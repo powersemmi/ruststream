@@ -206,7 +206,7 @@ async fn decode_skip_acks_past_bad_input_and_continues() {
 async fn publishing_decode_failure_is_dropped_and_continues() {
     let router = Router::<MemoryBroker>::new()
         .include(rpcd)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rpcd", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -260,8 +260,10 @@ async fn batch_decode_failure_drops_the_bad_element() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_decode_failure_is_dropped() {
-    let router =
-        Router::<MemoryBroker>::new().include(bpd.batch(nonzero!(64)).publisher(Publish).build());
+    let router = Router::<MemoryBroker>::new()
+        .include(bpd.batch(nonzero!(64)))
+        .out(Reply, Publish)
+        .build();
     let app = RustStream::new(AppInfo::new("bpd", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");

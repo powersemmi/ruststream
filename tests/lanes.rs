@@ -147,7 +147,7 @@ async fn a_serialized_out_type_is_a_dictionary_member() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(broker, |b| {
-        b.include(export).publisher(Publish);
+        b.include(export).out(Exports, Publish).build();
     });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -211,7 +211,7 @@ fn the_typed_form_keeps_the_serialized_metadata() {
 
     let app =
         RustStream::new(AppInfo::new("exports", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(export).publisher(Publish);
+            b.include(export).out(Exports, Publish).build();
         });
     let spec = build_spec(&app);
 

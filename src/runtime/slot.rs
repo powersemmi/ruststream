@@ -531,18 +531,17 @@ impl<Surface, C> SlotCodec<Surface> for CallCodec<C> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoOutBound;
 
-/// A step a `.transform(..)` can ride: what the chain named right before it.
+/// A position a chain's steps can ride: what the chain named right before them.
 ///
-/// The step traits below report it as an associated type ([`TransformAt::Step`],
-/// [`TransformLast::Step`]) rather than refusing to apply, so the transform's own bound is what
-/// fails and this note is what the call site reads.
+/// The step traits below report it as an associated type ([`TransformLast::Step`] and its
+/// siblings) rather than refusing to apply, so the step's own bound is what fails and this note
+/// is what the call site reads.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "this `.transform(..)` has no step to apply to",
-    label = "no `.out(marker, policy)` or `.publisher(policy)` call precedes it in this chain",
-    note = "a transform rides the step named right before it: \
-            `.out(Marker, Policy).transform(..)` for a slot, `.publisher(Policy).transform(..)` \
-            for a reply"
+    message = "this step has no publish position to apply to",
+    label = "no `.out(marker, policy)` call precedes it in this chain",
+    note = "a step rides the position named right before it: `.out(Reply, Policy).transform(..)` \
+            for a reply, `.out(Marker, Policy).transform(..)` for a slot"
 )]
 pub trait NamedStep {}
 

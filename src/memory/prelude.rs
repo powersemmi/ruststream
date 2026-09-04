@@ -28,7 +28,7 @@
 //! # }
 //! fn app() -> RustStream {
 //!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-//!         b.include(audit).publisher(Publish);
+//!         b.include(audit).out(Reply, Publish);
 //!     })
 //! }
 //! # }

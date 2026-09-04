@@ -180,7 +180,7 @@ in-memory брокера (опций нет, поэтому это unit-марк
 Если обычная политика годится со своими умолчаниями (а так почти всегда), реализуйте на
 подключённой форме ещё и `DefaultPublish`, чтобы её назвать. Тогда рантайм собирает издателя
 ответа по умолчанию, когда обработчик с `publish("dest")` монтируется без явного
-`.publisher(..)`: `b.include(def)` компилируется сам по себе. Брокеры, издателям
+`.out(Reply, ..)`: `b.include(def)` компилируется сам по себе. Брокеры, издателям
 которых всегда нужны явные опции, его не реализуют, и их пользователи прикладывают политику при
 каждой регистрации.
 
@@ -244,16 +244,28 @@ impl FromName for OrdersStream {
 
 <!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
+use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
+
 pub trait NatsSubscriber {
     fn jetstream(self, stream: impl Into<String>) -> Self;
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (W, F, P)> {
+// Четыре слота состояния - это (воркеры, политики отказа, стартовая позиция, размер страницы);
+// `Codec` - собственное переопределение кодека регистрации, `()` пока его никто не назвал. Оба
+// едут дальше без изменений.
+impl<Def, Workers, Failures, StartAt, Page, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Page), Codec>
+where
+    Def: Declared,
+{
     fn jetstream(self, stream: impl Into<String>) -> Self {
         self.map_source(|source| source.jetstream(stream))
     }
-    // ..
+
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.durable(name))
+    }
 }
 ```
 
@@ -261,6 +273,47 @@ impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (
 существует. Пользователи
 импортируют трейт, чтобы до них добраться, как и в случае любого расширяющего трейта. Ниже словарь
 слотов `Out` пользуется тем же приёмом с расширением.
+
+### Настройки издателя на вашем собственном языке
+
+Сторона публикации устроена зеркально. Точка монтирования называет политику публикации через
+`.out(marker, policy)` - `Reply` для того, что возвращает обработчик с `publish("dest")`, и маркер
+слота `Out` для слота, - а хуком над политикой этой позиции служит `MapPublisher`:
+
+<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+```rust
+use ruststream::runtime::MapPublisher;
+
+pub trait NatsPublish {
+    fn stream(self, name: impl Into<String>) -> Self;
+    fn expect_last_sequence(self, seq: u64) -> Self;
+}
+
+impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
+    fn stream(self, name: impl Into<String>) -> Self {
+        self.map_publisher(|policy| policy.stream(name))
+    }
+
+    fn expect_last_sequence(self, seq: u64) -> Self {
+        self.map_publisher(|policy| policy.expect_last_sequence(seq))
+    }
+}
+```
+
+В сервисе это читается так:
+
+<!-- inline-rust: the call shape against the broker policy sketched above -->
+```rust
+b.include(confirm).out(Reply, Publish).stream("ORDERS");
+b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
+```
+
+Ограничение стоит на политике, а не на цепочке, поэтому одна реализация покрывает и позицию
+ответа, и любой слот, и роутер, и область брокера. `map_publisher` заменяет политику на политику
+того же типа - именно это и делают собственные настройки издателя; другой тип политики означает
+другой режим публикации и место ему в самом вызове `.out(marker, policy)`. Передать уже настроенное
+значение (`.out(Reply, Publish::default().stream("ORDERS"))`) по-прежнему можно: хук - это
+эргономичное зеркало, а не замена.
 
 ## Трейты-совместимости
 

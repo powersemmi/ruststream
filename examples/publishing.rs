@@ -276,13 +276,13 @@ fn app() -> impl App {
             // static, per-reply: the chain names the policy and composes the transform at
             // compile time; the runtime pairs it with the connected broker at startup
             b.include(respond)
-                .publisher(Publish)
+                .out(Reply, Publish)
                 .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
-            b.include(forward).publisher(Publish);
+            b.include(forward).out(DefaultSlot, Publish).build();
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
             // each named slot binds by marker; the call order does not matter, and a
@@ -294,8 +294,9 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // the reply keeps .publisher(..) (or its default); the Out parameter attaches
-            // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
+            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
+            // parameter - DefaultSlot for a single unnamed slot
             b.include(gateway).out(DefaultSlot, Publish).build();
             // --8<-- [end:publish_out_mount]
             // --8<-- [start:declared_mount]
@@ -306,13 +307,9 @@ fn app() -> impl App {
             // .batch(n) is the page size the subscription opens with, which every page mount
             // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
-            b.include(
-                confirm
-                    .batch(nonzero!(64))
-                    .publisher(TransactionalPublish)
-                    .transactional()
-                    .build(),
-            );
+            b.include(confirm.batch(nonzero!(64)))
+                .out(Reply, TransactionalPublish)
+                .transactional();
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

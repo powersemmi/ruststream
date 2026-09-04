@@ -40,12 +40,17 @@ sends it:
     ```
 
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
-default publish policy under the default codec; `.publisher(Publish)` names the policy the broker
+default publish policy under the default codec; `.out(Reply, Publish)` names the policy the broker
 prelude exports, and the steps after it fill the rest of the reply wiring - `.codec(..)` for the
 reply codec, `.transform(..)` for a static publish transform, `.transactional()` for a page's
 replies in one broker transaction. Each step fills its own slot once, so naming a codec twice is a
 compile error rather than a silent overwrite. The wiring is a declaration: the runtime pairs it
 with the connected broker at startup.
+
+A definition never names a publisher. It declares what the handler replies with and where it
+goes; a publish policy is a broker's, so it is named where a broker is named - the mount site -
+with the same `.out(marker, policy)` call that binds an `Out` slot. `Reply` is the marker of the
+position a handler's returned value leaves through.
 
 === "Macros"
 
@@ -65,8 +70,8 @@ built. See [Codecs](codecs.md#the-publish-side).
 
 One clause serves both wires, because the choice belongs to the reply type rather than to the
 clause. A `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply carries
-its own bytes and leaves byte-for-byte, so its `.publisher(..)` takes the policy and nothing else:
-there is no codec to name on that wire, and `.codec(..)` after it does not compile. See
+its own bytes and leaves byte-for-byte, so its `.out(Reply, ..)` takes the policy and nothing
+else: there is no codec to name on that wire, and `.codec(..)` after it does not compile. See
 [raw subscribers](subscribers.md#raw-subscribers).
 
 ## Controlling the acknowledgement
@@ -154,13 +159,12 @@ terminal `.build()`. The calls bind by marker, so their order does not matter; b
 slot twice (or a marker the handler does not declare) fails to compile, and `.build()` exists
 only once every slot is bound - a forgotten binding is a compile error whose attachment type
 names the slot (`MissingSlot<Audit>`). A single unnamed `Out<impl Publisher>` parameter binds
-the implicit `DefaultSlot` through the plain `.publisher(policy)` call, which binds and commits
-in one step.
+the implicit `DefaultSlot` (`.out(DefaultSlot, Publish).build()`).
 
-A `.transform(..)` after an `.out(..)` rides that slot (see
-[the publish pipeline](#the-publish-pipeline)); the one-call `.publisher(policy)` shorthand
-commits on the spot, so a single slot that also names a transform binds by marker
-(`.out(DefaultSlot, Publish).transform(..).build()`).
+A `.transform(..)` after an `.out(..)` rides the position that call named (see
+[the publish pipeline](#the-publish-pipeline)), so a registration that both replies and fans out
+names one on each: `.out(Reply, Publish).transform(StampSource).out(Audit, Publish)
+.transform(Envelope)`.
 
 === "Macros"
 
@@ -283,12 +287,10 @@ a newtype that derives `Outgoing`, or, inside a transaction, keep the scope's
     ```
 
 The parameter composes with every subscriber form: next to a `Ctx` extractor, on a
-self-deserializing input, and on batch handlers (`b.include(f).publisher(..)` - the whole page
-in, per-element destinations out). On the reply forms - `publish(..)` and
-its batch counterpart - `.publisher(..)` stays the reply's own attachment and the injected
-publisher attaches with `.out(marker, ..)` plus the terminal `.build()` (`DefaultSlot` for a
-single unnamed slot), so a gateway can answer on a fixed destination while fanning side copies
-out through the injection:
+self-deserializing input, and on batch handlers (`b.include(f).out(marker, policy).build()` - the
+whole page in, per-element destinations out). On the reply forms - `publish(..)` and its batch
+counterpart - the reply is one more position on the same chain, so a gateway names both and
+answers on a fixed destination while fanning side copies out through the injection:
 
 === "Macros"
 
@@ -335,7 +337,7 @@ bidirectional bridge binds both directions up front.
 A token shares a slot with the `Bindable` wrapper it was minted from, so register that same
 wrapper (`with_broker(bindable, ..)`) for startup to fill the slot with the connected broker; a
 token whose broker never registers fails fast at pairing with a clear error. The same shape
-works for reply publishing (`.publisher(token)` on a `publish("dest")` handler) and for the
+works for reply publishing (`.out(Reply, token)` on a `publish("dest")` handler) and for the
 batch forms. Outside a registration, a token pairs itself once startup
 connected its broker: `running.publisher(token)` hands a sibling task its live publisher - see
 [Running beside another server](http.md). For the first publish at startup, no token is needed
@@ -369,7 +371,7 @@ still carries the handle's argument.
 Three kinds of transform run before a message leaves the process, and they compose:
 
 - **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
-  `.publisher(..)`. Zero-cost, per-destination transforms (an envelope, a fixed content type, or
+  `.out(Reply, ..)`. Zero-cost, per-destination transforms (an envelope, a fixed content type, or
   stamping the delivery's trace / correlation id onto the reply). They run first, closest to the
   value.
 - **Static `OutTransform`** on one `Out` slot, chained with `.transform(..)` after
@@ -428,9 +430,9 @@ Both levels compose on the application:
 
 The app-wide layer wraps every publish a handler makes: the reply of a `publish(..)` form and
 every message that leaves through an injected `Out` slot. The per-mount transforms stay with what
-they were named on - `.publisher(Publish).transform(StampSource)` grows the reply's stack,
+they were named on - `.out(Reply, Publish).transform(StampSource)` grows the reply's stack,
 `.out(Audit, Publish).transform(OutboxEnvelope)` that slot's - so a registration that carries both
-writes both, and `.transform(..)` reads as "on the step before it". The order on the wire is the
+writes both, and `.transform(..)` reads as "on the position before it". The order on the wire is the
 same on either side: the mount site's transforms first (closest to the encoded value), then the
 app-wide middleware, then the send.
 
@@ -462,7 +464,7 @@ transaction):
     --8<-- "examples/manual/publishing.rs:batch_publishing"
     ```
 
-Mount it with `include`, chaining the reply wiring with `.publisher(..)`:
+Mount it with `include`, chaining the reply wiring with `.out(Reply, ..)`:
 
 === "Macros"
 
@@ -478,7 +480,7 @@ Mount it with `include`, chaining the reply wiring with `.publisher(..)`:
 
 Without `.transactional()`, each reply publishes independently; a mid-batch failure retries
 the whole batch, so the earlier replies may be published again on redelivery (at-least-once).
-Chaining `.transactional()` after `.publisher(..)` switches the wiring to one broker transaction
+Chaining `.transactional()` after `.out(Reply, ..)` switches the wiring to one broker transaction
 per batch: the runtime begins a transaction, publishes every reply, commits, and only then acks
 the incoming batch; any failure aborts, so replies are never half-visible. The transactional
 requirement is enforced where the wiring is consumed: mounting it needs a policy whose live

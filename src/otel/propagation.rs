@@ -41,7 +41,7 @@
 //!     let otel = OpenTelemetry::new();
 //!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 //!         // Replies carry the delivery's trace context.
-//!         b.include(confirm).publisher(Publish).transform(otel.propagation());
+//!         b.include(confirm).out(Reply, Publish).transform(otel.propagation());
 //!     })
 //! }
 //! # }

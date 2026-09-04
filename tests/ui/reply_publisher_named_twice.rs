@@ -1,4 +1,3 @@
-use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, Reply, RustStream};
 use ruststream::subscriber;
@@ -19,13 +18,12 @@ async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
 
-// The reply names its codec once: the second `.codec(..)` has no open slot to fill, so the step
-// is gone from the type the first one produced.
+// A publish position is bound once. The reply's policy is named by the first `.out(Reply, ..)`,
+// so the second has no unbound position left to bind.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(confirm)
             .out(Reply, MemoryPublish)
-            .codec(JsonCodec)
-            .codec(CborCodec);
+            .out(Reply, MemoryPublish);
     });
 }

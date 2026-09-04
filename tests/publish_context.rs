@@ -82,7 +82,7 @@ async fn delivery_context_propagates_to_the_reply() {
         })
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(echo)
-                .publisher(egress_pub)
+                .out(Reply, egress_pub)
                 .transform(PropagateCorrelation);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -133,13 +133,9 @@ async fn batch_layer_runs_only_on_batched_replies() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // The same `MarkBatched` transform, reused on the batch path through `for_batch`; the
         // single-message mounts would reject a wiring carrying it.
-        b.include(
-            batch_echo
-                .batch(nonzero!(8))
-                .publisher(Publish)
-                .batch_transform(for_batch(MarkBatched))
-                .build(),
-        );
+        b.include(batch_echo.batch(nonzero!(8)))
+            .out(Reply, Publish)
+            .batch_transform(for_batch(MarkBatched));
         b.include(batch_capture);
     });
     let tb = TestApp::start(app).await.expect("startup failed");

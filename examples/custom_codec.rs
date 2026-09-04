@@ -120,7 +120,7 @@ fn app() -> RustStream {
             // per reply: the reply leaves under the envelope, the request still arrives under
             // the scope codec
             b.include(bill)
-                .publisher(Publish)
+                .out(Reply, Publish)
                 .codec(Envelope::new(JsonCodec));
         },
     )

@@ -186,6 +186,13 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
         }
     }
 
+    /// The wrapped definition on its own, so the crate's own tests can call the mount
+    /// machinery's accessors on it without a surface in the way.
+    #[cfg(test)]
+    pub(crate) fn into_def(self) -> Def {
+        self.def
+    }
+
     /// Replaces the wrapped definition, keeping the source and the collected settings: the hook
     /// the value-definition methods (`describe`, `documented`, `to`, ...) grow their
     /// definitions through.

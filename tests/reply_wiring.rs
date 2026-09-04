@@ -47,7 +47,7 @@ async fn a_named_codec_encodes_the_reply() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(encode_reply).publisher(Publish).codec(CborCodec);
+            b.include(encode_reply).out(Reply, Publish).codec(CborCodec);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -90,7 +90,9 @@ async fn a_chained_transform_stamps_the_reply() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(stamped_reply).publisher(Publish).transform(Stamp);
+            b.include(stamped_reply)
+                .out(Reply, Publish)
+                .transform(Stamp);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -132,14 +134,10 @@ async fn a_page_reply_commits_its_transaction() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(
-                confirm_page
-                    .batch(nonzero!(8))
-                    .publisher(TransactionalPublish)
-                    .batch_transform(for_batch(Stamp))
-                    .transactional()
-                    .build(),
-            );
+            b.include(confirm_page.batch(nonzero!(8)))
+                .out(Reply, TransactionalPublish)
+                .batch_transform(for_batch(Stamp))
+                .transactional();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

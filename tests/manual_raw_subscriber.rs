@@ -1,8 +1,9 @@
 //! The macro-free counterpart of `tests/raw_subscriber.rs`: the raw handler forms written out as
 //! named types, including the lane traits the derives would have written. The plain form is a
 //! body over a `Deserialized` payload view; the byte-reply form declares a `Serialized` type as
-//! its reply and wires it with `.reply().to(..).publisher(..)` - the wire is read off the two
-//! message types either way, on this path exactly as on the attribute's.
+//! its reply with `.reply().to(..)` and names the policy at the mount with `.out(Reply, ..)` -
+//! the wire is read off the two message types either way, on this path exactly as on the
+//! attribute's.
 //!
 //! The codec-free path is what the plain and the byte-reply sections pin: bytes on the input
 //! side mean no `Codec` bound reaches the mount, so this file also builds with every codec
@@ -172,9 +173,9 @@ async fn raw_reply_round_trips_exact_bytes() {
             subscriber("relay-in", Relay)
                 .reply()
                 .to("relay-out")
-                .publisher(Publish)
                 .build(),
-        );
+        )
+        .out(Reply, Publish);
         b.include(subscriber("relay-out", RelayCapture).build());
     });
 
@@ -262,9 +263,9 @@ mod typed_in {
                     subscriber("gateway-in", Gateway)
                         .reply()
                         .to("gateway-out")
-                        .publisher(Publish)
                         .build(),
-                );
+                )
+                .out(Reply, Publish);
                 b.include(subscriber("gateway-out", GatewayCapture).build());
             },
         );

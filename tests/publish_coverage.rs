@@ -181,7 +181,7 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
 
     let app =
         RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(flaky).publisher(FailsOncePolicy);
+            b.include(flaky).out(Reply, FailsOncePolicy);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

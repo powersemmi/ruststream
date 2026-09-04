@@ -171,7 +171,7 @@ users compose codecs and transforms over your policy before it pairs.
 
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
 the connected form to name it. The runtime then builds the default reply publisher when a
-`publish("dest")` handler is included without an explicit `.publisher(..)`: `b.include(def)`
+`publish("dest")` handler is included without an explicit `.out(Reply, ..)`: `b.include(def)`
 alone compiles. Brokers whose publishers always need explicit options do not implement it, and
 their users attach a policy at every registration.
 
@@ -234,22 +234,74 @@ crate layers its own trait on top, bound to your source type:
 
 <!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
+use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
+
 pub trait NatsSubscriber {
     fn jetstream(self, stream: impl Into<String>) -> Self;
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (W, F, P)> {
+// The four state slots are (workers, failure policies, start position, page size); `Codec` is
+// the registration's own decode override, `()` until one is named. Both travel unchanged.
+impl<Def, Workers, Failures, StartAt, Page, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Page), Codec>
+where
+    Def: Declared,
+{
     fn jetstream(self, stream: impl Into<String>) -> Self {
         self.map_source(|source| source.jetstream(stream))
     }
-    // ..
+
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.durable(name))
+    }
 }
 ```
 
 The bound on the source type means the methods do not exist on a builder for another broker.
 Users import the trait to reach them, as with any extension trait. This is the same extension
 shape the `Out` slot vocabulary uses below.
+
+### Publisher settings in your own vocabulary
+
+The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
+`Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
+`MapPublisher` is the hook over the policy that position carries:
+
+<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+```rust
+use ruststream::runtime::MapPublisher;
+
+pub trait NatsPublish {
+    fn stream(self, name: impl Into<String>) -> Self;
+    fn expect_last_sequence(self, seq: u64) -> Self;
+}
+
+impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
+    fn stream(self, name: impl Into<String>) -> Self {
+        self.map_publisher(|policy| policy.stream(name))
+    }
+
+    fn expect_last_sequence(self, seq: u64) -> Self {
+        self.map_publisher(|policy| policy.expect_last_sequence(seq))
+    }
+}
+```
+
+A service then reads:
+
+<!-- inline-rust: the call shape against the broker policy sketched above -->
+```rust
+b.include(confirm).out(Reply, Publish).stream("ORDERS");
+b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
+```
+
+The bound is on the policy, not on the chain, so one impl covers the reply position and every
+slot, on a router and on a broker scope alike. `map_publisher` replaces the policy with one of
+the same type, which is what a publisher's own settings produce; a different policy type is a
+different publish mode and belongs in the `.out(marker, policy)` call itself. Passing an
+already-configured value (`.out(Reply, Publish::default().stream("ORDERS"))`) keeps working - the
+hook is the ergonomic mirror, not a replacement.
 
 ## Capability traits
 

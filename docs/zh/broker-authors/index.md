@@ -157,7 +157,7 @@ Broker 的 `MemoryPublish` / `MemoryRequest` 是最小的参考实现（没有�
 组合编解码器和变换。
 
 如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 `DefaultPublish` 来指明它。随后，
-挂载一个不带显式 `.publisher(..)` 的 `publish("dest")` 处理器时，运行时就会构造出默认的回复发布者：
+挂载一个不带显式 `.out(Reply, ..)` 的 `publish("dest")` 处理器时，运行时就会构造出默认的回复发布者：
 只写 `b.include(def)` 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
 注册时附上一个策略。
 
@@ -216,21 +216,71 @@ impl FromName for OrdersStream {
 
 <!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
+use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
+
 pub trait NatsSubscriber {
     fn jetstream(self, stream: impl Into<String>) -> Self;
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-impl<Def, W, F, P> NatsSubscriber for SubscriberBuilder<Def, SubscribeOptions, (W, F, P)> {
+// 四个状态槽位依次是（工作者、失败策略、起始位置、分页大小）；`Codec` 是这次注册自己的解码覆盖，
+// 在没人指定之前是 `()`。两者都原样传递下去。
+impl<Def, Workers, Failures, StartAt, Page, Codec> NatsSubscriber
+    for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartAt, Page), Codec>
+where
+    Def: Declared,
+{
     fn jetstream(self, stream: impl Into<String>) -> Self {
         self.map_source(|source| source.jetstream(stream))
     }
-    // ..
+
+    fn durable(self, name: impl Into<String>) -> Self {
+        self.map_source(|source| source.durable(name))
+    }
 }
 ```
 
 对源类型的 trait 约束意味着，这些方法在别的 Broker 的构建器上根本不存在。用户像用任何扩展 trait
 那样导入它，就能用到这些方法。下文中 `Out` 槽位的词汇采用的也是同一种扩展形态。
+
+### 用你自己的词汇表达发布者配置
+
+发布这一侧是对称的。挂载点用 `.out(marker, policy)` 指定发布策略 - `Reply` 对应带
+`publish("dest")` 的处理器返回的值，`Out` 槽位的标记对应槽位 - 而 `MapPublisher` 就是作用在该位置
+所持策略之上的钩子：
+
+<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+```rust
+use ruststream::runtime::MapPublisher;
+
+pub trait NatsPublish {
+    fn stream(self, name: impl Into<String>) -> Self;
+    fn expect_last_sequence(self, seq: u64) -> Self;
+}
+
+impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
+    fn stream(self, name: impl Into<String>) -> Self {
+        self.map_publisher(|policy| policy.stream(name))
+    }
+
+    fn expect_last_sequence(self, seq: u64) -> Self {
+        self.map_publisher(|policy| policy.expect_last_sequence(seq))
+    }
+}
+```
+
+在服务里读起来是这样：
+
+<!-- inline-rust: the call shape against the broker policy sketched above -->
+```rust
+b.include(confirm).out(Reply, Publish).stream("ORDERS");
+b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
+```
+
+约束落在策略上而不是链上，所以一份实现就同时覆盖回复位置和每一个槽位，路由器和 Broker 作用域也一样。
+`map_publisher` 把策略替换成同一类型的策略，这正是发布者自身配置所产生的结果；换成另一种策略类型意味着
+另一种发布方式，那属于 `.out(marker, policy)` 调用本身。传入一个已经配置好的值
+（`.out(Reply, Publish::default().stream("ORDERS"))`）依然可行：这个钩子是符合工效的镜像，而不是替代。
 
 ## 能力 trait
 

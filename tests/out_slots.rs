@@ -257,7 +257,7 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
     let app = RustStream::new(AppInfo::new("slots-lanes", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(route_shard).publisher(LanePolicy);
+            b.include(route_shard).out(DefaultSlot, LanePolicy).build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

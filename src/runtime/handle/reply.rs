@@ -304,7 +304,7 @@ where
     }
 }
 
-impl<T, R, C, S, H, Doc, Dest>PublishingCall<S>
+impl<T, R, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<Solo<T>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
@@ -324,7 +324,7 @@ where
     }
 }
 
-impl<F, R, C, S, H, Doc, Dest>PublishingCall<S>
+impl<F, R, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<SoloDeserialized<F>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
@@ -351,7 +351,7 @@ where
     }
 }
 
-impl<Hd, P, R, C, S, H, Doc, Dest>PublishingCall<S>
+impl<Hd, P, R, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<SoloPair<Hd, P>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
@@ -523,4 +523,3 @@ where
         page_reply_verdict(verdict, batch.len(), ctx.name())
     }
 }
-

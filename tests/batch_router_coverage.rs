@@ -101,14 +101,11 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
                 .build(),
         )
         .include(brc_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build()
-        .include(
-            brc_batch_relay
-                .batch(nonzero!(64))
-                .publisher(Publish)
-                .build(),
-        );
+        .include(brc_batch_relay.batch(nonzero!(64)))
+        .out(Reply, Publish)
+        .build();
 
     assert!(format!("{router:?}").contains("Router"));
 
@@ -190,7 +187,7 @@ fn assert_subscribe_error(result: Result<impl Sized, RustStreamError>, expected:
 async fn publishing_route_reports_a_refused_reply_publisher() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_relay)
-        .publisher(RefusedPublish)
+        .out(Reply, RefusedPublish)
         .build();
 
     let app =
@@ -205,12 +202,10 @@ async fn publishing_route_reports_a_refused_reply_publisher() {
 /// startup failure, not a per-batch one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_publishing_route_reports_a_refused_reply_publisher() {
-    let router = Router::<MemoryBroker>::new().include(
-        brc_batch_relay
-            .batch(nonzero!(64))
-            .publisher(RefusedPublish)
-            .build(),
-    );
+    let router = Router::<MemoryBroker>::new()
+        .include(brc_batch_relay.batch(nonzero!(64)))
+        .out(Reply, RefusedPublish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("brc-batch-pair", "0.1.0")).with_broker(
         MemoryBroker::new(),
@@ -228,7 +223,7 @@ async fn batch_publishing_route_reports_a_refused_reply_publisher() {
 async fn publishing_route_reports_a_source_that_never_opens() {
     let router = Router::<MemoryBroker>::new()
         .include(brc_closed_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("brc-source", "0.1.0")).with_broker(

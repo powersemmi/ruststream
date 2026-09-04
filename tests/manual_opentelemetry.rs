@@ -82,14 +82,9 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
         .layer(otel.consume_layer())
         .with_broker(MemoryBroker::new(), |b| {
             // The reply wiring propagates the delivery's trace context onto each reply.
-            b.include(
-                subscriber("in", Echo)
-                    .reply()
-                    .to("out")
-                    .publisher(Publish)
-                    .transform(otel.propagation())
-                    .build(),
-            );
+            b.include(subscriber("in", Echo).reply().to("out").build())
+                .out(Reply, Publish)
+                .transform(otel.propagation());
             b.include(subscriber("out", Capture).build());
         });
     // --8<-- [end:wiring]

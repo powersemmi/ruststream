@@ -43,10 +43,10 @@ async fn rp_check_on(_r: &Receipt) -> HandlerOutcome {
 async fn default_codec_router_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
         .include(rp_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build()
         .include(rp_relay_on)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -100,10 +100,10 @@ async fn chain_codec_router_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
         .include(rpc_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build()
         .include(rpc_relay_on)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -155,8 +155,12 @@ async fn bp_check_on(_r: &Receipt) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_codec_router_batch_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
-        .include(bp_relay.batch(nonzero!(8)).publisher(Publish).build())
-        .include(bp_relay_on.batch(nonzero!(8)).publisher(Publish).build());
+        .include(bp_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build()
+        .include(bp_relay_on.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
@@ -208,8 +212,12 @@ async fn bpc_check_on(_r: &Receipt) -> HandlerOutcome {
 async fn chain_codec_router_batch_publishing_replies() {
     let router = Router::<MemoryBroker>::new()
         .with_codec(JsonCodec)
-        .include(bpc_relay.batch(nonzero!(8)).publisher(Publish).build())
-        .include(bpc_relay_on.batch(nonzero!(8)).publisher(Publish).build());
+        .include(bpc_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build()
+        .include(bpc_relay_on.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
@@ -266,7 +274,7 @@ async fn rl_check(_r: &Receipt) -> HandlerOutcome {
 async fn app_publish_layer_reaches_router_publishing_handlers() {
     let router = Router::<MemoryBroker>::new()
         .include(rl_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("rl", "0.1.0"))
@@ -311,7 +319,9 @@ async fn bl_check(_r: &Receipt) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let router = Router::<MemoryBroker>::new()
-        .include(bl_relay.batch(nonzero!(8)).publisher(Publish).build());
+        .include(bl_relay.batch(nonzero!(8)))
+        .out(Reply, Publish)
+        .build();
 
     let app = RustStream::new(AppInfo::new("bl", "0.1.0"))
         .publish_layer(StampApp)
@@ -388,7 +398,7 @@ async fn tc_check(_r: &Receipt) -> HandlerOutcome {
 async fn router_publishing_threads_typed_delivery_context() {
     let router = Router::<MemoryBroker>::new()
         .include(tc_relay)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .transform(PropagateCorrelation)
         .build();
 

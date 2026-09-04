@@ -195,7 +195,7 @@ async fn a_reply_and_a_slot_carry_their_own_transforms_under_one_app_layer() {
         .publish_layer(AppStamp)
         .with_broker(MemoryBroker::new(), |b| {
             b.include(confirm)
-                .publisher(Publish)
+                .out(Reply, Publish)
                 .transform(StampSource)
                 .out(Audit, Publish)
                 .transform(Envelope)

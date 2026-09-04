@@ -43,14 +43,15 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
     HandlerOutcome::ack()
 }
 
-/// The one-slot shorthand on a router: `.publisher(policy)` binds the slot and commits.
+/// The one-slot shorthand on a router: `.out(DefaultSlot, policy)` binds the unnamed slot, and
+/// `.build()` commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_single_out_slot() {
     let (broker, ingress, observer) = observed_memory().await;
 
     let router = Router::<MemoryBroker>::new()
         .include(forward)
-        .publisher(Publish)
+        .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-out", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -199,7 +200,7 @@ async fn a_router_mounts_a_batch_out_slot() {
 
     let router = Router::<MemoryBroker>::new()
         .include(forward_page.batch(nonzero!(64)))
-        .publisher(Publish)
+        .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-page", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
@@ -312,7 +313,7 @@ async fn echo_frame_on(frame: &Frame<'_>) -> Export {
 async fn a_router_takes_an_explicit_serialized_reply_policy() {
     let router = Router::<MemoryBroker>::new()
         .include(echo_frame_on)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-raw-on", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -444,7 +445,7 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 
     let router = Router::<MemoryBroker>::new()
         .include(settle_page.batch(nonzero!(64)))
-        .publisher(Publish)
+        .out(Reply, Publish)
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-ledger", "0.1.0"))
@@ -479,7 +480,7 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
     // the slot pairs against the egress broker while the subscription lives on the ingress one.
     let router = Router::<MemoryBroker>::new()
         .include(forward)
-        .publisher(egress)
+        .out(DefaultSlot, egress)
         .build();
     let app = RustStream::new(AppInfo::new("rp-bridge", "0.1.0"))
         .with_broker(ingress_broker, |b| b.include_router(router))
@@ -514,7 +515,9 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new().include(bulk_relay.batch(nonzero!(64)));
+    let router = Router::<MemoryBroker>::new()
+        .include(bulk_relay.batch(nonzero!(64)))
+        .build();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -540,7 +543,8 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
         .build()
         .include(relay)
         .build()
-        .include(bulk_relay.batch(nonzero!(64)));
+        .include(bulk_relay.batch(nonzero!(64)))
+        .build();
 
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(
@@ -550,22 +554,22 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The builders identify themselves by name while half-built.
+// One chain type serves every shape, and it identifies itself by name while half-built.
 
 #[test]
-fn the_registration_builders_name_themselves() {
+fn the_registration_chain_names_itself() {
     let with = Router::<MemoryBroker>::new().include(relay);
     assert!(format!("{with:?}").starts_with("RouterWith"), "{with:?}");
     let _ = with.build();
 
     let slots = Router::<MemoryBroker>::new().include(transcode);
-    assert!(format!("{slots:?}").starts_with("RouterSlots"), "{slots:?}");
-    let _ = slots.out(Audit, Publish).out(Encoded, Publish);
+    assert!(format!("{slots:?}").starts_with("RouterWith"), "{slots:?}");
+    let _ = slots.out(Audit, Publish).out(Encoded, Publish).build();
 
     let with_reply = Router::<MemoryBroker>::new().include(gate);
     assert!(
-        format!("{with_reply:?}").starts_with("RouterSlotsWithReply"),
+        format!("{with_reply:?}").starts_with("RouterWith"),
         "{with_reply:?}"
     );
-    let _ = with_reply.out(DefaultSlot, Publish);
+    let _ = with_reply.out(DefaultSlot, Publish).build();
 }

@@ -603,7 +603,7 @@ async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Ex
 }
 
 /// A byte-reply handler with an `Out` slot: the slot is bound explicitly and the reply leaves
-/// through the broker's default publish policy, with no `.publisher(..)` in the chain.
+/// through the broker's default publish policy, with no `.out(Reply, ..)` in the chain.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     let app =
@@ -639,14 +639,14 @@ async fn gate(order: &Order, Out(audit): Out<impl Publisher>) -> Receipt {
     Receipt { id: order.id }
 }
 
-/// The reply side of a publishing handler with slots is overridable: `.publisher(..)` replaces
+/// The reply side of a publishing handler with slots is overridable: `.out(Reply, ..)` replaces
 /// the default reply source, and the rest of the chain still binds the slots.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
     let app =
         RustStream::new(AppInfo::new("cov-gate", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(gate)
-                .publisher(Publish)
+                .out(Reply, Publish)
                 .transform(Envelope)
                 .out(DefaultSlot, Publish)
                 .build();
@@ -682,21 +682,23 @@ async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOut
     HandlerOutcome::ack()
 }
 
-/// Each registration builder is `Debug`, and none of them leaks the scope it borrows.
+/// One guard serves every shape a scope registration takes, it renders as `Mounting`, and it
+/// never leaks the scope it borrows.
 #[test]
-fn the_include_builders_render_a_debug_form() {
+fn the_mount_guard_renders_a_debug_form() {
     let _app =
         RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            // A reply-only registration is complete as it stands, so dropping the guard commits.
             let reply = b.include(debug_reply);
-            assert_debug_form(&reply, "IncludeWith");
-            reply.publisher(Publish);
+            assert_debug_form(&reply, "Mounting");
+            drop(reply);
 
             let slots = b.include(debug_slot);
-            assert_debug_form(&slots, "IncludeSlots");
-            slots.publisher(Publish);
+            assert_debug_form(&slots, "Mounting");
+            slots.out(DefaultSlot, Publish).build();
 
             let both = b.include(gate);
-            assert_debug_form(&both, "IncludeSlotsWithReply");
+            assert_debug_form(&both, "Mounting");
             both.out(DefaultSlot, Publish).build();
         });
 }
@@ -706,6 +708,6 @@ fn assert_debug_form<T: std::fmt::Debug>(value: &T, expected: &str) {
     assert!(rendered.starts_with(expected), "{rendered}");
     assert!(
         !rendered.contains("BrokerScope"),
-        "the builder must not render the scope it borrows: {rendered}",
+        "the guard must not render the scope it borrows: {rendered}",
     );
 }

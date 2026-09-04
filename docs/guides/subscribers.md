@@ -67,7 +67,7 @@ The mechanics live in
 
 One more parameter shape is not an extractor but an **injection**: `Out(out): Out<impl
 Publisher>` receives a live publisher paired by the runtime from the policy attached at the
-include site (`b.include(handler).publisher(..)`, or `.out(marker, ..)` per named slot); the
+include site (`b.include(handler).out(marker, policy).build()`); the
 concrete publisher type never appears in the signature. An optional third position declares
 the message set the handler publishes - `Out<impl Publisher, Marker, (A, B)>` - enabling the
 dictionary-driven typed publish path ([typed headers](headers.md)). See
@@ -580,7 +580,7 @@ byte-for-byte, exactly as the handler returned it. Return the reply directly, or
 `Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
 
 The publisher comes from the include site: both wires name the policy the same way
-(`b.include(relay).publisher(Publish)`), and with no call at all the broker's default publish
+(`b.include(relay).out(Reply, Publish)`), and with no call at all the broker's default publish
 policy carries the reply. The difference is what chains after it - an encoded reply takes
 `.codec(..)`, `.transform(..)` and `.transactional()`, while a `Serialized` reply's bytes leave
 untouched, so those steps do not exist there. A failed reply publish nacks the delivery with

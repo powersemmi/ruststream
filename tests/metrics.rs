@@ -133,7 +133,7 @@ mod publish {
             .publish_layer(metrics.publish_layer())
             .with_broker_labeled("egress", egress, |_b| {})
             .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-                b.include(reply).publisher(egress_pub);
+                b.include(reply).out(Reply, egress_pub);
             });
         let tb = TestApp::start(app).await.expect("startup failed");
 

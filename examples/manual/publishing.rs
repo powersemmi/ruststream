@@ -3,7 +3,7 @@
 //! declaration they mint is written out here: the reply bodies, the slot markers and their
 //! dictionaries, and what a message type says about being sent. Everything a body does is an axis
 //! of its own `impl Handle`, and the mount site then reads exactly as it does with the attribute -
-//! `include`, `.publisher(..)`, `.out(marker, ..)`, `.build()`.
+//! `include`, `.out(Reply, ..)`, `.out(marker, ..)`, `.build()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -517,10 +517,10 @@ fn app() -> impl App {
                 subscriber("requests", Respond)
                     .reply()
                     .to("responses")
-                    .publisher(Publish)
-                    .transform(EnvelopeTransform)
                     .build(),
-            );
+            )
+            .out(Reply, Publish)
+            .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(
                 subscriber("validated-requests", Validate)
@@ -531,7 +531,8 @@ fn app() -> impl App {
             // --8<-- [end:reply_mount]
             // --8<-- [start:forward_mount]
             b.include(subscriber("ingress", Forward).build())
-                .publisher(Publish);
+                .out(DefaultSlot, Publish)
+                .build();
             // --8<-- [end:forward_mount]
             // --8<-- [start:slots_mount]
             // each named slot binds by marker; the call order does not matter, and a
@@ -543,8 +544,9 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // the reply keeps .publisher(..) (or its default); the Out slot attaches
-            // with .out(<marker>, ..) - DefaultSlot for a single unnamed slot
+            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
+            // slot - DefaultSlot for a single unnamed slot
             b.include(
                 subscriber("gateway-requests", Gateway)
                     .reply()
@@ -568,11 +570,11 @@ fn app() -> impl App {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(TransactionalPublish)
-                    .transactional()
                     .batch(nonzero!(64))
                     .build(),
-            );
+            )
+            .out(Reply, TransactionalPublish)
+            .transactional();
             // --8<-- [end:batch_publishing_mount]
         })
     // --8<-- [end:pipeline]

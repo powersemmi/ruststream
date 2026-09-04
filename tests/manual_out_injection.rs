@@ -77,7 +77,8 @@ async fn a_bound_token_injects_a_foreign_brokers_publisher() {
         })
         .with_broker(ingress_broker, |b| {
             b.include(subscriber("out.crossing", Crossing).build())
-                .publisher(to_other);
+                .out(DefaultSlot, to_other)
+                .build();
         });
     // --8<-- [end:cross_broker]
     let running = app.start().await.expect("startup failed");

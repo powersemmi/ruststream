@@ -13,9 +13,9 @@ use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSour
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::input::DecodeWith;
+use crate::runtime::publish::RawReplyWiring;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
-use crate::runtime::publish::RawReplyWiring;
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
@@ -108,10 +108,15 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    (WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>, ()):
-        RouterCommit<PublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>,
+    (
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
+        (),
+    ): RouterCommit<PublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>,
 {
-    type Out = <(WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>, ()) as RouterCommit<
+    type Out = <(
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
+        (),
+    ) as RouterCommit<
         PublishMount,
         Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
         Def,
@@ -254,10 +259,15 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
 where
     B: Broker + 'static,
     B::Connected: DefaultPublish,
-    (WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>, ()):
-        RouterCommit<BatchPublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>,
+    (
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
+        (),
+    ): RouterCommit<BatchPublishMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>,
 {
-    type Out = <(WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>, ()) as RouterCommit<
+    type Out = <(
+        WithSource<ReplyWiring<<B::Connected as DefaultPublish>::Policy>>,
+        (),
+    ) as RouterCommit<
         BatchPublishMount,
         Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
         Def,

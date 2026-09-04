@@ -228,7 +228,7 @@ async fn static_publish_layer_transforms_reply() {
         })
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(relay)
-                .publisher(egress_pub)
+                .out(Reply, egress_pub)
                 .transform(StaticEnvelope);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -300,7 +300,7 @@ async fn macro_publisher_replies_cross_broker() {
             b.include(capture);
         })
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-            b.include(reply).publisher(egress_pub);
+            b.include(reply).out(Reply, egress_pub);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

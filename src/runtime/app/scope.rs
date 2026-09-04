@@ -135,15 +135,16 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///
     /// Machinery, not the user path - see [`Router::handle`](crate::runtime::Router::handle);
     /// a service mounts definitions with [`include`](Self::include) and the value constructors.
-    pub fn handle<S, H>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
+    pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
         S: Subscriber + Send + 'static,
         S::Message: Send + Sync + 'static,
         State: Send + Sync + 'static,
-        H: Handler<S::Message, (), State> + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        H: Handler<S::Message, Cx, State> + 'static,
         Layers: BlanketLayer + Clone + Send + Sync + 'static,
     {
-        let handler = self.global.apply::<S::Message, (), State, H>(handler);
+        let handler = self.global.apply::<S::Message, Cx, State, H>(handler);
         self.sink
             .push_handle(subscriber, handler, meta, FailurePolicies::default());
     }

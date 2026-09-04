@@ -61,8 +61,8 @@
 [把上下文字段作为参数](context.md#context-fields-as-parameters)。
 
 还有一种参数形态不是提取器，而是**注入**：`Out(out): Out<impl Publisher>` 接收一个活的发布者。
-运行时依据挂载点附加的策略（`b.include(handler).publisher(..)`，或者按具名槽位使用
-`.out(marker, ..)`）配对出该发布者；具体的发布者类型永远不会出现在签名里。可选的第三个位置声明该
+运行时依据挂载点附加的策略（`b.include(handler).out(marker, policy).build()`）配对出该发布者；
+具体的发布者类型永远不会出现在签名里。可选的第三个位置声明该
 处理器会发布的消息集合，即 `Out<impl Publisher, Marker, (A, B)>`，用于启用字典驱动的类型化发布路径
 （[类型化消息头](headers.md)）。参见
 [在处理器内部发布](publishing.md#publishing-from-inside-a-handler)。
@@ -530,7 +530,7 @@ policy）留在 Broker 自己的订阅描述符上，那里能原生表达它。
 带 `#[derive(Serialized)]` 的 newtype 自带字节，按字节原样发出，和处理器返回时一模一样。直接返回
 这个回复，或者写成 `Result<Export, HandlerOutcome>`，后者提供与编码写法相同的显式 ack 控制。
 
-发布者来自挂载点：两种传输方式都用同一种写法指定策略（`b.include(relay).publisher(Publish)`），
+发布者来自挂载点：两种传输方式都用同一种写法指定策略（`b.include(relay).out(Reply, Publish)`），
 一次调用都不写时，回复就由 Broker 的默认发布策略送出。区别在于其后能链什么：编码的回复接受
 `.codec(..)`、`.transform(..)` 和 `.transactional()`，而 `Serialized` 的字节原样发出，因此那些步骤
 在这里并不存在。回复发布失败会让这次投递 nack 并重新入队，和编码路径上完全一样：

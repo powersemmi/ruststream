@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryRequest};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
+use ruststream::runtime::{AppInfo, DefaultSlot, HandlerOutcome, Out, RustStream};
 use ruststream::{OwnedTransactions, subscriber};
 use serde::Deserialize;
 
@@ -19,6 +19,6 @@ async fn settle(order: &Order, Out(_tx): Out<impl OwnedTransactions>) -> Handler
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(settle).publisher(MemoryRequest);
+        b.include(settle).out(DefaultSlot, MemoryRequest).build();
     });
 }

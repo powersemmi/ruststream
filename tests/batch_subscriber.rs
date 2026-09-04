@@ -333,13 +333,9 @@ async fn batch_replies_publish_transactionally() {
     let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(
-                confirm
-                    .batch(nonzero!(64))
-                    .publisher(TransactionalPublish)
-                    .transactional()
-                    .build(),
-            );
+            b.include(confirm.batch(nonzero!(64)))
+                .out(Reply, TransactionalPublish)
+                .transactional();
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -364,7 +360,7 @@ async fn batch_replies_publish_transactionally() {
 fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(audit.batch(nonzero!(64)).publisher(Publish).build());
+        b.include(audit.batch(nonzero!(64))).out(Reply, Publish);
     });
 
     assert_eq!(app.handlers().len(), 1);
@@ -415,7 +411,7 @@ async fn batch_handler_reads_typed_state() {
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(scale.batch(nonzero!(64)).publisher(Publish).build());
+            b.include(scale.batch(nonzero!(64))).out(Reply, Publish);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

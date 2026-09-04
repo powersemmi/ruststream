@@ -19,8 +19,8 @@ use std::time::Duration;
 use common::{Event, Order, Wire, wait_for};
 use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource};
 use ruststream::runtime::{
-    AppInfo, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router, RustStream,
-    SubscriberSettings,
+    AppInfo, DefaultSlot, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router,
+    RustStream, SubscriberSettings,
 };
 use ruststream::testing::TestApp;
 use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
@@ -343,7 +343,8 @@ async fn the_page_size_reaches_a_slot_carrying_page() {
                 .start_at(MemoryPosition::start())
                 .batch(nonzero!(2)),
         )
-        .publisher(MemoryPublish);
+        .out(DefaultSlot, MemoryPublish)
+        .build();
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed page settles");

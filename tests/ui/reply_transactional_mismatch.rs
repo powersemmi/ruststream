@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryRequest};
-use ruststream::runtime::{AppInfo, RustStream, SubscriberSettings};
+use ruststream::runtime::{AppInfo, Reply, RustStream, SubscriberSettings};
 use ruststream::{nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -23,12 +23,8 @@ async fn confirm(orders: &[Order]) -> Vec<Receipt> {
 // but has no transactions, so the mount fails to compile with the capability diagnostic.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(
-            confirm
-                .batch(nonzero!(8))
-                .publisher(MemoryRequest)
-                .transactional()
-                .build(),
-        );
+        b.include(confirm.batch(nonzero!(8)))
+            .out(Reply, MemoryRequest)
+            .transactional();
     });
 }

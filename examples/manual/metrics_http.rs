@@ -123,9 +123,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(Publish)
                     .build(),
-            );
+            )
+            .out(Reply, Publish);
         });
     // --8<-- [end:wiring]
 

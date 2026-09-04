@@ -167,7 +167,9 @@ async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("combo", "0.1.0")).with_broker(broker, |b| {
-        b.include(forward_skipping).publisher(Publish);
+        b.include(forward_skipping)
+            .out(DefaultSlot, Publish)
+            .build();
     });
     let tb = TestApp::start(app).await.expect("harness start");
 

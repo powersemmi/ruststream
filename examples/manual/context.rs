@@ -13,7 +13,7 @@ use std::future::{Future, ready};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{Handler, Identity, Layer, Stack};
+use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -102,6 +102,20 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
             ctx.headers_mut().insert("x-request-id", id.into_bytes());
         }
         self.0.handle(msg, ctx).await
+    }
+}
+
+// The app-global stack wraps every handler through `BlanketLayer`: the mount site hides the
+// handler's concrete type, so the wrap happens through this generic method instead.
+impl BlanketLayer for RequestId {
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
+    where
+        M: Send + Sync + 'static,
+        C: Send + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
+    {
+        WithRequestId(handler)
     }
 }
 // --8<-- [end:enrich]

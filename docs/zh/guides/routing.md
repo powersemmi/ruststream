@@ -36,10 +36,10 @@ RustStream::new(info).with_broker(broker, |b| {
 
 需要附加物的处理器，比如一个回复发布者、一个
 [`Out`](publishing.md#publishing-from-inside-a-handler) 槽位，在路由器上的注册方式与在作用域上一样，
-区别只在于注册要通过一个显式的终结调用来提交：`.publisher(policy)` 指定接线方式，`.build()` 采用
-Broker 自带的默认发布策略，`.out(marker, policy)` 则在 `.build()` 之前绑定一个具名槽位。忘记写终结
-调用就永远得不到路由器，整条链也无法通过编译。这些策略仍然是纯粹的声明，因此路由器依旧不需要
-Broker：
+区别只在于注册要通过一个显式的终结调用来提交：`.out(marker, policy)` 指定一个位置的发布策略 -
+`Reply` 对应回复，`Out` 槽位的标记对应槽位 - 而 `.build()` 提交这次注册，并为没有写
+`.out(Reply, ..)` 的回复采用 Broker 自带的默认发布策略。忘记写终结调用就永远得不到路由器，整条链
+也无法通过编译。这些策略仍然是纯粹的声明，因此路由器依旧不需要 Broker：
 
 === "宏"
 

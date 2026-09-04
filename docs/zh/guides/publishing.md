@@ -35,10 +35,14 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
     ```
 
 用普通的 `include` 挂载它。如果不再多说什么，回复就会以默认编解码器、经由 Broker 的默认发布策略发出；
-`.publisher(Publish)` 指定 Broker 前奏导出的发布策略，其后的步骤把回复接线补齐：`.codec(..)`
+`.out(Reply, Publish)` 指定 Broker 前奏导出的发布策略，其后的步骤把回复接线补齐：`.codec(..)`
 指定回复的编解码器，`.transform(..)` 加上静态发布变换，`.transactional()` 让一页回复走同一个 Broker
 事务。每个步骤各占一个槽位、只填一次，因此写第二个 `.codec(..)` 是编译错误，而不是被悄悄覆盖。这套
 接线是一份声明：运行时会在启动时把它与已连接的 Broker 配对。
+
+定义永远不指定发布者。它声明处理器回复什么、发往哪里；发布策略属于 Broker，所以要在点名 Broker
+的地方指定 - 也就是挂载点，用绑定 `Out` 槽位的同一个 `.out(marker, policy)` 调用。`Reply` 就是处理
+器返回值离开时所走的那个位置的标记。
 
 === "宏"
 
@@ -57,7 +61,7 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
 
 一个子句服务于两种传输方式，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize`
 的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此它的
-`.publisher(..)` 只接一个策略、别的都不接：这种传输方式没有编解码器可命名，其后写 `.codec(..)`
+`.out(Reply, ..)` 只接一个策略、别的都不接：这种传输方式没有编解码器可命名，其后写 `.codec(..)`
 不会通过编译。参见[原始字节订阅者](subscribers.md#raw-subscribers)。
 
 ## 控制确认行为
@@ -138,12 +142,11 @@ Broker 会重新投递它，而不是让回复悄无声息地丢掉。务必让�
 收尾的 `.build()` 提交这次注册。这些调用是按标记绑定的，所以先后顺序无关紧要；把同一个槽位绑定两次
 （或者绑定一个处理器没有声明的标记）无法通过编译，而 `.build()` 只有在每个槽位都绑定之后才存在，漏掉
 一次绑定就是编译错误，其附着类型会点名是哪个槽位（`MissingSlot<Audit>`）。如果只有一个无名的
-`Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`，用普通的 `.publisher(policy)` 调用即可，
-绑定和提交一步完成。
+`Out<impl Publisher>` 参数，它绑定的是隐含的 `DefaultSlot`（`.out(DefaultSlot, Publish).build()`）。
 
-`.out(..)` 之后的 `.transform(..)` 跟着那个槽位走（见[发布管线](#the-publish-pipeline)）；一步到位的
-`.publisher(policy)` 当场就提交，所以只有一个槽位、又要加变换时按标记绑定：
-`.out(DefaultSlot, Publish).transform(..).build()`。
+`.out(..)` 之后的 `.transform(..)` 跟着那次调用点名的位置走（见[发布管线](#the-publish-pipeline)），
+所以既回复又扇出的注册会在每个位置各加一个：
+`.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`。
 
 === "宏"
 
@@ -254,9 +257,8 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     ```
 
 该参数可以和每一种订阅者写法组合：与 `Ctx` 提取器并列、用在输入自己完成反序列化的处理器上、也用在
-批量处理器上（`b.include(f).publisher(..)`，进来的是一整页，出去的是逐元素的目的地）。在回复写法上，
-也就是 `publish(..)` 以及它的批量对应形式，`.publisher(..)` 仍然是回复自己的附加项，
-注入的发布者则用 `.out(marker, ..)` 加上收尾的 `.build()` 来附加（单个无名槽位用 `DefaultSlot`），
+批量处理器上（`b.include(f).out(marker, policy).build()`，进来的是一整页，出去的是逐元素的目的地）。
+在回复写法上，也就是 `publish(..)` 以及它的批量对应形式，回复只是同一条链上的又一个位置，
 于是一个网关可以在固定的目的地上作答，同时通过注入把副本扇出出去：
 
 === "宏"
@@ -301,7 +303,7 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 令牌与铸出它的 `Bindable` 包装器共享同一个槽位，所以要注册同一个包装器（`with_broker(bindable, ..)`），
 启动过程才会把已连接的 Broker 填进该槽位；如果某个令牌的 Broker 从未注册，配对时就会带着清晰的错误
 快速失败。回复发布（在 `publish("dest")` 处理器上写
-`.publisher(token)`）和批量写法用的是同一套形态。在注册之外，令牌会在启动连接了它的 Broker 之后自行
+`.out(Reply, token)`）和批量写法用的是同一套形态。在注册之外，令牌会在启动连接了它的 Broker 之后自行
 完成配对：`running.publisher(token)` 会把活的发布者交给同级的任务，参见
 [与其他服务器并行运行](http.md)。而对于启动时的第一次发布，根本不需要令牌：作用域级别的
 `b.after_startup(policy, hook)` 会在订阅打开之后，用一个已经配对好的发布者运行该钩子（参见
@@ -329,7 +331,7 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 
 消息离开进程之前会跑过三类变换，而且它们可以组合：
 
-- **回复接线上的静态 `PublishTransform`**，在 `.publisher(..)` 之后用 `.transform(..)` 添加。这是
+- **回复接线上的静态 `PublishTransform`**，在 `.out(Reply, ..)` 之后用 `.transform(..)` 添加。这是
   零成本、按目的地生效的变换（一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
   关联 id 盖到回复上）。它们最先运行，离值最近。
 - **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
@@ -382,9 +384,9 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     ```
 
 应用级的这层包住处理器发出的每一次发布：既包括 `publish(..)` 那种写法的回复，也包括从注入的 `Out`
-槽位出去的每一条消息。挂载点上的变换只留在它被指名的那一侧：`.publisher(Publish).transform(StampSource)`
+槽位出去的每一条消息。挂载点上的变换只留在它被指名的那一侧：`.out(Reply, Publish).transform(StampSource)`
 长的是回复的栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 长的是这个槽位的栈，所以两侧都有的
-注册就把两个调用都写上，而 `.transform(..)` 读起来就是“作用在它前面那一步上”。两侧在线路上的顺序一样：
+注册就把两个调用都写上，而 `.transform(..)` 读起来就是“作用在它前面那个位置上”。两侧在线路上的顺序一样：
 先是挂载点的变换（离编码后的值最近），然后是应用级的中间件，最后才是发送。
 
 有两种发布不走这条管线，而且都是处理器体自己驱动的：在槽位上开启的事务（`begin()`、`transaction()`）
@@ -411,7 +413,7 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     --8<-- "examples/manual/publishing.rs:batch_publishing"
     ```
 
-用 `include` 挂载它，并用 `.publisher(..)` 链上回复的接线：
+用 `include` 挂载它，并用 `.out(Reply, ..)` 链上回复的接线：
 
 === "宏"
 
@@ -426,7 +428,7 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
     ```
 
 不写 `.transactional()` 时，每条回复各自独立发布；批量中途失败会重试整批，因此先前那些回复可能在
-重新投递时再发一次（至少一次）。在 `.publisher(..)` 之后链上 `.transactional()`，会把这套接线切换成
+重新投递时再发一次（至少一次）。在 `.out(Reply, ..)` 之后链上 `.transactional()`，会把这套接线切换成
 每批一个 Broker 事务：运行时开启事务，发布每一条回复，提交，然后才 ack 入站的这一批；任何失败都会中止
 事务，所以回复绝不会只露出一半。事务性这项要求在消费接线的地方强制执行：挂载它要求策略的活发布者
 是事务性的，因此没有事务的 Broker 依然无法通过编译。单条消息的回复没有一页内容可做成原子的，因此

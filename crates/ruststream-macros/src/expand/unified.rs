@@ -540,7 +540,7 @@ fn verdict_pieces(
 /// The mount form token of one unified handler, projected off the types: the input's axis
 /// carries the eager and slot forms, and a reply routes by its own type's wire - so the
 /// emission never decides a lane. The vocabulary is the same the include-site chains
-/// (`.publisher(..)`, `.out(marker, ..)`, `.build()`) always dispatched on.
+/// (`.out(marker, policy)`, `.build()`) always dispatched on.
 fn form_token(
     axis: &TokenStream2,
     r_tokens: &TokenStream2,

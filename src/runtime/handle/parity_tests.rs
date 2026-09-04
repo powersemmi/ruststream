@@ -17,9 +17,9 @@ use crate::memory::{
 use crate::nonzero;
 use crate::runtime::{
     Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, OutPipeline,
-    OutTransform, Outgoing, Outs, PublishContext, PublishTransform, ReplyShape, Router, RouterDef,
-    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
-    Verdict, for_batch, subscriber,
+    OutTransform, Outgoing, Outs, PublishContext, PublishTransform, Reply, ReplyShape, Router,
+    RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
+    SubscriberSettings, Verdict, for_batch, subscriber,
 };
 use crate::{Buffered, Publisher, Seeker};
 
@@ -559,32 +559,33 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .to("confirmations")
                 .build(),
         )
+        .build()
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
                 .build(),
         )
-        // the wiring steps after `.publisher(..)`: a named codec and a static transform
+        .out(Reply, MemoryPublish)
+        .build()
+        // the wiring steps after `.out(Reply, ..)`: a named codec and a static transform
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
-                .codec(JsonCodec)
-                .transform(StampReply)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec)
+        .transform(StampReply)
+        .build()
         .include(subscriber("orders", IssueReceipt).reply().build())
-        .include(
-            subscriber("orders", Echo)
-                .reply()
-                .to("echoes")
-                .publisher(MemoryPublish)
-                .build(),
-        )
+        .build()
+        .include(subscriber("orders", Echo).reply().to("echoes").build())
+        .out(Reply, MemoryPublish)
+        .build()
         .include(subscriber("frames", RawEcho).reply().to("echoes").build())
+        .build()
         // A page that replies names its size like any other page.
         .include(
             subscriber("orders", ConfirmPages)
@@ -593,23 +594,26 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .batch(nonzero!(8))
                 .build(),
         )
+        .build()
         // the page wiring: one broker transaction per page, with a batch-only transform
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
-                .batch_transform(for_batch(StampReply))
-                .transactional()
                 .batch(nonzero!(8))
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .batch_transform(for_batch(StampReply))
+        .transactional()
+        .build()
         .include(
             subscriber("orders", ConfirmWithMeta)
                 .reply()
                 .to("confirmations")
                 .build(),
         )
+        .build()
         .include(
             subscriber("orders", ConfirmPagesInContext)
                 .reply()
@@ -617,14 +621,16 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .batch(nonzero!(8))
                 .build(),
         )
+        .build()
         .include(
             subscriber("orders", HeaderedPageInContext)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
                 .batch(nonzero!(8))
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .build()
         // The client-side buffer turns any subscriber into a page source, so the reply and the
         // broker page context must survive that wrapping too.
         .include(
@@ -635,6 +641,7 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
                 .batch(nonzero!(4))
                 .build(),
         )
+        .build()
 }
 
 /// A publish transform the reply chain composes on: it only has to exist for the mount to
@@ -653,95 +660,104 @@ fn every_reply_spelling_mounts() {
     let _ = reply_axes();
 }
 
-/// The chain has no order to remember: opening the reply wiring closes no other step, so the
-/// value steps and the declarative settings mount the same registration whichever side of
-/// `.publisher(..)` names them. Both spellings of each pair are built here; a step reachable on
-/// one side only would fail this module's build.
+/// The definition chain has no order to remember: `.reply()` and `.to(..)` close no other step,
+/// so the value steps and the declarative settings mount the same registration whichever side of
+/// them names it. Both spellings of each pair are built here; a step reachable on one side only
+/// would fail this module's build.
 fn order_free_reply_axes() -> impl RouterDef<MemoryBroker> {
     use crate::codec::JsonCodec;
     use crate::runtime::{FailurePolicies, SubscriberSettings};
 
     Router::<MemoryBroker>::new()
-        // a page setting, before and after the wiring
+        // a page setting, before and after the reply declaration
         .include(
             subscriber("orders", ConfirmPages)
                 .reply()
                 .to("confirmations")
                 .batch(nonzero!(8))
-                .publisher(MemoryPublish)
-                .codec(JsonCodec)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec)
+        .build()
         .include(
             subscriber("orders", ConfirmPages)
-                .reply()
-                .to("confirmations")
-                .publisher(MemoryPublish)
-                .codec(JsonCodec)
                 .batch(nonzero!(8))
+                .reply()
+                .to("confirmations")
                 .build(),
         )
-        // the documentation steps, before and after the wiring
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec)
+        .build()
+        // the documentation steps, before and after the reply declaration
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
                 .describe("confirms an order")
-                .publisher(MemoryPublish)
-                .transform(StampReply)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .transform(StampReply)
+        .build()
         .include(
             subscriber("orders", Confirm)
-                .reply()
-                .to("confirmations")
-                .publisher(MemoryPublish)
-                .transform(StampReply)
                 .describe("confirms an order")
-                .build(),
-        )
-        .include(
-            subscriber("orders", Echo)
-                .reply()
-                .to("echoes")
-                .undocumented()
-                .publisher(MemoryPublish)
-                .build(),
-        )
-        .include(
-            subscriber("orders", Echo)
-                .reply()
-                .to("echoes")
-                .publisher(MemoryPublish)
-                .undocumented()
-                .build(),
-        )
-        // the declarative settings, before the wiring, inside it, and after the seal
-        .include(
-            subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .transform(StampReply)
+        .build()
+        .include(
+            subscriber("orders", Echo)
+                .reply()
+                .to("echoes")
+                .undocumented()
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .build()
+        .include(
+            subscriber("orders", Echo)
+                .undocumented()
+                .reply()
+                .to("echoes")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .build()
+        // the declarative settings, before the reply declaration, after it, and after the seal
+        .include(
+            subscriber("orders", Confirm)
                 .workers(nonzero!(2))
-                .publisher(MemoryPublish)
+                .reply()
+                .to("confirmations")
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .build()
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
                 .workers(nonzero!(2))
                 .on_failure(FailurePolicies::default())
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .build()
         .include(
             subscriber("orders", Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
                 .build()
                 .workers(nonzero!(2)),
         )
+        .out(Reply, MemoryPublish)
+        .build()
 }
 
 #[test]
@@ -749,10 +765,10 @@ fn the_reply_chain_takes_its_steps_in_any_order() {
     let _ = order_free_reply_axes();
 }
 
-/// The unnamed source is constructed by the same `name(..)` step whichever side of the wiring
-/// names it, and a source transform still applies through the wiring.
+/// The unnamed source is constructed by the same `name(..)` step whichever side of the reply
+/// declaration names it, and a source transform still applies through it.
 #[test]
-fn the_source_steps_reach_through_the_reply_wiring() {
+fn the_source_steps_reach_through_the_reply_declaration() {
     use crate::runtime::SubscriberSettings;
     use crate::{Name, Unnamed};
 
@@ -761,19 +777,21 @@ fn the_source_steps_reach_through_the_reply_wiring() {
             subscriber(Unnamed::<Name>::new(), Confirm)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
                 .name("orders")
                 .map_source(|source| source)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .build()
         .include(
             subscriber(Unnamed::<Name>::new(), Confirm)
+                .name("orders")
                 .reply()
                 .to("confirmations")
-                .name("orders")
-                .publisher(MemoryPublish)
                 .build(),
-        );
+        )
+        .out(Reply, MemoryPublish)
+        .build();
 }
 
 struct Gateway;
@@ -919,22 +937,22 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", Gateway)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
-                .codec(JsonCodec)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec)
         .out(Analytics, MemoryPublish)
         .build()
-        // A transform on each side of the same registration: the step applies to what the chain
-        // named before it, the reply after `.publisher(..)` and the slot after `.out(..)`.
+        // A transform on each position of the same registration: the step applies to what the
+        // chain named before it, whether that was the reply or a slot.
         .include(
             subscriber("orders", Gateway)
                 .reply()
                 .to("confirmations")
-                .publisher(MemoryPublish)
-                .transform(StampReply)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
+        .transform(StampReply)
         .out(Analytics, MemoryPublish)
         .transform(Trace)
         .build()
@@ -952,9 +970,9 @@ fn slot_axes() -> impl RouterDef<MemoryBroker> {
             subscriber("orders", RawGateway)
                 .reply()
                 .to("echoes")
-                .publisher(MemoryPublish)
                 .build(),
         )
+        .out(Reply, MemoryPublish)
         .out(Analytics, MemoryPublish)
         .build()
         .include(
@@ -1038,13 +1056,8 @@ async fn a_subscriber_dispatches_end_to_end() {
             b.include(subscriber("orders", SettlePage).batch(nonzero!(4)).build());
             b.include(subscriber("frames", Inspect).build());
             b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
-            b.include(
-                subscriber("orders", Echo)
-                    .reply()
-                    .to("echoes")
-                    .publisher(MemoryPublish)
-                    .build(),
-            );
+            b.include(subscriber("orders", Echo).reply().to("echoes").build())
+                .out(Reply, MemoryPublish);
             b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
             b.include(
                 subscriber("orders", ConfirmPagesInContext)
@@ -1066,12 +1079,13 @@ async fn a_subscriber_dispatches_end_to_end() {
                 subscriber("orders", Confirm)
                     .reply()
                     .to("confirmations")
-                    .publisher(MemoryPublish)
-                    .codec(JsonCodec)
                     .build(),
-            );
+            )
+            .out(Reply, MemoryPublish)
+            .codec(JsonCodec);
             b.include(subscriber("orders", RawMirror).build())
-                .publisher(MemoryPublish);
+                .out(Analytics, MemoryPublish)
+                .build();
             b.include(subscriber("orders", Mirror).build())
                 .out(Analytics, MemoryPublish)
                 .transform(Trace)
@@ -1085,19 +1099,19 @@ async fn a_subscriber_dispatches_end_to_end() {
                 subscriber("orders", RawGateway)
                     .reply()
                     .to("echoes")
-                    .publisher(MemoryPublish)
                     .build(),
             )
+            .out(Reply, MemoryPublish)
             .out(Analytics, MemoryPublish)
             .build();
             b.include(
                 subscriber("orders", Gateway)
                     .reply()
                     .to("confirmations")
-                    .publisher(MemoryPublish)
-                    .transform(StampReply)
                     .build(),
             )
+            .out(Reply, MemoryPublish)
+            .transform(StampReply)
             .out(Analytics, MemoryPublish)
             .transform(Trace)
             .build();

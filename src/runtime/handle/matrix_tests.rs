@@ -33,7 +33,7 @@ use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{PageSized, SubscriberBuilder, SubscriberSettings};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{
-    Deserialized, Handle, Input, Message, Outs, Router, Slot, SoloDeserialized, subscriber,
+    Deserialized, Handle, Input, Message, Outs, Reply, Router, Slot, SoloDeserialized, subscriber,
 };
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
@@ -371,7 +371,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for RefusePairing {
 /// Unwraps the definition a sealed chain carries, so a test can call the mount machinery's
 /// accessors on it directly.
 fn definition_of<Def, Src, State, DC>(builder: SubscriberBuilder<Def, Src, State, DC>) -> Def {
-    builder.split_def(|def| ((), def)).1
+    builder.into_def()
 }
 
 /// The per-delivery context the unit-level calls below run against.
@@ -516,29 +516,29 @@ fn the_reply_chain_carries_the_documentation_steps() {
     assert!(PublishingDef::input_schema(&opted_out).is_none());
 }
 
-/// A page reply chains `.transactional()` - the replies of one page become visible together, or
-/// none of them do - and the definition still reports the destination it was given.
+/// A page reply's mount chains `.transactional()` - the replies of one page become visible
+/// together, or none of them do - and the definition still reports the destination it was given.
 #[test]
 fn a_page_reply_attaches_a_transactional_publisher() {
-    let attached = definition_of(
+    let declared = definition_of(
         subscriber("orders", ConfirmPages)
             .reply()
             .to("confirmations")
-            .publisher(MemoryPublish)
-            .transactional()
             .build(),
     );
-    assert_eq!(BatchPublishingDef::reply_name(&attached), "confirmations");
+    assert_eq!(BatchPublishingDef::reply_name(&declared), "confirmations");
 
-    let _ = Router::<MemoryBroker>::new().include(
-        subscriber("orders", ConfirmPages)
-            .reply()
-            .to("confirmations")
-            .publisher(MemoryPublish)
-            .transactional()
-            .batch(nonzero!(8))
-            .build(),
-    );
+    let _ = Router::<MemoryBroker>::new()
+        .include(
+            subscriber("orders", ConfirmPages)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(8))
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .transactional()
+        .build();
 }
 
 /// A replying page body reaches the broker's subscription-scoped context: the page's own

@@ -106,16 +106,8 @@ where
     Def::Handler: 'static,
     F: Send + Sync + 'static,
 {
-    type Out = IncludedRawBatchRouter<
-        B,
-        Def::Source,
-        Def,
-        F,
-        RouteCodec,
-        RouteLayers,
-        RoutePipe,
-        Routes,
-    >;
+    type Out =
+        IncludedRawBatchRouter<B, Def::Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>;
 
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>) -> Self::Out {
         let source = def.source();

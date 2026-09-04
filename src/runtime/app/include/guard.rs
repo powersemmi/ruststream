@@ -106,7 +106,9 @@ where
 /// diagnostics are the router's. `Term` decides the terminal: [`OnDrop`] for a registration that
 /// is complete as it stands, [`OnBuild`] for one whose [`Out`](crate::runtime::Out) slots are
 /// bound first.
-#[must_use = "an Out handler registers nothing until .out(marker, policy) per slot and .build() commit it"]
+// No `#[must_use]`: for a registration that is complete as it stands, dropping the guard at the
+// end of the statement IS the commit, so the lint would fire on every correct `b.include(..);`.
+// A slot chain that never reaches `.build()` is caught by [`OnBuild`]'s drop instead.
 pub struct Mounting<'s, B, Layers, C, State, Pipeline, Chain, Term>
 where
     B: Broker + 'static,

@@ -75,18 +75,21 @@ The `ctx` here is the same per-delivery [`Context`](context.md) the handler rece
 can enrich the [headers working copy](context.md#the-headers-working-copy) before the handler
 reads it.
 
-## Per-handler middleware
+## Per-registration middleware
 
-Wrap a single handler with `HandlerExt::with` instead of the whole application:
+Wrap a single registration instead of the whole application: `.layer(..)` after an `include` on a
+router rides that registration, exactly as the other steps of the chain ride the position named
+before them.
 
-<!-- inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
+<!-- inline-rust: the call shape; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
 ```rust
-use ruststream::runtime::HandlerExt;
-
-let handler = base_handler.with(LogLayer);
+let router = Router::<MemoryBroker>::new().include(handle).layer(LogLayer);
 ```
 
-This is the right tool when only some handlers need a layer. It composes with the global stack.
+This is the right tool when only some handlers need a layer, and it is the only place a layer
+that is not a `BlanketLayer` can go: the registration's handler type is still concrete here, so an
+ordinary `Layer<H>` is enough. It sits outside the decode step, so the layer sees the raw
+delivery, and it composes with the app-wide and router-wide stacks.
 
 ## What a layer costs
 
@@ -111,8 +114,9 @@ use ruststream::runtime::{Context, DynMiddleware, HandlerOutcome, Next};
 ```
 
 Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, and the result is an
-ordinary static `Layer` - compose it into the application stack with `layer`, exactly like a
-hand-written one. The rest of the dispatch chain stays static; only the stack itself pays:
+ordinary static `Layer` - one bound to a single input type, so it rides one registration with
+`.layer(..)` rather than the application stack, which takes blanket layers only. The rest of the
+dispatch chain stays static; only the stack itself pays:
 
 === "Macros"
 
@@ -140,13 +144,11 @@ hand-written one. The rest of the dispatch chain stays static; only the stack it
 The full program, with the chain toggled by an environment variable, is
 [`examples/middleware.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/middleware.rs).
 
-`DynStack<I>` is generic over the input it wraps. In the application stack it wraps the whole
-decoding handler, so it is built over the broker's raw message type (`DynStack<MemoryMessage>`
-above) and runs before decoding - a middleware generic over `I`, like `Audit`, works at either
-level. To run on the decoded value instead, build a `DynStack<Order>` and apply it to the inner
-typed handler with `with` (the manual registration form). Middleware in the same `DynStack` runs
-in list order, outermost first. Keep the static chain as the default and reach for `DynStack` only
-where runtime composition earns it.
+`DynStack<I>` is generic over the input it wraps. On a registration it wraps the whole decoding
+handler, so it is built over the broker's raw message type (`DynStack<MemoryMessage>` above) and
+runs before decoding - a middleware generic over `I`, like `Audit`, works at either level.
+Middleware in the same `DynStack` runs in list order, outermost first. Keep the static chain as
+the default and reach for `DynStack` only where runtime composition earns it.
 
 ## Publish-side middleware { #publish-side-middleware }
 

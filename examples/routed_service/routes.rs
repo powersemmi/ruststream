@@ -18,10 +18,10 @@ use crate::{orders, payments};
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
-/// `confirm` needs a publisher for its reply; `.publisher(Publish)` names the policy and
-/// `.transform(StampSource)` composes a static publish transform onto it that stamps a provenance
-/// header on every confirmation - reply settings live on this chain, not in the `publish("..")`
-/// decorator (which only names the destination).
+/// `confirm` needs a publisher for its reply; `.out(Reply, Publish)` names the position and the
+/// policy, and `.transform(StampSource)` composes a static publish transform onto it that stamps a
+/// provenance header on every confirmation - reply settings live on this chain, not in the
+/// `publish("..")` decorator (which only names the destination).
 /// The reply wiring is a publish policy stack, pure declaration: the runtime pairs it with the
 /// connected broker at startup, so the router borrows no broker. `on_cancel` has no reply, so it
 /// is mounted with `include`. The router is a consuming builder, so the calls chain and each
@@ -33,7 +33,7 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
     Router::new()
         .layer(metrics.consume_layer())
         .include(orders::confirm)
-        .publisher(Publish)
+        .out(Reply, Publish)
         .transform(StampSource)
         .build()
         .include(orders::on_cancel)
@@ -51,11 +51,8 @@ pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposi
     Router::new()
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
-        .include(
-            payments::settle
-                .batch(nonzero!(64))
-                .publisher(TransactionalPublish)
-                .transactional()
-                .build(),
-        )
+        .include(payments::settle.batch(nonzero!(64)))
+        .out(Reply, TransactionalPublish)
+        .transactional()
+        .build()
 }

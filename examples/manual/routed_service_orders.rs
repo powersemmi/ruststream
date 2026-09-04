@@ -122,20 +122,22 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
 /// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
-/// the attribute lifts off the handler's doc comment. The reply publisher is wiring, so it stays a
-/// chain step on both paths: `.publisher(Publish)` names the policy, which pairs with the
-/// connected broker at startup and encodes with the default codec. Naming it closes nothing -
-/// `.describe(..)` reads the same on either side of it - so the steps here are in the order the
-/// declaration reads, not one the compiler imposes.
+/// the attribute lifts off the handler's doc comment. Who publishes the reply is wiring rather
+/// than declaration, so it lives on the mount chain on both paths: `.out(Reply, Publish)` names
+/// the position the returned value leaves through and the policy that carries it, which pairs with
+/// the connected broker at startup and encodes with the default codec. The definition says what it
+/// replies with and where; the chain says who sends it.
 fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
-    Router::<MemoryBroker>::new().include(
-        subscriber(MemorySource::new("orders"), Confirm)
-            .reply()
-            .to("confirmations")
-            .publisher(Publish)
-            .describe("Confirms an order and replies on `confirmations`.")
-            .build(),
-    )
+    Router::<MemoryBroker>::new()
+        .include(
+            subscriber(MemorySource::new("orders"), Confirm)
+                .reply()
+                .to("confirmations")
+                .describe("Confirms an order and replies on `confirmations`.")
+                .build(),
+        )
+        .out(Reply, Publish)
+        .build()
 }
 // --8<-- [end:descriptor]
 

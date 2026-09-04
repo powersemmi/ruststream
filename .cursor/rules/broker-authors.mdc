@@ -26,7 +26,7 @@ alwaysApply: false
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
-  compiles with no `.publisher(..)`). Make mode selection a policy type transition, not a runtime
+  compiles with no `.out(Reply, ..)`). Make mode selection a policy type transition, not a runtime
   flag: only the transactional policy's live form implements `TransactionalPublisher`.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
@@ -193,12 +193,37 @@ pub trait MySubscriber {
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-impl<Def, W, F, P> MySubscriber for SubscriberBuilder<Def, MySubscribeOptions, (W, F, P)> {
+// The four state slots are (workers, failure policies, start position, page size); `Codec` is
+// the registration's own decode override, `()` until one is named.
+impl<Def: Declared, W, F, P, Pg, Codec> MySubscriber
+    for SubscriberBuilder<Def, MySubscribeOptions, (W, F, P, Pg), Codec>
+{
     fn durable(self, name: impl Into<String>) -> Self {
         self.map_source(|source| source.durable(name))
     }
 }
 ```
+
+The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
+`Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
+`MapPublisher` is the hook over the policy that position carries. Bind the extension trait to the
+policy, not to the chain, so one impl covers the reply, every slot, a router and a broker scope:
+
+```rust
+pub trait MyPublishSettings {
+    fn stream(self, name: impl Into<String>) -> Self;
+}
+
+impl<T: MapPublisher<Policy = MyPublish>> MyPublishSettings for T {
+    fn stream(self, name: impl Into<String>) -> Self {
+        self.map_publisher(|policy| policy.stream(name))
+    }
+}
+```
+
+`map_publisher` replaces the policy with one of the same type, which is what a publisher's own
+settings produce; a different policy type is a different publish mode and belongs in the
+`.out(marker, policy)` call itself.
 
 ## Typed context and `Ctx` keys
 

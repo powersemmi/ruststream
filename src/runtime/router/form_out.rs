@@ -20,6 +20,7 @@
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
 use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
 
+use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_inject::BatchInjectDef;
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::inject::InjectDef;
@@ -32,7 +33,6 @@ use crate::runtime::settings::{DefMountCodec, MountsWith, PageSized};
 use crate::runtime::slot::{
     BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, SlotCodec, WithSource,
 };
-use crate::runtime::SourceSubscriber;
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterOut, RouterPublishingOut, RouterWith};

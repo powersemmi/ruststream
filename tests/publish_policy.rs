@@ -86,7 +86,7 @@ async fn a_reply_wiring_keeps_its_transform_through_the_pairing() {
 
     // The registration carries the wiring the chain built, and the runtime pairs it at startup.
     let app = RustStream::new(AppInfo::new("policy", "0.1.0")).with_broker(broker, |b| {
-        b.include(respond).publisher(Publish).transform(Envelope);
+        b.include(respond).out(Reply, Publish).transform(Envelope);
     });
     let running = app.start().await.expect("startup failed");
 

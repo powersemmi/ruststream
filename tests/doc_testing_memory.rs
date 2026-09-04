@@ -43,7 +43,7 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm).publisher(Publish);
+            b.include(confirm).out(Reply, Publish);
         },
     );
 

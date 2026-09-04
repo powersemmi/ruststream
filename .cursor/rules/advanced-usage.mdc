@@ -26,8 +26,9 @@ alwaysApply: false
   (`BuildBatchContext`, built once per page) on the page ones - and `S` the application state the
   body reads with `ctx.state()`. What the signature does
   not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
-  `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply wiring (`.reply()`,
-  `.to(dest)`, `.publisher(policy)`) and the document controls
+  `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply declaration (`.reply()`,
+  `.to(dest)` - never a publisher, which is the mount site's `.out(Reply, policy)`) and the
+  document controls
   (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and `include` mounts it. Nothing
   else to implement; the registration metadata is derived from the source and the body's input
   type.
@@ -42,7 +43,7 @@ alwaysApply: false
   page-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
 - **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
   type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
-  `.batch`), `.publisher(..)`, `.out(marker, ..)` and `.build()`. The settings live on
+  `.batch`), `.out(marker, policy)` per publish position and `.build()`. The settings live on
   `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
   is public for exactly this. Implementing `IncludeDef` alone routes through the blanket
   `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the codec-free forms, but a
@@ -349,15 +350,16 @@ A payload that already is bytes implements `Serialized` the same way - `fn bytes
 plus the wire spellings (`MessageWire`, `ReplyShape`), exactly what `#[derive(Serialized)]`
 writes - and rides the same `message(..)` entry with no codec on the path.
 
-The reply wiring chain, `after_startup`, publish transforms and `publish_layer` are all runtime API
+The mount chain, `after_startup`, publish transforms and `publish_layer` are all runtime API
 and work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the
 chain - `.to(dest)` names the destination the reply type does not declare itself - and the wire
-follows the reply *type*, not the chain: both wires name the policy with `.publisher(policy)` (or
-nothing, for the broker's default), and what differs is what chains after it. A `serde::Serialize`
+follows the reply *type*, not the chain: both wires name the policy at the mount site with
+`.out(Reply, policy)` (or nothing, for the broker's default), and what differs is what chains
+after it. A `serde::Serialize`
 `R` encodes through the codec, so it takes `.codec(..)`, `.transform(..)` and `.transactional()`;
 an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
 covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
-`.reply()` and one publisher step for both wires. A page reply always publishes through the
+`.reply()` and one `.out(Reply, ..)` for both wires. A page reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
 `Outs<(Slot<Marker, W, Enc, Pipe>,)>`, where `W` is the wired live value, `Enc` the include site's
 encode codec and `Pipe` the publish path it gave the slot (its `.transform(..)` steps over the
@@ -397,8 +399,8 @@ b.include(subscriber("mirror", Mirror).build())
 ```
 
 The markers come from the impl, so a missing, duplicate or extra `.out(..)` is a compile error
-naming the slot, and a single unnamed slot binds through `.publisher(policy)`, which binds and
-commits in one call. `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)`
+naming the slot, and a single unnamed slot binds through the implicit `DefaultSlot`
+(`.out(DefaultSlot, policy).build()`). `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)`
 builder and is a transparent `Deref` onto the wired live value, so a broker-defined
 capability is called straight on it - a body that needs one pins the concrete live type
 (`Slot<Lanes, LaneRouter, Enc, Pipe>`) or bounds `W` with the broker's own trait.
@@ -444,7 +446,7 @@ spellings of the one constructor, and the decoded one resolves the chain's codec
 Every form is reachable through that one constructor, so none is locked behind the definition
 traits: the application state, the typed broker context and the injections are all axes read off
 the body's own `impl Handle`, and the reply and document steps ride the chain
-(`.reply()` / `.to(..)` / `.publisher(..)`, `.describe(..)`, `.undocumented()`) next to the
+(`.reply()` / `.to(..)`, `.describe(..)`, `.undocumented()`) next to the
 declarative settings the attribute path shares, the mandatory page size `.batch(n)` among them.
 Registrations are documented by default under `asyncapi`, which is why the
 message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.

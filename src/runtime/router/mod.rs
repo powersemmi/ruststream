@@ -27,9 +27,9 @@ mod routes_publish;
 mod sink;
 
 pub use builder::Router;
-pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 #[doc(hidden)]
 pub use builders::RouterCommit;
+pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]

@@ -14,7 +14,7 @@ use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::{BlanketLayer, Identity, Stack};
+use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::settings::PageSized;
@@ -123,6 +123,30 @@ impl<B: Broker + 'static> Router<B, ()> {
     }
 }
 
+impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (), RouteCodec, RouteLayers, RoutePipe>
+{
+    /// Adds a router-scope middleware layer, wrapping every handler in this router when the
+    /// router is mounted. The first layer added runs outermost within the router; the app's
+    /// global [`layer`](crate::runtime::RustStream::layer) stack wraps outside it.
+    ///
+    /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
+    /// router hides), like the app-global stack, and it is declared before the router's first
+    /// registration: after one, `.layer(..)` rides that registration instead
+    /// ([`Router::layer`](Router::layer) on a registration), exactly as the other steps of the
+    /// chain ride the position named before them.
+    #[must_use]
+    pub fn layer<N>(self, layer: N) -> Router<B, (), RouteCodec, Stack<N, RouteLayers>, RoutePipe> {
+        Router {
+            routes: self.routes,
+            codec: self.codec,
+            layers: Stack::new(layer, self.layers),
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
+    }
+}
+
 impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
     /// The empty chain a [`BrokerScope`](crate::runtime::BrokerScope) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
@@ -151,27 +175,6 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             routes: self.routes,
             codec,
             layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
-    }
-
-    /// Adds a router-scope middleware layer, wrapping every handler in this router (regardless of
-    /// registration order) when the router is mounted. The first layer added runs outermost within
-    /// the router; the app's global [`layer`](crate::runtime::RustStream::layer) stack wraps
-    /// outside it.
-    ///
-    /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
-    /// router hides), like the app-global stack.
-    #[must_use]
-    pub fn layer<N>(
-        self,
-        layer: N,
-    ) -> Router<B, Routes, RouteCodec, Stack<N, RouteLayers>, RoutePipe> {
-        Router {
-            routes: self.routes,
-            codec: self.codec,
-            layers: Stack::new(layer, self.layers),
             pipeline: self.pipeline,
             _broker: PhantomData,
         }
@@ -242,16 +245,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         source: Source,
         def: Def,
         codec: DecodeCodec,
-    ) -> IncludedRouter<
-        B,
-        Source,
-        Def,
-        DecodeCodec,
-        RouteCodec,
-        RouteLayers,
-        RoutePipe,
-        Routes,
-    >
+    ) -> IncludedRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
@@ -290,16 +284,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         source: Source,
         def: Def,
         codec: DecodeCodec,
-    ) -> IncludedBatchRouter<
-        B,
-        Source,
-        Def,
-        DecodeCodec,
-        RouteCodec,
-        RouteLayers,
-        RoutePipe,
-        Routes,
-    >
+    ) -> IncludedBatchRouter<B, Source, Def, DecodeCodec, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -342,16 +327,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         self,
         source: Source,
         def: Def,
-    ) -> IncludedRawBatchRouter<
-        B,
-        Source,
-        Def,
-        F,
-        RouteCodec,
-        RouteLayers,
-        RoutePipe,
-        Routes,
-    >
+    ) -> IncludedRawBatchRouter<B, Source, Def, F, RouteCodec, RouteLayers, RoutePipe, Routes>
     where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -700,6 +676,82 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
         self.routes.0.workers = workers;
         self
     }
+
+    /// Wraps the registration just added (the preceding `include` call) with `layer`, outside its
+    /// decode step, so the layer sees the raw delivery.
+    ///
+    /// The per-registration counterpart of the app-wide
+    /// [`RustStream::layer`](crate::runtime::RustStream::layer) and the router-wide
+    /// [`layer`](Router::layer) on a fresh router: those two wrap every handler in their scope, so
+    /// they take a [`BlanketLayer`], which cannot be written for a layer fixed to one message
+    /// type. This one wraps exactly one registration, whose handler type is still concrete here,
+    /// so it takes an ordinary [`Layer`] - which is what a [`DynStack`](crate::runtime::DynStack)
+    /// over the broker's own message type is.
+    ///
+    /// Which of the two a `.layer(..)` call is follows what the chain named before it, like every
+    /// other step: on a router with no registrations yet it is the router's own, and after an
+    /// `include` it is that registration's. It repeats: each call wraps what the calls before it
+    /// produced, the last one outermost.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{HandlerOutcome, Router, layers::TracingLayer};
+    /// use ruststream::subscriber;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Job { id: u64 }
+    ///
+    /// #[subscriber("jobs")]
+    /// async fn work(job: &Job) -> HandlerOutcome {
+    ///     let _ = job.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// let router = Router::<MemoryBroker>::new()
+    ///     .include(work)
+    ///     .layer(TracingLayer::default());
+    /// # }
+    /// ```
+    #[must_use]
+    // The call site reads `.layer(TracingLayer::default())`, so the layer travels by value like
+    // every other builder argument; `Layer::layer` only borrows it.
+    #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+    pub fn layer<N>(
+        self,
+        layer: N,
+    ) -> Router<B, (SubscribeRoute<S, N::Handler, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>
+    where
+        N: Layer<H>,
+    {
+        let SubscribeRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            _context: context,
+        } = self.routes.0;
+        Router {
+            routes: (
+                SubscribeRoute {
+                    source,
+                    handler: layer.layer(handler),
+                    meta,
+                    policies,
+                    workers,
+                    _context: context,
+                },
+                self.routes.1,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
+    }
 }
 
 impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
@@ -751,8 +803,7 @@ impl<Outer: BlanketLayer, Inner: BlanketLayer> BlanketLayer for ComposedBlanket<
     }
 }
 
-impl<B, Routes, C, Layers, Pipe, State> RouterDef<B, State>
-    for Router<B, Routes, C, Layers, Pipe>
+impl<B, Routes, C, Layers, Pipe, State> RouterDef<B, State> for Router<B, Routes, C, Layers, Pipe>
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,
@@ -781,8 +832,7 @@ where
 }
 
 // Lets a whole router be a single registration inside another router's list (`Router::merge`).
-impl<B, Routes, C, Layers, Pipe, State> MountRoute<B, State>
-    for Router<B, Routes, C, Layers, Pipe>
+impl<B, Routes, C, Layers, Pipe, State> MountRoute<B, State> for Router<B, Routes, C, Layers, Pipe>
 where
     B: Broker + 'static,
     Routes: RouterDef<B, State>,

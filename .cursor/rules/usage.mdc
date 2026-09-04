@@ -43,9 +43,11 @@ alwaysApply: false
   type-map; everything is typed and zero-cost.
 - Construct brokers synchronously (`MemoryBroker::new()`, `NatsBroker::new(url)`); the runtime
   connects them at startup. Never connect inside the builder.
-- `include` is the only mounting call. It takes the definition and returns a builder: chain
-  `.publisher(..)` for the reply side, `.out(<marker>, ..)` for each injected publisher (finish
-  those with `.build()`), or chain nothing and the broker's default publish policy is used.
+- `include` is the only mounting call. It takes the definition and returns a mount chain:
+  `.out(Reply, policy)` names the reply's publish policy, `.out(<marker>, policy)` one injected
+  publisher's (finish a slot chain with `.build()`), or chain nothing and the broker's default
+  publish policy is used. A definition never names a publisher: it declares what a handler replies
+  with and where, and a policy belongs to a broker, so it is named where a broker is.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
   codec argument. With no codec feature at all, anything that would need to encode or decode is a
   compile error naming the fix; the `Deserialized`/`Serialized` byte lanes never need a codec.
@@ -200,7 +202,7 @@ the group) belongs on the broker's own subscription descriptor.
 ## Replying (request/response)
 
 Return the reply value and add `publish("subject")`. The reply publisher is the broker's default
-policy unless the mount names one with `.publisher(..)`.
+policy unless the mount names one with `.out(Reply, ..)`.
 
 ```rust
 use ruststream::memory::prelude::*;
@@ -219,11 +221,11 @@ async fn confirm(order: &Order) -> Confirmation {
 
 // in with_broker(broker, |b| { ... }):
 b.include(confirm);                                    // broker's default publish policy
-b.include(confirm).publisher(Publish);                 // an explicit one
-b.include(confirm).publisher(Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
+b.include(confirm).out(Reply, Publish);                // an explicit one
+b.include(confirm).out(Reply, Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
 ```
 
-The steps after `.publisher(..)` fill the reply wiring, each once: `.codec(..)` names the reply
+The steps after `.out(Reply, ..)` fill the reply wiring, each once: `.codec(..)` names the reply
 codec (the default codec applies without it), `.transform(..)` composes a static
 `PublishTransform`, `.batch_transform(..)` does the same on a page's replies, and
 `.transactional()` publishes a page's replies inside one broker transaction. A second `.codec(..)`,
@@ -288,7 +290,7 @@ async fn relay(frame: &Frame<'_>) -> Export {
 ```
 
 A `Serialized` reply names its publish policy at the include site the same way an encoded one does
-(`b.include(relay).publisher(Publish)`, or nothing for the broker's default); what it does not take
+(`b.include(relay).out(Reply, Publish)`, or nothing for the broker's default); what it does not take
 is the wiring steps after it, since its bytes leave with no codec and no transform stack.
 
 For a custom serialization format you want *typed* handlers for, implement `Codec` instead and
@@ -318,7 +320,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
 }
 
 // in with_broker(broker, |b| { ... }): the single unnamed slot is DefaultSlot
-b.include(forward).publisher(Publish);
+b.include(forward).out(DefaultSlot, Publish).build();
 ```
 
 ### Several publishers: one marker per path
@@ -359,11 +361,9 @@ b.include(route)
 
 `.transform(..)` composes an `OutTransform` (`apply(&mut Outgoing<'_>)`, no publish context: the
 body issues a slot publish itself) onto the slot named right before it, and onto that one only.
-Before any `.out(..)` the step does not exist, and the one-call `.publisher(policy)` shorthand
-commits on the spot, so a single slot that needs a transform binds by marker
-(`.out(DefaultSlot, Publish).transform(..).build()`). On a registration that also has a reply,
-`.transform(..)` after `.publisher(..)` grows the reply's `PublishTransform` stack and after
-`.out(..)` the slot's.
+Before any `.out(..)` the step does not exist. On a registration that also has a reply,
+`.transform(..)` after `.out(Reply, ..)` grows the reply's `PublishTransform` stack and after
+`.out(marker, ..)` the slot's.
 
 The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
 against a policy whose live publisher supports owned transactions, checked at the include site.
@@ -553,8 +553,8 @@ where
 }
 ```
 
-The same policy-plus-wrapper choice applies wherever a publisher is attached: `.publisher(..)` on a
-reply handler, `.out(marker, ..)` on a slot.
+The same policy-plus-wrapper choice applies wherever a publisher is attached, and the verb is the
+same on both: `.out(Reply, ..)` for a reply handler, `.out(marker, ..)` for a slot.
 
 ## Broker context fields (`Ctx<K>`)
 

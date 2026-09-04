@@ -46,13 +46,9 @@ fn sorted_ids(receipts: &[Receipt]) -> Vec<u32> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transactional_replies_compose_with_a_batch_pool() {
     let app = RustStream::new(AppInfo::new("tx", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(
-            tx_confirm
-                .batch(nonzero!(4))
-                .publisher(TransactionalPublish)
-                .transactional()
-                .build(),
-        );
+        b.include(tx_confirm.batch(nonzero!(4)))
+            .out(Reply, TransactionalPublish)
+            .transactional();
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 

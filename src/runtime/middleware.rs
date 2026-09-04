@@ -21,7 +21,14 @@ use std::future::Future;
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
 
-/// A function from one handler to another. Apply with [`HandlerExt::with`].
+/// A function from one handler to another. Apply with [`HandlerExt::with`], or to one
+/// registration with [`Router::with`](super::Router::with).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot wrap `{H}`",
+    note = "a layer that wraps one registration implements `Layer<H>` for the handler it wraps; \
+            a layer that wraps every handler in an app or a router implements `BlanketLayer` \
+            instead and rides `RustStream::layer(..)` or `Router::layer(..)`"
+)]
 pub trait Layer<H> {
     /// The handler type produced by this layer.
     type Handler;
