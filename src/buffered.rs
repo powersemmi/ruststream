@@ -28,6 +28,12 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// [`max_wait`](Self::max_wait) has elapsed after its first delivery, whichever comes first; an
 /// idle subscription waits indefinitely for that first delivery. The default deadline is 10 ms.
 ///
+/// Under the `testing` harness, injecting through `tb.message(&value).publish()` drives the whole
+/// reaction to a standstill before it returns, which closes the batch: one call per message yields
+/// one page per message, each holding a single element. A test that wants a longer page takes a
+/// producer handle off the broker before the app is built, publishes the run through it, and then
+/// drives the reaction once with `tb.settle()`.
+///
 /// # Examples
 ///
 /// ```

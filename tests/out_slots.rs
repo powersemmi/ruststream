@@ -1,6 +1,6 @@
 //! Marker-identified Out slots: multi-slot binding by marker, capability-refined bounds, the
-//! harness's per-slot capture, and the broker-defined capability extension through
-//! [`SlotPublisher::inner`].
+//! harness's per-slot capture, and the broker-defined capability extension grafted onto the
+//! arena entry.
 #![cfg(all(
     feature = "memory",
     feature = "macros",
@@ -15,7 +15,6 @@ use common::{Event, Wire};
 use ruststream::PairError;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::SlotPublisher;
 use ruststream::testing::TestApp;
 
 /// The payload view the slot-publishing body takes: the delivery's bytes, borrowed.
@@ -208,12 +207,21 @@ impl ShardLanes for LaneRouter {
     }
 }
 
-// Grafted onto the slot wrapper once, for every marker: this is what `SlotPublisher::inner`
-// exists for, and how a broker crate extends the slot vocabulary with its own traits.
-impl<P: ShardLanes, M: OutSlot> ShardLanes for SlotPublisher<P, M> {
+// Grafted onto the arena entry once, for every marker, delegating through the entry's
+// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
+// traits. A handler body holds the entry, so without this impl the capability is reachable by
+// autoderef for a method call but never satisfies a trait bound.
+impl<M, W: ShardLanes, E, Body> ShardLanes for Slot<M, W, E, Body> {
     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
-        self.inner().lane(shard)
+        (**self).lane(shard)
     }
+}
+
+/// The bound the graft buys: a helper generic over the capability, not over the concrete live
+/// type, takes the entry a handler body holds.
+async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+    let (publisher, dest) = lanes.lane(event.id);
+    publisher.message(event).to(dest).publish().await.is_ok()
 }
 
 /// The policy half: pure declaration pairing into the router, like a broker's
@@ -233,11 +241,11 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
 /// The handler bounds its slot with the broker-defined capability, not a core one.
 #[subscriber("slots.sharded")]
 async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
-    let (publisher, dest) = lanes.lane(event.id);
-    if publisher.message(event).to(dest).publish().await.is_err() {
-        return HandlerOutcome::retry();
+    if sent(lanes, event).await {
+        HandlerOutcome::ack()
+    } else {
+        HandlerOutcome::retry()
     }
-    HandlerOutcome::ack()
 }
 // --8<-- [end:extension]
 

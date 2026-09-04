@@ -33,7 +33,20 @@ alwaysApply: false
   the broker natively supports - never emulate.
 - Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
   types (unit structs with an associated `Context` and owned `Value`), so handlers can take
-  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path.
+  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path. A position that is
+  not `Copy` borrows on the read side (`Field::Value<'a>` is generic over the source's lifetime);
+  only the `ContextField::Value` behind `Ctx<K>` has to be owned and `'static`, so that key clones.
+- Your prelude has four layers in this order: `pub use ruststream::prelude::*;`, the crate surface
+  your examples name, your publish policies aliased to the uniform mount-site names
+  (`NatsPublish as Publish`, `KafkaTransactionalPublish as TransactionalPublish`,
+  `LapinRequest as Request`), and the capability manifest (the core capability traits you actually
+  implement). A handler body imports only the core prelude and bounds a slot with the broker
+  capability trait (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+  `Out<impl OwnedTransactions>`, `Out<impl RequestReply>`); a routes file imports yours. The core
+  exports no trait under the policy names, so the aliases collide with nothing - but your prelude
+  must never shadow a core name with anything of yours, because an explicit re-export beats the
+  core glob silently and the error lands in the service's file. Pin both halves behind your own
+  glob: `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
 - `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. A handle that
   carries an argument for a run of messages (a tenant, a partition hint, a delivery option your
   broker expresses as a header) returns it from `base_headers` rather than writing it inside

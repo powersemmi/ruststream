@@ -185,10 +185,17 @@ b.include(
 
 // a broker's own batching options ride its subscription source, after the core's size:
 // b.include(settle.name("orders").batch(nonzero!(6)).block(Duration::from_secs(5)));
+
+// where the subscription opens, on a broker with a replayable log (Seekable)
+b.include(audit.name("orders").start_at(MemoryPosition::start()));
 ```
 
-`workers(n)` and `on_failure(..)` can also be written as attribute clauses
-(`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("orders", on_failure(decode = retry))]`).
+`workers(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute clauses
+(`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("orders", on_failure(decode = retry))]`,
+`#[subscriber("audit", start_at(MemoryPosition::start()))]`). `start_at` forces the position on
+every startup and takes a value of the broker's own position type; without it the subscription
+opens at the broker's default. A conditional default (apply only when no stored cursor exists for
+the group) belongs on the broker's own subscription descriptor.
 
 ## Replying (request/response)
 

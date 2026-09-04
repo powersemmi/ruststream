@@ -2,34 +2,29 @@
 
 This page follows how the real [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats)
 crate implements the contract on top of the [`async-nats`](https://docs.rs/async-nats) client. It is
-a complete broker in miniature: the `Broker` -> `ConnectedBroker` ladder, one subscription type that serves both Core NATS and
-JetStream behind a single `SubscribeOptions` descriptor, a publisher that forwards headers, and a
-native request-reply capability.
+a complete broker in miniature: the `Broker` -> `ConnectedBroker` -> `Closed` ladder, one
+subscription type that serves both Core NATS and JetStream behind a single `SubscribeOptions`
+descriptor, a publisher that forwards headers, and the capabilities the transport actually has.
 
-!!! note
-    Item names track the `async-nats` version you depend on (0.46 here); adapt the few spots noted
-    below if the crate's API has moved.
+Read it as an illustration of the contract, not as the crate's source: the code below is trimmed to
+what each rule of [the contract](index.md) asks for, and the crate itself carries the options, the
+tuning and the typed per-delivery context that a real broker grows. Item names follow the
+`async-nats` API, which moves between releases; the client version a broker crate tracks is that
+crate's own business, and its documentation states it.
 
 ```toml title="Cargo.toml"
-[package]
-name = "ruststream-nats"
-version = "0.1.0"
-edition = "2024"
-
 [features]
 default = []
-testing = ["ruststream/conformance"]
+# The in-process test broker users get. The conformance harness is a broker-author tool and stays
+# a dev-dependency, not a feature users can turn on.
+testing = ["ruststream/testing"]
 
 [dependencies]
 ruststream = { version = "0.7", default-features = false }
-async-nats = "0.46"
-bytes = "1"
-futures = "0.3"
-thiserror = "2"
-tokio = { version = "1", features = ["sync", "time"] }
-tokio-stream = "0.1"
-tracing = "0.1"
 ```
+
+Everything else is the client and its support: `async-nats`, plus `bytes`, `futures`, `thiserror`,
+`tokio` and `tracing`.
 
 ## Errors
 
@@ -51,61 +46,75 @@ pub enum NatsError {
     Subscribe(#[source] Box<dyn StdError + Send + Sync>),
     #[error("nats jetstream error: {0}")]
     JetStream(#[source] Box<dyn StdError + Send + Sync>),
+    #[error("nats shutdown error: {0}")]
+    Shutdown(#[source] Box<dyn StdError + Send + Sync>),
     #[error("nats request timed out")]
     RequestTimeout,
-    #[error("nats broker is not connected")]
-    NotConnected,
+    /// A publisher aliasing the connection was used after the broker shut down.
+    #[error("nats connection is closed; cannot reach {subject}")]
+    Closed { subject: String },
     #[error("invalid subscribe options: {0}")]
     InvalidOptions(String),
 }
 ```
 
+`Closed` carries the subject rather than saying only that the connection is gone: an error a
+service reads at three in the morning names what it could not reach.
+
 ## The broker ladder
 
 `new` is synchronous and records only the address. The consuming `connect` dials and returns the
-connected form, which holds the live client directly. One shared cell remains: a publisher can be
-built while the application is being assembled, before `connect` runs, and it reads the client
-through the cell `connect` fills. The cell exists for the publishers (one publisher type serves
-both the early and the connected path); the connected form's own operations never check it.
+connected form, which holds the live client directly: there is no "maybe connected" state for its
+own operations to check. Publishers are handed out from the connected form and nowhere else, so a
+publisher without a connection is not representable.
+
+What a publisher does outlive is the connection itself, and that is the one thing types cannot
+settle: it is an aliasing question, not an ordering one. The connection therefore carries a closed
+flag, set before the drain begins, and every aliased handle reads the client through it.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use async_nats::{Client, ConnectOptions};
 use ruststream::{Broker, ConnectedBroker};
-use tokio::sync::OnceCell;
 
-#[derive(Clone)]
+/// The live connection, shared by the connected broker and every publisher paired off it.
+struct NatsConnection {
+    client: Client,
+    closed: AtomicBool,
+}
+
+impl NatsConnection {
+    /// The client, or `Closed` once the broker has shut down. A runtime check because the force
+    /// is external: aliased handles outlive the connection, and the ladder can only rule out
+    /// misuse through the owner's handle.
+    fn live_client(&self, subject: &str) -> Result<&Client, NatsError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(NatsError::Closed { subject: subject.to_owned() });
+        }
+        Ok(&self.client)
+    }
+}
+
+#[derive(Debug, Clone)]
+#[must_use]
 pub struct NatsBroker {
-    // Shared with publishers handed out before connect; the consuming connect fills it.
-    client: Arc<OnceCell<async_nats::Client>>,
-    addrs: Option<String>,
+    addrs: String,
+    options: ConnectOptions,
 }
 
 impl NatsBroker {
     /// Records the address; dials when `Broker::connect` runs. No I/O.
-    #[must_use]
     pub fn new(addrs: impl Into<String>) -> Self {
-        Self {
-            client: Arc::new(OnceCell::new()),
-            addrs: Some(addrs.into()),
-        }
+        Self { addrs: addrs.into(), options: ConnectOptions::default() }
     }
 
-    /// Wraps an already-connected client (TLS, credentials, custom options); `connect` then
-    /// finds the cell filled and performs no I/O.
-    #[must_use]
-    pub fn from_client(client: async_nats::Client) -> Self {
-        Self {
-            client: Arc::new(OnceCell::new_with(Some(client))),
-            addrs: None,
-        }
-    }
-
-    /// A publisher sharing this broker's connection cell; buildable before `connect`.
-    #[must_use]
-    pub fn publisher(&self) -> NatsPublisher {
-        NatsPublisher::new(Arc::clone(&self.client))
+    /// Credentials, TLS, reconnect behaviour: still pure configuration, still no I/O.
+    pub fn with_options(mut self, options: ConnectOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -115,53 +124,62 @@ impl Broker for NatsBroker {
 
     async fn connect(self) -> Result<Self::Connected, Self::Error> {
         let client = self
-            .client
-            .get_or_try_init(async || {
-                let addrs = self.addrs.as_deref().ok_or(NatsError::NotConnected)?;
-                async_nats::connect(addrs)
-                    .await
-                    .map_err(|e| NatsError::Connect(Box::new(e)))
-            })
-            .await?
-            .clone();
-        Ok(ConnectedNatsBroker {
-            client,
-            shared: self.client,
-        })
+            .options
+            .connect(self.addrs.as_str())
+            .await
+            .map_err(|e| NatsError::Connect(Box::new(e)))?;
+        Ok(ConnectedNatsBroker::from_client(client))
     }
 }
 
-/// The typed witness that `connect` succeeded: holds the live client directly.
+/// The typed witness that `connect` succeeded: the only value with a publish or subscribe surface.
+#[derive(Debug)]
 pub struct ConnectedNatsBroker {
-    client: async_nats::Client,
-    // Keeps the cell of publishers handed out before connect alive and filled.
-    shared: Arc<OnceCell<async_nats::Client>>,
+    connection: Arc<NatsConnection>,
 }
 
 impl ConnectedNatsBroker {
-    /// A publisher from the connected form. It rides the same cell-backed publisher type as the
-    /// early path; by now `connect` has filled the cell, so it resolves immediately.
+    /// Adopts an already-connected client: the escape hatch for a connection built outside the
+    /// framework. Only the plain `NatsBroker` slots into the synchronous app builder.
     #[must_use]
-    pub fn publisher(&self) -> NatsPublisher {
-        NatsPublisher::new(Arc::clone(&self.shared))
+    pub fn from_client(client: Client) -> Self {
+        Self {
+            connection: Arc::new(NatsConnection { client, closed: AtomicBool::new(false) }),
+        }
     }
 }
 
 impl ConnectedBroker for ConnectedNatsBroker {
     type Error = NatsError;
-    type Closed = ();
+    type Closed = ClosedNatsBroker;
 
-    async fn shutdown(self) -> Result<(), Self::Error> {
-        let _ = self.client.drain().await; // best-effort; never blocks or panics
-        Ok(())
+    async fn shutdown(self) -> Result<Self::Closed, Self::Error> {
+        // Marked closed before draining: a publisher aliasing the connection must not slip a
+        // message into a connection that is already going away.
+        self.connection.closed.store(true, Ordering::Release);
+        let client = &self.connection.client;
+        let stats = client.statistics();
+        client.drain().await.map_err(|e| NatsError::Shutdown(Box::new(e)))?;
+        Ok(ClosedNatsBroker {
+            messages_sent: stats.out_messages.load(Ordering::Relaxed),
+            messages_received: stats.in_messages.load(Ordering::Relaxed),
+        })
     }
+}
+
+/// The terminal witness: no publish or subscribe surface, just the drained connection's counters,
+/// for a shutdown log line or a teardown assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClosedNatsBroker {
+    messages_sent: u64,
+    messages_received: u64,
 }
 ```
 
-Consuming `self` rules out a second `connect` and a publish after shutdown on the owner path. A
-publisher created earlier keeps its cell, and a publish after the drain surfaces the client's own
-error - the aliased-handle contract the lifecycle check verifies. `shutdown` does all fallible
-teardown and never panics.
+Consuming `self` rules out a second `connect`, and a publish or subscribe after shutdown, on the
+owner path. `shutdown` does all fallible teardown, returns the witness, and never panics. A
+publisher created earlier reports `Closed` afterwards instead of succeeding against a dead
+connection - the aliased-handle contract the lifecycle check verifies.
 
 ## One subscription for Core and JetStream
 
@@ -268,21 +286,21 @@ impl Subscribe for ConnectedNatsBroker {
     type Subscriber = NatsSubscriber;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error> {
-        ConnectedNatsBroker::subscribe(self, SubscribeOptions::new(name)).await
+        self.subscribe_with(SubscribeOptions::new(name)).await
     }
 }
 ```
 
-The connected form's own `subscribe` validates the options and branches once (`queue_group_ref`,
-`stream_ref`, and `durable_ref` are small `pub(crate)` getters returning `Option<&str>`); it holds
-the client directly, so there is no "not connected" path to handle:
+The connected form's own `subscribe_with` validates the options and branches once
+(`queue_group_ref`, `stream_ref`, and `durable_ref` are small `pub(crate)` getters returning
+`Option<&str>`); the client comes from the connection, which is where the closed check lives:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
 use async_nats::jetstream::{self, consumer::pull::Config as PullConfig};
 
 impl ConnectedNatsBroker {
-    pub async fn subscribe(&self, opts: SubscribeOptions) -> Result<NatsSubscriber, NatsError> {
+    pub async fn subscribe_with(&self, opts: SubscribeOptions) -> Result<NatsSubscriber, NatsError> {
         opts.validate()?;
         if opts.is_jetstream() {
             self.subscribe_jetstream(opts).await
@@ -292,18 +310,22 @@ impl ConnectedNatsBroker {
     }
 
     async fn subscribe_core(&self, opts: SubscribeOptions) -> Result<NatsSubscriber, NatsError> {
-        let client = self.client.clone();
+        let client = self.connection.live_client(opts.subject())?;
         let subject = opts.subject().to_owned();
         let inner = match opts.queue_group_ref() {
             Some(group) => client.queue_subscribe(subject.clone(), group.to_owned()).await,
             None => client.subscribe(subject.clone()).await,
         }
         .map_err(|e| NatsError::Subscribe(Box::new(e)))?;
+        // Core SUB is written without waiting for the server, so without this round trip a
+        // producer on another connection can publish into a subscription the server has not
+        // registered yet, and the message is simply lost.
+        client.flush().await.map_err(|e| NatsError::Subscribe(Box::new(e)))?;
         Ok(NatsSubscriber::from_core(subject, inner))
     }
 
     async fn subscribe_jetstream(&self, opts: SubscribeOptions) -> Result<NatsSubscriber, NatsError> {
-        let ctx = jetstream::new(self.client.clone());
+        let ctx = jetstream::new(self.connection.live_client(opts.subject())?.clone());
         let stream_name = opts.stream_ref().expect("validated").to_owned();
         let stream = ctx
             .get_stream(&stream_name)
@@ -458,8 +480,8 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 ## Publishing
 
-The publisher holds the shared connection cell and reads the client on each publish, forwarding
-headers when present.
+The publisher shares the connection with the broker that paired it and reads the client through the
+closed check on every publish, forwarding headers when present.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -467,14 +489,18 @@ use ruststream::{OutgoingMessage, Publisher};
 
 #[derive(Clone)]
 pub struct NatsPublisher {
-    client: Arc<OnceCell<async_nats::Client>>,
+    connection: Arc<NatsConnection>,
 }
 
 impl Publisher for NatsPublisher {
     type Error = NatsError;
 
+    /// # Cancel safety
+    ///
+    /// Core NATS publishing is fire-and-forget: the message is handed to the connection's writer
+    /// without waiting for the server. Dropping the future may leave it either sent or unsent.
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        let client = self.client.get().cloned().ok_or(NatsError::NotConnected)?;
+        let client = self.connection.live_client(msg.name())?.clone();
         let subject = msg.name().to_owned();
         let payload = Bytes::copy_from_slice(msg.payload());
         match headers_to_nats(msg.headers()) {
@@ -505,7 +531,7 @@ impl RequestReply for NatsPublisher {
         msg: OutgoingMessage<'_>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
-        let client = self.client.get().cloned().ok_or(NatsError::NotConnected)?;
+        let client = self.connection.live_client(msg.name())?.clone();
         let subject = msg.name().to_owned();
         let request = async_nats::Request::new().payload(Bytes::copy_from_slice(msg.payload()));
         let send = async {
@@ -522,28 +548,40 @@ impl RequestReply for NatsPublisher {
 }
 ```
 
-Implement only the capabilities the transport supports: Core NATS has no batch subscribe,
-transactional publish, or replayable log, so `BatchSubscriber`, `TransactionalPublisher`, and
-`Seekable` are left out (a JetStream consumer, whose stream is a replayable log, is where a NATS
-`Seekable` would live). `ruststream-nats` also does not currently implement `DescribeServer`; add
-it if you want the broker reported as a server in the AsyncAPI document.
+A JetStream pull consumer fetches in batches on the wire, so `BatchSubscriber` reports what the
+transport already does rather than emulating anything: one stream item is one fetch, bounded by a
+batch size and an expiry, and an empty fetch is retried so a page is never empty. The Core arm of
+the same subscriber has no wire-level batching, so a page there is whatever the client has already
+buffered locally, capped and never padded with latency the transport does not have. A broker
+without either would leave the capability out and let users reach for the client-side
+[`buffered`](../guides/subscribers.md#batch-subscribers) adapter instead.
+
+`DescribeServer` puts the broker in the generated AsyncAPI document. It sits on the **unconnected**
+broker, because the document is generated from a service that has not dialled anything: it reports
+the configured address. The coordinates the server itself announces (a cluster route, a discovered
+peer) are only knowable once connected, so they belong on an accessor of the connected form, not on
+this trait.
+
+Everything else is left out, because the transport does not have it: NATS has no transactions, so
+`TransactionalPublisher` and `OwnedTransactions` are absent, and so is `Seekable` - a JetStream
+consumer, whose stream is a replayable log, is where a NATS `Seekable` would live.
 
 ## The publish policy
 
 `NatsPublisher` is the live half; `PublishPolicy` supplies its declaration half, so registrations
-can name a publisher before any connection exists. NATS publishing carries no options, so the
-policy is a unit marker (mirroring the in-memory broker's `MemoryPublish`), and pairing is the
-connected form's own `publisher()` - infallible here; a broker that does real work bringing a
-publisher alive (a transactional producer) wraps its failure with `PairError::new`. Because the
-default configuration is usable as-is, the connected form can also implement `DefaultPublish`
-(see [the contract](index.md#publishpolicy)) so a `publish(..)` handler compiles without an
-explicit publisher.
+can name a publisher before any connection exists. Core NATS publishing carries no per-publisher
+options - the subject and the headers travel with each message - so the policy is a unit marker
+(mirroring the in-memory broker's `MemoryPublish`), and pairing only clones the connection handle.
+It is infallible here; a broker that does real work bringing a publisher alive (a transactional
+producer) wraps its failure with `PairError::new`. Because the plain policy is usable as-is, the
+connected form also implements `DefaultPublish` (see [the contract](index.md#publishpolicy)) so a
+`publish(..)` handler compiles without an explicit publisher.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use ruststream::{PairError, PublishPolicy};
+use ruststream::{DefaultPublish, PairError, PublishPolicy};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[must_use]
 pub struct NatsPublish;
 
@@ -551,7 +589,7 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
     type Live = NatsPublisher;
 
     async fn pair(self, connected: &ConnectedNatsBroker) -> Result<Self::Live, PairError> {
-        Ok(connected.publisher())
+        Ok(NatsPublisher { connection: Arc::clone(connected.connection()) })
     }
 }
 ```

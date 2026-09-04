@@ -132,6 +132,11 @@ use super::value::{HandleValue, Sealed};
 /// bare leaf call - until a mount site names either, so a body generic over its entry leaves it
 /// generic and bounds it with [`OutPipeline`].
 ///
+/// Autoderef carries a method call, not a trait bound: a helper written as `fn f<L: Lanes>(l:
+/// &L)` rejects the entry a body holds. A broker crate that wants such helpers - or bodies
+/// generic over its capability - adds one blanket impl next to its trait,
+/// `impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`, delegating through this `Deref`.
+///
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
 /// `#[subscriber]` parameter's third `Out` position narrows it;
 /// [`message`](Slot::message) checks it at compile time (see

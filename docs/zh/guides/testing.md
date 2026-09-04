@@ -104,6 +104,13 @@ Broker，它就报告 `TestError::Ambiguous`。
 三条记录的日志在 `batch(2)` 之下回放，到达函数体时是 `[2, 1]` - 两次调用，因为 Broker 攒出了两页。
 单条消息的处理器每来一次投递就被调用一次，所以同一轮报出来是 `[1, 1, 1]`。
 
+!!! note "怎样凑出多于一个元素的一页"
+    `tb.message(&value).publish()` 在返回之前会把整个反应推到静止，而一个静止下来的反应会关闭那些
+    在客户端攒页的 Broker 的当前页。因此一次注入一条消息，无论挂载点写下多大的尺寸，得到的都是每条
+    消息一页，每页只有一个元素。要凑出一页，就在应用组装之前从 Broker 取一个生产者句柄，用它把整串
+    消息发完（这一路上什么都不会静止），最后用 `tb.settle()` 把反应推到静止一次。原生支持分页的
+    Broker 不受影响：那里由 Broker 决定一页在哪里结束。
+
 `tb.broker::<B>().published::<T>(name)` 断言处理器向下游发布了什么，数据取自 Broker 的发布日志：
 `.assert_called_once()` / `.assert_called(n)` / `.assert_not_called()` 固定发布次数，
 `.with(&Receipt { id: 1 })` / `.with_raw(bytes)` 固定最近一条载荷，`.with_header("x-app", b"1")`

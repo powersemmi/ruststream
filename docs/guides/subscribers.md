@@ -432,11 +432,48 @@ retried and the mismatch is logged.
 ## Seeking
 
 Replaying a stream after fixing a handler bug, reprocessing from a known point, skipping forward
-past a poison region: each moves a live subscription to another position without dropping it.
-Brokers whose transport is a replayable log (Kafka, Redis streams, the in-memory broker's publish
-log) implement the `Seekable` capability and publish seek keys over their per-delivery context.
-Brokers without a replayable log ship no such keys, and the mount below fails to compile against
-them instead of failing at runtime.
+past a poison region: each names a position in the stream, either where a subscription opens or
+where a live one moves without being dropped. Brokers whose transport is a replayable log (Kafka,
+Redis streams, the in-memory broker's publish log) implement the `Seekable` capability, own the
+position type, and publish seek keys over their per-delivery context. Brokers without a replayable
+log ship neither, and the mounts below fail to compile against them instead of failing at runtime.
+
+### Opening at a chosen position
+
+A fresh subscription opens where the broker decides: at the tail for a plain consumer, at a stored
+cursor for a durable one. Everything published before that is invisible to the service, which is
+the wrong answer for an audit trail that has to see the whole history, and for a monitor that must
+never wade through a backlog. Where a subscription opens is a property of the mount, not of the
+handler, so it is named there - `start_at(<position>)` as an attribute clause, `.start_at(..)` as
+a settings step:
+
+=== "Macros"
+
+    ```rust
+    --8<-- "examples/seek.rs:start_at"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at"
+    ```
+
+    ```rust
+    --8<-- "examples/manual/seek.rs:start_at_mount"
+    ```
+
+The position is a value of the broker's own position type, so what can be named is what that
+broker can express: the in-memory log offers `MemoryPosition::start()` for the whole history,
+`MemoryPosition::end()` for the next publish onwards, and `MemoryPosition::sequence(n)` for one
+log entry.
+
+The clause forces the position on every startup; without it the subscription opens at the
+broker's default. A conditional default - apply only when the broker holds no stored
+cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
+broker's own subscription descriptor, which expresses it natively.
+
+### Repositioning from a handler
 
 A handler repositions its own subscription through the broker's context keys: the delivery's
 context carries the position and a live seek handle (resolved once, when the subscription opens),
@@ -462,11 +499,6 @@ against the broker's context type on the manual one. Nothing is attached at the 
     ```rust
     --8<-- "examples/manual/seek.rs:mount"
     ```
-
-The clause forces the position on every startup; without it the subscription opens at the
-broker's default. A conditional default - apply only when the broker holds no stored
-cursor for the group (Kafka's offset reset, a JetStream deliver policy) - stays on the
-broker's own subscription descriptor, which expresses it natively.
 
 A page body repositions its subscription the same way, one level up: the seek handle is
 subscription-scoped, so it rides the broker's batch context, while the target - a position the

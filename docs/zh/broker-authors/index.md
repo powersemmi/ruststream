@@ -43,8 +43,8 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
 Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
 状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
-句柄，而不是已连接形态。[NATS 示例](example-nats.md)展示的就是基于单元的变体。
-[conformance 校验套件](conformance.md)会端到端地证明这道阶梯。
+句柄，而不是已连接形态。[conformance 校验套件](conformance.md)会端到端地证明这道阶梯，而
+[NATS 示例](example-nats.md)在一个真实客户端上把整道阶梯走了一遍。
 
 在一个已经关闭的 Broker 上，根本没有发布或订阅方法可调用，所以持有者一侧的误用通不过编译。别名仍是
 一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
@@ -309,11 +309,16 @@ seeker，它只带句柄、不带位置。
 
 ### 扩展 `Out` 槽位的词汇
 
-处理器参数 `Out<impl X, Marker>` 接受运行时的 `SlotPublisher` 包装器实现了的任意 `X`；核心会转发它
-自己的那套能力（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`）。当你
-配对出来的值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）
-时，就声明你自己的能力 trait，为该值实现它，再用一个通过 `SlotPublisher::inner` 转发的全覆盖实现把
-它嫁接到包装器上。此后处理器就用你的 trait 约束自己的槽位，而具体类型依然不会出现在应用代码里：
+处理器参数 `Out<impl X, Marker>` 接受槽位背后那个活值实现了的任意 `X`；在此之上，核心还会转发它
+自己的那套能力（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`）。当
+活值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）时，
+就声明你自己的能力 trait，并为这个活值实现它。
+
+处理器主体手里拿到的并不是那个值，而是竞技场里的条目 `Slot<Marker, W, E, Body>`，一扇通向它的透明
+窗口。自动解引用能把方法调用送过这扇窗，却送不过 trait 约束：写成 `fn issue<L: Lanes>(lanes: &L)`
+的辅助函数会以 `E0277` 拒收这个条目。在你的 trait 旁边加上一个全覆盖实现
+`impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`，通过条目的 `Deref` 转发，此后按能力
+泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：
 
 === "宏"
 
@@ -327,15 +332,67 @@ seeker，它只带句柄、不带位置。
     --8<-- "tests/manual_out_slots.rs:extension"
     ```
 
-通过 `inner` 取出的值所做的发布会绕过测试套件按槽位的记录（就像一个已结算的 owned 事务的缓冲区那样）；
-它们仍然会出现在 Broker 的发布日志里。
+决定 trait 形状的是发送发生在哪里，而形状有两种。
+
+**路由器形状**的能力交出一个发布者，自己从不发送：上面那个按分区的 producer 缓存为某个分片挑出
+一条通路并把它返回。处理器随后经这条通路发出的东西是从包装器外面走的，所以测试套件不会把这次发布
+记到槽位名下（就像一个已结算的 owned 事务的缓冲区那样），要在 Broker 的发布日志上断言它。这就是
+归属的边界，也是交出内层发布者所付的代价。
+
+**步骤形状**的能力给一条消息设定一个参数，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。
+不要把发送放进 trait。从你自己的值走出去的发布，就是槽位视图不再看得见的发布，而排序键这类参数
+恰恰是测试要断言的东西。改为走条目自己的类型化发布路径（`out.message(&value).publish()`），把参数
+当作头部携带：为一串消息持有它的发布者从 `Publisher::base_headers` 交出它，为单条消息设定它的调用
+点用 `.with_headers(..)` 写下它，而你的 `publish` 从出站的头部表里读走它，并在上线之前把它剥掉。
+你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它并不会得到。
+
+### 你这个 crate 的 prelude
+
+两种文件导入的东西不一样，正是这种分工让服务保持可移植。处理器主体导入 `ruststream::prelude::*`，
+不导入你的任何东西：它用 Broker 的能力 trait 去约束注入进来的槽位，也就是 `Out<impl Publisher>`、
+`Out<impl TransactionalPublisher>`、`Out<impl OwnedTransactions>`、`Out<impl RequestReply>`，
+于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。挂载文件导入你的 prelude，因为
+指名 Broker 的地方就在那里。
+
+这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
+四层，按这个顺序：
+
+- 先是 `pub use ruststream::prelude::*;`，让主体本来就认识的一切原样到位；
+- 你自己的示例会写出来的那部分 crate 表面：Broker、它的订阅描述符、它的配置；
+- 你的发布策略，以统一的挂载点名字取别名：`NatsPublish as Publish`、
+  `KafkaTransactionalPublish as TransactionalPublish`、`LapinRequest as Request`，
+  这样无论挂的是哪个 Broker，挂载文件读起来都一样，换 Broker 就是换一行导入；
+- 能力清单：你的 Broker 真正实现了的那些核心能力 trait，好让服务能用什么去约束槽位，从这一个导入
+  就看得出来。
+
+在这些策略名字下，核心一个 trait 都不导出，所以这些别名不会跟任何东西相撞。维持这一点的规则是双向的，
+你这一半是：你的 prelude 不能用自己的任何东西去遮蔽核心的名字。显式 re-export 会一声不响地盖过 glob，
+所以一个跟核心 trait 同名的名字，会把那个 trait 从每个写了这行 glob 的服务手里拿走，而错误浮现在服务
+的文件里，不在你的文件里。
+
+用一个跟在自己 glob 后面的探针把两半都钉死：主体所写的那个约束仍然必须以核心 trait 的身份到达，
+挂载点的名字仍然必须是你的策略。
+
+<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+```rust
+// in your crate, behind your own prelude glob
+use crate::prelude::*;
+
+// A capability bound a body states: the core trait, not something of yours.
+fn _p<T: Publisher>() {}
+
+// A mount-site name: your policy, constructible with no connection in sight.
+fn _q() {
+    let _: Publish = Publish::default();
+}
+```
 
 ## 单条投递的上下文与 `Ctx` 键
 
 如果 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号），就把它作为类型化的单条投递上下文
 暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型，好让处理器能
-用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是单元结构体，
-值是拥有所有权的。投递路径上既没有 type-map，也没有堆分配。
+用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是单元结构体。
+投递路径上既没有 type-map，也没有堆分配。
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -358,6 +415,13 @@ impl ContextField for Partition {
     }
 }
 ```
+
+这段草图读的是一个 `Copy` 标量，拥有和借用没有分别。位置类型不是 `Copy` 时（Pulsar 的消息 id、
+Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::Value<'a>` 对来源的生命周期是泛型的，
+所以键交回的是 `&'a MessageId`，用 `ctx.context(..)` 读它的主体一份都不必复制。必须拥有所有权且为
+`'static` 的只有 `ContextField::Value`，也就是 `Ctx<K>` 提取器背后的那个值，因为提取器的值在主体
+运行之前就要绑定好；这个键会把借用那个键交回的东西克隆一份。一个键通常两个 trait 都实现，各出一种
+形状。
 
 没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
 

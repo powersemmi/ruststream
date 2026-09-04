@@ -113,6 +113,15 @@ broker's answer to the [`batch(n)`](subscribers.md#batch-subscribers) the mount 
 body as `[2, 1]` - two calls, because the broker built two pages. A single-message handler is
 called per delivery, so the same run reports `[1, 1, 1]`.
 
+!!! note "Filling a page with more than one element"
+    `tb.message(&value).publish()` drives the whole reaction to a standstill before it returns, and
+    a settled reaction closes the page of a broker that assembles its pages on the client. Injecting
+    messages one call at a time therefore produces one page per message, each holding a single
+    element, whatever size the mount named. Take a producer handle off the broker before the app is
+    built, publish the whole run through it - nothing settles on the way - and drive the reaction
+    once with `tb.settle()`. A broker that pages natively is unaffected: there the broker decides
+    where a page ends.
+
 `tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
 the broker's publish log: `.assert_called_once()` / `.assert_called(n)` /
 `.assert_not_called()` pin the count, `.with(&Receipt { id: 1 })` / `.with_raw(bytes)` the most

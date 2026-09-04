@@ -47,8 +47,8 @@ the live client directly - its own operations never check a "maybe connected" st
 additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
 in-memory broker does) so publishers can be handed out while the app is still being assembled,
 before `connect` runs; the cell serves those early handles, not the connected form. The
-[NATS example](example-nats.md) shows the cell-backed variant. The
-[conformance harness](conformance.md) proves the ladder end to end.
+[conformance harness](conformance.md) proves the ladder end to end, and the
+[NATS example](example-nats.md) walks the whole ladder on a real client.
 
 There is no publish or subscribe to call on a broker you already shut down, so owner-side misuse
 does not compile. Aliasing stays a runtime rule: handles that alias the connection (publishers
@@ -341,13 +341,18 @@ practice - and let a service that needs it import it explicitly.
 
 ### Extending the `Out` slot vocabulary
 
-An `Out<impl X, Marker>` handler parameter accepts any `X` the runtime's `SlotPublisher`
-wrapper implements; the core delegates its own capability set (`Publisher`,
-`TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your paired value offers
-more than that - or is not a publisher at all (a per-partition producer cache, a shard
-router) - declare your own capability trait, implement it for the value, and graft it onto the
-wrapper with one blanket impl delegating through `SlotPublisher::inner`. Handlers then bound
-their slot with your trait, and the concrete type still never appears in application code:
+An `Out<impl X, Marker>` handler parameter accepts any `X` the live value behind the slot
+implements; on top of that the core delegates its own capability set (`Publisher`,
+`TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your live value offers more
+than that - or is not a publisher at all (a per-partition producer cache, a shard router) -
+declare your own capability trait and implement it for the live value.
+
+What the body actually holds is the arena entry, `Slot<Marker, W, E, Body>`, a transparent window
+onto that value. Autoderef carries a method call through it, but not a trait bound: a helper
+written as `fn issue<L: Lanes>(lanes: &L)` rejects the entry with `E0277`. Add one blanket impl
+next to your trait - `impl<M, W: Lanes, E, Body> Lanes for Slot<M, W, E, Body>`, delegating
+through the entry's `Deref` - and helpers and bodies generic over the capability take the entry
+as it is. The concrete type still never appears in application code:
 
 === "Macros"
 
@@ -361,16 +366,74 @@ their slot with your trait, and the concrete type still never appears in applica
     --8<-- "tests/manual_out_slots.rs:extension"
     ```
 
-Publishes made through values obtained from `inner` bypass the harness's per-slot capture
-(like a settled owned transaction's buffer); they stay visible in the broker's publish log.
+Where the send happens is what shapes the trait, and there are two shapes.
+
+A **router-shaped** capability hands out a publisher and never sends one itself: the per-partition
+producer cache above picks the lane for a shard and returns it. What the handler publishes through
+that lane leaves by the unwrapped value, so it bypasses the harness's per-slot capture (like a
+settled owned transaction's buffer) and is asserted on the broker's publish log instead. That is
+the attribution boundary, and it is the price of handing out the inner publisher.
+
+A **step-shaped** capability sets one argument on a message and ends in a single publish: an
+ordering key, a priority, a QoS. Do not put the send in the trait. A publish that leaves through
+your own value is a publish the slot view stops seeing, and an argument like an ordering key is
+exactly what a test wants to assert on. Ride the entry's typed publish path instead
+(`out.message(&value).publish()`) and carry the argument as a header: a publisher holding it for a
+run of messages returns it from `Publisher::base_headers`, a call site setting it per message
+writes it with `.with_headers(..)`, and your `publish` reads it off the outgoing map and strips it
+before the wire. A value your publisher cannot read is a publish error, never a silent fallback to
+the default - the caller asked for an ordering it would not get.
+
+### Your crate's prelude
+
+Two files import different things, and the split is what keeps a service portable. A handler body
+imports `ruststream::prelude::*` and nothing of yours: it bounds an injected slot with the broker
+capability trait - `Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+`Out<impl OwnedTransactions>`, `Out<impl RequestReply>` - so the body says what it needs of a
+publisher and never which broker provides it. A routes file imports your prelude, because mounting
+is where a broker is named.
+
+That makes your prelude the one import a service on your broker writes, so its shape is part of the
+contract. Four layers, in this order:
+
+- `pub use ruststream::prelude::*;` first, so everything a body already knows arrives unchanged;
+- the crate surface your own examples name: the broker, its subscription descriptor, its config;
+- your publish policies, aliased to the uniform mount-site names - `NatsPublish as Publish`,
+  `KafkaTransactionalPublish as TransactionalPublish`, `LapinRequest as Request` - so a routes file
+  reads the same whichever broker it mounts, and switching brokers is a change of import;
+- the capability manifest: the core capability traits your broker actually implements, so what a
+  service may bound a slot with is legible from that one import.
+
+The core exports no trait under the policy names, so those aliases collide with nothing. The rule
+that keeps it that way runs in both directions, and your half is that your prelude must not shadow
+a core name with anything of yours. An explicit re-export beats a glob without a word, so a name
+you spell like a core trait takes that trait away from every service writing the glob, and the
+error surfaces in the service's file rather than in yours.
+
+Pin both halves with a probe behind your own glob: the bound a body writes still has to arrive as
+the core trait, and the mount-site name still has to be your policy.
+
+<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+```rust
+// in your crate, behind your own prelude glob
+use crate::prelude::*;
+
+// A capability bound a body states: the core trait, not something of yours.
+fn _p<T: Publisher>() {}
+
+// A mount-site name: your policy, constructible with no connection in sight.
+fn _q() {
+    let _: Publish = Publish::default();
+}
+```
 
 ## Per-delivery context and `Ctx` keys
 
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
 typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
 key types so handlers can bind single fields as parameters with the
-[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs; values are
-owned. No type-map and no heap on the delivery path.
+[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs. No type-map
+and no heap on the delivery path.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -393,6 +456,14 @@ impl ContextField for Partition {
     }
 }
 ```
+
+The sketch reads a `Copy` scalar, which owns and borrows alike. A position that is not `Copy` - a
+Pulsar message id, a Kinesis shard plus its sequence string - is read by borrowing:
+`Field::Value<'a>` is generic over the source's lifetime, so the key hands back `&'a MessageId`
+and a body reading it with `ctx.context(..)` copies nothing. Only `ContextField::Value`, the value
+behind the `Ctx<K>` extractor, has to be owned and `'static`, because extractor values bind before
+the body runs; that key clones what the borrowing one returns. A key usually implements both
+traits, one shape each.
 
 A broker with no per-delivery fields uses `()` and skips all of this.
 

@@ -186,7 +186,7 @@ where
 ///     }
 /// }
 ///
-/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerResult`.
+/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerOutcome`.
 /// let extracted = Ctx::<Offset>(42);
 /// assert_eq!(extracted.0, 42);
 /// ```

@@ -296,6 +296,23 @@ impl ShardLanes for LaneRouter {
     }
 }
 
+// Grafted onto the arena entry once, for every marker, delegating through the entry's
+// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own
+// traits. A body holds the entry, so without this impl the capability is reachable by autoderef
+// for a method call but never satisfies a trait bound.
+impl<M, W: ShardLanes, E, Body> ShardLanes for Slot<M, W, E, Body> {
+    fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+        (**self).lane(shard)
+    }
+}
+
+/// The bound the graft buys: a helper generic over the capability, not over the concrete live
+/// type, takes the entry a body holds.
+async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+    let (publisher, dest) = lanes.lane(event.id);
+    publisher.message(event).to(dest).publish().await.is_ok()
+}
+
 /// The policy half: pure declaration pairing into the router, like a broker's
 /// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.
 struct LanePolicy;
@@ -310,8 +327,8 @@ impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
     }
 }
 
-/// The body names the wired live type directly - the arena entry is a transparent window onto
-/// it, so the broker-defined capability is called with no grafting machinery in between.
+/// The body leaves the wired live value generic and bounds it with the broker-defined
+/// capability, exactly as the attribute's `Out<impl ShardLanes>` does.
 struct RouteShard;
 
 struct Lanes;
@@ -320,21 +337,22 @@ impl OutSlot for Lanes {
     const NAME: &'static str = "Lanes";
 }
 
-impl<Enc> Handle<Event, (), Outs<(Slot<Lanes, LaneRouter, Enc>,)>> for RouteShard
+impl<W, Enc> Handle<Event, (), Outs<(Slot<Lanes, W, Enc>,)>> for RouteShard
 where
+    W: ShardLanes + Send + Sync,
     Enc: Send + Sync,
 {
     async fn handle(
         &self,
         event: &Event,
-        outs: &Outs<(Slot<Lanes, LaneRouter, Enc>,)>,
+        outs: &Outs<(Slot<Lanes, W, Enc>,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
-        let (publisher, dest) = outs.get(Lanes).lane(event.id);
-        if publisher.message(event).to(dest).publish().await.is_err() {
-            return Err(HandlerOutcome::retry());
+        if sent(outs.get(Lanes), event).await {
+            Ok(())
+        } else {
+            Err(HandlerOutcome::retry())
         }
-        Ok(())
     }
 }
 // --8<-- [end:extension]
