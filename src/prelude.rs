@@ -51,10 +51,12 @@ pub use crate::runtime::{
 // injected slot (`Out<impl TransactionalPublisher>`) without knowing which broker runs it; the
 // consumer-side capabilities (`Partitioned`, `Seekable`, `Positioned`, `Seeker`) are not, since
 // a service reaches those through a broker whose prelude names the ones it implements.
+// `BytesMut` is here for one reason: a hand-written `Serialized` impl names it in the signature
+// the trait demands, and the manual path is meant to need nothing but this glob.
 pub use crate::{
-    Broker, CallerName, FixedName, HeaderMap, IncomingMessage, MessageHeaders, MessageInfo, Name,
-    NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions, PublishPolicy,
-    Publisher, RequestReply, TransactionalPublisher, Unnamed, WithHeaders,
+    Broker, BytesMut, CallerName, FixedName, HeaderMap, IncomingMessage, MessageHeaders,
+    MessageInfo, Name, NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions,
+    PublishPolicy, Publisher, RequestReply, TransactionalPublisher, Unnamed, WithHeaders,
 };
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;

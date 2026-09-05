@@ -60,8 +60,10 @@ impl Wire {
 }
 
 impl Serialized for Wire {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 
@@ -186,8 +188,10 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
 struct WireExport(Vec<u8>);
 
 impl Serialized for WireExport {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 

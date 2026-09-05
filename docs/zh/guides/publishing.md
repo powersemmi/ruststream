@@ -9,7 +9,7 @@
 
 ```text
 message(&order)   -> codec -> bytes -> broker    （Serialize 的值需要编码）
-message(&export)  ->          bytes -> broker    （Serialized 的值本身就是字节）
+message(&export)  ->          bytes -> broker    （Serialized 的值自己产出字节）
 ```
 
 服务手上已经编码好的字节以 `Serialized` newtype 的形式发出：给它一个名字，它就从信道上的匿名载荷
@@ -60,7 +60,7 @@ message(&export)  ->          bytes -> broker    （Serialized 的值本身就�
 回复的编解码器则随着这条链搭好的接线一起走。参见[编解码器](codecs.md#the-publish-side)。
 
 一个子句服务于两种传输方式，因为这个选择属于回复的类型，而不属于子句。实现了 `serde::Serialize`
-的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自带字节、按字节原样发出，因此它的
+的回复按上面的方式编码；带 `#[derive(Serialized)]` 的回复自己产出字节、按字节原样发出，因此它的
 `.out(Reply, ..)` 只接一个策略、别的都不接：这种传输方式没有编解码器可命名，其后写 `.codec(..)`
 不会通过编译。参见[原始字节订阅者](subscribers.md#raw-subscribers)。
 
@@ -189,8 +189,9 @@ crate 自己定义的那一个），而不是任何 Broker 类型，所以主体
 `DefaultSlot` 没有可以列类型的声明处，所以它接受每一种已声明的消息。参见[类型化的消息头](headers.md)。
 
 类型化发布用哪种传输方式，由类型选定。实现 `serde::Serialize` 的值由 `message(&value)` 用编解码器
-编码，如上；带 `#[derive(Serialized)]` 的类型自带字节，同一个调用把它们按原样发出 - 路径上没有任何
-编解码器。其余一切都遵循平常的规则：给它 `#[derive(Outgoing)]`，再像任何模型一样列进
+编码，如上；带 `#[derive(Serialized)]` 的类型自己产出字节 - 或是攥在手里，或是当场写出 - 同一个
+调用把它们按原样发出，路径上没有任何编解码器。其余一切都遵循平常的规则：给它
+`#[derive(Outgoing)]`，再像任何模型一样列进
 `#[publishes(..)]`。文档会用它自己的名字收录它（不带载荷 schema - 字节本身就是格式），目的地取自
 类型的声明，而词典、声明的消息集合和消息头位置对它的把关与对编码模型完全一致。
 

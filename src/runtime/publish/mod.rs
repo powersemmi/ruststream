@@ -109,10 +109,10 @@ mod transform;
 mod wiring;
 
 pub use builder::{
-    BoundSegment, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody, MessageWire,
-    MissingSegment, PublishAt, PublishBuilder, PublishError, PublishHeaders, ResolvedName,
-    SatisfiesContract, Serialized, SerializedWire, SuppliedName, TemplateAddress, TypedHeaders,
-    WireBytes, WirePayload,
+    BoundSegment, EncodeOutcome, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
+    MessageWire, MissingSegment, PayloadError, PublishAt, PublishBuilder, PublishError,
+    PublishHeaders, ResolvedName, SatisfiesContract, SerializePayloadError, Serialized,
+    SerializedWire, SuppliedName, TemplateAddress, TypedHeaders, WirePayload,
 };
 pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;

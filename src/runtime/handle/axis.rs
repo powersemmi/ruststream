@@ -129,6 +129,28 @@ pub trait Deserialized: Sized {
     fn from_payload(payload: &[u8]) -> Result<Self::Output<'_>, Self::Error>;
 }
 
+/// What a `#[wire(decode = ..)]` function returns, with its error erased so the derive need not
+/// name a type it cannot see. Machinery behind the derive.
+///
+/// Only the fallible shape is admitted, which every self-describing format's reader has anyway:
+/// a bare `T` and `Result<T, E>` overlap the moment the decoded type is itself a result, so the
+/// two cannot both be accepted.
+#[doc(hidden)]
+pub trait DecodeOutcome<T> {
+    /// Normalizes the outcome into an erased construction failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the format's own error, boxed.
+    fn finish(self) -> Result<T, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+impl<T, E: std::error::Error + Send + Sync + 'static> DecodeOutcome<T> for Result<T, E> {
+    fn finish(self) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+        self.map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
+    }
+}
+
 /// A [`Handle`](super::Handle) input spelling: a decoded `T`, a [`Deserialized`] type, a
 /// [`Message<H, P>`](Message) pair, or a batch (slice) of any of them.
 #[diagnostic::on_unimplemented(

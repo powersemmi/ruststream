@@ -5,10 +5,12 @@
 //! that every spelling MOUNTS, so they must build wherever this module does - and the harness
 //! lives behind the `testing` feature this module's gate deliberately leaves out.
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
 
 use serde::{Deserialize, Serialize};
 
+use crate::BytesMut;
 use crate::codec::JsonCodec;
 use crate::memory::{
     MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
@@ -34,7 +36,7 @@ struct Frame<'a>(&'a [u8]);
 
 impl Deserialized for Frame<'_> {
     type Output<'a> = Frame<'a>;
-    type Error = core::convert::Infallible;
+    type Error = Infallible;
 
     fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
         Ok(Frame(payload))
@@ -49,8 +51,10 @@ impl Input for Frame<'_> {
 struct Export(Vec<u8>);
 
 impl Serialized for Export {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 

@@ -1,0 +1,20 @@
+error[E0271]: type mismatch resolving `<Archived as MessageWire>::Wire == EncodedWire`
+  --> tests/ui/publish_codec_on_serialized.rs:36:10
+   |
+36 |         .with_codec(JsonCodec)
+   |          ^^^^^^^^^^ type mismatch resolving `<Archived as MessageWire>::Wire == EncodedWire`
+   |
+note: expected this to be `EncodedWire`
+  --> tests/ui/publish_codec_on_serialized.rs:10:20
+   |
+10 | #[derive(Outgoing, Serialized)]
+   |                    ^^^^^^^^^^
+note: required by a bound in `PublishBuilder::<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest>::with_codec`
+  --> src/runtime/publish/builder.rs
+   |
+   |     pub fn with_codec<C: Codec>(
+   |            ---------- required by a bound in this associated function
+...
+   |         T: MessageWire<Wire = EncodedWire>,
+   |                        ^^^^^^^^^^^^^^^^^^ required by this bound in `PublishBuilder::<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest>::with_codec`
+   = note: this error originates in the derive macro `Serialized` (in Nightly builds, run with -Z macro-backtrace for more info)

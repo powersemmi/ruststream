@@ -63,6 +63,13 @@ mod typed_headers;
 #[doc(hidden)]
 pub use inventory;
 
+/// The buffer the crate's byte-producing surfaces speak: what a [`Codec`](codec::Codec) returns
+/// and what a [`Serialized`](runtime::Serialized) value writes into.
+///
+/// Re-exported so that implementing either trait does not also mean depending on `bytes`
+/// directly; a service that already does keeps its own import, which shadows this one.
+pub use bytes::BytesMut;
+
 pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{

@@ -57,9 +57,9 @@ pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
-    Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DocState, Docs,
-    HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDocs, ProbedReplyDef, ReplyValue,
-    Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DecodeOutcome, DocState,
+    Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDocs, ProbedReplyDef,
+    ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,
@@ -96,9 +96,9 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[doc(hidden)]
 pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, Direct,
-    InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, PublishingDirectly,
-    RawReplyWiring, ReplyPublisher, ReplyWiring, Transactional, TransactionalReply, TypedPublisher,
-    WireBytes, WirePayload,
+    EncodeOutcome, InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, PayloadError,
+    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, Transactional,
+    TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
@@ -108,8 +108,9 @@ pub use publish::{
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
     PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
     PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
-    SatisfiesContract, SerializedWire, SuppliedName, TemplateAddress, TransactionPublishError,
-    TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec, for_batch,
+    SatisfiesContract, SerializePayloadError, SerializedWire, SuppliedName, TemplateAddress,
+    TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec,
+    for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.

@@ -26,8 +26,10 @@ const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
 struct Wire(Vec<u8>);
 
 impl Serialized for Wire {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 
@@ -121,8 +123,10 @@ async fn raw_handler_receives_exact_bytes() {
 struct Export(Vec<u8>);
 
 impl Serialized for Export {
-    fn bytes(&self) -> &[u8] {
-        &self.0
+    type Error = Infallible;
+
+    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+        Ok(&self.0)
     }
 }
 

@@ -11,6 +11,7 @@
 
 use std::future::Future;
 
+use bytes::BytesMut;
 use serde::Serialize;
 use tracing::warn;
 
@@ -156,7 +157,9 @@ where
     Pipeline: Send + Sync,
     Bare: Publisher,
 {
-    type Error = Bare::Error;
+    // Erased, because two unrelated failures reach this point: the reply's own encoder and the
+    // publisher. The axis only ever reports its error, so nothing downstream matches on it.
+    type Error = Box<dyn std::error::Error + Send + Sync>;
 
     async fn deliver(
         &self,
@@ -165,8 +168,13 @@ where
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
-        self.publish(OutgoingMessage::new(name, reply.bytes()))
+        // `BytesMut::new` does not allocate, so a reply that already holds its bytes lends them
+        // and leaves this buffer untouched.
+        let mut buf = BytesMut::new();
+        let payload = reply.wire_bytes(&mut buf)?;
+        self.publish(OutgoingMessage::new(name, payload))
             .await
+            .map_err(Into::into)
     }
 }
 

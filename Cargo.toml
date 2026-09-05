@@ -37,6 +37,12 @@ required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging
 name = "quickstart"
 required-features = ["macros", "memory", "json"]
 
+# No codec feature in the list, and none missing: the message serializes itself, so the whole
+# service builds with the codec layer switched off.
+[[example]]
+name = "protobuf"
+required-features = ["macros", "memory"]
+
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
 # hand-written path stands on its own.
@@ -44,6 +50,13 @@ required-features = ["macros", "memory", "json"]
 name = "manual_quickstart"
 path = "examples/manual/quickstart.rs"
 required-features = ["memory", "json"]
+
+# The counterpart of `protobuf` with the derives written out: no codec feature, and no `macros`
+# either, which is what shows the lanes are public traits rather than macro-only sugar.
+[[example]]
+name = "manual_protobuf"
+path = "examples/manual/protobuf.rs"
+required-features = ["memory"]
 
 [[example]]
 name = "manual_tutorial"
@@ -497,6 +510,11 @@ schemars = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 axum = "0.8"
 trybuild = "1"
+# The one real generator behind `#[wire(prost)]`. It is a dev-dependency and nothing else: the
+# shorthand expands to paths in this crate, so the only way to know the expansion type-checks
+# against the real trait is to compile a message against it. No `prost-build` and no `protoc`:
+# the test writes out what a generator's `message_attribute` config would have emitted.
+prost = "0.14"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
 

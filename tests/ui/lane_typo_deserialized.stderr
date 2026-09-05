@@ -1,4 +1,4 @@
-error: #[derive(Deserialized)] covers a struct over the payload view `&'a [u8]`; a validating or converting construction implements `Deserialized` (and the `Input` spelling) by hand - see the trait's rustdoc
+error: #[derive(Deserialized)] covers a struct over the payload view `&'a [u8]`; a type that deserializes itself declares `#[wire(decode = <path>)]`, and any other construction implements `Deserialized` (and the `Input` spelling) by hand - see the trait's rustdoc
  --> tests/ui/lane_typo_deserialized.rs:7:9
   |
 7 |     id: u64,

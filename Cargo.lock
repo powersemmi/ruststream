@@ -998,6 +998,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "prometheus",
+ "prost",
  "rmp-serde",
  "ruststream-macros",
  "schemars",
