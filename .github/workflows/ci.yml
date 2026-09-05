@@ -445,6 +445,16 @@ jobs:
           # package discovery never parses its placeholder name. Assert that cargo-generate did
           # drop the suffix, otherwise the append below would quietly write a manifest of its own.
           test -f "$RUNNER_TEMP/smoke/Cargo.toml"
+          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
+          # Cargo keeps pre-releases out of a range that does not name one. So while the
+          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
+          # Point the rendered copy at the version actually being built; the template keeps the
+          # requirement a user writes for the release it targets.
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "ruststream") | .version')
+          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
+            "$RUNNER_TEMP/smoke/Cargo.toml"
+          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
           {
             echo ""
             echo "[patch.crates-io]"
