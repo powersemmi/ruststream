@@ -1,0 +1,699 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/benchmarks/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/benchmarks/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/reference/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/reference/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/reference/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/reference/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/broker-authors/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/broker-authors/conformance/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/conformance/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/broker-authors/example-nats/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/example-nats/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/broker-authors/templates/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/templates/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/brokers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/brokers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/brokers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/brokers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/brokers/memory/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/brokers/memory/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/getting-started/installation/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/installation/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/getting-started/quickstart/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/quickstart/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/getting-started/tutorial/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/tutorial/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/asyncapi/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/asyncapi/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/cli/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/cli/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/codecs/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/codecs/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/context/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/context/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/failure-policy/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/failure-policy/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/headers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/headers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/http/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/http/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/lifespan/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/lifespan/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/logging/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/logging/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/metrics/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/metrics/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/middleware/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/middleware/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/opentelemetry/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/opentelemetry/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/publishing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/publishing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/routing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/routing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/subscribers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/subscribers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/testing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/testing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/guides/transactional-outbox/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7/guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/transactional-outbox/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/benchmarks/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/benchmarks/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/reference/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/reference/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7reference/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/reference/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/conformance/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/conformance/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/example-nats/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/example-nats/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/templates/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/broker-authors/templates/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/brokers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/brokers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7brokers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/brokers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/brokers/memory/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/brokers/memory/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/getting-started/installation/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/installation/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/getting-started/quickstart/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/quickstart/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/getting-started/tutorial/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/getting-started/tutorial/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/asyncapi/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/asyncapi/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/cli/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/cli/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/codecs/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/codecs/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/context/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/context/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/failure-policy/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/failure-policy/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/headers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/headers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/http/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/http/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/lifespan/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/lifespan/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/logging/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/logging/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/metrics/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/metrics/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/middleware/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/middleware/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/opentelemetry/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/opentelemetry/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/publishing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/publishing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/routing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/routing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/subscribers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/subscribers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/testing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/testing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/ru/guides/transactional-outbox/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7/ru/guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7zh/guides/transactional-outbox/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/benchmarks/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7benchmarks/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/benchmarks/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/reference/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/reference/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7reference/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/reference/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/conformance/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/conformance/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/conformance/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/example-nats/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/example-nats/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/example-nats/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/templates/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7broker-authors/templates/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/broker-authors/templates/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/brokers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/brokers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7brokers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/brokers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/brokers/memory/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7brokers/memory/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/brokers/memory/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/getting-started/installation/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/installation/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/installation/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/getting-started/quickstart/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/quickstart/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/getting-started/tutorial/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7getting-started/tutorial/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/getting-started/tutorial/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/asyncapi/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/asyncapi/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/asyncapi/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/cli/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/cli/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/cli/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/codecs/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/codecs/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/codecs/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/context/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/context/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/context/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/failure-policy/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/failure-policy/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/failure-policy/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/headers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/headers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/headers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/http/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/http/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/http/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/lifespan/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/lifespan/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/lifespan/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/logging/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/logging/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/logging/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/metrics/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/metrics/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/metrics/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/middleware/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/middleware/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/middleware/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/opentelemetry/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/opentelemetry/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/opentelemetry/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/publishing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/publishing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/publishing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/routing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/routing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/routing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/subscribers/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/subscribers/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/subscribers/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/testing/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/testing/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/testing/"/>
+    </url>
+    <url>
+        <loc>https://powersemmi.github.io/ruststream/0.7/zh/guides/transactional-outbox/</loc>
+        <lastmod>2026-09-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://powersemmi.github.io/ruststream/0.7/zh/guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://powersemmi.github.io/ruststream/0.7guides/transactional-outbox/"/>
+        <xhtml:link rel="alternate" hreflang="ru" href="https://powersemmi.github.io/ruststream/0.7ru/guides/transactional-outbox/"/>
+    </url>
+</urlset>

@@ -1,0 +1,5 @@
+# Documentation toolchain. Install with `pip install -r docs/requirements.txt`,
+# then serve locally with `mkdocs serve`.
+mkdocs-material>=9.5
+pymdown-extensions>=10.7
+mike>=2.1

@@ -1,0 +1,3097 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Async messaging framework for Rust - broker-agnostic traits, router, codecs, and a conformance harness for broker authors.">
+      
+      
+      
+        <link rel="canonical" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/">
+      
+      
+        <link rel="prev" href="../benchmarks/">
+      
+      
+        <link rel="next" href="example-nats/">
+      
+      
+        
+          <link rel="alternate" href="../../broker-authors/" hreflang="en">
+        
+          <link rel="alternate" href="../../ru/broker-authors/" hreflang="ru">
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>编写一个 Broker - RustStream</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#编写一个-broker" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../" title="RustStream" class="md-header__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RustStream
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              编写一个 Broker
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../broker-authors/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../ru/broker-authors/" hreflang="ru" class="md-select__link">
+              Russian
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              Chinese
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/powersemmi/ruststream" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../" title="RustStream" class="md-nav__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    RustStream
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/powersemmi/ruststream" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速开始
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    快速开始
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安装
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速上手
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    教程：构建你的第一个服务
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    编写服务
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    编写服务
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/subscribers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    订阅者
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    发布与回复
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    路由
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/codecs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    编解码器与序列化
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/context/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    上下文与状态
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/headers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    类型化消息头
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/lifespan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    生命周期与共享状态
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/middleware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    中间件
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/failure-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    失败策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    集成
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    集成
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/http/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP 框架
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/transactional-outbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    事务性 outbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可观测性
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    可观测性
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    日志
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/opentelemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenTelemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/asyncapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AsyncAPI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    测试
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLI
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../brokers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Broker
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../brokers/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    内存 Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-fred/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Redis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-lapin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RabbitMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rdkafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-amqp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AMQP 1.0
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-gcp-pubsub/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google Cloud Pub/Sub
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sqs-sns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS SQS / SNS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-pulsar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Pulsar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rumqttc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MQTT 5
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-zeromq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ZeroMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sea-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stream files / stdio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-kinesis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Kinesis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    基准测试
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="./" class="md-nav__link md-nav__link--active">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker authors
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_10" id="__nav_10_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Broker authors
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="example-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实例讲解：一个 NATS Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    模板契约
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#必需的-trait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必需的 trait
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="必需的 trait">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#broker-与-connectedbroker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broker 与 ConnectedBroker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subscribe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subscribe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subscriber" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subscriber
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incomingmessage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IncomingMessage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publisher" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publisher
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publishpolicy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PublishPolicy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subscription-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        订阅来源
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="订阅来源">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#用一个字符串命名一种订阅方式" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用一个字符串命名一种订阅方式
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#用你自己的词汇表达配置" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用你自己的词汇表达配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#用你自己的词汇表达发布者配置" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用你自己的词汇表达发布者配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#能力-trait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        能力 trait
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="能力 trait">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#batches-batchsubscriber" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        批次：BatchSubscriber
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broker-prelude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        你的 crate 要提供的 prelude
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#扩展-out-槽位的词汇" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        扩展 Out 槽位的词汇
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#你这个-crate-的-prelude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        你这个 crate 的 prelude
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#单条投递的上下文与-ctx-键" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        单条投递的上下文与 Ctx 键
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#middleware-on-the-async-edges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        异步边界上的中间件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#配置与默认值" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置与默认值
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#错误" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        错误
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        测试支持
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/powersemmi/ruststream/edit/main/docs/zh/broker-authors/index.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="编写一个-broker">编写一个 Broker<a class="headerlink" href="#编写一个-broker" title="Permanent link">&para;</a></h1>
+<div class="admonition info i18n-banner">
+<p class="admonition-title">英文版本为准</p>
+<p>本页译自英文，由模型翻译。若与<a href="../../broker-authors/">英文原文</a>存在差异，以英文原文为准。</p>
+</div>
+
+<p>Broker 是一个实现了核心 trait 的独立 crate。它以关闭默认 feature 的方式依赖 <code>ruststream</code>，因此只引入
+trait 接口和运行时，既不会带上自带的 JSON 编解码器，也不会带上任何别的 Broker：</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[dependencies]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">ruststream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"0.7"</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>本页就是这份契约。实现必需的 trait，暴露你自己的 <code>Config</code>，为你的 Broker 支持的功能补上能力 trait，
+然后用 <a href="conformance/">conformance 校验套件</a>证明结果。想看一份基于真实客户端的完整实现，参见
+<a href="example-nats/">NATS 完整示例</a>。</p>
+<h2 id="必需的-trait">必需的 trait<a class="headerlink" href="#必需的-trait" title="Permanent link">&para;</a></h2>
+<h3 id="broker-与-connectedbroker"><code>Broker</code> 与 <code>ConnectedBroker</code><a class="headerlink" href="#broker-与-connectedbroker" title="Permanent link">&para;</a></h3>
+<p>Broker 只负责生命周期，而生命周期是一串消费 <code>self</code> 的状态转移：每个状态都是不同的类型，因此顺序错乱的
+调用无法通过编译。Broker 本身既不携带订阅者类型，也不携带发布者类型，所以同一个应用里可以混用不同种类
+的 Broker。</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Broker</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sized</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Error</span><span class="p">:</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">error</span><span class="p">::</span><span class="n">Error</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Connected</span><span class="p">:</span><span class="w"> </span><span class="nc">ConnectedBroker</span><span class="p">;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Connected</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">ConnectedBroker</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sized</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Error</span><span class="p">:</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">error</span><span class="p">::</span><span class="n">Error</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">;</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Closed</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="p">;</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">shutdown</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Closed</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>shutdown</code> 不得阻塞，也不得 panic；所有可失败的拆解工作都在这里做完，并返回一个 <code>Result</code>。<code>Closed</code>
+见证值没有任何发布或订阅接口；把拆解过程的诊断信息（flush 结果、丢弃计数）当作普通数据放进去，或者
+直接用 <code>()</code>。</p>
+<p>构造过程是<strong>同步且不做 I/O 的</strong>：<code>new(addrs)</code> 只记录配置，所有网络工作都发生在 <code>connect</code> 里（由运行时
+在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
+Broker 还可以额外保留一个由 <code>connect</code> 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
+状态），这样在应用还在组装、<code>connect</code> 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
+句柄，而不是已连接形态。<a href="conformance/">conformance 校验套件</a>会端到端地证明这道阶梯，而
+<a href="example-nats/">NATS 示例</a>在一个真实客户端上把整道阶梯走了一遍。</p>
+<p>在一个已经关闭的 Broker 上，根本没有发布或订阅方法可调用，所以持有者一侧的误用通不过编译。别名仍是
+一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
+使用时必须报错，绝不能在一条已死的连接上悄悄地返回成功。生命周期检查同样会走到这条路径。</p>
+<h3 id="subscribe"><code>Subscribe</code><a class="headerlink" href="#subscribe" title="Permanent link">&para;</a></h3>
+<p>在已连接形态上实现 <code>Subscribe</code>，即可支持按名字订阅。<code>#[subscriber("name")]</code> 用的就是它。</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Subscribe</span><span class="p">:</span><span class="w"> </span><span class="nc">ConnectedBroker</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Subscriber</span><span class="p">:</span><span class="w"> </span><span class="nc">Subscriber</span><span class="p">;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">subscribe</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Subscriber</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="subscriber"><code>Subscriber</code><a class="headerlink" href="#subscriber" title="Permanent link">&para;</a></h3>
+<p>订阅者是一个由到达消息组成的 <code>Stream</code>。背压由流天然提供。</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Subscriber</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Message</span><span class="p">:</span><span class="w"> </span><span class="nc">IncomingMessage</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Error</span><span class="p">:</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">error</span><span class="p">::</span><span class="n">Error</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">stream</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="n">Stream</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Message</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">_</span><span class="p">;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>stream</code> 取的是 <code>&amp;mut self</code>，因此两次 poll 之间缓冲的状态都存放在该可变借用之后，
+从而保证了它的取消安全。</p>
+<h3 id="incomingmessage"><code>IncomingMessage</code><a class="headerlink" href="#incomingmessage" title="Permanent link">&para;</a></h3>
+<p>一条投递到的消息会暴露自己的载荷和消息头，并以 ack 或 nack 结算。ack 会消费 <code>self</code>，因此两次 ack 是
+编译错误。</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">IncomingMessage</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">payload</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[</span><span class="kt">u8</span><span class="p">];</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">headers</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">HeaderMap</span><span class="p">;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">ack</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">AckError</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">nack</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">requeue</span><span class="p">:</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">AckError</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="c1">// Defaulted: a plain nack(true). Override when the transport has native</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="c1">// delayed redelivery (JetStream NAK with delay); handlers reach it through</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="c1">// HandlerOutcome::retry_after.</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">nack_after</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">delay</span><span class="p">:</span><span class="w"> </span><span class="nc">Duration</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">AckError</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="c1">// Defaulted: None. Override (with the Partitioned capability) to feed the</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="c1">// runtime's keyed worker lanes, workers(n, by_key).</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">partition_key</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;&amp;</span><span class="p">[</span><span class="kt">u8</span><span class="p">]</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>这两个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能：<code>retry_after</code> 退回为立即
+重新入队，按键分道则会轮转那些没有键的消息。</p>
+<h3 id="publisher"><code>Publisher</code><a class="headerlink" href="#publisher" title="Permanent link">&para;</a></h3>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Publisher</span><span class="p">:</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Error</span><span class="p">:</span><span class="w"> </span><span class="nc">std</span><span class="p">::</span><span class="n">error</span><span class="p">::</span><span class="n">Error</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">publish</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span><span class="p">:</span><span class="w"> </span><span class="nc">OutgoingMessage</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="sd">/// 带默认实现：这个发布者垫在每次发布下面的消息头。</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">base_headers</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;&amp;</span><span class="n">HeaderMap</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">None</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>OutgoingMessage</code> 借用自己的名字和载荷，因此发布不会强制带来一次分配。</p>
+<p>这是发布接口，而不是服务代码要写的那一个：应用通过构建器发布
+（<code>publisher.message(&amp;value).publish()</code>），由构建器解析目的地、编解码器（在这条线需要它的时候）
+和消息头，然后恰好调用一次该方法。实现 <code>publish</code>，整个构建器就随之而来；没有别的
+东西要提供。</p>
+<p>一个为一整串消息携带同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），
+应当把该参数从 <code>base_headers</code> 返回，而不是在 <code>publish</code> 内部写进消息里。构建器会以这层底作为出站
+映射的起点，再把调用点的消息头逐个键覆盖上去，因此调用点取胜（参见
+<a href="../guides/publishing/#where-the-headers-come-from">消息头从哪里来</a>）。<code>Transaction</code> 上有同样带
+默认实现的方法，因此从这样的发布者开启的事务行为完全一致。没有东西要补的发布者两个都不必实现。</p>
+<h3 id="publishpolicy"><code>PublishPolicy</code><a class="headerlink" href="#publishpolicy" title="Permanent link">&para;</a></h3>
+<p>Broker 的发布者是一份策略（一个 exchange、一个队列超时、一个事务 id）加上活连接的组合。就沿着这条缝
+把它拆开：提供一个可以随处构造的<strong>策略</strong>类型，它只带构建器选项，不带任何发布接口；再实现
+<code>PublishPolicy</code>，把它与已连接形态配对成活的发布者。对那些在发布者激活时要真干活的 Broker（初始化
+一个事务性 producer），配对是异步且可失败的；对大多数 Broker 而言，它只是一次廉价的构造调用。</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">PublishPolicy</span><span class="o">&lt;</span><span class="n">C</span><span class="p">:</span><span class="w"> </span><span class="nc">ConnectedBroker</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Live</span><span class="p">;</span><span class="w"> </span><span class="c1">// the live publisher (or live wiring form, for combinator stacks)</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">pair</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">connected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">C</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Live</span><span class="p">,</span><span class="w"> </span><span class="n">PairError</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
+</code></pre></div>
+<p>这里的错误类型是做了类型擦除的 <code>PairError</code>：用 <code>PairError::new</code> 包住你的 Broker 的失败。配对在启动时
+对每个发布者只做一次，绝不出现在热路径上。</p>
+<p>为每一种真正意义上的发布<strong>模式</strong>提供一对策略与活形态，并且让模式的选择成为策略类型之间的转移，而不是
+一个运行时标志：普通策略配对出普通的发布者，而 <code>transactional_id(..)</code> 这一步构建器调用会转移到另一个
+独立的事务性策略类型，其活形态实现 <code>TransactionalPublisher</code>，于是普通发布者上压根没有事务接口。内存
+Broker 的 <code>MemoryPublish</code> / <code>MemoryRequest</code> 是最小的参考实现（没有选项，所以它们是单元标记类型）；
+核心提供的类型化组合子以函子的方式实现 <code>PublishPolicy</code>，于是用户可以在你的策略配对之前，在它之上
+组合编解码器和变换。</p>
+<p>如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 <code>DefaultPublish</code> 来指明它。随后，
+挂载一个不带显式 <code>.out(Reply, ..)</code> 的 <code>publish("dest")</code> 处理器时，运行时就会构造出默认的回复发布者：
+只写 <code>b.include(def)</code> 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
+注册时附上一个策略。</p>
+<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">DefaultPublish</span><span class="p">:</span><span class="w"> </span><span class="nc">ConnectedBroker</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Policy</span><span class="p">:</span><span class="w"> </span><span class="nc">PublishPolicy</span><span class="o">&lt;</span><span class="bp">Self</span><span class="o">&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Default</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="subscription-sources">订阅来源<a class="headerlink" href="#subscription-sources" title="Permanent link">&para;</a></h2>
+<p><code>Subscribe</code> 覆盖的是按名字订阅的情形。当一次订阅需要 Broker 专有的选项（一个消费者组、一个持久化名称、
+一份投递策略）时，就暴露一个实现了 <code>SubscriptionSource</code> 的描述符类型：</p>
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">SubscriptionSource</span><span class="o">&lt;</span><span class="n">C</span><span class="p">:</span><span class="w"> </span><span class="nc">ConnectedBroker</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Subscriber</span><span class="p">:</span><span class="w"> </span><span class="nc">Subscriber</span><span class="p">;</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">;</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">subscribe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">connected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">C</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="n">Future</span><span class="o">&lt;</span><span class="n">Output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Subscriber</span><span class="p">,</span><span class="w"> </span><span class="n">C</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="p">;</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>给描述符配一个关联构造函数（<code>OrdersStream::new(..)</code>），而不是一个自由函数，这样用户就能在属性里直接
+写出它的名字：<code>#[subscriber(OrdersStream::new("orders", "workers"))]</code>。宏会从这次构造调用里读出类型，
+并且只要每个方法都返回 <code>Self</code>，也接受在它之上的构建器链式调用
+（<code>#[subscriber(OrdersStream::new("orders").durable("workers"))]</code>）。由于 <code>type Subscriber</code> 定义在源
+上，一个 Broker 可以提供多种订阅方式（pub/sub 与流），各带不同的订阅者类型；也可以像
+<a href="example-nats/">NATS 示例</a>那样，用一个在内部分支的描述符把它们全部承载起来。</p>
+<p>给描述符派生 <code>Clone</code>：它是配置，挂载点会为每次注册重新构造它，这样同一个定义可以挂到两个 Broker 上。</p>
+<h3 id="用一个字符串命名一种订阅方式">用一个字符串命名一种订阅方式<a class="headerlink" href="#用一个字符串命名一种订阅方式" title="Permanent link">&para;</a></h3>
+<p>如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 <code>FromName</code>，其唯一的构造函数用该名字把
+它构造出来：</p>
+<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">impl</span><span class="w"> </span><span class="n">FromName</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">OrdersStream</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">from_name</span><span class="p">(</span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="n">Cow</span><span class="o">&lt;'</span><span class="nb">static</span><span class="p">,</span><span class="w"> </span><span class="kt">str</span><span class="o">&gt;&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">        </span><span class="bp">Self</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>于是 <code>#[subscriber(OrdersStream)]</code> 就合法了：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
+需要不止一个名字才能成立（既要一个主题，<em>又</em>要一个订阅名），它就不实现 <code>FromName</code>，于是这种写法对它
+无法通过编译。</p>
+<h3 id="用你自己的词汇表达配置">用你自己的词汇表达配置<a class="headerlink" href="#用你自己的词汇表达配置" title="Permanent link">&para;</a></h3>
+<p>核心无从知道一次订阅还有流、持久化名称或消费者组这些东西，所以它只暴露一个钩子：<code>map_source</code>，一个作用在
+挂载点正在构造的源之上的变换；而你的 crate 在它之上叠加自己的 trait，并约束到你自己的源类型：</p>
+<!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">runtime</span><span class="p">::{</span><span class="n">Declared</span><span class="p">,</span><span class="w"> </span><span class="n">SubscriberBuilder</span><span class="p">,</span><span class="w"> </span><span class="n">SubscriberSettings</span><span class="p">};</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">NatsSubscriber</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">jetstream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">;</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">durable</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">;</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">}</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="c1">// 四个状态槽位依次是（工作者、失败策略、起始位置、批次大小）；`Codec` 是这次注册自己的解码覆盖，</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1">// 在没人指定之前是 `()`。两者都原样传递下去。</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">Def</span><span class="p">,</span><span class="w"> </span><span class="n">Workers</span><span class="p">,</span><span class="w"> </span><span class="n">Failures</span><span class="p">,</span><span class="w"> </span><span class="n">StartPosition</span><span class="p">,</span><span class="w"> </span><span class="n">Batch</span><span class="p">,</span><span class="w"> </span><span class="n">Codec</span><span class="o">&gt;</span><span class="w"> </span><span class="n">NatsSubscriber</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">SubscriberBuilder</span><span class="o">&lt;</span><span class="n">Def</span><span class="p">,</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">Workers</span><span class="p">,</span><span class="w"> </span><span class="n">Failures</span><span class="p">,</span><span class="w"> </span><span class="n">StartPosition</span><span class="p">,</span><span class="w"> </span><span class="n">Batch</span><span class="p">),</span><span class="w"> </span><span class="n">Codec</span><span class="o">&gt;</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="k">where</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="n">Def</span><span class="p">:</span><span class="w"> </span><span class="nc">Declared</span><span class="p">,</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="p">{</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">jetstream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_source</span><span class="p">(</span><span class="o">|</span><span class="n">source</span><span class="o">|</span><span class="w"> </span><span class="n">source</span><span class="p">.</span><span class="n">jetstream</span><span class="p">(</span><span class="n">stream</span><span class="p">))</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">durable</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_source</span><span class="p">(</span><span class="o">|</span><span class="n">source</span><span class="o">|</span><span class="w"> </span><span class="n">source</span><span class="p">.</span><span class="n">durable</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="p">}</span>
+</code></pre></div>
+<p>对源类型的 trait 约束意味着，这些方法在别的 Broker 的构建器上根本不存在。用户像用任何扩展 trait
+那样导入它，就能用到这些方法。下文中 <code>Out</code> 槽位的词汇采用的也是同一种扩展形态。</p>
+<p>有一项核心设定改变的不是状态槽位，而是源类型本身：<code>start_at(..)</code> 会把描述符包进
+<code>StartAt&lt;SubscribeOptions, Position&gt;</code>，于是恰恰在那些指定了起始位置的订阅上，你的方法不再在作用域
+里。为这种情形再写一个针对被包装源的 impl。<code>StartAt::map_inner</code> 能够到里面的描述符，并原样交还位置，
+所以每个方法仍旧只有一行：</p>
+<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">StartAt</span><span class="p">;</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">runtime</span><span class="p">::</span><span class="n">Fixed</span><span class="p">;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1">// 这里起始位置槽位按构造必然是 `Fixed` - 这个包装正是 `start_at(..)` 造出来的 - 而且源类型也</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">// 不同，所以这个 impl 与上面那个永远不会重叠。</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">Def</span><span class="p">,</span><span class="w"> </span><span class="n">Workers</span><span class="p">,</span><span class="w"> </span><span class="n">Failures</span><span class="p">,</span><span class="w"> </span><span class="n">Batch</span><span class="p">,</span><span class="w"> </span><span class="n">Codec</span><span class="p">,</span><span class="w"> </span><span class="n">Position</span><span class="o">&gt;</span><span class="w"> </span><span class="n">NatsSubscriber</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">SubscriberBuilder</span><span class="o">&lt;</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">        </span><span class="n">Def</span><span class="p">,</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">        </span><span class="n">StartAt</span><span class="o">&lt;</span><span class="n">SubscribeOptions</span><span class="p">,</span><span class="w"> </span><span class="n">Position</span><span class="o">&gt;</span><span class="p">,</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">        </span><span class="p">(</span><span class="n">Workers</span><span class="p">,</span><span class="w"> </span><span class="n">Failures</span><span class="p">,</span><span class="w"> </span><span class="n">Fixed</span><span class="p">,</span><span class="w"> </span><span class="n">Batch</span><span class="p">),</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">        </span><span class="n">Codec</span><span class="p">,</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">    </span><span class="o">&gt;</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="k">where</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">    </span><span class="n">Def</span><span class="p">:</span><span class="w"> </span><span class="nc">Declared</span><span class="p">,</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="p">{</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">jetstream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">stream</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_source</span><span class="p">(</span><span class="o">|</span><span class="n">source</span><span class="o">|</span><span class="w"> </span><span class="n">source</span><span class="p">.</span><span class="n">map_inner</span><span class="p">(</span><span class="o">|</span><span class="n">inner</span><span class="o">|</span><span class="w"> </span><span class="n">inner</span><span class="p">.</span><span class="n">jetstream</span><span class="p">(</span><span class="n">stream</span><span class="p">)))</span>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">durable</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_source</span><span class="p">(</span><span class="o">|</span><span class="n">source</span><span class="o">|</span><span class="w"> </span><span class="n">source</span><span class="p">.</span><span class="n">map_inner</span><span class="p">(</span><span class="o">|</span><span class="n">inner</span><span class="o">|</span><span class="w"> </span><span class="n">inner</span><span class="p">.</span><span class="n">durable</span><span class="p">(</span><span class="n">name</span><span class="p">)))</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="用你自己的词汇表达发布者配置">用你自己的词汇表达发布者配置<a class="headerlink" href="#用你自己的词汇表达发布者配置" title="Permanent link">&para;</a></h3>
+<p>发布这一侧是对称的。挂载点用 <code>.out(marker, policy)</code> 指定发布策略 - <code>Reply</code> 对应带
+<code>publish("dest")</code> 的处理器返回的值，<code>Out</code> 槽位的标记对应槽位 - 而 <code>MapPublisher</code> 就是作用在该位置
+所持策略之上的钩子：</p>
+<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">runtime</span><span class="p">::</span><span class="n">MapPublisher</span><span class="p">;</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">NatsPublish</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">stream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">;</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">expect_last_sequence</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">seq</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">;</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="p">}</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="p">:</span><span class="w"> </span><span class="nc">MapPublisher</span><span class="o">&lt;</span><span class="n">Policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Publish</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">NatsPublish</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">stream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_publisher</span><span class="p">(</span><span class="o">|</span><span class="n">policy</span><span class="o">|</span><span class="w"> </span><span class="n">policy</span><span class="p">.</span><span class="n">stream</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">expect_last_sequence</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">seq</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">map_publisher</span><span class="p">(</span><span class="o">|</span><span class="n">policy</span><span class="o">|</span><span class="w"> </span><span class="n">policy</span><span class="p">.</span><span class="n">expect_last_sequence</span><span class="p">(</span><span class="n">seq</span><span class="p">))</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="p">}</span>
+</code></pre></div>
+<p>在服务里读起来是这样：</p>
+<!-- inline-rust: the call shape against the broker policy sketched above -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">b</span><span class="p">.</span><span class="n">include</span><span class="p">(</span><span class="n">confirm</span><span class="p">).</span><span class="n">out</span><span class="p">(</span><span class="n">Reply</span><span class="p">,</span><span class="w"> </span><span class="n">Publish</span><span class="p">).</span><span class="n">stream</span><span class="p">(</span><span class="s">"ORDERS"</span><span class="p">);</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">b</span><span class="p">.</span><span class="n">include</span><span class="p">(</span><span class="n">mirror</span><span class="p">).</span><span class="n">out</span><span class="p">(</span><span class="n">Audit</span><span class="p">,</span><span class="w"> </span><span class="n">Publish</span><span class="p">).</span><span class="n">stream</span><span class="p">(</span><span class="s">"AUDIT"</span><span class="p">).</span><span class="n">build</span><span class="p">();</span>
+</code></pre></div>
+<p>约束落在策略上而不是链上，所以一份实现就同时覆盖回复位置和每一个槽位，路由器和 Broker 作用域也一样。
+<code>map_publisher</code> 把策略替换成同一类型的策略，这正是发布者自身配置所产生的结果；换成另一种策略类型意味着
+另一种发布方式，那属于 <code>.out(marker, policy)</code> 调用本身。传入一个已经配置好的值
+（<code>.out(Reply, Publish::default().stream("ORDERS"))</code>）依然可行：这个钩子是符合工效的镜像，而不是替代。</p>
+<h2 id="能力-trait">能力 trait<a class="headerlink" href="#能力-trait" title="Permanent link">&para;</a></h2>
+<p>只实现你的 Broker 真正支持的能力；它们都不属于必需接口。最接近必需的是 <code>BatchSubscriber</code>：
+<a href="#batches-batchsubscriber">能提供的地方就提供它</a>，因为每个批量处理器都要它，而自身没有批量能力的
+传输照样可以在客户端攒批。</p>
+<table>
+<thead>
+<tr>
+<th>trait</th>
+<th>适用于支持这些能力的 Broker</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BatchSubscriber</code></td>
+<td>按批次接收消息（能提供就提供，见下文）</td>
+</tr>
+<tr>
+<td><code>TransactionalPublisher</code></td>
+<td>在句柄上围绕发布做 begin / commit / abort</td>
+</tr>
+<tr>
+<td><code>OwnedTransactions</code> / <code>Transaction</code></td>
+<td>缓冲区存放在值里的事务，同一个句柄上可同时开启任意多个</td>
+</tr>
+<tr>
+<td><code>RequestReply</code></td>
+<td>原生的请求-响应（NATS 有，Kafka 没有）</td>
+</tr>
+<tr>
+<td><code>Partitioned</code></td>
+<td>出站消息上的分区键</td>
+</tr>
+<tr>
+<td><code>Seekable</code> / <code>Seeker</code></td>
+<td>在可重放的日志中重新定位一个活的订阅</td>
+</tr>
+<tr>
+<td><code>Positioned</code></td>
+<td>能报告自身日志位置的投递</td>
+</tr>
+<tr>
+<td><code>DescribeServer</code></td>
+<td>为 AsyncAPI 报告一个 <code>ServerSpec</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>Seekable</code> 会在流借用订阅者之前铸出它的 <code>Seeker</code> 句柄，因此可以从分发循环之外重新定位一个正在运行的
+订阅。位置由 Broker 自己拥有（在你自己的类型上提供 <code>KafkaPosition</code> 风格的构造函数）。通过
+<code>Positioned::position</code> 从一条已投递消息上捕获的位置带有钉住的契约：定位到它会精确地重新投递那一条
+消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
+还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。要让处理器主体能够定位，就把投递
+位置和订阅的 seeker 作为你的投递上下文的字段携带，并为它们发布 <code>ContextField</code> 键：内存 Broker 的
+<code>MemoryContext</code> 及其 <code>Position</code> / <code>SeekHandle</code> 键就是范本。批量的那些写法通过下面的批量上下文拿到
+seeker，它只带句柄、不带位置。</p>
+<p>这些 trait 就是处理器主体所写的词汇。主体用它需要的那个能力来约束自己的槽位
+（<code>Out&lt;impl TransactionalPublisher, Journal&gt;</code>，手动路径上则是 <code>where W: TransactionalPublisher</code>），
+从不写你的任何类型；包含点会按这个约束把所绑定策略的活形态检查一次，在编译期完成。在四种发布者能力
+各自的约束之下，竞技场条目还会在包含点的编解码器和标记的字典之上给出该能力的类型化形态 - 发布构建
+器、事务作用域、拥有式事务、带关联的请求 - 所以服务要用到它们，只需你在实时发布者上实现该 trait。</p>
+<h3 id="batches-batchsubscriber">批次：<code>BatchSubscriber</code><a class="headerlink" href="#batches-batchsubscriber" title="Permanent link">&para;</a></h3>
+<p>接受 <code>&amp;[T]</code> 的处理器消费的是一个批次，而它的挂载点会给出一个数字 - 批次大小 - 运行时把它直接传给
+<code>BatchSubscriber::batches(size)</code>。你的订阅者交出的那个批次，就是处理器主体看到的那个批次：运行时
+既不拆分也不合并，因此一个批次绝不能超过 <code>size</code> 条消息；传输手上只有更少的消息时，它也可以更短。</p>
+<p>把 <code>size</code> 翻译成你的客户端本来就说的话：<code>XREADGROUP COUNT</code>、JetStream 的 pull 批次、Kafka 的 poll
+上限。一个批次是怎么攒出来的，其余部分 - 阻塞超时、消费者组、预取窗口 - 仍归你自己的词汇，通过你的设置
+扩展 trait 配置在订阅源上，于是服务写出来是
+<code>b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))</code>：核心的词在前，你的词在后。</p>
+<p>要把这项能力放到挂载能够到的每一个订阅者上，而不只是你自己的描述符打开的那一个。
+<code>#[subscriber("topic")]</code> 走的是 <code>Subscribe</code>，因此这种写法下的 <code>&amp;[T]</code> 主体要的是
+<code>Subscribe::Subscriber</code> 上的 <code>BatchSubscriber</code>；只把能力挂在自家描述符订阅者上的 crate，会让字符串
+字面量那种写法编译不过。两者是同一个类型时无事可做；类型不同时两边都得有。</p>
+<p>如果传输一次只投递一条消息，不要干脆不实现这项能力：用核心的 <code>BufferedSubscriber</code> 在客户端攒批次，
+它的 <code>batches</code> 会遵守拿到的批次大小。封住不满一个批次的那个截止时间由你选定，而且它不必是个常量：
+把它放到你的订阅描述符上（<code>.max_wait(Duration::from_millis(25))</code>），在订阅打开时交给包装器，这样
+服务就能逐个订阅去调。网络传输要的正是这个：10 ms 的默认值是照进程内总线定的，一旦中间隔着一次网络
+往返，它会把大多数批次封在一条投递上，所以把这个截止时间做成描述符选项的那些 Broker crate 落在
+10 到 50 ms 之间。批次大小则不由你选。订阅者的其余部分都原样穿过这层包装：</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/batch_subscriber.rs">tests/batch_subscriber.rs</a></span><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="sd">/// What a broker crate writes when its transport has no batches of its own: the subscriber it</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="sd">/// already has, wrapped in the core's client-side buffer, and `BatchSubscriber` delegated to it.</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="sd">/// The deadline that closes a partial batch is the broker's own choice; the batch size is not -</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="sd">/// it arrives per subscription, as the argument of `batches`.</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="k">struct</span><span class="w"> </span><span class="nc">TrickleSubscriber</span><span class="p">(</span><span class="n">BufferedSubscriber</span><span class="o">&lt;</span><span class="n">MemorySubscriber</span><span class="o">&gt;</span><span class="p">);</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="k">impl</span><span class="w"> </span><span class="n">TrickleSubscriber</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">new</span><span class="p">(</span><span class="n">inner</span><span class="p">:</span><span class="w"> </span><span class="nc">MemorySubscriber</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">        </span><span class="bp">Self</span><span class="p">(</span><span class="n">BufferedSubscriber</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">inner</span><span class="p">).</span><span class="n">max_wait</span><span class="p">(</span><span class="n">Duration</span><span class="p">::</span><span class="n">from_millis</span><span class="p">(</span><span class="mi">5</span><span class="p">)))</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="p">}</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="k">impl</span><span class="w"> </span><span class="n">Subscriber</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TrickleSubscriber</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Message</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">MemorySubscriber</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">Subscriber</span><span class="o">&gt;</span><span class="p">::</span><span class="n">Message</span><span class="p">;</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Error</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">MemorySubscriber</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">Subscriber</span><span class="o">&gt;</span><span class="p">::</span><span class="n">Error</span><span class="p">;</span>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">stream</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="n">Stream</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Message</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">_</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="mf">0.</span><span class="n">stream</span><span class="p">()</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="p">}</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="k">impl</span><span class="w"> </span><span class="n">BatchSubscriber</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TrickleSubscriber</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Batch</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;&lt;</span><span class="n">MemorySubscriber</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">Subscriber</span><span class="o">&gt;</span><span class="p">::</span><span class="n">Message</span><span class="o">&gt;</span><span class="p">;</span>
+<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a>
+<a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">batches</span><span class="p">(</span>
+<a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a><span class="w">        </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a><span class="w">        </span><span class="n">size</span><span class="p">:</span><span class="w"> </span><span class="nc">NonZeroUsize</span><span class="p">,</span>
+<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">impl</span><span class="w"> </span><span class="n">Stream</span><span class="o">&lt;</span><span class="n">Item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Batch</span><span class="p">,</span><span class="w"> </span><span class="bp">Self</span><span class="p">::</span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">_</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="mf">0.</span><span class="n">batches</span><span class="p">(</span><span class="n">size</span><span class="p">)</span>
+<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a><span class="p">}</span>
+<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a>
+<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a><span class="sd">/// Buffering does not move the subscription, so every other capability reaches through the</span>
+<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a><span class="sd">/// wrapper unchanged - here the seeker, which is what lets a batch subscription open at a</span>
+<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="sd">/// position even where the batches are assembled on the client.</span>
+<a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a><span class="k">impl</span><span class="w"> </span><span class="n">Seekable</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">TrickleSubscriber</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-37" name="__codelineno-14-37" href="#__codelineno-14-37"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Seeker</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">MemorySubscriber</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">Seekable</span><span class="o">&gt;</span><span class="p">::</span><span class="n">Seeker</span><span class="p">;</span>
+<a id="__codelineno-14-38" name="__codelineno-14-38" href="#__codelineno-14-38"></a>
+<a id="__codelineno-14-39" name="__codelineno-14-39" href="#__codelineno-14-39"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">seeker</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Self</span><span class="p">::</span><span class="n">Seeker</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-40" name="__codelineno-14-40" href="#__codelineno-14-40"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="mf">0.</span><span class="n">seeker</span><span class="p">()</span>
+<a id="__codelineno-14-41" name="__codelineno-14-41" href="#__codelineno-14-41"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-42" name="__codelineno-14-42" href="#__codelineno-14-42"></a><span class="p">}</span>
+<a id="__codelineno-14-43" name="__codelineno-14-43" href="#__codelineno-14-43"></a>
+<a id="__codelineno-14-44" name="__codelineno-14-44" href="#__codelineno-14-44"></a><span class="sd">/// The broker's own subscription descriptor, opening the batching subscriber above.</span>
+<a id="__codelineno-14-45" name="__codelineno-14-45" href="#__codelineno-14-45"></a><span class="cp">#[derive(Clone)]</span>
+<a id="__codelineno-14-46" name="__codelineno-14-46" href="#__codelineno-14-46"></a><span class="k">struct</span><span class="w"> </span><span class="nc">Trickle</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-47" name="__codelineno-14-47" href="#__codelineno-14-47"></a><span class="w">    </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">,</span>
+<a id="__codelineno-14-48" name="__codelineno-14-48" href="#__codelineno-14-48"></a><span class="p">}</span>
+<a id="__codelineno-14-49" name="__codelineno-14-49" href="#__codelineno-14-49"></a>
+<a id="__codelineno-14-50" name="__codelineno-14-50" href="#__codelineno-14-50"></a><span class="k">impl</span><span class="w"> </span><span class="n">SubscriptionSource</span><span class="o">&lt;</span><span class="n">ConnectedMemoryBroker</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Trickle</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-51" name="__codelineno-14-51" href="#__codelineno-14-51"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Subscriber</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">TrickleSubscriber</span><span class="p">;</span>
+<a id="__codelineno-14-52" name="__codelineno-14-52" href="#__codelineno-14-52"></a>
+<a id="__codelineno-14-53" name="__codelineno-14-53" href="#__codelineno-14-53"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-54" name="__codelineno-14-54" href="#__codelineno-14-54"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">name</span>
+<a id="__codelineno-14-55" name="__codelineno-14-55" href="#__codelineno-14-55"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-56" name="__codelineno-14-56" href="#__codelineno-14-56"></a>
+<a id="__codelineno-14-57" name="__codelineno-14-57" href="#__codelineno-14-57"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">subscribe</span><span class="p">(</span>
+<a id="__codelineno-14-58" name="__codelineno-14-58" href="#__codelineno-14-58"></a><span class="w">        </span><span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-14-59" name="__codelineno-14-59" href="#__codelineno-14-59"></a><span class="w">        </span><span class="n">connected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ConnectedMemoryBroker</span><span class="p">,</span>
+<a id="__codelineno-14-60" name="__codelineno-14-60" href="#__codelineno-14-60"></a><span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="n">TrickleSubscriber</span><span class="p">,</span><span class="w"> </span><span class="n">MemoryError</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-61" name="__codelineno-14-61" href="#__codelineno-14-61"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">TrickleSubscriber</span><span class="p">::</span><span class="n">new</span><span class="p">(</span>
+<a id="__codelineno-14-62" name="__codelineno-14-62" href="#__codelineno-14-62"></a><span class="w">            </span><span class="n">Subscribe</span><span class="p">::</span><span class="n">subscribe</span><span class="p">(</span><span class="n">connected</span><span class="p">,</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">name</span><span class="p">).</span><span class="k">await</span><span class="o">?</span><span class="p">,</span>
+<a id="__codelineno-14-63" name="__codelineno-14-63" href="#__codelineno-14-63"></a><span class="w">        </span><span class="p">))</span>
+<a id="__codelineno-14-64" name="__codelineno-14-64" href="#__codelineno-14-64"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-65" name="__codelineno-14-65" href="#__codelineno-14-65"></a><span class="p">}</span>
+</code></pre></div>
+<p>挂载点看不出你走的是两条路里的哪一条，而这正是要点：服务报出批次大小，就拿到批次。</p>
+<p>在攒批会破坏传输自身某项保证的地方，不提供这项能力同样是正当的答复。ZeroMQ 的 ROUTER 就是现实中的
+例子：它按每个对端各自的 <code>reply-to</code> 去回复，而一个批次到达它的回复接线时只带着一个覆盖整批的
+<code>PublishContext</code>，于是批量回复会顺着某一个对端的地址走，把其余的送错地方。在你的 crate 文档里把这点
+写明；<code>&amp;[T]</code> 主体在那种传输上便直接编译不过，这是诚实的结果。</p>
+<p><code>conformance</code> 的批量套件会检查这项契约：它用小于整轮消息数的批次大小打开订阅，批次回得更长的
+Broker 会被判失败。它不在 <code>harness::run_suite</code> 之内：能力套件由你自己调用，实现了哪项能力就调哪一个。</p>
+<h3 id="broker-prelude">你的 crate 要提供的 prelude<a class="headerlink" href="#broker-prelude" title="Permanent link">&para;</a></h3>
+<p>你的类型由挂载点来写，而不是主体，这正是你的 crate prelude 的用处。提供一个 <code>prelude</code> 模块，按这个
+顺序分三层：</p>
+<ol>
+<li><code>pub use ruststream::prelude::*;</code>，让一个 glob 就能服务整个文件；</li>
+<li>服务会写到的、你自己的那部分表面：Broker、它的订阅源、它的错误，以及主体会读的 <code>ContextField</code> 键；</li>
+<li>你的发布策略，放在每个 Broker 都用的那套统一名字下 - <code>Publish</code>，以及在你有的时候还有
+   <code>TransactionalPublish</code> 和 <code>Request</code>（<code>pub use crate::KafkaTransactionalPublish as
+   TransactionalPublish;</code>）。再把你在实时值上实现的能力 trait 作为一份清单加进去，这样带来策略的那个
+   glob 也会把它们的操作带进作用域。</li>
+</ol>
+<p>这三个名字是策略的名字，因此核心 prelude 在这些名字下什么都不导出：挂载点在哪个 Broker 上读起来都
+一样，换 Broker 换的只是那个 glob。绝不要把策略取名成核心 trait 的名字（<code>Publisher</code>、
+<code>TransactionalPublisher</code>、<code>OwnedTransactions</code>、<code>RequestReply</code>），也不要在这些名字下重导出别的东西：
+同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心 trait。</p>
+<p>清单指的是你的 glob 添加的那部分，也就是主体经由你的 Broker 才够得到的消费侧 trait：<code>Positioned</code>、
+<code>Seeker</code>、<code>Transaction</code> 之类。四个发布者能力已经在核心 prelude 里了，再导出一遍什么也不改变。如果
+某个 trait 的方法会和核心的默认方法冲突，就把它留在外面 - 实践中就是 <code>Partitioned::partition_key</code>
+与 <code>IncomingMessage::partition_key</code> - 让需要它的服务显式导入。<code>BatchSubscriber</code> 则根本不属于任何
+清单：调用它的是框架，没有哪个主体会把它写成边界。可以参照的现成例子是
+<code>ruststream::memory::prelude</code>。</p>
+<h3 id="扩展-out-槽位的词汇">扩展 <code>Out</code> 槽位的词汇<a class="headerlink" href="#扩展-out-槽位的词汇" title="Permanent link">&para;</a></h3>
+<p>处理器参数 <code>Out&lt;impl X, Marker&gt;</code> 接受槽位背后那个活值实现了的任意 <code>X</code>；在此之上，核心还会转发它
+自己的那套能力（<code>Publisher</code>、<code>TransactionalPublisher</code>、<code>OwnedTransactions</code>、<code>RequestReply</code>）。当
+活值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）时，
+就声明你自己的能力 trait，并为这个活值实现它。</p>
+<p>处理器主体手里拿到的并不是那个值，而是竞技场里的条目 <code>Slot&lt;Marker, W, E, Pipe, Body&gt;</code>，一扇通向它的透明
+窗口。自动解引用能把方法调用送过这扇窗，却送不过 trait 约束：写成 <code>fn issue&lt;L: Lanes&gt;(lanes: &amp;L)</code>
+的辅助函数会以 <code>E0277</code> 拒收这个条目。在你的 trait 旁边加上一个全覆盖实现
+<code>impl&lt;M, W: Lanes, E, Pipe, Body&gt; Lanes for Slot&lt;M, W, E, Pipe, Body&gt;</code>，通过条目的 <code>Deref</code> 转发，此后按能力
+泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">宏</label><label for="__tabbed_1_2">手写</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/out_slots.rs">tests/out_slots.rs</a></span><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1">// A paired value that is NOT a publisher: a lane router in the shape of a broker's</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="c1">// per-partition producer cache. The capability is broker-defined; the core knows nothing</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1">// about it.</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="cp">#[derive(Clone)]</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="k">struct</span><span class="w"> </span><span class="nc">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="n">publisher</span><span class="p">:</span><span class="w"> </span><span class="nc">MemoryPublisher</span><span class="p">,</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="p">}</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="sd">/// The broker-defined capability: pick a destination lane for a shard.</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="k">trait</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">);</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">}</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="k">impl</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">dest</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">shard</span><span class="p">.</span><span class="n">is_multiple_of</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="w">            </span><span class="s">"slots.lane.even"</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="w">            </span><span class="s">"slots.lane.odd"</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="w">        </span><span class="p">};</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="w">        </span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">.</span><span class="n">publisher</span><span class="p">,</span><span class="w"> </span><span class="n">dest</span><span class="p">)</span>
+<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="p">}</span>
+<a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>
+<a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="c1">// Grafted onto the arena entry once, for every marker, delegating through the entry's</span>
+<a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a><span class="c1">// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own</span>
+<a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a><span class="c1">// traits. A handler body holds the entry, so without this impl the capability is reachable by</span>
+<a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a><span class="c1">// autoderef for a method call but never satisfies a trait bound.</span>
+<a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">W</span><span class="p">:</span><span class="w"> </span><span class="nc">ShardLanes</span><span class="p">,</span><span class="w"> </span><span class="n">E</span><span class="p">,</span><span class="w"> </span><span class="n">Pipe</span><span class="p">,</span><span class="w"> </span><span class="n">Body</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Slot</span><span class="o">&lt;</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">W</span><span class="p">,</span><span class="w"> </span><span class="n">E</span><span class="p">,</span><span class="w"> </span><span class="n">Pipe</span><span class="p">,</span><span class="w"> </span><span class="n">Body</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a><span class="w">        </span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="p">).</span><span class="n">lane</span><span class="p">(</span><span class="n">shard</span><span class="p">)</span>
+<a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a><span class="p">}</span>
+<a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a>
+<a id="__codelineno-15-35" name="__codelineno-15-35" href="#__codelineno-15-35"></a><span class="sd">/// The bound the graft buys: a helper generic over the capability, not over the concrete live</span>
+<a id="__codelineno-15-36" name="__codelineno-15-36" href="#__codelineno-15-36"></a><span class="sd">/// type, takes the entry a handler body holds.</span>
+<a id="__codelineno-15-37" name="__codelineno-15-37" href="#__codelineno-15-37"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">sent</span><span class="o">&lt;</span><span class="n">L</span><span class="p">:</span><span class="w"> </span><span class="nc">ShardLanes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="o">&gt;</span><span class="p">(</span><span class="n">lanes</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">L</span><span class="p">,</span><span class="w"> </span><span class="n">event</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Event</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-38" name="__codelineno-15-38" href="#__codelineno-15-38"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">publisher</span><span class="p">,</span><span class="w"> </span><span class="n">dest</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lanes</span><span class="p">.</span><span class="n">lane</span><span class="p">(</span><span class="n">event</span><span class="p">.</span><span class="n">id</span><span class="p">);</span>
+<a id="__codelineno-15-39" name="__codelineno-15-39" href="#__codelineno-15-39"></a><span class="w">    </span><span class="n">publisher</span><span class="p">.</span><span class="n">message</span><span class="p">(</span><span class="n">event</span><span class="p">).</span><span class="n">to</span><span class="p">(</span><span class="n">dest</span><span class="p">).</span><span class="n">publish</span><span class="p">().</span><span class="k">await</span><span class="p">.</span><span class="n">is_ok</span><span class="p">()</span>
+<a id="__codelineno-15-40" name="__codelineno-15-40" href="#__codelineno-15-40"></a><span class="p">}</span>
+<a id="__codelineno-15-41" name="__codelineno-15-41" href="#__codelineno-15-41"></a>
+<a id="__codelineno-15-42" name="__codelineno-15-42" href="#__codelineno-15-42"></a><span class="sd">/// The policy half: pure declaration pairing into the router, like a broker's</span>
+<a id="__codelineno-15-43" name="__codelineno-15-43" href="#__codelineno-15-43"></a><span class="sd">/// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.</span>
+<a id="__codelineno-15-44" name="__codelineno-15-44" href="#__codelineno-15-44"></a><span class="k">struct</span><span class="w"> </span><span class="nc">LanePolicy</span><span class="p">;</span>
+<a id="__codelineno-15-45" name="__codelineno-15-45" href="#__codelineno-15-45"></a>
+<a id="__codelineno-15-46" name="__codelineno-15-46" href="#__codelineno-15-46"></a><span class="k">impl</span><span class="w"> </span><span class="n">PublishPolicy</span><span class="o">&lt;</span><span class="n">ConnectedMemoryBroker</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">LanePolicy</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-47" name="__codelineno-15-47" href="#__codelineno-15-47"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Live</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LaneRouter</span><span class="p">;</span>
+<a id="__codelineno-15-48" name="__codelineno-15-48" href="#__codelineno-15-48"></a>
+<a id="__codelineno-15-49" name="__codelineno-15-49" href="#__codelineno-15-49"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">pair</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">connected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ConnectedMemoryBroker</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Live</span><span class="p">,</span><span class="w"> </span><span class="n">PairError</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-50" name="__codelineno-15-50" href="#__codelineno-15-50"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-51" name="__codelineno-15-51" href="#__codelineno-15-51"></a><span class="w">            </span><span class="n">publisher</span><span class="p">:</span><span class="w"> </span><span class="nc">Publish</span><span class="p">.</span><span class="n">pair</span><span class="p">(</span><span class="n">connected</span><span class="p">).</span><span class="k">await</span><span class="o">?</span><span class="p">,</span>
+<a id="__codelineno-15-52" name="__codelineno-15-52" href="#__codelineno-15-52"></a><span class="w">        </span><span class="p">})</span>
+<a id="__codelineno-15-53" name="__codelineno-15-53" href="#__codelineno-15-53"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-15-54" name="__codelineno-15-54" href="#__codelineno-15-54"></a><span class="p">}</span>
+<a id="__codelineno-15-55" name="__codelineno-15-55" href="#__codelineno-15-55"></a>
+<a id="__codelineno-15-56" name="__codelineno-15-56" href="#__codelineno-15-56"></a><span class="sd">/// The handler bounds its slot with the broker-defined capability, not a core one.</span>
+<a id="__codelineno-15-57" name="__codelineno-15-57" href="#__codelineno-15-57"></a><span class="cp">#[subscriber(</span><span class="s">"slots.sharded"</span><span class="cp">)]</span>
+<a id="__codelineno-15-58" name="__codelineno-15-58" href="#__codelineno-15-58"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">route_shard</span><span class="p">(</span><span class="n">event</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Event</span><span class="p">,</span><span class="w"> </span><span class="n">Out</span><span class="p">(</span><span class="n">lanes</span><span class="p">):</span><span class="w"> </span><span class="nc">Out</span><span class="o">&lt;</span><span class="k">impl</span><span class="w"> </span><span class="n">ShardLanes</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">HandlerOutcome</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-59" name="__codelineno-15-59" href="#__codelineno-15-59"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">sent</span><span class="p">(</span><span class="n">lanes</span><span class="p">,</span><span class="w"> </span><span class="n">event</span><span class="p">).</span><span class="k">await</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-60" name="__codelineno-15-60" href="#__codelineno-15-60"></a><span class="w">        </span><span class="n">HandlerOutcome</span><span class="p">::</span><span class="n">ack</span><span class="p">()</span>
+<a id="__codelineno-15-61" name="__codelineno-15-61" href="#__codelineno-15-61"></a><span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-62" name="__codelineno-15-62" href="#__codelineno-15-62"></a><span class="w">        </span><span class="n">HandlerOutcome</span><span class="p">::</span><span class="n">retry</span><span class="p">()</span>
+<a id="__codelineno-15-63" name="__codelineno-15-63" href="#__codelineno-15-63"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-15-64" name="__codelineno-15-64" href="#__codelineno-15-64"></a><span class="p">}</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/manual_out_slots.rs">tests/manual_out_slots.rs</a></span><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1">// A paired value that is NOT a publisher: a lane router in the shape of a broker's</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="c1">// per-partition producer cache. The capability is broker-defined; the core knows nothing</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1">// about it.</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="cp">#[derive(Clone)]</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="k">struct</span><span class="w"> </span><span class="nc">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span><span class="n">publisher</span><span class="p">:</span><span class="w"> </span><span class="nc">MemoryPublisher</span><span class="p">,</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="p">}</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="sd">/// The broker-defined capability: pick a destination lane for a shard.</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="k">trait</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">);</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="p">}</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="k">impl</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">dest</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">shard</span><span class="p">.</span><span class="n">is_multiple_of</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="w">            </span><span class="s">"slots.lane.even"</span>
+<a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a><span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="w">            </span><span class="s">"slots.lane.odd"</span>
+<a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="w">        </span><span class="p">};</span>
+<a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a><span class="w">        </span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">.</span><span class="n">publisher</span><span class="p">,</span><span class="w"> </span><span class="n">dest</span><span class="p">)</span>
+<a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="p">}</span>
+<a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>
+<a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a><span class="c1">// Grafted onto the arena entry once, for every marker, delegating through the entry's</span>
+<a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a><span class="c1">// transparent `Deref`: this is how a broker crate extends the slot vocabulary with its own</span>
+<a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a><span class="c1">// traits. A body holds the entry, so without this impl the capability is reachable by autoderef</span>
+<a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a><span class="c1">// for a method call but never satisfies a trait bound.</span>
+<a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">W</span><span class="p">:</span><span class="w"> </span><span class="nc">ShardLanes</span><span class="p">,</span><span class="w"> </span><span class="n">E</span><span class="p">,</span><span class="w"> </span><span class="n">Pipe</span><span class="p">,</span><span class="w"> </span><span class="n">Body</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ShardLanes</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Slot</span><span class="o">&lt;</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">W</span><span class="p">,</span><span class="w"> </span><span class="n">E</span><span class="p">,</span><span class="w"> </span><span class="n">Pipe</span><span class="p">,</span><span class="w"> </span><span class="n">Body</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">lane</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">shard</span><span class="p">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">MemoryPublisher</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a><span class="w">        </span><span class="p">(</span><span class="o">**</span><span class="bp">self</span><span class="p">).</span><span class="n">lane</span><span class="p">(</span><span class="n">shard</span><span class="p">)</span>
+<a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a><span class="p">}</span>
+<a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a>
+<a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a><span class="sd">/// The bound the graft buys: a helper generic over the capability, not over the concrete live</span>
+<a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a><span class="sd">/// type, takes the entry a body holds.</span>
+<a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">sent</span><span class="o">&lt;</span><span class="n">L</span><span class="p">:</span><span class="w"> </span><span class="nc">ShardLanes</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="o">&gt;</span><span class="p">(</span><span class="n">lanes</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">L</span><span class="p">,</span><span class="w"> </span><span class="n">event</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Event</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">publisher</span><span class="p">,</span><span class="w"> </span><span class="n">dest</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lanes</span><span class="p">.</span><span class="n">lane</span><span class="p">(</span><span class="n">event</span><span class="p">.</span><span class="n">id</span><span class="p">);</span>
+<a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a><span class="w">    </span><span class="n">publisher</span><span class="p">.</span><span class="n">message</span><span class="p">(</span><span class="n">event</span><span class="p">).</span><span class="n">to</span><span class="p">(</span><span class="n">dest</span><span class="p">).</span><span class="n">publish</span><span class="p">().</span><span class="k">await</span><span class="p">.</span><span class="n">is_ok</span><span class="p">()</span>
+<a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a><span class="p">}</span>
+<a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a>
+<a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a><span class="sd">/// The policy half: pure declaration pairing into the router, like a broker's</span>
+<a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a><span class="sd">/// `per_partition()` policy pairs into its producer cache. No `Clone`: resolution consumes it.</span>
+<a id="__codelineno-16-44" name="__codelineno-16-44" href="#__codelineno-16-44"></a><span class="k">struct</span><span class="w"> </span><span class="nc">LanePolicy</span><span class="p">;</span>
+<a id="__codelineno-16-45" name="__codelineno-16-45" href="#__codelineno-16-45"></a>
+<a id="__codelineno-16-46" name="__codelineno-16-46" href="#__codelineno-16-46"></a><span class="k">impl</span><span class="w"> </span><span class="n">PublishPolicy</span><span class="o">&lt;</span><span class="n">ConnectedMemoryBroker</span><span class="o">&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">LanePolicy</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-47" name="__codelineno-16-47" href="#__codelineno-16-47"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Live</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LaneRouter</span><span class="p">;</span>
+<a id="__codelineno-16-48" name="__codelineno-16-48" href="#__codelineno-16-48"></a>
+<a id="__codelineno-16-49" name="__codelineno-16-49" href="#__codelineno-16-49"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">pair</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">connected</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">ConnectedMemoryBroker</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">::</span><span class="n">Live</span><span class="p">,</span><span class="w"> </span><span class="n">PairError</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-50" name="__codelineno-16-50" href="#__codelineno-16-50"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">LaneRouter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-51" name="__codelineno-16-51" href="#__codelineno-16-51"></a><span class="w">            </span><span class="n">publisher</span><span class="p">:</span><span class="w"> </span><span class="nc">Publish</span><span class="p">.</span><span class="n">pair</span><span class="p">(</span><span class="n">connected</span><span class="p">).</span><span class="k">await</span><span class="o">?</span><span class="p">,</span>
+<a id="__codelineno-16-52" name="__codelineno-16-52" href="#__codelineno-16-52"></a><span class="w">        </span><span class="p">})</span>
+<a id="__codelineno-16-53" name="__codelineno-16-53" href="#__codelineno-16-53"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-16-54" name="__codelineno-16-54" href="#__codelineno-16-54"></a><span class="p">}</span>
+<a id="__codelineno-16-55" name="__codelineno-16-55" href="#__codelineno-16-55"></a>
+<a id="__codelineno-16-56" name="__codelineno-16-56" href="#__codelineno-16-56"></a><span class="sd">/// The body leaves the wired live value generic and bounds it with the broker-defined</span>
+<a id="__codelineno-16-57" name="__codelineno-16-57" href="#__codelineno-16-57"></a><span class="sd">/// capability, exactly as the attribute's `Out&lt;impl ShardLanes&gt;` does.</span>
+<a id="__codelineno-16-58" name="__codelineno-16-58" href="#__codelineno-16-58"></a><span class="k">struct</span><span class="w"> </span><span class="nc">RouteShard</span><span class="p">;</span>
+<a id="__codelineno-16-59" name="__codelineno-16-59" href="#__codelineno-16-59"></a>
+<a id="__codelineno-16-60" name="__codelineno-16-60" href="#__codelineno-16-60"></a><span class="k">struct</span><span class="w"> </span><span class="nc">Lanes</span><span class="p">;</span>
+<a id="__codelineno-16-61" name="__codelineno-16-61" href="#__codelineno-16-61"></a>
+<a id="__codelineno-16-62" name="__codelineno-16-62" href="#__codelineno-16-62"></a><span class="k">impl</span><span class="w"> </span><span class="n">OutSlot</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Lanes</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-63" name="__codelineno-16-63" href="#__codelineno-16-63"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">NAME</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="nb">static</span><span class="w"> </span><span class="kt">str</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Lanes"</span><span class="p">;</span>
+<a id="__codelineno-16-64" name="__codelineno-16-64" href="#__codelineno-16-64"></a><span class="p">}</span>
+<a id="__codelineno-16-65" name="__codelineno-16-65" href="#__codelineno-16-65"></a>
+<a id="__codelineno-16-66" name="__codelineno-16-66" href="#__codelineno-16-66"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">L</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Handle</span><span class="o">&lt;</span><span class="n">Event</span><span class="p">,</span><span class="w"> </span><span class="p">(),</span><span class="w"> </span><span class="n">Outs</span><span class="o">&lt;</span><span class="p">(</span><span class="n">L</span><span class="p">,)</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">RouteShard</span>
+<a id="__codelineno-16-67" name="__codelineno-16-67" href="#__codelineno-16-67"></a><span class="k">where</span>
+<a id="__codelineno-16-68" name="__codelineno-16-68" href="#__codelineno-16-68"></a><span class="w">    </span><span class="n">L</span><span class="p">:</span><span class="w"> </span><span class="nc">OutEntry</span><span class="o">&lt;</span><span class="n">Lanes</span><span class="p">,</span><span class="w"> </span><span class="n">Wire</span><span class="p">:</span><span class="w"> </span><span class="nc">ShardLanes</span><span class="o">&gt;</span><span class="p">,</span>
+<a id="__codelineno-16-69" name="__codelineno-16-69" href="#__codelineno-16-69"></a><span class="p">{</span>
+<a id="__codelineno-16-70" name="__codelineno-16-70" href="#__codelineno-16-70"></a><span class="w">    </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span>
+<a id="__codelineno-16-71" name="__codelineno-16-71" href="#__codelineno-16-71"></a><span class="w">        </span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-16-72" name="__codelineno-16-72" href="#__codelineno-16-72"></a><span class="w">        </span><span class="n">event</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Event</span><span class="p">,</span>
+<a id="__codelineno-16-73" name="__codelineno-16-73" href="#__codelineno-16-73"></a><span class="w">        </span><span class="n">outs</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">Outs</span><span class="o">&lt;</span><span class="p">(</span><span class="n">L</span><span class="p">,)</span><span class="o">&gt;</span><span class="p">,</span>
+<a id="__codelineno-16-74" name="__codelineno-16-74" href="#__codelineno-16-74"></a><span class="w">        </span><span class="n">_ctx</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">Context</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">,</span>
+<a id="__codelineno-16-75" name="__codelineno-16-75" href="#__codelineno-16-75"></a><span class="w">    </span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">HandlerOutcome</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-76" name="__codelineno-16-76" href="#__codelineno-16-76"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">sent</span><span class="p">(</span><span class="n">outs</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">Lanes</span><span class="p">),</span><span class="w"> </span><span class="n">event</span><span class="p">).</span><span class="k">await</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-77" name="__codelineno-16-77" href="#__codelineno-16-77"></a><span class="w">            </span><span class="nb">Ok</span><span class="p">(())</span>
+<a id="__codelineno-16-78" name="__codelineno-16-78" href="#__codelineno-16-78"></a><span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-16-79" name="__codelineno-16-79" href="#__codelineno-16-79"></a><span class="w">            </span><span class="nb">Err</span><span class="p">(</span><span class="n">HandlerOutcome</span><span class="p">::</span><span class="n">retry</span><span class="p">())</span>
+<a id="__codelineno-16-80" name="__codelineno-16-80" href="#__codelineno-16-80"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-16-81" name="__codelineno-16-81" href="#__codelineno-16-81"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-16-82" name="__codelineno-16-82" href="#__codelineno-16-82"></a><span class="p">}</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p>决定 trait 形状的是发送发生在哪里，而形状有两种。</p>
+<p><strong>路由器形状</strong>的能力交出一个发布者，自己从不发送：上面那个按分区的 producer 缓存为某个分片挑出
+一条通路并把它返回。处理器随后经这条通路发出的东西是从包装器外面走的，所以测试套件不会把这次发布
+记到槽位名下（就像一个已结算的 owned 事务的缓冲区那样），要在 Broker 的发布日志上断言它。这就是
+归属的边界，也是交出内层发布者所付的代价。</p>
+<p><strong>步骤形状</strong>的能力给一条消息设定一个参数，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。
+不要把发送放进 trait。从你自己的值走出去的发布，就是槽位视图不再看得见的发布，而排序键这类参数
+恰恰是测试要断言的东西。改为走条目自己的类型化发布路径（<code>out.message(&amp;value).publish()</code>），把参数
+当作头部携带：为一串消息持有它的发布者从 <code>Publisher::base_headers</code> 交出它，为单条消息设定它的调用
+点用 <code>.with_headers(..)</code> 写下它，而你的 <code>publish</code> 从出站的头部表里读走它，并在上线之前把它剥掉。
+你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它并不会得到。</p>
+<h3 id="你这个-crate-的-prelude">你这个 crate 的 prelude<a class="headerlink" href="#你这个-crate-的-prelude" title="Permanent link">&para;</a></h3>
+<p>两种文件导入的东西不一样，正是这种分工让服务保持可移植。处理器主体导入 <code>ruststream::prelude::*</code>，
+不导入你的任何东西：它用 Broker 的能力 trait 去约束注入进来的槽位，也就是 <code>Out&lt;impl Publisher&gt;</code>、
+<code>Out&lt;impl TransactionalPublisher&gt;</code>、<code>Out&lt;impl OwnedTransactions&gt;</code>、<code>Out&lt;impl RequestReply&gt;</code>，
+于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。挂载文件导入你的 prelude，因为
+指名 Broker 的地方就在那里。</p>
+<p>这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
+四层，按这个顺序：</p>
+<ul>
+<li>先是 <code>pub use ruststream::prelude::*;</code>，让主体本来就认识的一切原样到位；</li>
+<li>你自己的示例会写出来的那部分 crate 表面：Broker、它的订阅描述符、它的配置；</li>
+<li>你的发布策略，以统一的挂载点名字取别名：<code>NatsPublish as Publish</code>、
+  <code>KafkaTransactionalPublish as TransactionalPublish</code>、<code>LapinRequest as Request</code>，
+  这样无论挂的是哪个 Broker，挂载文件读起来都一样，换 Broker 就是换一行导入；</li>
+<li>能力清单：你的 Broker 真正实现了的那些核心能力 trait，好让服务能用什么去约束槽位，从这一个导入
+  就看得出来。</li>
+</ul>
+<p>在这些策略名字下，核心一个 trait 都不导出，所以这些别名不会跟任何东西相撞。维持这一点的规则是双向的，
+你这一半是：你的 prelude 不能用自己的任何东西去遮蔽核心的名字。显式 re-export 会一声不响地盖过 glob，
+所以一个跟核心 trait 同名的名字，会把那个 trait 从每个写了这行 glob 的服务手里拿走，而错误浮现在服务
+的文件里，不在你的文件里。</p>
+<p>用一个跟在自己 glob 后面的探针把两半都钉死：主体所写的那个约束仍然必须以核心 trait 的身份到达，
+挂载点的名字仍然必须是你的策略。</p>
+<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1">// in your crate, behind your own prelude glob</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="k">use</span><span class="w"> </span><span class="k">crate</span><span class="p">::</span><span class="n">prelude</span><span class="p">::</span><span class="o">*</span><span class="p">;</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1">// A capability bound a body states: the core trait, not something of yours.</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="k">fn</span><span class="w"> </span><span class="nf">_p</span><span class="o">&lt;</span><span class="n">T</span><span class="p">:</span><span class="w"> </span><span class="nc">Publisher</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1">// A mount-site name: your policy, constructible with no connection in sight.</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="k">fn</span><span class="w"> </span><span class="nf">_q</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="p">:</span><span class="w"> </span><span class="nc">Publish</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Publish</span><span class="p">::</span><span class="n">default</span><span class="p">();</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="单条投递的上下文与-ctx-键">单条投递的上下文与 <code>Ctx</code> 键<a class="headerlink" href="#单条投递的上下文与-ctx-键" title="Permanent link">&para;</a></h2>
+<p>如果 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号），就把它作为类型化的单条投递上下文
+暴露出来：一个由订阅者指明的 <code>#[non_exhaustive]</code> 结构体，外加若干 <code>ContextField</code> 键类型，好让处理器能
+用 <a href="../guides/context/#per-delivery-context"><code>Ctx&lt;K&gt;</code> 提取器</a>把单个字段绑定成参数。键是单元结构体。
+投递路径上既没有 type-map，也没有堆分配。</p>
+<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="sd">/// Per-delivery context of this broker.</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="cp">#[non_exhaustive]</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="cp">#[derive(Debug, Clone)]</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">MyContext</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">partition</span><span class="p">:</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="p">}</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="sd">/// `Ctx&lt;Partition&gt;` in a handler binds the delivery's partition.</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="cp">#[derive(Debug, Default, Clone, Copy)]</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Partition</span><span class="p">;</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="k">impl</span><span class="w"> </span><span class="n">ContextField</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Partition</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Context</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MyContext</span><span class="p">;</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="w">    </span><span class="k">type</span><span class="w"> </span><span class="nc">Value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">i32</span><span class="p">;</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">MyContext</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="w">        </span><span class="n">src</span><span class="p">.</span><span class="n">partition</span>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="p">}</span>
+</code></pre></div>
+<p>这段草图读的是一个 <code>Copy</code> 标量，拥有和借用没有分别。位置类型不是 <code>Copy</code> 时（Pulsar 的消息 id、
+Kinesis 的分片加序列号字符串），就以借用的方式读：<code>Field::Value&lt;'a&gt;</code> 对来源的生命周期是泛型的，
+所以键交回的是 <code>&amp;'a MessageId</code>，用 <code>ctx.context(..)</code> 读它的主体一份都不必复制。必须拥有所有权且为
+<code>'static</code> 的只有 <code>ContextField::Value</code>，也就是 <code>Ctx&lt;K&gt;</code> 提取器背后的那个值，因为提取器的值在主体
+运行之前就要绑定好；这个键会把借用那个键交回的东西克隆一份。一个键通常两个 trait 都实现，各出一种
+形状。</p>
+<p>没有任何单条投递字段的 Broker 用 <code>()</code>，整节都可以跳过。</p>
+<p>批量订阅另有自己的上下文，因为一个批次横跨多次投递：把整条<em>订阅</em>共享的东西（seek 句柄、流的名字、
+消费者组）攒成第二个结构体，在它上面实现 <code>BuildBatchContext</code> - 运行时按批构造一个值，取自该批的
+第一次投递 - 再发布若干 <code>Field</code> 键，好让批量函数体用 <code>ctx.context(..)</code> 读它。逐次投递的字段不放
+进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则在编译期成立的
+办法：投递上下文并不实现 <code>BuildBatchContext</code>，因此批量函数体无法写出它。范本是内存 Broker 的
+<code>MemoryBatchContext</code> - 订阅的 seeker，用的还是它的投递上下文所发布的那个 <code>SeekHandle</code> 键。订阅级
+上没有东西可交的 Broker 什么都不用实现，批量停在 <code>()</code> 这个默认值上。</p>
+<h2 id="middleware-on-the-async-edges">异步边界上的中间件<a class="headerlink" href="#middleware-on-the-async-edges" title="Permanent link">&para;</a></h2>
+<p>那些需要围绕编码和解码做异步 I/O 的集成（一个 schema 注册表、一层线上格式的信封）不属于 <code>Codec</code>：核心
+的编解码器是同步的，处理器也应当继续用默认的那一个。把它们放到异步边界上：在订阅的投递路径上转码入站
+载荷（赶在编解码器看到它们之前），出站的则用核心的 <code>PublishLayer</code> 加上信封，通过
+<code>RustStream::publish_layer</code> 在应用级别添加。发布层是异步且可失败的，而 <code>Outgoing::payload_mut</code> 的存在
+正是为了包装信封。</p>
+<h2 id="配置与默认值">配置与默认值<a class="headerlink" href="#配置与默认值" title="Permanent link">&para;</a></h2>
+<p><code>Config</code> 归你的 crate 所有；核心不携带任何 Broker 专有的配置。如果某个配置字段没有合理的默认值，就
+不要为它实现 <code>Default</code>；强迫用户显式设置，好过发出一个日后可能出问题的默认值。</p>
+<h2 id="错误">错误<a class="headerlink" href="#错误" title="Permanent link">&para;</a></h2>
+<p>用 <code>thiserror</code> 写一个 crate 级别的错误枚举，变体按来源划分。公开的错误枚举标记 <code>#[non_exhaustive]</code>。
+切勿在库 crate 里使用 <code>anyhow</code>。</p>
+<h2 id="test-support">测试支持<a class="headerlink" href="#test-support" title="Permanent link">&para;</a></h2>
+<p>在 <code>testing</code> feature 下提供一个进程内传输，在它的<strong>已连接形态</strong>上实现 <code>TestableBroker</code>（用
+<code>register_testable_broker!</code> 为该已连接类型注册，因为套件会先连接每一个 Broker，然后才取回它的
+传输），这样用户就能用 <code>TestApp</code> 测试套件对着你的 Broker 单元测试处理器。该传输<strong>只做核心路由</strong>：把
+发布出去的消息分发给匹配的订阅者，并把 ack/nack 当作实质上的空操作。切勿在其中模拟 Broker 专有的语义
+（持久游标、重新投递定时器、偏移量、死信路由）；那些要对着一台真实的服务器端到端地验证。</p>
+<p>参考实现就是内存 Broker 自己的那一份（在 <code>ConnectedMemoryBroker</code> 上）：</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/src/memory/mod.rs">src/memory/mod.rs</a></span><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1">// The harness drives the connected form: TestApp connects every registered broker before it</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="c1">// recovers the in-process transport, and run_suite scenarios receive connected brokers.</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="cp">#[cfg(feature = </span><span class="s">"testing"</span><span class="cp">)]</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="k">impl</span><span class="w"> </span><span class="k">crate</span><span class="p">::</span><span class="n">testing</span><span class="p">::</span><span class="n">TestableBroker</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">ConnectedMemoryBroker</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">install_coordinator</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">coordinator</span><span class="p">:</span><span class="w"> </span><span class="nc">Coordinator</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">state</span><span class="p">.</span><span class="n">install_coordinator</span><span class="p">(</span><span class="n">coordinator</span><span class="p">);</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">inject</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">message</span><span class="p">:</span><span class="w"> </span><span class="nc">OutgoingMessage</span><span class="o">&lt;'</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="w">        </span><span class="c1">// Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="w">        </span><span class="c1">// the bus strictly before shutdown), so fail loudly instead of losing the message.</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">state</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="w">            </span><span class="p">.</span><span class="n">fanout</span><span class="p">(</span><span class="n">MemoryOutbound</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a><span class="w">                </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nc">message</span><span class="p">.</span><span class="n">name</span><span class="p">().</span><span class="n">to_owned</span><span class="p">(),</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="w">                </span><span class="n">payload</span><span class="p">:</span><span class="w"> </span><span class="nc">Bytes</span><span class="p">::</span><span class="n">copy_from_slice</span><span class="p">(</span><span class="n">message</span><span class="p">.</span><span class="n">payload</span><span class="p">()),</span>
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="w">                </span><span class="n">headers</span><span class="p">:</span><span class="w"> </span><span class="nc">message</span><span class="p">.</span><span class="n">headers</span><span class="p">().</span><span class="n">clone</span><span class="p">(),</span>
+<a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a><span class="w">            </span><span class="p">})</span>
+<a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a><span class="w">            </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">"inject on a shut-down broker: drive the harness before shutdown"</span><span class="p">);</span>
+<a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a>
+<a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">published</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="kt">str</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">RawMessage</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a><span class="w">        </span><span class="bp">self</span><span class="p">.</span><span class="n">state</span>
+<a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a><span class="w">            </span><span class="p">.</span><span class="n">published</span>
+<a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a><span class="w">            </span><span class="p">.</span><span class="n">lock</span><span class="p">()</span>
+<a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a><span class="w">            </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">"memory broker mutex poisoned"</span><span class="p">)</span>
+<a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a><span class="w">            </span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a><span class="w">            </span><span class="p">.</span><span class="n">cloned</span><span class="p">()</span>
+<a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a><span class="w">            </span><span class="p">.</span><span class="n">unwrap_or_default</span><span class="p">()</span>
+<a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a><span class="p">}</span>
+<a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a>
+<a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a><span class="cp">#[cfg(feature = </span><span class="s">"testing"</span><span class="cp">)]</span>
+<a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a><span class="k">crate</span><span class="p">::</span><span class="n">register_testable_broker</span><span class="o">!</span><span class="p">(</span><span class="n">ConnectedMemoryBroker</span><span class="p">);</span>
+</code></pre></div>
+<p>该传输在每次把消息入队给某个订阅者时调用 <code>Coordinator::enqueued</code>，在结算或丢弃一次投递时调用
+<code>Coordinator::consumed</code>（这样套件才能判断反应何时尘埃落定），并把延迟的重新投递交给
+<code>Coordinator::schedule_redelivery</code> 去路由。于是同一个类型既适用于 <code>TestApp</code>，也适用于 conformance
+校验套件。面向用户的那一侧参见<a href="../guides/testing/">测试</a>；用 <code>run_suite</code> 和 <code>lifecycle</code> 阶梯检查来证明
+你的实现，参见 <a href="conformance/">Conformance</a>。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/powersemmi/ruststream" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.action.edit", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
+    
+    
+  
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../assets/benchmarks.js"></script>
+      
+    
+  
+  <script src="https://context7.com/widget.js" data-library="/powersemmi/ruststream"></script>
+
+  </body>
+</html>
