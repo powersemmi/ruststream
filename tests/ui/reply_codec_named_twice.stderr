@@ -1,4 +1,4 @@
-error[E0599]: the method `codec` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>, ()), ruststream::runtime::ReplyLast>, ruststream::runtime::OnDrop>`, but its trait bounds were not satisfied
+error[E0599]: the method `codec` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, CallCodec<JsonCodec>>>, ()), ruststream::runtime::ReplyLast>>`, but its trait bounds were not satisfied
   --> tests/ui/reply_codec_named_twice.rs:29:14
    |
 26 | /         b.include(confirm)

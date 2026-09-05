@@ -48,6 +48,13 @@ These are core-routing guarantees, the contract every broker must meet. The harn
 broker-specific semantics (durable resume, redelivery on timeout, partition assignment); those are
 not part of the contract and are verified in your own end-to-end suite against a real server.
 
+Nor does it reach a single capability. Each of those has a suite of its own below, and it is your
+crate that calls the ones it implements - `capabilities::batches` included, which is the only
+check that a batch never comes back larger than the size it was opened with. Folding it in here is
+not open: a `BatchSubscriber` bound on `run_suite` would shut out every broker that declines the
+capability, and the in-process transport is not where your batches are built anyway. So a crate
+that runs `run_suite` alone has not checked its batches.
+
 ## The lifecycle check
 
 `run_suite` exercises routing through the in-process transport; `harness::lifecycle` exercises the
@@ -120,6 +127,13 @@ async fn passes_request_reply() {
     .await;
 }
 ```
+
+Every suite names its subject per run rather than fixing one, so a run reads only what it
+published. A fixed subject passes against a fresh server and fails the second time on any broker
+that keeps what the first run left: a retained log replays both runs into one subscription, a
+durable queue still holds the earlier messages, a key namespace still holds the earlier type. The
+suites call `conformance::helpers::unique_subject` for that, and your own end-to-end suite has the
+same problem and the same answer.
 
 The in-memory broker implements every capability natively and passes all five suites in-process
 (see [Memory](../brokers/memory.md#capabilities)); it is the executable reference for what each

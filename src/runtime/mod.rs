@@ -36,11 +36,11 @@ pub(crate) type SourceSubscriber<B, S> =
 pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscriber>::Message;
 
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, RunningApp, RustStream,
-    RustStreamError, Setup, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
+    RustStream, RustStreamError, Setup, Wired,
 };
 #[doc(hidden)]
-pub use app::{IncludeMount, OnBuild, OnDrop, ScopeCommit, ScopeTerminal};
+pub use app::{IncludeMount, ScopeCommit};
 #[cfg(feature = "testing")]
 pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user

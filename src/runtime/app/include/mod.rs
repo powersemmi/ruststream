@@ -7,12 +7,14 @@
 //! more: every step, every typestate slot and every diagnostic comes from
 //! [`RouterWith`](crate::runtime::RouterWith).
 //!
-//! Which terminal a registration uses follows its form, exactly as before. A plain or batch
+//! Which guard a registration uses follows its form, exactly as before. A plain or batch
 //! handler attaches nothing, so `b.include(handle);` is the whole registration and the call
 //! commits on the spot. A reply-publishing one may still name a policy, so it commits when the
-//! guard drops at the end of the statement (`b.include(respond).out(Reply, Publish);`). One
-//! carrying [`Out`](crate::runtime::Out) slots commits with `.build()`: a chain that still has an
-//! unbound slot has nothing to commit, so its terminal has to be a call.
+//! [`Mounting`] guard drops at the end of the statement
+//! (`b.include(respond).out(Reply, Publish);`). One carrying [`Out`](crate::runtime::Out) slots
+//! gets a [`MountingSlots`] guard and commits with `.build()`: a chain that still has an unbound
+//! slot has nothing to commit, so its terminal has to be a call - and the type is `#[must_use]`,
+//! so forgetting it is a warning where the mount site is.
 
 mod guard;
 
@@ -21,7 +23,7 @@ use crate::runtime::middleware::Identity;
 use crate::runtime::router::{Router, RouterMount, forms};
 
 use super::scope::BrokerScope;
-pub use guard::{Mounting, OnBuild, OnDrop, ScopeCommit, ScopeTerminal};
+pub use guard::{Mounting, MountingSlots, ScopeCommit};
 
 /// The empty chain a scope drives one registration through: its codec and publish pipeline, no
 /// router-scope layers of its own.
@@ -32,8 +34,8 @@ type ScopeChain<Form, B, C, Pipeline, Def> =
     <Form as RouterMount<ScopeRouter<B, C, Pipeline>, Def>>::Out;
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
-/// [`forms`](crate::runtime::forms), it picks the chain the form opens and the terminal its guard
-/// commits through. Machinery; you never implement or name it.
+/// [`forms`](crate::runtime::forms), it picks the chain the form opens and the guard that
+/// commits it. Machinery; you never implement or name it.
 #[doc(hidden)]
 pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
     /// What `include` hands back: a guard over the form's own mount chain.
@@ -42,10 +44,10 @@ pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
     fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out;
 }
 
-/// Implements [`IncludeMount`] for one form: open the router chain over a scope-shaped router,
-/// then wrap it in the guard whose terminal that form uses.
+/// Implements [`IncludeMount`] for a form whose registration is complete as it stands: open the
+/// router chain over a scope-shaped router, then wrap it in the guard that commits on drop.
 macro_rules! scope_mount {
-    ($($form:ty => $terminal:ty),+ $(,)?) => {$(
+    ($($form:ty),+ $(,)?) => {$(
         impl<'s, B, Layers, C, State, Pipeline, Def>
             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
         where
@@ -55,14 +57,7 @@ macro_rules! scope_mount {
             State: 's,
             Pipeline: Clone + 's,
             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-            $terminal: ScopeTerminal<
-                B,
-                Layers,
-                C,
-                State,
-                Pipeline,
-                ScopeChain<Self, B, C, Pipeline, Def>,
-            >,
+            ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
         {
             type Out = Mounting<
                 's,
@@ -72,7 +67,6 @@ macro_rules! scope_mount {
                 State,
                 Pipeline,
                 ScopeChain<Self, B, C, Pipeline, Def>,
-                $terminal,
             >;
 
             fn begin(
@@ -87,14 +81,53 @@ macro_rules! scope_mount {
 }
 
 scope_mount! {
-    forms::Publishing => OnDrop,
-    forms::RawReply => OnDrop,
-    forms::BatchPublishing => OnDrop,
-    forms::Out => OnBuild,
-    forms::BatchOut => OnBuild,
-    forms::PublishingOut => OnBuild,
-    forms::RawReplyOut => OnBuild,
-    forms::BatchPublishingOut => OnBuild,
+    forms::Publishing,
+    forms::RawReply,
+    forms::BatchPublishing,
+}
+
+/// Implements [`IncludeMount`] for a form carrying [`Out`](crate::runtime::Out) slots: the same
+/// chain, in the guard whose terminal is `.build()`. The chain is not committable until every
+/// slot is bound, so no commit bound is stated here - `build` is where it is checked.
+macro_rules! scope_mount_slots {
+    ($($form:ty),+ $(,)?) => {$(
+        impl<'s, B, Layers, C, State, Pipeline, Def>
+            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
+        where
+            B: Broker + 'static,
+            C: Clone + 's,
+            Layers: 's,
+            State: 's,
+            Pipeline: Clone + 's,
+            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
+        {
+            type Out = MountingSlots<
+                's,
+                B,
+                Layers,
+                C,
+                State,
+                Pipeline,
+                ScopeChain<Self, B, C, Pipeline, Def>,
+            >;
+
+            fn begin(
+                def: Def,
+                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
+            ) -> Self::Out {
+                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
+                MountingSlots::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
+            }
+        }
+    )+};
+}
+
+scope_mount_slots! {
+    forms::Out,
+    forms::BatchOut,
+    forms::PublishingOut,
+    forms::RawReplyOut,
+    forms::BatchPublishingOut,
 }
 
 /// Implements [`IncludeMount`] for a form that attaches nothing: the chain is already a finished

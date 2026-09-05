@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use bytes::BytesMut;
 use serde::Serialize;
 
 use super::{
@@ -61,6 +62,21 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
 }
 
 impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
+    /// The message a reply starts from: `name` and `payload` over the publisher's own base
+    /// ([`Publisher::base_headers`]).
+    ///
+    /// A reply never passes the publish builder, so this is where the base reaches it, in the same
+    /// order the builder uses: the handle's headers first, whatever the reply itself names written
+    /// over them. A publisher with no base yields the empty map a reply always started from, so
+    /// nothing is cloned on the path every broker publisher takes today.
+    fn outgoing<'n>(&self, name: &'n str, payload: BytesMut) -> Outgoing<'n> {
+        let mut out = Outgoing::new(name, payload);
+        if let Some(base) = self.publisher.base_headers() {
+            *out.headers_mut() = base.clone();
+        }
+        out
+    }
+
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
     pub(crate) async fn publish<T: Serialize + Sync, Cx, PP>(
@@ -80,7 +96,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(name, payload);
+        let mut out = self.outgoing(name, payload);
         self.layers.apply(&mut out, cx);
         pipeline.run(&mut out, &self.publisher).await
     }
@@ -106,7 +122,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(name, payload);
+        let mut out = self.outgoing(name, payload);
         out.headers_mut()
             .insert_typed(headers)
             .map_err(|e| Box::new(e) as BoxError)?;
@@ -135,7 +151,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .codec
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
-        let mut out = Outgoing::new(name, payload);
+        let mut out = self.outgoing(name, payload);
         self.batch_layers.apply(&mut out, cx);
         pipeline.run(&mut out, &self.publisher).await
     }

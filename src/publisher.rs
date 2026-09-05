@@ -60,15 +60,21 @@ pub trait Publisher: Send + Sync {
         msg: OutgoingMessage<'_>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    /// The headers this publisher contributes to every message sent through the publish builder,
-    /// underneath whatever the call site names.
+    /// The headers this publisher contributes to every message it sends, underneath whatever the
+    /// message itself names.
     ///
-    /// `None` by default: a plain broker publisher contributes nothing and the builder starts from
-    /// an empty map. A handle that carries an argument for a run of publishes - a partition key, a
+    /// `None` by default: a plain broker publisher contributes nothing and the outgoing map starts
+    /// empty. A handle that carries an argument for a run of publishes - a partition key, a
     /// tenant, a delivery option the broker expresses as a header - returns it here instead of
-    /// stamping it into the message inside [`publish`](Self::publish). The builder then assembles
-    /// the outgoing map once: the base first, the publish's own headers written over it key by
-    /// key, so the call site wins over the handle.
+    /// stamping it into the message inside [`publish`](Self::publish). The base is then laid down
+    /// first and the message's own headers are written over it key by key, so the call site wins
+    /// over the handle.
+    ///
+    /// Every message the runtime sends through this publisher starts from that base: a publish
+    /// through the builder, and the reply a `publish("dest")` handler returns (whose
+    /// [`PublishTransform`](crate::runtime::PublishTransform) stack then writes over it, like any
+    /// other call site). A publish a handler body issues on a value it obtained outside the
+    /// framework is that body's own call and reaches nothing here.
     ///
     /// The map is borrowed, never rebuilt per publish, so a handle that has one keeps it in its
     /// own state.

@@ -1,6 +1,7 @@
 //! The reply wiring a mount site's chain builds, driven end to end on the in-memory broker: the
-//! codec the chain names encodes the reply, the transform it composes stamps it, and
-//! `.transactional()` puts a batch's replies in one broker transaction.
+//! codec the chain names encodes the reply, the transform it composes stamps it, the publisher's
+//! own base headers reach what leaves through it, and `.transactional()` puts a batch's replies
+//! in one broker transaction.
 #![cfg(all(
     feature = "testing",
     feature = "macros",
@@ -9,10 +10,14 @@
     feature = "cbor"
 ))]
 
+use std::future::{Future, ready};
+
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishContext, PublishTransform, for_batch};
 use ruststream::testing::TestApp;
+use ruststream::{HeaderMap, OutgoingMessage, PairError, PublishPolicy};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
@@ -20,7 +25,9 @@ struct Order {
     id: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+/// The reply, which the slot case below also publishes by hand: it declares no destination of its
+/// own, so the mount site's `publish("..")` names one and the slot's builder names the other.
+#[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
 struct Receipt {
     id: u64,
 }
@@ -119,6 +126,155 @@ async fn a_chained_transform_stamps_the_reply() {
     );
 }
 
+/// The header a broker publisher carrying a delivery option for a run of messages contributes to
+/// everything that leaves through it: a lane, a partition key, a tenant.
+const LANE: &str = "x-lane";
+
+/// A publish policy whose live publisher carries an argument for every message it sends: the
+/// shape a broker takes when its option rides the headers rather than the message body.
+#[derive(Debug, Clone, Copy)]
+struct LanePublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for LanePublish {
+    type Live = Laned;
+
+    fn pair(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Laned, PairError>> {
+        let mut base = HeaderMap::new();
+        base.insert(LANE, "west");
+        ready(Ok(Laned {
+            inner: connected.publisher(),
+            base,
+        }))
+    }
+}
+
+/// The live half of [`LanePublish`]: the broker's own publisher plus the base it contributes.
+struct Laned {
+    inner: MemoryPublisher,
+    base: HeaderMap,
+}
+
+impl Publisher for Laned {
+    type Error = MemoryError;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        self.inner.publish(msg).await
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        Some(&self.base)
+    }
+}
+
+#[subscriber("lane.in", publish("lane.out"))]
+async fn laned_reply(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
+/// A reply leaves through the publisher the chain named, so the base that publisher contributes
+/// is on it - and the chain's own transform still writes over that base.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publishers_base_headers_reach_the_reply() {
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(laned_reply)
+                .out(Reply, LanePublish)
+                .transform(Stamp);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 5 })
+        .to("lane.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("lane.out")
+        .assert_called_once()
+        .with(&Receipt { id: 5 })
+        .with_header(LANE, "west")
+        .with_header("x-stamped", b"1");
+}
+
+#[subscriber("lane.batch.in", publish("lane.batch.out"))]
+async fn laned_batch(orders: &[Order]) -> Vec<Receipt> {
+    orders
+        .iter()
+        .map(|order| Receipt { id: order.id })
+        .collect()
+}
+
+/// The batch reply path builds its own outgoing message too, so the base has to be on those
+/// replies as well.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publishers_base_headers_reach_a_batch_reply() {
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(laned_batch.batch(nonzero!(8)))
+                .out(Reply, LanePublish);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 6 })
+        .to("lane.batch.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("lane.batch.out")
+        .assert_called_once()
+        .with(&Receipt { id: 6 })
+        .with_header(LANE, "west");
+}
+
+#[subscriber("lane.slot.in")]
+async fn laned_slot(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
+    if out
+        .message(&Receipt { id: order.id })
+        .to("lane.slot.out")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// A slot publish reaches the same base through the publish builder the body writes, so what
+/// leaves a slot carries the bound publisher's argument like a reply does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publishers_base_headers_reach_a_slot_publish() {
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(laned_slot).out(DefaultSlot, LanePublish).build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 8 })
+        .to("lane.slot.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("lane.slot.out")
+        .assert_called_once()
+        .with(&Receipt { id: 8 })
+        .with_header(LANE, "west");
+}
+
 #[subscriber("batch.in", publish("batch.out"))]
 async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
     orders
@@ -161,5 +317,69 @@ async fn a_batch_reply_commits_its_transaction() {
         published.messages()[0].headers().get("x-stamped"),
         Some(b"1".as_slice()),
         "the batch's replies must carry the batch transform's header",
+    );
+}
+
+#[derive(OutSlot)]
+#[publishes(Receipt)]
+struct Journal;
+
+#[subscriber("both.in", publish("both.out"))]
+async fn confirm_and_journal(
+    orders: &[Order],
+    Out(journal): Out<impl Publisher, Journal>,
+) -> Vec<Receipt> {
+    for order in orders {
+        let _ = journal
+            .message(&Receipt { id: order.id })
+            .to("both.journal")
+            .publish()
+            .await;
+    }
+    orders
+        .iter()
+        .map(|order| Receipt { id: order.id })
+        .collect()
+}
+
+/// A registration that carries both positions commits with `.build()`, and the reply-only steps
+/// still ride the reply: the batch transform stamps every reply and the transaction wraps them,
+/// while the slot beside it takes its own policy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_and_slot_chain_keeps_the_reply_only_steps() {
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(confirm_and_journal.batch(nonzero!(8)))
+                .out(Reply, TransactionalPublish)
+                .batch_transform(for_batch(Stamp))
+                .transactional()
+                .out(Journal, Publish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 12 })
+        .to("both.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    let handle = tb.broker::<MemoryBroker>();
+    handle
+        .published::<Receipt>("both.out")
+        .assert_called_once()
+        .with(&Receipt { id: 12 })
+        .with_header("x-stamped", b"1");
+    // The slot publish is the body's own, so the reply's batch transform never touches it.
+    let journalled = handle.published::<Receipt>("both.journal");
+    let journalled = journalled.assert_called_once().with(&Receipt { id: 12 });
+    assert!(
+        journalled.messages()[0]
+            .headers()
+            .get("x-stamped")
+            .is_none(),
+        "a batch transform rides the reply position, not a slot",
     );
 }

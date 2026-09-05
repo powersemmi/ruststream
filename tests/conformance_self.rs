@@ -52,6 +52,21 @@ async fn memory_broker_passes_batches_suite() {
     .await;
 }
 
+/// A suite is re-runnable: it names its own subject per run, so running it twice in one process
+/// (and, on a real server, twice against one instance) reads only what that run published.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_capability_suite_runs_twice_in_one_process() {
+    for _ in 0..2 {
+        capabilities::batches(
+            MemoryBroker::new,
+            |name| MemorySource::new(name),
+            |broker| broker.publisher(),
+        )
+        .await;
+    }
+}
+
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_transactions_suite() {

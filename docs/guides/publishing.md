@@ -368,6 +368,12 @@ still carries the handle's argument.
 
 `.with_headers(..)` is still filled once: a second call is a compile error.
 
+A reply is assembled the same way, though nothing writes `.with_headers(..)` on it: the publisher
+the mount site named for the `Reply` position lays its base down first, and the chain's own
+`.transform(..)` steps write over it. So a broker option that rides the headers is on what a
+`publish("dest")` handler answers with, on every reply of a batch, and on what a body sends
+through an `Out` slot, without the handler knowing about it.
+
 ## The publish pipeline
 
 Three kinds of transform run before a message leaves the process, and they compose:
@@ -401,7 +407,12 @@ carry a value from the incoming message onto the reply:
 ```
 
 A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
-`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`.
+`.batch_transform(..)`, reusing a per-message `PublishTransform` via `for_batch(transform)`. Each
+reply runs through it one at a time, but they share one `PublishContext`, and it is the batch's,
+not a delivery's: a batch spans many deliveries, so `name()` is the subscription, `headers()` is
+empty, and `context(..)` reads the broker's batch context. A transform that has to read the
+message it is answering for belongs on the per-message path, where a reply and its delivery are
+one.
 
 An `OutTransform` implements `apply(&mut Outgoing<'_>)` and rides one slot:
 
