@@ -60,6 +60,16 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 возвращать ошибку при использовании после остановки - и никогда не отрабатывать молча и успешно на
 мёртвом соединении. Проверка `lifecycle` проходит и по этому пути.
 
+Брокер в памяти проходит всю лестницу за несколько строк, и каждый набросок ниже на этой странице
+вырезан из того же файла - контракт сдвинется и утащит код страницы за собой:
+
+```rust
+--8<-- "src/memory/mod.rs:ladder"
+```
+
+`ClosedMemoryBroker` - это тот самый свидетель с диагностикой остановки, о котором сказано выше:
+он сообщает, сколько регистраций подписчиков снял останов.
+
 ### `Subscribe`
 
 Реализуйте `Subscribe` на подключённой форме, чтобы поддержать подписку по имени. Именно этим
@@ -71,6 +81,12 @@ pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
+```
+
+Всё, что требуется, - открыть подписку:
+
+```rust
+--8<-- "src/memory/mod.rs:subscribe"
 ```
 
 ### `Subscriber`
@@ -129,6 +145,16 @@ pub trait IncomingMessage: Send + Sync {
 издателем, которого приложение подключило через `BrokerScope::retry_via`, - с увеличенным
 заголовком счётчика повторов. Только когда такого издателя нет, задержка вырождается в немедленный
 возврат в очередь. Полосы воркеров по ключу раскладывают сообщения без ключа по кругу.
+
+Что получится, если не переопределять ничего, показать не на ком: в этом воркспейсе эти методы
+переопределяет каждый брокер. Поэтому ядро закрепляет поведение тестом - вот этим:
+
+```rust
+--8<-- "src/message.rs:incoming_defaults"
+```
+
+`nack_after` сообщает, что задержку соблюсти нельзя, а не завершает доставку тихим `nack(true)`:
+именно это позволяет рантайму отличить один случай от другого и включить собственный запасной путь.
 
 ### `Publisher`
 
@@ -204,6 +230,12 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
+Обе половины - на брокере, чья политика не несёт вообще никаких опций:
+
+```rust
+--8<-- "src/memory/mod.rs:publish_policy"
+```
+
 ## Источники подписки {#subscription-sources}
 
 `Subscribe` закрывает случай «по имени». Когда подписке нужны специфичные для брокера опции
@@ -236,13 +268,8 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 Вид, который определяется именем и больше ничем, реализует ещё и `FromName` - его единственный
 конструктор строит значение из этого имени:
 
-<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
 ```rust
-impl FromName for OrdersStream {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name)
-    }
-}
+--8<-- "src/memory/mod.rs:from_name"
 ```
 
 После этого `#[subscriber(OrdersStream)]` законен: атрибут фиксирует вид, а значение подставляет

@@ -50,6 +50,15 @@ Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者�
 一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
 使用时必须报错，绝不能在一条已死的连接上悄悄地返回成功。生命周期检查同样会走到这条路径。
 
+内存 Broker 用几行就走完了整道阶梯，本页下面的每一段草图也都是从同一个文件里裁出来的：契约一动，
+页面上的代码就跟着动：
+
+```rust
+--8<-- "src/memory/mod.rs:ladder"
+```
+
+`ClosedMemoryBroker` 就是上一段说的那种带拆卸诊断的见证：它报告这次关闭摘掉了多少个订阅者注册。
+
 ### `Subscribe`
 
 在已连接形态上实现 `Subscribe`，即可支持按名字订阅。`#[subscriber("name")]` 用的就是它。
@@ -60,6 +69,12 @@ pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
+```
+
+要做的只是开一条订阅：
+
+```rust
+--8<-- "src/memory/mod.rs:subscribe"
 ```
 
 ### `Subscriber`
@@ -114,6 +129,16 @@ pub trait IncomingMessage: Send + Sync {
 `retry_after` 由运行时自己扛：它丢弃这条投递，并在延迟之后把一份副本发布回同一个来源 - 走应用通过
 `BrokerScope::retry_via` 接上的那个发布者 - 并把重试计数消息头加一。只有在没有这个发布者时，延迟才
 退化为立即重新入队。按键分道则会轮转那些没有键的消息。
+
+「什么都不覆盖」会得到什么，没有哪个 Broker 能拿来演示：本工作区里的 Broker 个个都覆盖了它们。所以
+核心用一个测试把这份行为钉住，就是下面这个：
+
+```rust
+--8<-- "src/message.rs:incoming_defaults"
+```
+
+`nack_after` 报告的是这个延迟没法兑现，而不是悄悄按一次普通的 `nack(true)` 结算：正因如此，运行时
+才分得清这两种情况，并启用自己那条兜底路径。
 
 ### `Publisher`
 
@@ -178,6 +203,12 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
+两半合在一起，来自一个策略完全不带任何选项的 Broker：
+
+```rust
+--8<-- "src/memory/mod.rs:publish_policy"
+```
+
 ## 订阅来源 { #subscription-sources }
 
 `Subscribe` 覆盖的是按名字订阅的情形。当一次订阅需要 Broker 专有的选项（一个消费者组、一个持久化名称、
@@ -206,13 +237,8 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 `FromName`，其唯一的构造函数用该名字把
 它构造出来：
 
-<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
 ```rust
-impl FromName for OrdersStream {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name)
-    }
-}
+--8<-- "src/memory/mod.rs:from_name"
 ```
 
 于是 `#[subscriber(OrdersStream)]` 就合法了：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
