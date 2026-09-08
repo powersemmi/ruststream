@@ -50,6 +50,17 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// broker running `run_suite` alone has not checked its batches - `capabilities::batches` is the
 /// call that does, against the broker's own subscription source.
 ///
+/// # Transports with no acknowledgement
+///
+/// A transport that cannot acknowledge (`ZeroMQ`, MQTT `QoS 0`, Redis pub/sub, Core NATS) reports
+/// [`AckError::Unsupported`] from `ack` and `nack`, and the suite accepts that answer wherever the
+/// capability suites already do - so the in-process transport can answer exactly as the real one
+/// does instead of claiming a settlement production never performs. The redelivery scenario is the
+/// one that cannot be checked against such a transport: `nack(requeue = true)` reporting
+/// `Unsupported` is a transport that has no redelivery to observe, so the scenario ends there
+/// rather than accepting any answer. Everything else stays asserted, the drop scenario included: a
+/// delivery nobody can settle is still a delivery that must not come back.
+///
 /// # Panics
 ///
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.
@@ -200,7 +211,10 @@ async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
             expected.to_be_bytes(),
             "messages must be delivered in publish order",
         );
-        msg.ack().await.expect("ack failed");
+        match msg.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
     }
     broker.shutdown().await.expect("shutdown failed");
 }
@@ -227,7 +241,10 @@ async fn publish_after_subscribe<C: TestableBroker + Subscribe>(broker: C) {
         b"after-subscribe",
         "subscriber must receive only messages published after subscription opened",
     );
-    msg.ack().await.expect("ack failed");
+    match msg.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
     broker.shutdown().await.expect("shutdown failed");
 }
 
@@ -240,7 +257,12 @@ async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker: C) {
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "ack_consumes_delivery").await;
-    msg.ack().await.expect("ack failed");
+    // A transport with no acknowledgement consumes the delivery by delivering it, so the
+    // assertion below - one publish, one delivery - is the same contract either way.
+    match msg.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
 
     expect_no_more(&mut stream, "ack_consumes_delivery").await;
     broker.shutdown().await.expect("shutdown failed");
@@ -259,15 +281,28 @@ async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(broker: C) 
     let mut stream = std::pin::pin!(subscriber.stream());
     let first = expect_next(&mut stream, "nack_with_requeue first").await;
     assert_eq!(first.payload(), b"retry-me");
-    first.nack(true).await.expect("nack failed");
+    // The only scenario whose assertion IS the settlement: a transport that reports the requeue
+    // unsupported has no redelivery to observe, so the scenario ends instead of accepting any
+    // answer - reading the redelivery of a message the transport never took back would pass a
+    // broker whose retries silently lose messages.
+    let requeued = match first.nack(true).await {
+        Ok(()) => true,
+        Err(AckError::Unsupported) => false,
+        Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
+    };
 
-    let second = expect_next(&mut stream, "nack_with_requeue second").await;
-    assert_eq!(
-        second.payload(),
-        b"retry-me",
-        "nack(requeue=true) must redeliver the same payload",
-    );
-    second.ack().await.expect("ack failed");
+    if requeued {
+        let second = expect_next(&mut stream, "nack_with_requeue second").await;
+        assert_eq!(
+            second.payload(),
+            b"retry-me",
+            "nack(requeue=true) must redeliver the same payload",
+        );
+        match second.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
+    }
     broker.shutdown().await.expect("shutdown failed");
 }
 
@@ -280,7 +315,12 @@ async fn nack_without_requeue_drops<C: TestableBroker + Subscribe>(broker: C) {
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "nack_without_requeue").await;
-    msg.nack(false).await.expect("nack failed");
+    // Dropping is what a transport with no settlement does with every delivery anyway, so the
+    // assertion below holds for both answers and stays checked for both.
+    match msg.nack(false).await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
+    }
 
     expect_no_more(&mut stream, "nack_without_requeue").await;
     broker.shutdown().await.expect("shutdown failed");
@@ -303,7 +343,10 @@ async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
     let msg = expect_next(&mut stream, "headers_propagate").await;
     assert_eq!(msg.headers().content_type(), Some("application/json"));
     assert_eq!(msg.headers().get("x-tenant"), Some(b"acme".as_slice()));
-    msg.ack().await.expect("ack failed");
+    match msg.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
     broker.shutdown().await.expect("shutdown failed");
 }
 

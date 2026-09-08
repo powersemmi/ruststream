@@ -613,7 +613,11 @@ Ship an in-process transport implementing `TestableBroker` on its **connected fo
 `testing` feature (registered with `register_testable_broker!` for that connected type, since the
 harness connects every broker before recovering its transport) so users can unit-test handlers
 against your broker with the `TestApp` harness. The transport does **core routing only**: it dispatches published messages to matching
-subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-specific semantics
+subscribers, and it answers `ack` / `nack` the way the real transport answers - in memory where the
+transport acknowledges (`nack(requeue = true)` puts the delivery back), with
+`AckError::Unsupported` where it cannot acknowledge at all (ZeroMQ, MQTT `QoS 0`, Redis pub/sub).
+A stand-in that claims a settlement its transport never performs is what makes a handler's retry
+pass in a test and lose the message in production. Do not simulate broker-specific semantics
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
 end against a real server.
 

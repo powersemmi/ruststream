@@ -44,6 +44,14 @@ use ruststream::conformance::harness;
 | headers propagate | message headers survive the round trip |
 | published log observes publishes | `published(name)` records every published message |
 
+A transport that cannot acknowledge - ZeroMQ, MQTT `QoS 0`, Redis pub/sub, Core NATS - reports
+`AckError::Unsupported` from `ack` and `nack`, and the suite accepts that answer wherever it settles
+a delivery. So your in-process transport answers exactly as the real one does, instead of claiming a
+settlement production never performs. The redelivery scenario is the one exception: a
+`nack(requeue = true)` reporting `Unsupported` ends that scenario, because a transport that takes
+nothing back has no redelivery to observe. Everything else stays asserted, the drop scenario
+included - a delivery nobody can settle must still not come back.
+
 These are core-routing guarantees, the contract every broker must meet. The harness does **not** test
 broker-specific semantics (durable resume, redelivery on timeout, partition assignment); those are
 not part of the contract and are verified in your own end-to-end suite against a real server.
