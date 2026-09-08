@@ -461,12 +461,15 @@ impl<'a, C, S> Context<'a, C, S> {
         runnable
     }
 
-    /// Returns the app-wide task tracker for post-settle [`HandlerResult::and_after`]
-    /// continuations. The dispatcher spawns each element's continuation onto it after settling,
-    /// and the single-message path uses it the same way, so a graceful shutdown drains in-flight
-    /// continuations.
-    pub(crate) fn tasks(&self) -> &tokio_util::task::TaskTracker {
-        &self.delivery.tasks
+    /// Returns the scope's delivery context: the task tracker post-settle
+    /// [`HandlerResult::and_after`] continuations are spawned onto, and the publisher the
+    /// `retry_after` fallback re-publishes through.
+    ///
+    /// Borrowed for the scope's lifetime rather than the context's, so the batch path can settle
+    /// through it after handing `&mut self` to the handler - and so no borrow of the context is
+    /// held across an await, which would demand `Context: Sync`.
+    pub(crate) fn delivery(&self) -> &'a Delivery {
+        self.delivery
     }
 }
 

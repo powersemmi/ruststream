@@ -152,9 +152,9 @@ where
         if accepted.is_empty() {
             return;
         }
-        let tasks = ctx.tasks().clone();
+        let delivery = ctx.delivery();
         let result = self.def.call(&values, &self.injections, ctx).await;
-        settle_batch(accepted, result, &subscription, &tasks).await;
+        settle_batch(accepted, result, &subscription, delivery).await;
     }
 }
 

@@ -223,8 +223,7 @@ where
             }
             Err(result) => result,
         };
-        let tasks = ctx.tasks().clone();
-        settle_batch(accepted, result, &subscription, &tasks).await;
+        settle_batch(accepted, result, &subscription, ctx.delivery()).await;
     }
 }
 
