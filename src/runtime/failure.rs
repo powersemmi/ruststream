@@ -48,8 +48,10 @@ pub enum FailurePolicy {
     /// yet available, a schema not yet propagated).
     Retry,
     /// Requeue the message, but ask the broker to redeliver no sooner than the given delay:
-    /// `nack_after(..)`. For brokers without native delayed redelivery this degrades to an
-    /// immediate requeue.
+    /// `nack_after(..)`. A broker without native delayed redelivery takes the runtime's deferred
+    /// re-publish instead, and degrades to an immediate requeue only with no
+    /// [`retry_via`](super::BrokerScope::retry_via) publisher wired - see
+    /// [`HandlerOutcome::retry_after`](super::HandlerOutcome::retry_after).
     RetryAfter(Duration),
     /// Acknowledge the failed message to move past it: `ack`. A deliberate poison-message escape
     /// hatch - it advances past a message that could not be processed. This is not success; the
