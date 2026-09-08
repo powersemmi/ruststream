@@ -673,3 +673,70 @@ reaction has settled), and routes delayed redeliveries through `Coordinator::sch
 That one type then works with both `TestApp` and the conformance suite. See
 [Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
 prove the implementation with `run_suite` and the `lifecycle` ladder check.
+
+### Writing one you can trust
+
+A stand-in is the type a service's whole test suite runs against, so every difference between it
+and the real transport is a green test for behaviour production does not have. The differences that
+matter are not exotic ones, and each rule below costs about one test.
+
+**Run the core's contract suites against the stand-in, not only against a server.** The suites are
+written against the traits and do not care which side of the wire answers them, so the stand-in can
+sit in the same harness a real broker does - at the price of a `#[tokio::test]`:
+
+```rust
+--8<-- "tests/conformance_self.rs:run_suite"
+```
+
+Run `lifecycle` first. It walks `new` -> `connect` -> subscribe -> publish -> ack -> `shutdown` and
+then asks what a stand-in almost never gets asked: does a publisher created before the shutdown
+fail afterwards? A real client answers "not connected"; a stand-in whose publish is a channel send
+has no reason to, and accepts the message instead.
+
+```rust
+--8<-- "tests/conformance_self.rs:lifecycle"
+```
+
+Add every `capabilities::*` suite your capabilities justify on the same footing.
+
+**Offer the capability surface the real broker offers.** The `testing` feature is for tests, and a
+release build turns it off, which is what makes the two directions unequal. Falling short is the
+one that costs: a capability the real broker has and the stand-in lacks cannot be mounted in
+process at all, so the behaviour behind it goes untested. Going over is a smaller matter - a
+transaction or a request-reply that only the stand-in offers fails to compile in your own release
+build, which is annoying and caught early.
+
+**Settle the way the transport settles.** Where the real `ack` reports `AckError::Unsupported` - a
+fire-and-forget transport, an at-most-once quality of service - the stand-in reports it too.
+Answering `Ok(())` to keep a suite quiet is how a handler returning `HandlerOutcome::retry()` passes
+in process and loses the message in production. The suites accept the honest answer.
+
+**Reproduce what the client does; do not fake what the broker does.** The split is not about
+effort, it is about which side the behaviour lives on. Competing consumers, group distribution,
+correlation and reply routing, and buffering until commit are client-side or routing-level, and an
+in-process copy of them is exact. Cluster atomicity, fencing, broker-held timeouts and
+exactly-once are broker-side, and an in-process copy of them is fiction.
+
+Competing consumers is the one to get right, because getting it wrong looks like success: handing
+every message to every subscriber of a queue is a fan-out, not a queue. Two workers sharing one
+then each run the whole stream, and a test that counts what was processed sees the work done and
+reports no error.
+
+**Give every gap a comment naming the assertion it makes unsound** - not that the feature is
+missing, but which test a reader may no longer trust, and what does cover it:
+
+<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+```rust
+// No fencing: a second producer claiming the same transactional id is not rejected here, so a
+// test cannot assert the first one is fenced out. `capabilities::transactions` against a real
+// server is what covers that.
+```
+
+**Pin the gap with a test as well.** A comment goes stale the first time someone "fixes" the
+stand-in to route what it deliberately does not; a test asserting the handler is *not* reached
+fails that day and explains itself.
+
+**Mount the stand-in with the production wiring.** Your own subscription sources and publish
+policies have to work against it unchanged, so a service tests the routes file it ships. If a user
+must swap `OrdersStream` for something else to get a test running, the test no longer covers the
+mount.
