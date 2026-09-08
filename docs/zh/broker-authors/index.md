@@ -556,7 +556,10 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`（用
 `register_testable_broker!` 为该已连接类型注册，因为套件会先连接每一个 Broker，然后才取回它的
 传输），这样用户就能用 `TestApp` 测试套件对着你的 Broker 单元测试处理器。该传输**只做核心路由**：把
-发布出去的消息分发给匹配的订阅者，并把 ack/nack 当作实质上的空操作。切勿在其中模拟 Broker 专有的语义
+发布出去的消息分发给匹配的订阅者，并且对 `ack` / `nack` 的答复要和真实传输一致 - 传输能确认时就在
+内存里结算（`nack(requeue = true)` 把这条投递放回去），传输根本无法确认时（ZeroMQ、MQTT `QoS 0`、
+Redis pub/sub）就答 `AckError::Unsupported`。替身若声称一次自己传输做不到的结算，处理器里的重试就会
+在测试里通过，在生产中丢消息。切勿在其中模拟 Broker 专有的语义
 （持久游标、重新投递定时器、偏移量、死信路由）；那些要对着一台真实的服务器端到端地验证。
 
 参考实现就是内存 Broker 自己的那一份（在 `ConnectedMemoryBroker` 上）：
