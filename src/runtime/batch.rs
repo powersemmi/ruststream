@@ -20,13 +20,12 @@ use opentelemetry::{KeyValue, global};
 // reach decoding through `DecodeWith`.
 #[cfg(test)]
 use serde::de::DeserializeOwned;
-use tokio_util::task::TaskTracker;
 use tracing::{error, warn};
 
 use crate::IncomingMessage;
 
 use super::context::Context;
-use super::dispatch::Workers;
+use super::dispatch::{Delivery, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
@@ -375,9 +374,9 @@ where
         if accepted.is_empty() {
             return;
         }
-        let tasks = ctx.tasks().clone();
+        let delivery = ctx.delivery();
         let result = self.inner.handle_slice(&values, ctx).await;
-        settle_batch(accepted, result, &subscription, &tasks).await;
+        settle_batch(accepted, result, &subscription, delivery).await;
     }
 }
 
@@ -434,7 +433,7 @@ where
         if batch.is_empty() {
             return;
         }
-        let tasks = ctx.tasks().clone();
+        let delivery = ctx.delivery();
         // The constructed values borrow the deliveries' payloads, so the deliveries stay owned
         // by `batch` and the values are dropped before anything settles. Rejections are settled
         // after the batch runs, which keeps the accepted values contiguous with no second pass.
@@ -468,7 +467,7 @@ where
             self.inner.handle_slice(&values, ctx).await
         };
         drop(values);
-        settle_split_batch(batch, rejected, result, &subscription, &tasks).await;
+        settle_split_batch(batch, rejected, result, &subscription, delivery).await;
     }
 }
 
@@ -480,10 +479,10 @@ async fn settle_split_batch<M: IncomingMessage>(
     rejected: Vec<(usize, HandlerResult)>,
     result: BatchResult,
     subscription: &str,
-    tasks: &TaskTracker,
+    delivery: &Delivery,
 ) {
     if rejected.is_empty() {
-        return settle_batch(batch, result, subscription, tasks).await;
+        return settle_batch(batch, result, subscription, delivery).await;
     }
     let accepted_len = batch.len() - rejected.len();
     let per_element = match result {
@@ -509,16 +508,16 @@ async fn settle_split_batch<M: IncomingMessage>(
     for (index, msg) in batch.into_iter().enumerate() {
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
-            settle(msg, outcome, subscription).await;
+            settle_outcome(msg, outcome, subscription, delivery).await;
             continue;
         }
         let mut result = accepted_results
             .next()
             .unwrap_or_else(HandlerOutcome::retry);
         let after = result.take_after();
-        settle(msg, result.outcome(), subscription).await;
+        settle_outcome(msg, result.outcome(), subscription, delivery).await;
         if let Some(after) = after {
-            tasks.spawn(after);
+            delivery.tasks.spawn(after);
         }
     }
 }
@@ -529,7 +528,7 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
     accepted: Vec<M>,
     result: BatchResult,
     subscription: &str,
-    tasks: &TaskTracker,
+    delivery: &Delivery,
 ) {
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.
@@ -542,13 +541,13 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
             for msg in accepted {
                 #[cfg(feature = "testing")]
                 batch.settled(status);
-                settle(msg, status, subscription).await;
+                settle_outcome(msg, status, subscription, delivery).await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
             // tracked set so a graceful shutdown drains it (at-most-once, like the
             // per-element ones below).
             if let Some(after) = after {
-                tasks.spawn(after);
+                delivery.tasks.spawn(after);
             }
         }
         BatchResult::PerElement(results) => {
@@ -569,12 +568,12 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                 let after = result.take_after();
                 #[cfg(feature = "testing")]
                 batch.settled(result.outcome());
-                settle(msg, result.outcome(), subscription).await;
+                settle_outcome(msg, result.outcome(), subscription, delivery).await;
                 // The continuation runs after this element is settled, on the tracked set so a
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
                 // never redelivers the already-settled message.
                 if let Some(after) = after {
-                    tasks.spawn(after);
+                    delivery.tasks.spawn(after);
                 }
             }
         }
@@ -680,6 +679,9 @@ where
     S: Send + Sync,
 {
     let subscription = ctx.name().to_owned();
+    // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
+    // demand `Context: Sync` (see the signature's note).
+    let delivery = ctx.delivery();
     let mut values = Vec::with_capacity(batch.len());
     let mut accepted = Vec::with_capacity(batch.len());
     for msg in batch {
@@ -697,7 +699,7 @@ where
                     "codec decode failed",
                 );
                 let outcome = rejection(&err, "batch decode failed", decode, ctx);
-                settle(msg, outcome, &subscription).await;
+                settle_outcome(msg, outcome, &subscription, delivery).await;
             }
         }
     }
@@ -726,23 +728,6 @@ fn rejection<C, S>(
             HandlerResult::drop()
         }
         other => other.settlement().unwrap_or_else(HandlerResult::drop),
-    }
-}
-
-/// Applies one settlement to one delivery's own `ack` / `nack`.
-pub(crate) async fn settle<M: IncomingMessage>(msg: M, result: HandlerResult, subscription: &str) {
-    let ack_result = match result {
-        HandlerResult::Ack => msg.ack().await,
-        HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-        HandlerResult::NackAfter { delay } => msg.nack_after(delay).await,
-    };
-    if let Err(err) = ack_result {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %subscription,
-            error = %err,
-            "ack / nack failed",
-        );
     }
 }
 

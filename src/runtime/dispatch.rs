@@ -775,7 +775,11 @@ fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
 }
 
 /// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
-async fn settle_outcome<M: IncomingMessage>(
+///
+/// The single place a settlement reaches the broker, single-message and batch paths alike: a
+/// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
+/// the delay fallback below is exactly the part that is easy to leave out.
+pub(crate) async fn settle_outcome<M: IncomingMessage>(
     msg: M,
     outcome: HandlerResult,
     name: &str,
