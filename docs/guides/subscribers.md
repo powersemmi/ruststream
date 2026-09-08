@@ -166,6 +166,11 @@ Under the hood, the runtime honours the delay:
   message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
   window: if the process exits before the timer fires the copy is lost.
 
+  A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) rides the same
+  path: there is no original to drop, so the deferred copy is the whole retry. A settle the
+  broker actively rejects is the other case - the delivery is still the broker's to redeliver,
+  so the runtime reports the failure and adds no copy on top of it.
+
 The `batch_retry_after` form composes with
 [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerOutcome>` carries
 per-element delays, so pending entries back off without holding up the rest of the batch:
