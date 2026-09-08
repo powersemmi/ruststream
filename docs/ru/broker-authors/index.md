@@ -293,7 +293,7 @@ pub trait NatsSubscriber {
 
 // Четыре слота состояния - это (воркеры, политики отказа, стартовая позиция, размер пакета);
 // `Codec` - собственное переопределение кодека регистрации, `()` пока его никто не назвал. Оба
-// едут дальше без изменений.
+// передаются дальше без изменений.
 impl<Def, Workers, Failures, StartPosition, Batch, Codec> NatsSubscriber
     for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartPosition, Batch), Codec>
 where
