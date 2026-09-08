@@ -98,7 +98,11 @@ pub trait IncomingMessage: Send + Sync {
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
-    // Defaulted: a plain nack(true). Override when the transport has native
+    // Defaulted: false. The runtime reads this first and never calls
+    // nack_after without it, so override the pair together.
+    fn supports_nack_after(&self) -> bool;
+
+    // Defaulted: AckError::Unsupported. Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
     // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
@@ -109,8 +113,17 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-A broker that overrides neither defaulted method still works with every runtime feature:
-`retry_after` falls back to an immediate requeue, and keyed lanes rotate keyless messages.
+Delayed redelivery is two methods, and `supports_nack_after` is the one the runtime asks:
+overriding `nack_after` alone leaves it at `false`, and the override is never called. The
+`nack_after` default answers `AckError::Unsupported` rather than quietly settling as a plain
+`nack(true)`, because a transport that cannot hold a message back should say so instead of turning
+a back-off into a redelivery storm.
+
+A broker that overrides none of the three still works with every runtime feature. Where there is no
+native delayed redelivery the runtime carries `retry_after` itself: it drops the delivery and
+re-publishes a copy to the same source after the delay, through the publisher the application wired
+with `BrokerScope::retry_via`, carrying an incremented retry-count header. Only with no such
+publisher does the delay degrade to an immediate requeue. Keyed lanes rotate keyless messages.
 
 ### `Publisher`
 

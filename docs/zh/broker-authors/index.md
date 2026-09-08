@@ -91,7 +91,11 @@ pub trait IncomingMessage: Send + Sync {
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
-    // Defaulted: a plain nack(true). Override when the transport has native
+    // Defaulted: false. The runtime reads this first and never calls
+    // nack_after without it, so override the pair together.
+    fn supports_nack_after(&self) -> bool;
+
+    // Defaulted: AckError::Unsupported. Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
     // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
@@ -102,8 +106,14 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-这两个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能：`retry_after` 退回为立即
-重新入队，按键分道则会轮转那些没有键的消息。
+延迟重投由两个方法组成，运行时问的是 `supports_nack_after`：只覆盖 `nack_after`，这道闸门仍然是
+`false`，覆盖的实现一次也不会被调用。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是
+悄悄按一次普通的 `nack(true)` 结算：传输压不住这条消息，就得说出来，否则一次退避就变成一场重投风暴。
+
+这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重投的地方，
+`retry_after` 由运行时自己扛：它丢弃这条投递，并在延迟之后把一份副本发布回同一个来源 - 走应用通过
+`BrokerScope::retry_via` 接上的那个发布者 - 并把重试计数消息头加一。只有在没有这个发布者时，延迟才
+退化为立即重新入队。按键分道则会轮转那些没有键的消息。
 
 ### `Publisher`
 

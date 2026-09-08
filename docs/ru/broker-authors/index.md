@@ -102,7 +102,11 @@ pub trait IncomingMessage: Send + Sync {
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
-    // Defaulted: a plain nack(true). Override when the transport has native
+    // Defaulted: false. The runtime reads this first and never calls
+    // nack_after without it, so override the pair together.
+    fn supports_nack_after(&self) -> bool;
+
+    // Defaulted: AckError::Unsupported. Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
     // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
@@ -113,9 +117,18 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-Брокер, который не переопределил ни одного из двух методов с реализацией по умолчанию, всё равно
-работает со всеми возможностями рантайма: `retry_after` сводится к немедленному возврату в очередь,
-а полосы воркеров по ключу раскладывают сообщения без ключа по кругу.
+Отложенная повторная доставка - это два метода, и рантайм спрашивает `supports_nack_after`:
+если переопределить только `nack_after`, гейт останется в `false` и переопределение никто не
+вызовет. По умолчанию `nack_after` отвечает `AckError::Unsupported`, а не завершает доставку тихим
+`nack(true)`: транспорт, который не умеет придержать сообщение, обязан сказать об этом, иначе
+пауза перед повтором превращается в шторм повторных доставок.
+
+Брокер, который не переопределил ни один из трёх методов с реализацией по умолчанию, всё равно
+работает со всеми возможностями рантайма. Там, где нативной отложенной доставки нет, `retry_after`
+несёт сам рантайм: он отбрасывает доставку и через задержку публикует копию в тот же источник -
+издателем, которого приложение подключило через `BrokerScope::retry_via`, - с увеличенным
+заголовком счётчика повторов. Только когда такого издателя нет, задержка вырождается в немедленный
+возврат в очередь. Полосы воркеров по ключу раскладывают сообщения без ключа по кругу.
 
 ### `Publisher`
 
