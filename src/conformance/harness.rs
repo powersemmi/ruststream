@@ -61,6 +61,12 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// rather than accepting any answer. Everything else stays asserted, the drop scenario included: a
 /// delivery nobody can settle is still a delivery that must not come back.
 ///
+/// The answer is read from the delivery, not from the broker, so it can differ per subscription
+/// and per message the way the transport does: a requeue that is advisory under one commit mode
+/// and rewinding under another, an acknowledgement a transport gives at one quality of service and
+/// not at another. What the suite holds either way is the meaning of a success:
+/// `Ok(())` from `nack(requeue = true)` promises the message comes back.
+///
 /// # Panics
 ///
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.

@@ -52,6 +52,12 @@ settlement production never performs. The redelivery scenario is the one excepti
 nothing back has no redelivery to observe. Everything else stays asserted, the drop scenario
 included - a delivery nobody can settle must still not come back.
 
+The answer is read from the delivery, not from the broker, so it can differ per subscription and
+per message the way your transport does: a requeue that is advisory under one commit mode and
+rewinding under another, an acknowledgement you give at one quality of service and not at another.
+What the suite holds either way is the meaning of a success - `Ok(())` from `nack(requeue = true)`
+promises the message comes back, and the runtime's retry path reads it the same way.
+
 These are core-routing guarantees, the contract every broker must meet. The harness does **not** test
 broker-specific semantics (durable resume, redelivery on timeout, partition assignment); those are
 not part of the contract and are verified in your own end-to-end suite against a real server.
