@@ -56,6 +56,16 @@ handed out from the connected form, clones of a shareable broker) must surface a
 used after shutdown - never a silent success against a dead connection. The lifecycle check
 drives that path too.
 
+The in-memory broker walks the whole ladder in a few lines, and every sketch below it on this page
+is cut from that same file, so a contract that moves takes the page's code with it:
+
+```rust
+--8<-- "src/memory/mod.rs:ladder"
+```
+
+`ClosedMemoryBroker` is the witness carrying teardown diagnostics the paragraph above describes:
+it reports how many subscriber registrations the shutdown dropped.
+
 ### `Subscribe`
 
 Implement `Subscribe` on the connected form to support subscribing by name. This is what
@@ -67,6 +77,12 @@ pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
+```
+
+Opening a subscription is all it has to do:
+
+```rust
+--8<-- "src/memory/mod.rs:subscribe"
 ```
 
 ### `Subscriber`
@@ -111,6 +127,16 @@ pub trait IncomingMessage: Send + Sync {
 
 A broker that overrides neither defaulted method still works with every runtime feature:
 `retry_after` falls back to an immediate requeue, and keyed lanes rotate keyless messages.
+
+What "overrides nothing" gets you is not something a broker can be pointed at to show - every
+broker in this workspace overrides these - so the core pins it with a test, and this is that test:
+
+```rust
+--8<-- "src/message.rs:incoming_defaults"
+```
+
+`nack_after` reports that the delay cannot be honoured rather than quietly settling as a plain
+`nack(true)`, which is what lets the runtime tell the two cases apart and run its own fallback.
 
 ### `Publisher`
 
@@ -182,6 +208,12 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
+Both halves, on a broker whose policy carries no options at all:
+
+```rust
+--8<-- "src/memory/mod.rs:publish_policy"
+```
+
 ## Subscription sources
 
 `Subscribe` covers the by-name case. When a subscription needs broker-specific options (a consumer
@@ -213,13 +245,8 @@ so one definition can be mounted on two brokers.
 A kind identified by a name and nothing else also implements `FromName`, whose single
 constructor builds it from that name:
 
-<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
 ```rust
-impl FromName for OrdersStream {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name)
-    }
-}
+--8<-- "src/memory/mod.rs:from_name"
 ```
 
 `#[subscriber(OrdersStream)]` is then legal: the attribute fixes the kind, and the mount site

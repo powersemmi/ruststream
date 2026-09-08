@@ -287,6 +287,7 @@ impl fmt::Debug for MemoryBroker {
     }
 }
 
+// --8<-- [start:ladder]
 impl Broker for MemoryBroker {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker;
@@ -373,6 +374,8 @@ impl ConnectedBroker for ConnectedMemoryBroker {
     }
 }
 
+// --8<-- [end:ladder]
+
 /// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
 ///
 /// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`], filling the same
@@ -396,6 +399,7 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryPublish;
 
+// --8<-- [start:publish_policy]
 impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
     type Live = MemoryPublisher;
 
@@ -410,6 +414,8 @@ impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
 impl DefaultPublish for ConnectedMemoryBroker {
     type Policy = MemoryPublish;
 }
+
+// --8<-- [end:publish_policy]
 
 /// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
 ///
@@ -504,6 +510,7 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
 crate::register_testable_broker!(ConnectedMemoryBroker);
 // --8<-- [end:testable]
 
+// --8<-- [start:subscribe]
 impl Subscribe for ConnectedMemoryBroker {
     type Subscriber = MemorySubscriber;
 
@@ -522,6 +529,8 @@ impl Subscribe for ConnectedMemoryBroker {
         }))
     }
 }
+
+// --8<-- [end:subscribe]
 
 /// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
 ///
@@ -544,11 +553,14 @@ impl MemorySource {
 
 // The in-memory subscription needs nothing beyond a name, so it offers the name-only
 // constructor the `#[subscriber(MemorySource)]` form builds through.
+// --8<-- [start:from_name]
 impl FromName for MemorySource {
     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
         Self::new(name.into().into_owned())
     }
 }
+
+// --8<-- [end:from_name]
 
 impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     type Subscriber = MemorySubscriber;
