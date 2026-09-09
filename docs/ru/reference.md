@@ -31,5 +31,5 @@ cargo doc --all-features --open
 | `build_spec` | `ruststream::asyncapi` | генерация документа AsyncAPI |
 | `Metrics` | `ruststream::metrics` | метрики Prometheus |
 | `TestApp` | `ruststream::testing` | внутрипроцессная обвязка для юнит-тестов приложения |
-| `TestableBroker` | `ruststream::testing` | контракт тестового транспорта брокера |
+| `TestableBroker` | `ruststream::testing` | контракт, который реализует внутрипроцессный транспорт брокера |
 | `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов брокеров |

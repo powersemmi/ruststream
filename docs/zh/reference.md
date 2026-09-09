@@ -30,5 +30,5 @@ cargo doc --all-features --open
 | `build_spec` | `ruststream::asyncapi` | 生成 AsyncAPI 文档 |
 | `Metrics` | `ruststream::metrics` | Prometheus 指标 |
 | `TestApp` | `ruststream::testing` | 应用的进程内单元测试套件 |
-| `TestableBroker` | `ruststream::testing` | Broker 测试传输的契约 |
+| `TestableBroker` | `ruststream::testing` | Broker 进程内传输实现的契约 |
 | `harness::run_suite` | `ruststream::conformance` | 供 Broker 作者使用的校验套件 |
