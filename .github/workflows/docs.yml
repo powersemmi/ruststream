@@ -16,8 +16,10 @@ on:
       - scripts/check_doc_parity.py
       - scripts/doc_glossary.toml
       - .github/workflows/docs.yml
+  # No base filter: a pull request stacked on another one has a branch for its base, and a filter
+  # naming `main` leaves it with no checks at all - which reads as a conflicting branch rather
+  # than as a workflow that declined to run.
   pull_request:
-    branches: [main]
     # `labeled` / `unlabeled` are here for the translation-parity job below: applying its
     # escape-hatch label has to re-run the check, or the label leaves a stale red run
     # blocking the merge.

@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # No base filter: a pull request stacked on another one has a branch for its base, and a filter
+  # naming `main` leaves it with no checks at all - which reads as a conflicting branch rather
+  # than as a workflow that declined to run.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
