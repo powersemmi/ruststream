@@ -15,7 +15,7 @@ use ruststream::memory::prelude::*;
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::{
     OutTransform, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform,
+    PublishTransform, RedirectTransform,
 };
 use serde::{Deserialize, Serialize};
 
@@ -218,6 +218,31 @@ impl OutTransform for OutboxEnvelope {
 }
 // --8<-- [end:slot_transform]
 
+// --8<-- [start:redirect]
+/// A redirect: the one transform that names where a reply goes. This one answers where the
+/// request asked to be answered, and leaves the name alone for a request that asked for nothing -
+/// which is when the mount site's own destination stands.
+struct ReplyTo;
+
+impl<C> RedirectTransform<C> for ReplyTo {
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+        if let Some(to) = cx.headers().get("reply-to")
+            && let Ok(to) = std::str::from_utf8(to)
+        {
+            out.set_name(to.to_owned());
+        }
+    }
+}
+
+/// `Response` declares no destination, so this reply can be redirected; the clause's
+/// `"answers"` is the fallback and what the generated document reports.
+#[subscriber("asks", publish("answers"))]
+async fn answer(req: &Request) -> Response {
+    println!("answering ask {}", req.id);
+    Response { ok: true }
+}
+// --8<-- [end:redirect]
+
 // --8<-- [start:app_layer]
 /// A static, app-wide publish layer: observes every publish, then passes it on.
 #[derive(Clone)]
@@ -298,6 +323,10 @@ fn app() -> impl App {
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
             // --8<-- [end:reply_mount]
+            // --8<-- [start:redirect_mount]
+            // the redirect names the destination per delivery; ordinary transforms run after it
+            b.include(answer).out(Reply, Publish).redirect(ReplyTo);
+            // --8<-- [end:redirect_mount]
             // --8<-- [start:forward_mount]
             b.include(forward).out(DefaultSlot, Publish).build();
             // --8<-- [end:forward_mount]

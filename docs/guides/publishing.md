@@ -389,15 +389,19 @@ an `Out` slot, without the handler knowing about it.
 
 ## The publish pipeline
 
-Three kinds of transform run before a message leaves the process, and they compose:
+Four kinds of transform run before a message leaves the process, and they compose:
 
 - **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
   `.out(Reply, ..)`. Zero-cost transforms for one destination: an envelope, a fixed content type,
-  the delivery's trace / correlation id on the reply. They run first, closest to the value.
+  the delivery's trace / correlation id on the reply. They rewrite the headers and the payload, and
+  leave the destination alone.
 - **Static `OutTransform`** on one `Out` slot, chained with `.transform(..)` after
-  `.out(marker, policy)`. It takes the same place in the order, and works on what leaves through
-  that slot: an outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext`:
-  the body itself issues a slot publish, so the body reads the delivery and puts it on the message.
+  `.out(marker, policy)`. It rewrites the headers and the payload of what leaves through that slot:
+  an outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext`: the body
+  itself issues a slot publish, so the body reads the delivery and puts it on the message.
+- **Static `RedirectTransform`** on the reply wiring, chained with `.redirect(..)` after
+  `.out(Reply, ..)`, and its slot counterpart `OutRedirect` after `.out(marker, policy)`. It is the
+  one transform that names a message's destination, and it names it per message.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can read its result. The chain composes into a concrete type and becomes part of the
@@ -432,6 +436,46 @@ An `OutTransform` implements `apply(&mut Outgoing<'_>)` and works on one slot:
 --8<-- "examples/publishing.rs:slot_transform"
 ```
 
+### Naming a destination per message
+
+Where a message goes is declared: on the message type with `#[outgoing(name = "..")]`, at the mount
+site with `publish("dest")`, or at a slot's call site with `.to(..)`. Some answers have no
+destination to declare. An AMQP request carries the queue to answer on in its `reply-to` header,
+and a ZeroMQ `ROUTER` addresses each answer to the peer that asked.
+
+A `RedirectTransform` reads the delivery and names the reply's destination:
+
+```rust
+--8<-- "examples/publishing.rs:redirect"
+```
+
+Name it on the chain with `.redirect(..)`:
+
+```rust
+--8<-- "examples/publishing.rs:redirect_mount"
+```
+
+`.redirect(..)` applies to a reply type that leaves its destination open; on a type carrying
+`#[outgoing(name = "receipts")]` it is a compile error naming the reply type. The mount site's
+`publish("answers")` stays the reply's declared destination. It is the name the generated document
+reports, and where a reply goes when the redirect leaves the name alone.
+
+A batch's replies cannot be redirected: they are published against the batch, which answers many
+deliveries and carries none of their headers. A position takes one redirect, so a second
+`.redirect(..)` on it does not compile.
+
+An `Out` slot takes the same step with an `OutRedirect`, which has the same
+`apply(&mut Outgoing<'_>)` as an `OutTransform` and names the destination of every message leaving
+the slot.
+
+Every type in a redirected slot's `#[publishes(..)]` list has to leave its destination open. The
+body still writes `.to(..)` on every publish, and the redirect writes over that name. A marker with
+no list admits every declared message and cannot be redirected at all, the implicit `DefaultSlot`
+of a single unnamed `Out<impl Publisher>` included.
+
+Such a slot offers plain sending only: a transaction or a request / reply round trip reaches the
+broker without the slot's publish path, so a handler that asks for either does not compile.
+
 A `PublishLayer` implements an around/next signature, so it can stop the chain, retry the send, or
 just observe:
 
@@ -459,9 +503,9 @@ message that leaves through an injected `Out` slot.
 The mount site's transforms act on the position they were named on:
 `.out(Reply, Publish).transform(StampSource)` grows the reply's stack,
 `.out(Audit, Publish).transform(OutboxEnvelope)` grows that slot's. A registration with both sides
-writes both calls, and `.transform(..)` applies to the position named before it. The order is the
-same on either side: the mount site's transforms first (closest to the encoded value), then the
-app-wide middleware, then the send.
+writes both calls, and `.transform(..)` applies to the position named before it. A position runs
+its steps in a fixed order, whatever order the chain names them in: the redirect first, then the
+position's transforms, then the app-wide middleware, then the send.
 
 Two publishes stay outside the pipeline, and the body drives both itself: a transaction opened on a
 slot (`begin()`, `transaction()`) sends into the broker's transaction, and a request / reply round

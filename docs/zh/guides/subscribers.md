@@ -540,9 +540,9 @@ derive 也写出批量的声明，批量函数体不需要第二个 impl。批�
 发布者由 `include` 处指定的策略构造，两种传输方式指定策略的写法相同：
 `b.include(relay).out(Reply, Publish)`。不写 `.out(..)` 时，发布者由 Broker 的默认发布策略构造。
 
-之后两条链分开：编码的回复接受 `.codec(..)`、`.transform(..)` 和 `.transactional()`，而
-`Serialized` 的字节原样发出，这条路径上没有这些步骤。回复发布失败会让这次投递 nack 并重新入队，和
-编码路径上一样：
+之后两条链分开：编码的回复接受 `.codec(..)`、`.transform(..)`、`.redirect(..)` 和
+`.transactional()`，而 `Serialized` 的字节原样发出，这条路径上没有这些步骤。回复发布失败会让这次投递
+nack 并重新入队，和编码路径上一样：
 
 === "宏"
 

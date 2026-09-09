@@ -347,15 +347,18 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前，有三类变换运行，而且它们可以组合：
+消息离开进程之前，有四类变换运行，而且它们可以组合：
 
 - **回复接线上的静态 `PublishTransform`**，在 `.out(Reply, ..)` 之后用 `.transform(..)` 添加。这是
   零成本、按目的地生效的变换：一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
-  关联 id 写进回复。它们最先运行，离值最近。
+  关联 id 写进回复。它们改写消息头和负载，不动目的地。
 - **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
-  添加。它在顺序里的位置相同，作用于从该槽位出去的消息：一层 outbox 信封、一个固定的 content
-  type 和一个租户标记。它不接受 `PublishContext`。槽位上的发布由处理器函数体自己发出，因此那次
-  投递也由函数体自己读取、自己写进消息。
+  添加。它改写从该槽位出去的消息的消息头和负载：一层 outbox 信封、一个固定的 content type 和一个
+  租户标记。它不接受 `PublishContext`。槽位上的发布由处理器函数体自己发出，因此那次投递也由函数体
+  自己读取、自己写进消息。
+- **回复接线上的静态 `RedirectTransform`**，在 `.out(Reply, ..)` 之后用 `.redirect(..)` 添加；槽位
+  上与之对应的是 `.out(marker, policy)` 之后的 `OutRedirect`。它是唯一指定消息目的地的变换，而且
+  逐条消息指定。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信
   包装），作用于每一条发布出去的消息。它包在发送外面，因此能观察到发送的结果。整条链会组合成一个
   具体类型，于是它成为应用类型的一部分：构建器通常返回 `impl App`，从不把它写出来，而具体的
@@ -386,6 +389,41 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 --8<-- "examples/publishing.rs:slot_transform"
 ```
 
+### 按消息指定目的地 { #naming-a-destination-per-message }
+
+消息发往何处是声明出来的：在消息类型上用 `#[outgoing(name = "..")]`，在挂载点用
+`publish("dest")`，或者在槽位的调用点用 `.to(..)`。有些回复没有目的地可声明。AMQP 请求把作答用的
+队列放在 `reply-to` 消息头里，ZeroMQ 的 `ROUTER` 则把每条回复发给提问的那一方。
+
+`RedirectTransform` 读取这次投递，指定回复的目的地：
+
+```rust
+--8<-- "examples/publishing.rs:redirect"
+```
+
+在链上用 `.redirect(..)` 指定它：
+
+```rust
+--8<-- "examples/publishing.rs:redirect_mount"
+```
+
+`.redirect(..)` 适用于把目的地留空的回复类型。写了 `#[outgoing(name = "receipts")]` 的类型上，它
+是一个点名该回复类型的编译错误。挂载点的 `publish("answers")` 仍然是这条回复已声明的目的地：生成
+的文档报告这个名字，重定向没有改名字时，回复也发往这里。
+
+批的回复无法重定向：它们以整个批的名义发布，而一个批作答许多条投递，不带其中任何一条的消息头。一个
+位置只接受一次重定向，因此在它上面写第二个 `.redirect(..)` 无法通过编译。
+
+`Out` 槽位接受同一个步骤，用的是 `OutRedirect`。它和 `OutTransform` 的签名一样，都是
+`apply(&mut Outgoing<'_>)`，作用是给每条从该槽位出去的消息指定目的地。
+
+被重定向的槽位，其 `#[publishes(..)]` 列表里的每个类型都必须把目的地留空。函数体每次发布仍然要写
+`.to(..)`，重定向再改写这个名字。没有列表的标记接受任何已声明的消息，因此根本无法重定向，单个匿名
+`Out<impl Publisher>` 的隐式 `DefaultSlot` 也在其内。
+
+这样的槽位只提供普通发送：事务和一次 request / reply 往返都绕过槽位的发布路径直达 Broker，因此
+索要其中任何一项的处理器无法通过编译。
+
 `PublishLayer` 实现 around/next 形式的签名，因此它可以中断这条链、重试发送，或者只做观察：
 
 ```rust
@@ -411,8 +449,8 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 挂载点上的变换作用在指定它的那个位置上：`.out(Reply, Publish).transform(StampSource)` 扩充回复的
 栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 扩充这个槽位的栈。两个位置都用到时，注册就
-把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。两个位置的顺序一样：先是挂载点
-的变换（离编码后的值最近），然后是应用级的中间件，最后是发送。
+把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。一个位置按固定顺序运行它的步骤，
+无论链上把它们写成什么次序：先是重定向，然后是这个位置的变换，然后是应用级的中间件，最后是发送。
 
 有两种发布不经过这条管线，都由处理器函数体自己驱动：在槽位上开启的事务（`begin()`、`transaction()`）
 发往 Broker 的事务，而一次 request / reply 往返（`request(..)`）等待回复，不以一次发送收尾。

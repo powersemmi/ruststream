@@ -73,6 +73,11 @@
 //! [`Slot`], `Outs<(Slot<Lanes, LaneRouter, JsonCodec>,)>`) and calls it directly through the
 //! entry's transparent `Deref`. Everything is monomorphized: the arena is built once at startup,
 //! and a delivery only ever passes a reference to it.
+//!
+//! A mount site that names a redirect for the slot
+//! ([`OutRedirect`](crate::runtime::OutRedirect)) leaves the first row of that table and nothing
+//! else: the rows below it reach the broker without the slot's publish path, so their messages
+//! would go where the redirect never looked, and a body asking for one of them fails to mount.
 
 use std::fmt;
 use std::marker::PhantomData;
