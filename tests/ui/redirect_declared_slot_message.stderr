@@ -1,0 +1,21 @@
+error[E0599]: the method `redirect` exists for struct `MountingSlots<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<mirror, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Audit, MemoryPublish>>,)), ruststream::runtime::SlotPos<0>>>`, but its trait bounds were not satisfied
+  --> tests/ui/redirect_declared_slot_message.rs:42:14
+   |
+20 |   struct Audit;
+   |   ------------ doesn't satisfy `Audit: OpenDestinations`
+...
+40 | /         b.include(mirror)
+41 | |             .out(Audit, MemoryPublish)
+42 | |             .redirect(ByTenant)
+   | |             -^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
+   |
+   |
+  ::: src/schema.rs
+   |
+   |   pub struct FixedName;
+   |   -------------------- doesn't satisfy `FixedName: ruststream::runtime::OpenForm<Audited>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `FixedName: ruststream::runtime::OpenForm<Audited>`
+           which is required by `Audit: OpenDestinations`

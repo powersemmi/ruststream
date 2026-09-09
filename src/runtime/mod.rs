@@ -69,9 +69,9 @@ pub use handle::{
 };
 #[doc(hidden)]
 pub use handle::{
-    EntryMarkers, OutPos, ReplyDest, ReplyDestination, ReplyFormFor, ReplyHeadersSchema,
-    ReplyRoute, ResolveDestination, SelectSlot, UnbuiltDefinition, WireDocs,
-    declared_reply_destination, reply_destination,
+    DeclaresReply, EntryMarkers, OutPos, RedirectableReply, ReplyDest, ReplyDestination,
+    ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination, SelectSlot,
+    UnbuiltDefinition, WireDocs, declared_reply_destination, reply_destination,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
@@ -97,22 +97,24 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // service code.
 #[doc(hidden)]
 pub use publish::{
-    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, Direct,
-    EncodeOutcome, InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, PayloadError,
-    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, Transactional,
+    AddBatchReplyTransform, AddReplyRedirect, AddReplyTransform, Admits, AnyDeclared,
+    CodecSlotOpen, Direct, EncodeOutcome, InTransaction, LowerOutRedirect, LowerOutTransforms,
+    LowerRedirect, MapReplyPolicy, NameReplyCodec, NoOutRedirect, NoRedirect, OutRedirected,
+    PayloadError, PublishingDirectly, RawReplyWiring, RedirectSlotOpen, RedirectStack, Redirected,
+    RedirectedSend, RedirectedSendPolicy, Redirecting, ReplyPublisher, ReplyWiring, Transactional,
     TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, EncodedWire, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
-    MessageWire, MissingSegment, OutPipeline, OutTransform, OutTransformIdentity,
+    MessageWire, MissingSegment, OutPipeline, OutRedirect, OutTransform, OutTransformIdentity,
     OutTransformStack, Outgoing, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
     PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
-    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
-    SatisfiesContract, SerializePayloadError, SerializedWire, SuppliedName, TemplateAddress,
-    TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec,
-    for_batch,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack,
+    RedirectTransform, ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire,
+    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
+    TypedTransaction, UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
@@ -121,7 +123,7 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount};
+pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount, SoloReplyMount};
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
     RouterPublishingOut, RouterSink, RouterWith, forms,
@@ -135,12 +137,13 @@ pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{
     BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,
-    MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OutAttachment,
-    ReplyLast, ReplyOpen, ReplyStep, SlotCodec, SlotPos, TransactionalLast, TransformAt,
+    MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OpenDestination,
+    OpenDictionary, OpenForm, OutAttachment, RedirectAt, RedirectLast, RedirectPosition, ReplyLast,
+    ReplyOpen, ReplyStep, SlotCodec, SlotDictionary, SlotPos, TransactionalLast, TransformAt,
     TransformLast, WithSource,
 };
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OutMessages, OutSlot, PublishedThrough,
-    Reply, SlotPublisher, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OpenDestinations, OutMessages, OutSlot,
+    PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
 pub use typed::{Typed, typed};

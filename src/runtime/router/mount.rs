@@ -152,6 +152,25 @@ pub struct RawReplyInjectMount;
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishInjectMount;
 
+/// A mount whose reply answers one delivery, so a redirect has a delivery to read.
+///
+/// The `.redirect(..)` step states this about the chain's mount token: a batch's replies are
+/// published against the batch, which spans many deliveries and carries none of their headers, so
+/// a redirect would have nothing to name a destination from.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a batch's replies cannot be redirected",
+    label = "this registration answers a batch, not one delivery",
+    note = "`.redirect(..)` names a reply's destination from the delivery it answers, and a batch \
+            spans many: publish the batch's replies where the declaration says, or mount the \
+            handler one-by-one"
+)]
+pub trait SoloReplyMount {}
+
+impl SoloReplyMount for PublishMount {}
+
+impl SoloReplyMount for PublishInjectMount {}
+
 /// What `.out(Reply, policy)` attaches on one mount, per the reply's wire.
 ///
 /// An encoded reply wraps the policy in a [`ReplyWiring`] the rest of the chain grows

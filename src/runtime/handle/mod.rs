@@ -75,8 +75,9 @@ pub use outs::{EntryMarkers, OutPos, SelectSlot};
 pub use outs::{OutEntry, Outs, Slot};
 #[doc(hidden)]
 pub use reply::{
-    ReplyDest, ReplyDestination, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, ResolveDestination,
-    WireDocs, declared_reply_destination, reply_destination,
+    DeclaresReply, RedirectableReply, ReplyDest, ReplyDestination, ReplyFormFor,
+    ReplyHeadersSchema, ReplyRoute, ResolveDestination, WireDocs, declared_reply_destination,
+    reply_destination,
 };
 pub use reply::{ReplyShape, Serialized};
 pub use value::{

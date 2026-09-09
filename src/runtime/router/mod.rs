@@ -37,7 +37,7 @@ pub use mount::DefaultReply;
 pub use mount::IncludeDef;
 pub(crate) use mount::InputCodec;
 #[doc(hidden)]
-pub use mount::{ReplyAttachment, RouterMount};
+pub use mount::{ReplyAttachment, RouterMount, SoloReplyMount};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 

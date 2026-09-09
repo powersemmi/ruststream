@@ -11,8 +11,9 @@ use std::fmt;
 use std::marker::PhantomData;
 
 use super::{
-    BatchPublishTransformStack, BatchTransformIdentity, CallCodec, PublishCodec,
-    PublishTransformIdentity, PublishTransformStack, Transactional, TypedPublisher, UnnamedCodec,
+    BatchPublishTransformStack, BatchTransformIdentity, CallCodec, LowerRedirect, NoRedirect,
+    PublishCodec, PublishTransformIdentity, PublishTransformStack, Redirected, Transactional,
+    TypedPublisher, UnnamedCodec,
 };
 use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
 
@@ -65,7 +66,7 @@ pub trait MapReplyPolicy: Sized {
     fn map_policy(self, f: impl FnOnce(Self::Policy) -> Self::Policy) -> Self;
 }
 
-impl<Policy, Enc, PL, BL, Tx> MapReplyPolicy for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+impl<Policy, Enc, PL, BL, Tx, Rd> MapReplyPolicy for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd> {
     type Policy = Policy;
 
     fn map_policy(self, f: impl FnOnce(Policy) -> Policy) -> Self {
@@ -74,6 +75,7 @@ impl<Policy, Enc, PL, BL, Tx> MapReplyPolicy for ReplyWiring<Policy, Enc, PL, BL
             enc: self.enc,
             layers: self.layers,
             batch_layers: self.batch_layers,
+            redirect: self.redirect,
             _tx: PhantomData,
         }
     }
@@ -109,29 +111,32 @@ pub struct ReplyWiring<
     PL = PublishTransformIdentity,
     BL = BatchTransformIdentity,
     Tx = Direct,
+    Rd = NoRedirect,
 > {
     policy: Policy,
     enc: Enc,
     layers: PL,
     batch_layers: BL,
+    redirect: Rd,
     _tx: PhantomData<fn() -> Tx>,
 }
 
 impl<Policy> ReplyWiring<Policy> {
     /// The wiring a bare `.out(Reply, policy)` produces: no codec named (the default applies), no
-    /// transforms, one broker call per reply.
+    /// transforms, no redirect, one broker call per reply.
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
             policy,
             enc: UnnamedCodec::new(),
             layers: PublishTransformIdentity,
             batch_layers: BatchTransformIdentity,
+            redirect: NoRedirect,
             _tx: PhantomData,
         }
     }
 }
 
-impl<Policy, Enc, PL, BL, Tx> fmt::Debug for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+impl<Policy, Enc, PL, BL, Tx, Rd> fmt::Debug for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReplyWiring").finish_non_exhaustive()
     }
@@ -161,9 +166,11 @@ pub trait NameReplyCodec<C> {
     fn name_codec(self, codec: C) -> Self::Out;
 }
 
-impl<Policy, Enc, PL, BL, Tx, C> NameReplyCodec<C> for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+impl<Policy, Enc, PL, BL, Tx, Rd, C> NameReplyCodec<C>
+    for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd>
+{
     type Slot = Enc;
-    type Out = ReplyWiring<Policy, CallCodec<C>, PL, BL, Tx>;
+    type Out = ReplyWiring<Policy, CallCodec<C>, PL, BL, Tx, Rd>;
 
     fn name_codec(self, codec: C) -> Self::Out {
         ReplyWiring {
@@ -171,6 +178,7 @@ impl<Policy, Enc, PL, BL, Tx, C> NameReplyCodec<C> for ReplyWiring<Policy, Enc, 
             enc: CallCodec(codec),
             layers: self.layers,
             batch_layers: self.batch_layers,
+            redirect: self.redirect,
             _tx: PhantomData,
         }
     }
@@ -210,8 +218,10 @@ pub trait AddReplyTransform<N> {
     fn add_transform(self, transform: N) -> Self::Out;
 }
 
-impl<Policy, Enc, PL, BL, Tx, N> AddReplyTransform<N> for ReplyWiring<Policy, Enc, PL, BL, Tx> {
-    type Out = ReplyWiring<Policy, Enc, PublishTransformStack<PL, N>, BL, Tx>;
+impl<Policy, Enc, PL, BL, Tx, Rd, N> AddReplyTransform<N>
+    for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd>
+{
+    type Out = ReplyWiring<Policy, Enc, PublishTransformStack<PL, N>, BL, Tx, Rd>;
 
     fn add_transform(self, transform: N) -> Self::Out {
         ReplyWiring {
@@ -222,6 +232,52 @@ impl<Policy, Enc, PL, BL, Tx, N> AddReplyTransform<N> for ReplyWiring<Policy, En
                 outer: transform,
             },
             batch_layers: self.batch_layers,
+            redirect: self.redirect,
+            _tx: PhantomData,
+        }
+    }
+}
+
+/// Naming a reply's destination per delivery: the `.redirect(..)` step of a mount site's chain.
+///
+/// Implemented for every encoded reply wiring and for nothing else, so the call on a
+/// byte-for-byte reply - which carries the publish policy alone - fails here. Whether the
+/// redirect position is still empty is the separate question
+/// [`RedirectSlotOpen`](super::RedirectSlotOpen) answers, so that a second `.redirect(..)`
+/// reports the position rather than the whole wiring.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not take a redirect",
+    label = "this reply's destination cannot be named here",
+    note = "`.redirect(..)` names an encoded reply's destination per delivery, right after \
+            `.out(Reply, ..)`; a `Serialized` reply carries its own bytes and publishes where its \
+            declaration says"
+)]
+pub trait AddReplyRedirect<N> {
+    /// The redirect position the wiring holds right now: [`NoRedirect`](super::NoRedirect) until
+    /// a `.redirect(..)` fills it.
+    type Slot;
+
+    /// The wiring with the redirect named.
+    type Out;
+
+    /// Names it.
+    fn add_redirect(self, redirect: N) -> Self::Out;
+}
+
+impl<Policy, Enc, PL, BL, Tx, Rd, N> AddReplyRedirect<N>
+    for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd>
+{
+    type Slot = Rd;
+    type Out = ReplyWiring<Policy, Enc, PL, BL, Tx, Redirected<N>>;
+
+    fn add_redirect(self, redirect: N) -> Self::Out {
+        ReplyWiring {
+            policy: self.policy,
+            enc: self.enc,
+            layers: self.layers,
+            batch_layers: self.batch_layers,
+            redirect: Redirected(redirect),
             _tx: PhantomData,
         }
     }
@@ -245,10 +301,10 @@ pub trait AddBatchReplyTransform<N> {
     fn add_batch_transform(self, transform: N) -> Self::Out;
 }
 
-impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
-    for ReplyWiring<Policy, Enc, PL, BL, Tx>
+impl<Policy, Enc, PL, BL, Tx, Rd, N> AddBatchReplyTransform<N>
+    for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd>
 {
-    type Out = ReplyWiring<Policy, Enc, PL, BatchPublishTransformStack<BL, N>, Tx>;
+    type Out = ReplyWiring<Policy, Enc, PL, BatchPublishTransformStack<BL, N>, Tx, Rd>;
 
     fn add_batch_transform(self, transform: N) -> Self::Out {
         ReplyWiring {
@@ -259,6 +315,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddBatchReplyTransform<N>
                 inner: self.batch_layers,
                 outer: transform,
             },
+            redirect: self.redirect,
             _tx: PhantomData,
         }
     }
@@ -289,9 +346,9 @@ pub trait TransactionalReply {
     fn into_transactional(self) -> Self::Out;
 }
 
-impl<Policy, Enc, PL, BL, Tx> TransactionalReply for ReplyWiring<Policy, Enc, PL, BL, Tx> {
+impl<Policy, Enc, PL, BL, Tx, Rd> TransactionalReply for ReplyWiring<Policy, Enc, PL, BL, Tx, Rd> {
     type State = Tx;
-    type Out = ReplyWiring<Policy, Enc, PL, BL, InTransaction>;
+    type Out = ReplyWiring<Policy, Enc, PL, BL, InTransaction, Rd>;
 
     fn into_transactional(self) -> Self::Out {
         ReplyWiring {
@@ -299,6 +356,7 @@ impl<Policy, Enc, PL, BL, Tx> TransactionalReply for ReplyWiring<Policy, Enc, PL
             enc: self.enc,
             layers: self.layers,
             batch_layers: self.batch_layers,
+            redirect: self.redirect,
             _tx: PhantomData,
         }
     }
@@ -318,24 +376,27 @@ pub trait PublishingDirectly {}
 
 impl PublishingDirectly for Direct {}
 
-// A wiring is a policy over a policy: pairing swaps the leaf for its live form and resolves the
-// codec position, while the transform stacks travel unchanged.
-impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, Direct>
+// A wiring is a policy over a policy: pairing swaps the leaf for its live form, resolves the
+// codec position and folds the redirect into the head of the transform stack, while the
+// transforms themselves travel unchanged.
+impl<CB, Policy, Enc, PL, BL, Rd> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, Direct, Rd>
 where
     CB: ConnectedBroker,
     Policy: PublishPolicy<CB> + Send,
     Enc: PublishCodec<Codec: Clone> + Send,
     PL: Send,
     BL: Send,
+    Rd: LowerRedirect<PL, Out: Send> + Send,
 {
-    type Live = TypedPublisher<Policy::Live, Enc::Codec, PL, BL>;
+    type Live = TypedPublisher<Policy::Live, Enc::Codec, Rd::Out, BL>;
 
     async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         let codec = self.enc.codec().clone();
+        let layers = self.redirect.lower(self.layers);
         Ok(TypedPublisher::live(
             self.policy.pair(connected).await?,
             codec,
-            self.layers,
+            layers,
             self.batch_layers,
         ))
     }
@@ -344,7 +405,8 @@ where
 // The transactional wiring pairs into the transactional reply sink, which is where the leaf's
 // live form has to carry broker transactions - so a broker without them fails at the mount that
 // named `.transactional()`, not at the step.
-impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, InTransaction>
+impl<CB, Policy, Enc, PL, BL, Rd> PublishPolicy<CB>
+    for ReplyWiring<Policy, Enc, PL, BL, InTransaction, Rd>
 where
     CB: ConnectedBroker,
     Policy: PublishPolicy<CB> + Send,
@@ -352,15 +414,17 @@ where
     Enc: PublishCodec<Codec: Clone> + Send,
     PL: Send,
     BL: Send,
+    Rd: LowerRedirect<PL, Out: Send> + Send,
 {
-    type Live = Transactional<Policy::Live, Enc::Codec, PL, BL>;
+    type Live = Transactional<Policy::Live, Enc::Codec, Rd::Out, BL>;
 
     async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         let codec = self.enc.codec().clone();
+        let layers = self.redirect.lower(self.layers);
         Ok(Transactional::live(TypedPublisher::live(
             self.policy.pair(connected).await?,
             codec,
-            self.layers,
+            layers,
             self.batch_layers,
         )))
     }

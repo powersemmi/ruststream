@@ -1,0 +1,25 @@
+error[E0277]: a batch's replies cannot be redirected
+  --> tests/ui/redirect_batch_reply.rs:35:14
+   |
+35 |             .redirect(ReplyTo);
+   |              ^^^^^^^^ this registration answers a batch, not one delivery
+   |
+   = help: the trait `ruststream::runtime::SoloReplyMount` is not implemented for `runtime::router::mount::BatchPublishMount`
+   = note: `.redirect(..)` names a reply's destination from the delivery it answers, and a batch spans many: publish the batch's replies where the declaration says, or mount the handler one-by-one
+help: the following other types implement trait `ruststream::runtime::SoloReplyMount`
+  --> src/runtime/router/mount.rs
+   |
+   | impl SoloReplyMount for PublishMount {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `runtime::router::mount::PublishMount`
+   |
+   | impl SoloReplyMount for PublishInjectMount {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `runtime::router::mount::PublishInjectMount`
+   = note: required for `ruststream::runtime::ReplyLast` to implement `ruststream::runtime::RedirectPosition<runtime::router::mount::BatchPublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, NamedDest>>, Name, (Open, Open, Open, Fixed)>>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::redirect`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn redirect<N>(
+   |            -------- required by a bound in this associated function
+...
+   |         Last: RedirectPosition<Mount, Def>,
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::redirect`

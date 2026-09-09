@@ -22,8 +22,8 @@ use std::marker::PhantomData;
 #[cfg(doc)]
 use crate::runtime::slot::Reply;
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, ReplyStep,
-    TransactionalLast, TransformLast,
+    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, RedirectLast,
+    RedirectPosition, ReplyStep, TransactionalLast, TransformLast,
 };
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
@@ -131,6 +131,31 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         Attach: TransformLast<N, Last, Step: NamedStep>,
     {
         RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
+    }
+
+    /// Names the destination of everything leaving the position named last, per delivery: a
+    /// [`RedirectTransform`](crate::runtime::RedirectTransform) on the reply, an
+    /// [`OutRedirect`](crate::runtime::OutRedirect) on a slot.
+    ///
+    /// This is the one step allowed to move a message off the channel its declaration names, and
+    /// the declaration has to leave that open for it: a reply type or a slot message type carrying
+    /// `#[outgoing(name = "..")]` is published there, and redirecting it does not compile. The
+    /// mount site's own name stays the declared fallback - what the generated document reports,
+    /// and where a delivery goes when the redirect leaves the name alone.
+    ///
+    /// One per position, and the order is fixed however the chain names it: the redirect decides
+    /// the destination first, then the position's [`transform`](Self::transform) stack rewrites
+    /// headers and payload, then the app-wide publish pipeline runs, then the send.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn redirect<N>(
+        self,
+        redirect: N,
+    ) -> RouterWith<Mount, R, Def, <Attach as RedirectLast<N, Last>>::Out, Last>
+    where
+        Attach: RedirectLast<N, Last, Step: NamedStep>,
+        Last: RedirectPosition<Mount, Def>,
+    {
+        RouterWith::new(self.def, self.attach.redirect_last(redirect), self.router)
     }
 
     /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every

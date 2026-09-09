@@ -23,6 +23,7 @@ use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
+use crate::runtime::handle::DeclaresReply;
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::input::InputKind;
@@ -257,6 +258,12 @@ where
 
 impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, State, DC> {
     type Markers = Def::Markers;
+}
+
+// The reply type is the definition's, so a mount chain reads it through the builder the same way
+// it reads every other structural piece.
+impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def, Src, State, DC> {
+    type Reply = Def::Reply;
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source
