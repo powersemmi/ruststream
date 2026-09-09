@@ -11,20 +11,30 @@ use syn::{
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
-/// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `publish("topic")`
-/// (the reply destination; the reply type decides its wire), `workers(n[, by_key])` (the
-/// dispatch concurrency), and `start_at(<position>)` (the subscription opens at that position)
-/// clauses, in any order. The subscription form (single, batch) is never spelled here: it is
-/// inferred from the payload parameter's type.
+/// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `publish` /
+/// `publish("topic")` (the return value is published; the reply type decides its wire and,
+/// where it declares one, its destination), `workers(n[, by_key])` (the dispatch concurrency),
+/// and `start_at(<position>)` (the subscription opens at that position) clauses, in any order.
+/// The subscription form (single, batch) is never spelled here: it is inferred from the payload
+/// parameter's type.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: SourceArg,
-    /// The `publish(..)` destination: a string literal, or a `&'static str` constant.
-    pub(crate) publish: Option<Expr>,
+    pub(crate) publish: Option<PublishArg>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
     /// The `start_at(<position>)` clause: a broker position constructor the subscription is
     /// sought to before the first delivery.
     pub(crate) start_at: Option<Expr>,
+}
+
+/// The `publish` clause: the reply is published either way, and the clause says where.
+pub(crate) enum PublishArg {
+    /// `publish`: the reply type's own `#[outgoing(name = "..")]` declaration is the
+    /// destination.
+    Declared,
+    /// `publish("topic")`: the default destination for a reply type that declares none. A
+    /// string literal, or a `&'static str` constant.
+    Default(Expr),
 }
 
 /// The subscription the attribute fixes. The kind is always fixed here (the definition and the
@@ -211,11 +221,9 @@ impl Parse for SubscriberArgs {
                 on_failure = Some(content.parse()?);
             } else if keyword == "publish" {
                 if publish.is_some() {
-                    return Err(Error::new(keyword.span(), "duplicate publish(..)"));
+                    return Err(Error::new(keyword.span(), "duplicate publish clause"));
                 }
-                let content;
-                parenthesized!(content in input);
-                publish = Some(content.parse()?);
+                publish = Some(parse_publish(input, &keyword)?);
             } else if keyword == "publish_raw" {
                 // The clause is retired, not unknown: point straight at its replacement.
                 return Err(Error::new(
@@ -248,7 +256,7 @@ impl Parse for SubscriberArgs {
             } else {
                 return Err(Error::new(
                     keyword.span(),
-                    "expected `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
+                    "expected `publish` / `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
                      `on_failure(panic = .., decode = ..)`, or `start_at(<position>)`",
                 ));
             }
@@ -261,6 +269,23 @@ impl Parse for SubscriberArgs {
             start_at,
         })
     }
+}
+
+/// Parses a `publish` clause: bare, or with the default destination in parentheses.
+fn parse_publish(input: ParseStream, keyword: &Ident) -> syn::Result<PublishArg> {
+    if !input.peek(token::Paren) {
+        return Ok(PublishArg::Declared);
+    }
+    let content;
+    parenthesized!(content in input);
+    if content.is_empty() {
+        return Err(Error::new(
+            keyword.span(),
+            "publish() names nothing: write `publish` to send the reply where its type declares, \
+             or `publish(\"dest\")` to name the destination of a reply type that declares none",
+        ));
+    }
+    Ok(PublishArg::Default(content.parse()?))
 }
 
 /// Parses the leading source argument, if the attribute opens on one. Reports the subscription

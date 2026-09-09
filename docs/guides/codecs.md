@@ -39,16 +39,23 @@ confusion the byte lanes prevent. So a binary protocol goes on the lanes, where 
 between the type and its bytes.
 
 Generated code is not edited by hand, but every generator can add attributes to what it emits.
-`prost-build` takes `message_attribute`, so the whole recipe is two lines of build configuration:
+`prost-build` takes `message_attribute`, so the whole recipe is two attributes on every generated
+message:
 
 <!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
 ```rust
 // build.rs
 prost_build::Config::new()
-    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(
+        ".",
+        "#[derive(ruststream::Serialized, ruststream::Deserialized, ruststream::Outgoing)]",
+    )
     .message_attribute(".", "#[wire(prost)]")
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
+
+The third derive declares where the message is sent, which is what a typed publish and a reply
+both read.
 
 Every message in the schema is then already on the lanes, as if it had been written by hand. The
 Manual tab is the same message with the derives expanded:

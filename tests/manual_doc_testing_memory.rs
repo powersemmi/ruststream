@@ -33,9 +33,20 @@ struct Confirmation {
     accepted: bool,
 }
 
+// `#[derive(Outgoing)]` with `#[outgoing(name = "confirmations")]`, by hand: the reply carries
+// its destination, so nothing else names it.
+impl OutgoingDestination for Confirmation {
+    type Form = FixedName;
+
+    const DESTINATION: &'static str = "confirmations";
+}
+
+impl MessageHeaders for Confirmation {
+    type Contract = NoHeaders;
+}
+
 /// The reply body without the attribute: the reply type sits in the `Handle` impl's second
-/// position, and the subscription source and the reply destination are named where the definition
-/// is built.
+/// position, and the subscription source is named where the definition is built.
 struct Confirm;
 
 impl Handle<Order, Confirmation> for Confirm {
@@ -63,13 +74,8 @@ async fn confirms_valid_orders() {
     let app = RustStream::new(AppInfo::new("orders-test", "0.0.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(
-                subscriber("orders", Confirm)
-                    .reply()
-                    .to("confirmations")
-                    .build(),
-            )
-            .out(Reply, Publish);
+            b.include(subscriber("orders", Confirm).reply().build())
+                .out(Reply, Publish);
         },
     );
 

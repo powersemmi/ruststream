@@ -23,7 +23,10 @@ use crate::runtime::{
     RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
     SubscriberSettings, Verdict, for_batch, subscriber,
 };
-use crate::{Buffered, Publisher, Seeker};
+use crate::{
+    Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
+    Seeker,
+};
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -77,6 +80,11 @@ struct Meta {
 struct Confirmation {
     id: u64,
 }
+
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
+}
+
 struct Audit;
 
 impl Handle<Order> for Audit {
@@ -179,10 +187,10 @@ struct Receipt {
     id: u64,
 }
 
-impl crate::OutgoingDestination for Receipt {
-    type Form = crate::FixedName;
+impl OutgoingDestination for Receipt {
+    type Form = FixedName;
 
-    const ADDRESS: &'static str = "receipts";
+    const DESTINATION: &'static str = "receipts";
 }
 
 struct IssueReceipt;
@@ -318,24 +326,24 @@ struct Event {
     id: u64,
 }
 
-impl crate::OutgoingDestination for Event {
-    type Form = crate::CallerName;
+impl OutgoingDestination for Event {
+    type Form = CallerName;
 }
 
-impl crate::MessageHeaders for Event {
-    type Contract = crate::NoHeaders;
+impl MessageHeaders for Event {
+    type Contract = NoHeaders;
 }
 
 impl crate::runtime::PublishedThrough<Analytics> for Event {}
 
 // A serialized out type is a first-class dictionary member: it declares its destination and
 // membership like any model, and its bytes leave through the same typed builder, uncoded.
-impl crate::OutgoingDestination for Export {
-    type Form = crate::CallerName;
+impl OutgoingDestination for Export {
+    type Form = CallerName;
 }
 
-impl crate::MessageHeaders for Export {
-    type Contract = crate::NoHeaders;
+impl MessageHeaders for Export {
+    type Contract = NoHeaders;
 }
 
 impl crate::runtime::PublishedThrough<Analytics> for Export {}

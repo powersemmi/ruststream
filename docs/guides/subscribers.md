@@ -580,7 +580,7 @@ therefore the one subscriber form that works with no codec feature enabled at al
 serialization format of your own that you want *typed* handlers for, implement
 [`Codec`](codecs.md) and stay on the typed path.
 
-A handler on this path replies through the same `publish("dest")` clause every reply form uses.
+A handler on this path replies through the same `publish` clause every reply form uses.
 The reply *type* picks the wire form, by the same mnemonic: a `serde::Serialize` reply is encoded
 by the reply codec, and a `#[derive(Serialized)]` reply produces its own bytes, published exactly
 as the handler returned them. You can return the reply directly, or as

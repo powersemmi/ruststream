@@ -2,8 +2,9 @@
 //! repository shared across handlers.
 //!
 //! Every payload derives [`JsonSchema`](ruststream::schemars::JsonSchema) so it contributes a
-//! schema to the AsyncAPI document, and [`MessageInfo`] so the document names the component after
-//! the type and uses its doc comment as the description. The [`Repository`] is a
+//! schema to the AsyncAPI document, and the metadata derive that names the component after the
+//! type and uses its doc comment as the description: [`MessageInfo`] for a message the service
+//! receives, [`Outgoing`] for one it sends. The [`Repository`] is a
 //! fake for any real async resource (a connection pool, an HTTP client); it is opened once in the
 //! startup hook and shared with every handler through [`Context`](ruststream::runtime::Context).
 
@@ -12,8 +13,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ruststream::MessageInfo;
 use ruststream::schemars::JsonSchema;
+use ruststream::{MessageInfo, Outgoing};
 use serde::{Deserialize, Serialize};
 
 /// An order placed by a customer, delivered on the `orders` channel.
@@ -47,14 +48,14 @@ pub(crate) struct Cancellation {
 }
 
 /// The reply published to `confirmations` for each accepted or rejected order.
-#[derive(Debug, Clone, Serialize, JsonSchema, MessageInfo)]
+#[derive(Debug, Clone, Serialize, JsonSchema, Outgoing)]
 pub(crate) struct Confirmation {
     pub(crate) order_id: u64,
     pub(crate) accepted: bool,
 }
 
 /// The settlement published to `settlements` when a batch of clearings commits.
-#[derive(Debug, Clone, Serialize, JsonSchema, MessageInfo)]
+#[derive(Debug, Clone, Serialize, JsonSchema, Outgoing)]
 pub(crate) struct Settlement {
     pub(crate) order_id: u64,
     pub(crate) amount_cents: u64,

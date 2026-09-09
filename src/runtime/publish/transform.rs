@@ -178,7 +178,7 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 /// # use ruststream::subscriber;
 /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
 /// # struct Order { id: u64 }
-/// # #[derive(serde::Serialize, schemars::JsonSchema)]
+/// # #[derive(serde::Serialize, schemars::JsonSchema, ruststream::Outgoing)]
 /// # struct Confirmation { id: u64 }
 /// # #[subscriber("orders", publish("confirmations"))]
 /// # async fn confirm(orders: &[Order]) -> Vec<Confirmation> {

@@ -57,7 +57,7 @@ struct ChunkDone {
 
 impl OutgoingDestination for ChunkDone {
     type Form = FixedName;
-    const ADDRESS: &'static str = "chunks.done";
+    const DESTINATION: &'static str = "chunks.done";
 }
 
 impl MessageHeaders for ChunkDone {
@@ -73,7 +73,7 @@ impl ContainsMessage<Self, SlotPos<0>> for ChunkDone {}
 impl<M: OutSlot> OutMessages<M> for ChunkDone {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::ADDRESS, type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, type_name::<Self>())
                 .with_message_name(Some(Self::NAME))
                 .with_payload_schema(Some(schema_of::<Self>()))
                 .with_headers_schema(Some(schema_of::<DoneMeta>())),
@@ -88,7 +88,7 @@ struct Progress {
 
 impl OutgoingDestination for Progress {
     type Form = FixedName;
-    const ADDRESS: &'static str = "chunks.progress";
+    const DESTINATION: &'static str = "chunks.progress";
 }
 
 // No `headers = ..` in the declaration: the publish builder demands no contract for this type.
@@ -105,7 +105,7 @@ impl ContainsMessage<Self, SlotPos<0>> for Progress {}
 impl<M: OutSlot> OutMessages<M> for Progress {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::ADDRESS, type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, type_name::<Self>())
                 .with_message_name(Some(Self::NAME))
                 .with_payload_schema(Some(schema_of::<Self>())),
         ]

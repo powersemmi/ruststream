@@ -11,7 +11,7 @@ use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::{IncludeDef, forms};
-use crate::{FixedName, Name, OutgoingDestination, Unnamed};
+use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
@@ -136,16 +136,87 @@ impl<R: ReplyShape + ?Sized, Doc> WireDocs<R, Doc> for SerializedReply {
     }
 }
 
-/// Where a wired reply goes: the chain-named subject, or the reply type's own declaration.
+/// Resolves one declared destination form against the mount site's name: a fixed name is the
+/// destination and the mount-site name does not apply, a type declaring none takes it.
+///
+/// [`NameTemplate`](crate::NameTemplate) has no impl on purpose: a reply is published by the
+/// runtime, which has nothing to bind the placeholders with.
+#[doc(hidden)]
+pub trait ResolveDestination<Form> {
+    /// The destination, given the name the mount site supplied.
+    fn resolve(default: &str) -> &str;
+}
+
+impl<R: OutgoingDestination<Form = FixedName>> ResolveDestination<FixedName> for R {
+    fn resolve(_default: &str) -> &str {
+        <R as OutgoingDestination>::DESTINATION
+    }
+}
+
+impl<R: OutgoingDestination<Form = CallerName>> ResolveDestination<CallerName> for R {
+    fn resolve(default: &str) -> &str {
+        default
+    }
+}
+
+/// Where a reply type is published, resolved from its payload's own declaration and the
+/// mount-site name.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not declare where it is published",
+    note = "derive `Outgoing` on the reply type: `#[outgoing(name = \"orders.done\")]` fixes the \
+            destination, and a derive without a name is published where the mount site says \
+            (`publish(\"..\")` on the attribute, `.to(\"..\")` on the chain). A name template has \
+            no placeholders to bind on the reply path."
+)]
+pub trait ReplyDestination {
+    /// The destination, given the name the mount site supplied.
+    fn destination(default: &str) -> &str;
+}
+
+// The two nested obligations are the machinery of the resolution, not the user's mistake: the
+// trait's own note names the derive, so the impl stays out of the error.
+#[diagnostic::do_not_recommend]
+impl<R> ReplyDestination for R
+where
+    R: ReplyShape<Body: OutgoingDestination>,
+    R::Body: ResolveDestination<<R::Body as OutgoingDestination>::Form>,
+{
+    fn destination(default: &str) -> &str {
+        <R::Body as ResolveDestination<<R::Body as OutgoingDestination>::Form>>::resolve(default)
+    }
+}
+
+/// The destination of one reply type at the mount-site name, resolved at the expansion site.
+/// Machinery behind the macro expansion; not part of the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> &'static str {
+    R::destination(default)
+}
+
+/// The destination of one reply type that declares its own. Machinery behind the macro
+/// expansion; not part of the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn declared_reply_destination<R>() -> &'static str
+where
+    R: ReplyShape<Body: OutgoingDestination<Form = FixedName>>,
+{
+    <R::Body as OutgoingDestination>::DESTINATION
+}
+
+/// Where a wired reply goes: the reply type's own declaration, or the mount-site name where the
+/// type declares none.
 #[doc(hidden)]
 pub trait ReplyDest<R>: Send + Sync {
     /// The subject the reply publishes to.
     fn name(&self) -> &str;
 }
 
-impl<R> ReplyDest<R> for NamedDest {
+impl<R: ReplyDestination> ReplyDest<R> for NamedDest {
     fn name(&self) -> &str {
-        &self.0
+        R::destination(&self.0)
     }
 }
 
@@ -154,7 +225,7 @@ where
     R: ReplyShape<Body: OutgoingDestination<Form = FixedName>>,
 {
     fn name(&self) -> &str {
-        <R::Body as OutgoingDestination>::ADDRESS
+        <R::Body as OutgoingDestination>::DESTINATION
     }
 }
 

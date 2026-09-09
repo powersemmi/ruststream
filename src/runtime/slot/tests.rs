@@ -68,7 +68,7 @@ impl MessageHeaders for Progress {
 // fixture drives the builder's error arms.
 impl OutgoingDestination for Progress {
     type Form = FixedName;
-    const ADDRESS: &'static str = "events.progress";
+    const DESTINATION: &'static str = "events.progress";
 }
 
 impl PublishedThrough<Events> for Progress {}
@@ -97,7 +97,7 @@ impl MessageHeaders for Done {
 
 impl OutgoingDestination for Done {
     type Form = FixedName;
-    const ADDRESS: &'static str = "events.done";
+    const DESTINATION: &'static str = "events.done";
 }
 
 impl PublishedThrough<Events> for Done {}

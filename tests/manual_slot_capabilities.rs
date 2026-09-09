@@ -32,7 +32,7 @@ impl MessageHeaders for Order {
 /// A record with a declared destination, what `#[derive(Outgoing)] #[outgoing(name = ..)]`
 /// writes: the publish resolves the name from the type.
 macro_rules! record {
-    ($name:ident, $address:literal) => {
+    ($name:ident, $destination:literal) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         struct $name {
             id: u64,
@@ -40,7 +40,7 @@ macro_rules! record {
 
         impl OutgoingDestination for $name {
             type Form = FixedName;
-            const ADDRESS: &'static str = $address;
+            const DESTINATION: &'static str = $destination;
         }
 
         impl MessageHeaders for $name {

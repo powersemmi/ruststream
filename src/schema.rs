@@ -126,10 +126,10 @@ impl<H> HeadersContract for WithHeaders<H> {}
 /// // What `#[derive(Outgoing)]` + `#[outgoing(name = "orders.done")]` generates:
 /// impl OutgoingDestination for OrderDone {
 ///     type Form = FixedName;
-///     const ADDRESS: &'static str = "orders.done";
+///     const DESTINATION: &'static str = "orders.done";
 /// }
 ///
-/// assert_eq!(OrderDone::ADDRESS, "orders.done");
+/// assert_eq!(OrderDone::DESTINATION, "orders.done");
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not declare how it is sent",
@@ -141,23 +141,34 @@ pub trait OutgoingDestination {
     /// The declared form: [`FixedName`], [`NameTemplate`] or [`CallerName`].
     type Form: DestinationForm;
 
-    /// The declared address: the literal name, the template with its placeholders in braces, or
-    /// the empty string when the type declares none.
-    const ADDRESS: &'static str = "";
+    /// The declared destination: its literal name, the template with the placeholders in braces,
+    /// or the empty string when the type declares none.
+    const DESTINATION: &'static str = "";
 
-    /// The template's placeholder names, in the order they appear in [`ADDRESS`](Self::ADDRESS).
-    /// Empty for the other two forms; the generated document turns it into the channel's
-    /// parameters block.
+    /// The template's placeholder names, in the order they appear in
+    /// [`DESTINATION`](Self::DESTINATION). Empty for the other two forms; the generated document
+    /// turns it into the channel's parameters block.
     const PARAMETERS: &'static [&'static str] = &[];
 }
 
-/// The destination form of a type declaring one literal name: the address is fixed, so the
-/// publish builder resolves it without asking the call site.
+// The same two bare payloads that carry no header contract declare no destination either: a
+// `Vec<Item>` batch body and a plain text message are sent wherever the call site says. The
+// orphan rule keeps a downstream crate from declaring it, so the declaration lives here.
+impl<T> OutgoingDestination for Vec<T> {
+    type Form = CallerName;
+}
+
+impl OutgoingDestination for String {
+    type Form = CallerName;
+}
+
+/// The destination form of a type declaring one literal name: the name is fixed, so the
+/// publish builder resolves the destination without asking the call site.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct FixedName;
 
 /// The destination form of a type declaring a name template: the call site binds every
-/// placeholder through the setters generated from it, and the address is rendered per publish.
+/// placeholder through the setters generated from it, and the name is rendered per publish.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct NameTemplate;
 

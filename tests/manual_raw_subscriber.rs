@@ -119,7 +119,8 @@ async fn raw_handler_receives_exact_bytes() {
 // --8<-- [start:raw_reply]
 /// The reply type the byte-reply form returns, with the impls `#[derive(Serialized)]` writes
 /// for the reply position: the bytes that leave, and the shape that routes them onto the
-/// serialized wire.
+/// serialized wire. `#[derive(Outgoing)]` writes the third one, the destination this reply
+/// declares: none, so the chain's `.to(..)` names it.
 struct Export(Vec<u8>);
 
 impl Serialized for Export {
@@ -134,6 +135,10 @@ impl ReplyShape for Export {
     type Body = Self;
     type Headers = ();
     type Wire = SerializedReply;
+}
+
+impl OutgoingDestination for Export {
+    type Form = CallerName;
 }
 
 /// The byte-reply form by hand: a body over `Frame<'_>` declaring `Export` as its reply, so

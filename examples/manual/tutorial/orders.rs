@@ -36,16 +36,27 @@ impl Handle<Order> for Receive {
 // --8<-- [start:confirm]
 use serde::Serialize;
 
-/// The service's answer to an order.
+/// The service's answer to an order, published on `confirmations`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub(crate) struct Confirmation {
     pub(crate) id: u64,
     pub(crate) accepted: bool,
 }
 
+/// What `#[derive(Outgoing)]` with `#[outgoing(name = "confirmations")]` writes: the destination
+/// is fixed on the type, so nothing else names it.
+impl OutgoingDestination for Confirmation {
+    type Form = FixedName;
+
+    const DESTINATION: &'static str = "confirmations";
+}
+
+impl MessageHeaders for Confirmation {
+    type Contract = NoHeaders;
+}
+
 /// The reply form of the same trait: the second parameter of `Handle` is the reply type, so the
-/// body returns a `Confirmation`, and the mount site names the destination and supplies the
-/// publisher it leaves through.
+/// body returns a `Confirmation`, and the mount site supplies the publisher it leaves through.
 pub(crate) struct Confirm;
 
 impl Handle<Order, Confirmation> for Confirm {

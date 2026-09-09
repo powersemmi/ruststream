@@ -136,8 +136,8 @@ base; see [where the headers come from](publishing.md#where-the-headers-come-fro
 
 ## The reply form
 
-A handler with `publish("dest")` needs no extra declaration: the destination is in the attribute,
-the headers are in the reply type's contract.
+A replying handler needs no extra declaration. One derive on the reply type states its header
+contract and its destination, and the document reports both.
 
 === "Macros"
 

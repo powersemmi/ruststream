@@ -1,7 +1,7 @@
 use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, Reply, RustStream};
-use ruststream::subscriber;
+use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -9,7 +9,7 @@ struct Order {
     id: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Outgoing)]
 struct Receipt {
     id: u32,
 }

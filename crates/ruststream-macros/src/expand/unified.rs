@@ -10,9 +10,9 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Expr, Ident, ItemFn, Pat};
+use syn::{Ident, ItemFn, Pat};
 
-use crate::parse::SubscriberArgs;
+use crate::parse::{PublishArg, SubscriberArgs};
 
 use super::{
     BodyDecl, HandlerParts, OutParam, Shape, batch_reply_body, extractor_preds, extractor_prelude,
@@ -35,10 +35,10 @@ fn body_ty(bodies: Option<&BodyDecl<'_>>) -> TokenStream2 {
 enum ReplyPlan<'a> {
     /// No reply: the body settles and nothing is published.
     None,
-    /// A reply (`publish("dest")`): the returned value publishes to the topic, on the wire its
-    /// type selects.
+    /// A reply (`publish` / `publish("dest")`): the returned value publishes where its type
+    /// declares, or at the clause's default, on the wire its type selects.
     Publish {
-        topic: &'a Expr,
+        dest: &'a PublishArg,
         ty: TokenStream2,
         body: TokenStream2,
     },
@@ -47,6 +47,20 @@ enum ReplyPlan<'a> {
 impl ReplyPlan<'_> {
     fn is_none(&self) -> bool {
         matches!(self, Self::None)
+    }
+
+    /// The channel one reply entry documents: the destination the mount site and the reply
+    /// type resolve between them, not the clause's literal, so the document reports where the
+    /// reply actually goes.
+    fn channel(dest: &PublishArg, ty: &TokenStream2) -> TokenStream2 {
+        match dest {
+            PublishArg::Declared => {
+                quote!(::ruststream::runtime::declared_reply_destination::<#ty>())
+            }
+            PublishArg::Default(topic) => {
+                quote!(::ruststream::runtime::reply_destination::<#ty>(#topic))
+            }
+        }
     }
 
     /// The `R` axis of the emitted `Handle` impl: the reply type one-by-one, a `Vec` of it per
@@ -235,20 +249,20 @@ fn reply_plan<'a>(
     block: &syn::Block,
     batched: bool,
 ) -> syn::Result<ReplyPlan<'a>> {
-    let Some(topic) = &args.publish else {
+    let Some(dest) = &args.publish else {
         return Ok(ReplyPlan::None);
     };
     Ok(if batched {
         let (elem, body) = batch_reply_body(func, block)?;
         ReplyPlan::Publish {
-            topic,
+            dest,
             ty: quote!(#elem),
             body,
         }
     } else {
         let (ty, body) = publishing_reply(func, block)?;
         ReplyPlan::Publish {
-            topic,
+            dest,
             ty: quote!(#ty),
             body,
         }
@@ -282,21 +296,33 @@ fn definition_wiring(
         let plain = quote! {
             ::ruststream::runtime::HandleValue<#axis, #r_tokens, #o, #ctx_ty, #name, #doc_state>
         };
-        match reply {
-            ReplyPlan::None => quote!(::ruststream::runtime::Sealed<#plain>),
-            ReplyPlan::Publish { .. } => quote! {
-                ::ruststream::runtime::Sealed<::ruststream::runtime::ReplyValue<
-                    #plain,
-                    ::ruststream::runtime::NamedDest,
-                >>
-            },
+        let dest_ty = match reply {
+            ReplyPlan::None => return quote!(::ruststream::runtime::Sealed<#plain>),
+            ReplyPlan::Publish {
+                dest: PublishArg::Declared,
+                ..
+            } => quote!(::ruststream::runtime::DeclaredDest),
+            ReplyPlan::Publish {
+                dest: PublishArg::Default(_),
+                ..
+            } => quote!(::ruststream::runtime::NamedDest),
+        };
+        quote! {
+            ::ruststream::runtime::Sealed<
+                ::ruststream::runtime::ReplyValue<#plain, #dest_ty>,
+            >
         }
     };
     let def_expr = match reply {
         ReplyPlan::None => quote!(::ruststream::runtime::probed_def(self, #docs_expr)),
-        ReplyPlan::Publish { topic, .. } => {
-            quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #topic))
-        }
+        ReplyPlan::Publish {
+            dest: PublishArg::Declared,
+            ..
+        } => quote!(::ruststream::runtime::probed_declared_reply_def(self, #docs_expr)),
+        ReplyPlan::Publish {
+            dest: PublishArg::Default(topic),
+            ..
+        } => quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #topic)),
     };
 
     // The declaration: the settings-builder wrapper `subscriber(..)` also produces. Without
@@ -683,7 +709,9 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>) -> TokenStr
     } else {
         let reply_entry = match reply {
             ReplyPlan::None => quote!(),
-            ReplyPlan::Publish { topic, ty, .. } => outgoing_entry(&quote!(#topic), ty),
+            ReplyPlan::Publish { dest, ty, .. } => {
+                outgoing_entry(&ReplyPlan::channel(dest, ty), ty)
+            }
         };
         let slots = outs.iter().map(|out| {
             let marker = &out.marker;

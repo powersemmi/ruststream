@@ -1,13 +1,13 @@
 error[E0277]: the trait bound `Receipt: serde::Serialize` is not satisfied
-  --> tests/ui/subscriber_publish_unserializable_reply.rs:16:1
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:18:1
    |
-16 | #[subscriber("orders", publish("receipts"))]
+18 | #[subscriber("orders", publish("receipts"))]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
 help: the trait `_serde::Serialize` is not implemented for `Receipt`
-  --> tests/ui/subscriber_publish_unserializable_reply.rs:12:1
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:14:1
    |
-12 | struct Receipt {
+14 | struct Receipt {
    | ^^^^^^^^^^^^^^
    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Receipt` type
    = note: for types from other crates check whether the crate offers a `serde` feature flag
@@ -25,16 +25,34 @@ help: the trait `_serde::Serialize` is not implemented for `Receipt`
    = note: required for `Receipt` to implement `ruststream::runtime::ReplyRoute<OneByOne>`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: the trait bound `Receipt: serde::Serialize` is not satisfied
-  --> tests/ui/subscriber_publish_unserializable_reply.rs:23:11
+error[E0277]: `Receipt` does not declare where it is published
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:19:35
    |
-23 |         b.include(handle);
+19 | async fn handle(order: &Order) -> Receipt {
+   |                                   ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `ruststream::runtime::ReplyDestination` is not implemented for `Receipt`
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:14:1
+   |
+14 | struct Receipt {
+   | ^^^^^^^^^^^^^^
+   = note: derive `Outgoing` on the reply type: `#[outgoing(name = "orders.done")]` fixes the destination, and a derive without a name is published where the mount site says (`publish("..")` on the attribute, `.to("..")` on the chain). A name template has no placeholders to bind on the reply path.
+note: required by a bound in `ruststream::runtime::reply_destination`
+  --> src/runtime/handle/reply.rs
+   |
+   | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> &'static str {
+   |                             ^^^^^^^^^^^^^^^^ required by this bound in `reply_destination`
+
+error[E0277]: the trait bound `Receipt: serde::Serialize` is not satisfied
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:25:11
+   |
+25 |         b.include(handle);
    |           ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `_serde::Serialize` is not implemented for `Receipt`
-  --> tests/ui/subscriber_publish_unserializable_reply.rs:12:1
+  --> tests/ui/subscriber_publish_unserializable_reply.rs:14:1
    |
-12 | struct Receipt {
+14 | struct Receipt {
    | ^^^^^^^^^^^^^^
    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `Receipt` type
    = note: for types from other crates check whether the crate offers a `serde` feature flag

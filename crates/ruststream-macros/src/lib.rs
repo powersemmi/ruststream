@@ -34,10 +34,19 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn handle(order: &Order) -> HandlerOutcome { HandlerOutcome::ack() }
 /// // later: broker_scope.include(handle);
 ///
-/// // reply form: the return value is encoded and published to "responses" through the
-/// // reply publisher attached at the include site (the broker's default without it).
-/// #[subscriber("requests", publish("responses"))]
+/// // reply form: the return value is encoded and published through the reply publisher
+/// // attached at the include site (the broker's default without it), at the destination its
+/// // own type declares.
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "responses")]
+/// struct Response { /* ... */ }
+///
+/// #[subscriber("requests", publish)]
 /// async fn reply(req: &Request) -> Response { /* ... */ }
+///
+/// // a reply type declaring no name takes the clause's:
+/// #[subscriber("requests", publish("responses"))]
+/// async fn reply_elsewhere(req: &Request) -> Receipt { /* ... */ }
 ///
 /// // reply form with explicit ack control: `Ok` publishes the reply, `Err` skips it and the
 /// // dispatcher settles by the returned HandlerOutcome.
@@ -72,9 +81,9 @@ use parse::{SubscriberArgs, doc_description};
 ///
 /// // raw reply: the reply type carries its own bytes, so they are published as they are -
 /// // no codec on the way out. `Serialize` means the framework's codec does it; `Serialized`
-/// // means it is already done by the user's own type. The same publish("dest") clause serves
-/// // both wires, and Result<Export, HandlerOutcome> gives the usual explicit ack control.
-/// #[derive(Serialized)]
+/// // means it is already done by the user's own type. The same publish clause serves both
+/// // wires, and Result<Export, HandlerOutcome> gives the usual explicit ack control.
+/// #[derive(Outgoing, Serialized)]
 /// struct Export(Vec<u8>);
 ///
 /// #[subscriber("frames", publish("frames-out"))]
@@ -87,10 +96,14 @@ use parse::{SubscriberArgs, doc_description};
 /// async fn encode(order: &Order) -> Export { /* your wire format */ }
 /// ```
 ///
-/// Without `publish(..)` the handler returns any accepted outcome shape (a `HandlerOutcome`,
+/// A reply type derives `Outgoing`: `#[outgoing(name = "..")]` on it is the destination, and a
+/// derive without a name takes the clause's `publish("..")` as the destination instead. The two
+/// never disagree, because a declared name is the one that applies.
+///
+/// Without a `publish` clause the handler returns any accepted outcome shape (a `HandlerOutcome`,
 /// `()`, or `Result<_, E>`). Attach a post-settle continuation with
 /// `HandlerOutcome::ack().and_after` (any outcome works), which runs after the message is
-/// settled. With `publish(..)` it returns the reply value to publish, or
+/// settled. With one it returns the reply value to publish, or
 /// `Result<Reply, HandlerOutcome>` to control acknowledgement: `Err(outcome)` publishes nothing
 /// and settles by `outcome`. The `Result` form is
 /// detected syntactically, so spell it out in the signature (a type alias is treated as a plain
@@ -126,9 +139,9 @@ use parse::{SubscriberArgs, doc_description};
 ///
 /// Clause values need not be literals: `workers(..)` takes any `usize` expression (a constant,
 /// a static, a function call - an integer literal keeps the compile-time zero rejection, a
-/// runtime value of zero panics at registration), `publish(..)` / `publish_raw(..)` take a
-/// `&'static str` expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next
-/// to the keyword vocabulary.
+/// runtime value of zero panics at registration), `publish(..)` takes a `&'static str`
+/// expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next to the keyword
+/// vocabulary.
 ///
 /// An `Out(out): Out<P>` parameter injects a live publisher, paired at startup from the
 /// policy attached at the include site (`b.include(f).out(marker, policy).build()`); its optional third
@@ -136,8 +149,8 @@ use parse::{SubscriberArgs, doc_description};
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
 /// the publish builder accepts on it, and the generated document reports that narrowed list as
 /// the handler's send operations. `Out` parameters combine freely in one handler: with each
-/// other, with a byte input, with a batch handler, and with every reply form (`publish(..)`,
-/// `publish_raw(..)`, and the batch publishing form). An `Out` parameter's attachment is
+/// other, with a byte input, with a batch handler, and with every reply form (the two `publish`
+/// spellings and the batch publishing form). An `Out` parameter's attachment is
 /// required at the include site: one `.out(marker, policy)` per slot, next to the reply's own
 /// optional `.out(Reply, policy)`, and a `.build()` to commit. Repositioning a
 /// subscription from inside the body is not a parameter but a broker context field: the broker
@@ -297,6 +310,11 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 /// * `#[outgoing(name = "orders.{tenant}.v1")]` declares a space of names - `to()` opens one
 ///   setter per placeholder, and the publish appears once the last one is bound.
 /// * the derive alone declares nothing - the call site names it: `.to("orders.archived")`.
+///
+/// The same declaration decides a reply's destination: `#[subscriber(.., publish)]` publishes the
+/// return value where its type says, and `publish("..")` supplies the destination of a reply type
+/// that declares none. A reply type derives this in every case; a name template does not resolve
+/// there, because the runtime has nothing to bind its placeholders with.
 ///
 /// `headers = Meta` declares the typed header contract: `Meta` stays an ordinary serde struct
 /// the derive does not touch, and the publish builder then demands `with_headers(&meta)`.

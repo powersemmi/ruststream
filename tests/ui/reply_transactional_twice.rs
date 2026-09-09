@@ -1,6 +1,6 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, Reply, RustStream, SubscriberSettings};
-use ruststream::{nonzero, subscriber};
+use ruststream::{Outgoing, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -8,7 +8,7 @@ struct Order {
     id: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Outgoing)]
 struct Receipt {
     id: u32,
 }

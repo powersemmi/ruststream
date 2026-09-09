@@ -31,7 +31,7 @@ struct Order {
     quantity: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Outgoing)]
 struct Confirmation {
     id: u64,
     accepted: bool,

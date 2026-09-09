@@ -50,6 +50,10 @@ pub(crate) struct Order {
 
 /// The reply half of a request/reply suite: what a handler answers with when the answer's shape
 /// is not what the suite is asserting on.
+///
+/// The `Outgoing` derive is what makes it a reply at all. It declares no name, because the reply
+/// subject differs per suite, so the mount site keeps naming it.
+#[cfg_attr(feature = "macros", derive(ruststream::Outgoing))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Receipt {
@@ -109,6 +113,7 @@ pub(crate) struct Req {
 }
 
 /// The answer to a [`Req`]. See its docs.
+#[cfg_attr(feature = "macros", derive(ruststream::Outgoing))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 pub(crate) struct Resp {

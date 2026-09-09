@@ -41,17 +41,23 @@
 двоичный протокол работает на байтовых путях, где между типом и байтами передачи нет кодека.
 
 Сгенерированный код не правят руками, зато любой генератор умеет добавить атрибуты к тому, что
-выдаёт. `prost-build` принимает `message_attribute`, поэтому весь рецепт - две строки конфигурации
-сборки:
+выдаёт. `prost-build` принимает `message_attribute`, поэтому весь рецепт - два атрибута на каждом
+сгенерированном сообщении:
 
 <!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
 ```rust
 // build.rs
 prost_build::Config::new()
-    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(
+        ".",
+        "#[derive(ruststream::Serialized, ruststream::Deserialized, ruststream::Outgoing)]",
+    )
     .message_attribute(".", "#[wire(prost)]")
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
+
+Третий derive объявляет, куда отправляется сообщение: это объявление читают и типизированная
+публикация, и ответ.
 
 После этого каждое сообщение схемы само оказывается на байтовых путях, как будто его написали
 вручную. Вкладка «Вручную» - то же сообщение с раскрытым `derive`:

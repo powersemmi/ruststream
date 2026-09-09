@@ -34,6 +34,16 @@ struct Response {
     ok: bool,
 }
 
+// A reply the mount site sends where it says: the destination form is the one that leaves the
+// name to the chain.
+impl OutgoingDestination for Response {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Response {
+    type Contract = NoHeaders;
+}
+
 /// An event this service sends wherever the call site says.
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Event {
@@ -56,8 +66,39 @@ impl<M: OutSlot> OutMessages<M> for Event {
     }
 }
 
+// --8<-- [start:reply_declared]
+// The reply type fixes its destination, so the chain names none.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct Receipt {
+    id: u64,
+}
+
+impl OutgoingDestination for Receipt {
+    type Form = FixedName;
+
+    const DESTINATION: &'static str = "receipts";
+}
+
+impl MessageHeaders for Receipt {
+    type Contract = NoHeaders;
+}
+
+struct IssueReceipt;
+
+impl Handle<Request, Receipt> for IssueReceipt {
+    fn handle(
+        &self,
+        req: &Request,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+        ready(Ok(Receipt { id: req.id }))
+    }
+}
+// --8<-- [end:reply_declared]
+
 // --8<-- [start:reply]
-// A `publish(..)` handler is a body producing a reply: the reply type is the second axis of
+// A replying handler is a body producing a reply: the reply type is the second axis of
 // `Handle`, and the chain names the subscription, the destination and the publisher the reply
 // leaves through.
 struct Respond;
@@ -236,7 +277,7 @@ struct OrderConfirmed {
 
 impl OutgoingDestination for OrderConfirmed {
     type Form = FixedName;
-    const ADDRESS: &'static str = "orders.confirmed";
+    const DESTINATION: &'static str = "orders.confirmed";
 }
 
 impl MessageHeaders for OrderConfirmed {
@@ -246,7 +287,7 @@ impl MessageHeaders for OrderConfirmed {
 impl<M: OutSlot> OutMessages<M> for OrderConfirmed {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![OutgoingMessageMetadata::new(
-            Self::ADDRESS,
+            Self::DESTINATION,
             std::any::type_name::<Self>(),
         )]
     }
@@ -259,7 +300,7 @@ struct OrderPlaced {
 
 impl OutgoingDestination for OrderPlaced {
     type Form = NameTemplate;
-    const ADDRESS: &'static str = "orders.{tenant}.placed";
+    const DESTINATION: &'static str = "orders.{tenant}.placed";
     const PARAMETERS: &'static [&'static str] = &["tenant"];
 }
 
@@ -270,7 +311,7 @@ impl MessageHeaders for OrderPlaced {
 impl<M: OutSlot> OutMessages<M> for OrderPlaced {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::ADDRESS, std::any::type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, std::any::type_name::<Self>())
                 .with_parameters(Self::PARAMETERS),
         ]
     }
@@ -489,6 +530,8 @@ fn app() -> impl App {
                 seed_events(seeder).await.map_err(std::io::Error::other)
             });
             // --8<-- [start:reply_mount]
+            // the reply type carries the destination, so the chain adds nothing to it
+            b.include(subscriber("receipt-requests", IssueReceipt).reply().build());
             // static, per-reply: the chain names the policy and composes the transform at
             // compile time; the runtime pairs it with the connected broker at startup
             b.include(

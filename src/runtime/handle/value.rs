@@ -161,9 +161,15 @@ pub fn probed_def<A, R, O, C, H>(
 pub type ProbedReplyDef<A, R, O, C, H> =
     Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest>>;
 
+/// The sealed reply definition [`probed_declared_reply_def`] builds, for a `publish` clause
+/// naming nothing.
+#[doc(hidden)]
+pub type ProbedDeclaredReplyDef<A, R, O, C, H> =
+    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, DeclaredDest>>;
+
 /// Builds a `#[subscriber]` expansion's sealed reply definition: the plain definition wrapped
-/// at the clause-named destination - the reply's wire comes from the reply type itself, as
-/// everywhere. Machinery behind the macro expansion; not part of the public API.
+/// at the clause-named destination, which applies to a reply type declaring none of its own.
+/// Machinery behind the macro expansion; not part of the public API.
 // The explicit `&'static str` parameter keeps a wrongly-typed destination expression a plain
 // type error at the expansion site, as the attribute always reported it.
 #[doc(hidden)]
@@ -179,13 +185,30 @@ pub fn probed_reply_def<A, R, O, C, H>(
         dest: NamedDest(Cow::Borrowed(dest)),
     })
 }
+
+/// Builds a `#[subscriber]` expansion's sealed reply definition for a bare `publish` clause:
+/// the destination is the reply type's own declaration. Machinery behind the macro expansion;
+/// not part of the public API.
+#[doc(hidden)]
+#[must_use]
+pub fn probed_declared_reply_def<A, R, O, C, H>(
+    body: H,
+    docs: ProbedDocs,
+) -> ProbedDeclaredReplyDef<A, R, O, C, H> {
+    let Sealed(value) = probed_def(body, docs);
+    Sealed(ReplyValue {
+        value,
+        dest: DeclaredDest,
+    })
+}
 /// The reply destination still unnamed: it resolves from the reply type's own
 /// `#[outgoing(name = "..")]` declaration, and a type declaring none takes a mandatory
 /// [`to`](SubscriberBuilder::to).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DeclaredDest;
 
-/// The reply destination the chain named with [`to`](SubscriberBuilder::to).
+/// The default reply destination the chain named with [`to`](SubscriberBuilder::to): it applies
+/// to a reply type that declares no name of its own.
 #[derive(Debug, Clone)]
 pub struct NamedDest(pub(super) Cow<'static, str>);
 
@@ -296,8 +319,9 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
         self.map_def(HandleValue::with_doc)
     }
 
-    /// Declares the body's reply published: the reply type's declared destination applies (name
-    /// one with [`to`](SubscriberBuilder::to)).
+    /// Declares the body's reply published: the destination is the reply type's own
+    /// `#[outgoing(name = "..")]` declaration, and a reply type that declares none takes the
+    /// name from [`to`](SubscriberBuilder::to).
     ///
     /// The wire follows the reply type: a `serde::Serialize` reply encodes through the reply
     /// publisher's codec, a [`Serialized`](super::Serialized) reply's bytes leave as they are.
@@ -327,9 +351,12 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
 pub trait IsDocumented {}
 impl IsDocumented for Documented {}
 impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, State, DC> {
-    /// Names the subject the reply is published to, overriding nothing: without this call the
-    /// destination comes from the reply type's own `#[outgoing(name = "..")]` declaration, and
-    /// a type declaring none does not mount.
+    /// Names the subject a reply type declaring none of its own is published to.
+    ///
+    /// The reply type's `#[outgoing(name = "..")]` declaration is the destination wherever
+    /// there is one, so this name is the default rather than an override: it applies to a
+    /// `#[derive(Outgoing)]` reply type that fixes no name, and a reply type that fixes one is
+    /// published there whether or not this call is written.
     #[must_use]
     pub fn to(
         self,

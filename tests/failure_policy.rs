@@ -14,6 +14,7 @@ use common::{Order, Wire};
 use ruststream::memory::prelude::*;
 use ruststream::runtime::RustStreamError;
 use ruststream::testing::{Outcome, TestApp};
+use serde::{Deserialize, Serialize};
 
 /// Default policy: a panic fails fast. Used by `handler_panic_fails_fast_and_run_returns_err`.
 #[subscriber("boom")]
@@ -51,10 +52,15 @@ async fn batch_boom(orders: &[Order]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
+/// What the publishing handlers below answer with. The id alone is what the assertions read, so
+/// the reply is that one field under a declared name.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Outgoing)]
+struct Acked(u32);
+
 /// A publishing handler: exercises the single-message decode-failure path (default `decode = drop`).
 #[subscriber("rpcd", publish("rpcd.out"))]
-async fn rpcd(order: &Order) -> u32 {
-    order.id
+async fn rpcd(order: &Order) -> Acked {
+    Acked(order.id)
 }
 
 /// A plain batch handler: exercises the per-element batch decode-failure path.
@@ -66,8 +72,8 @@ async fn bd(orders: &[Order]) -> HandlerOutcome {
 
 /// A batch publishing handler: exercises the batch-publishing decode-failure path.
 #[subscriber("bpd", publish("bpd.out"))]
-async fn bpd(orders: &[Order]) -> Vec<u32> {
-    orders.iter().map(|o| o.id).collect()
+async fn bpd(orders: &[Order]) -> Vec<Acked> {
+    orders.iter().map(|o| Acked(o.id)).collect()
 }
 
 /// Injects a good order, a payload the decoder rejects, and another good order, in that order.
@@ -221,9 +227,9 @@ async fn publishing_decode_failure_is_dropped_and_continues() {
     // The element that never decoded published no reply; the two that did, did.
     assert_eq!(
         tb.broker::<MemoryBroker>()
-            .published::<u32>("rpcd.out")
+            .published::<Acked>("rpcd.out")
             .decoded(),
-        vec![1, 2],
+        vec![Acked(1), Acked(2)],
     );
     tb.assert_running();
     let result = tb.shutdown().await;
@@ -274,9 +280,9 @@ async fn batch_publishing_decode_failure_is_dropped() {
     assert_eq!(seen.iter().map(|o| o.id).collect::<Vec<_>>(), [1, 2]);
     assert_eq!(
         tb.broker::<MemoryBroker>()
-            .published::<u32>("bpd.out")
+            .published::<Acked>("bpd.out")
             .decoded(),
-        vec![1, 2],
+        vec![Acked(1), Acked(2)],
     );
     tb.assert_running();
     let result = tb.shutdown().await;

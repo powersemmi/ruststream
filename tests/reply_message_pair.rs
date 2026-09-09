@@ -29,7 +29,7 @@ struct ReceiptMeta {
     order_id: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
 struct Receipt {
     total: u32,
 }

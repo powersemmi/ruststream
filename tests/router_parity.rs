@@ -22,8 +22,9 @@ use ruststream::testing::TestApp;
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
-/// The reply those bodies return: its bytes leave on the wire as they are.
-#[derive(Serialized)]
+/// The reply those bodies return: its bytes leave on the wire as they are, at the subject the
+/// mount site names.
+#[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
 // Out slots: the single-slot shorthand, named slots, and the batch counterpart.

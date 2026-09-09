@@ -37,16 +37,21 @@
 传输字节之间没有编解码器。
 
 生成出来的代码不靠手改，但每个生成器都能给自己产出的代码添加属性。`prost-build` 接受
-`message_attribute`，因此整套做法就是构建配置里的两行：
+`message_attribute`，因此整套做法就是给每个生成的消息加两个属性：
 
 <!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
 ```rust
 // build.rs
 prost_build::Config::new()
-    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(
+        ".",
+        "#[derive(ruststream::Serialized, ruststream::Deserialized, ruststream::Outgoing)]",
+    )
     .message_attribute(".", "#[wire(prost)]")
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
+
+第三个 derive 声明消息发往何处，类型化发布和回复都读这份声明。
 
 此后 schema 里的每个消息一到手就已经在字节路径上，如同手写出来的一样。“手写”标签页是同一个
 消息展开 `derive` 之后的样子：

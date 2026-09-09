@@ -44,6 +44,11 @@ impl MessageHeaders for Event {
     type Contract = NoHeaders;
 }
 
+// The same by hand on the reply: the chain's `.to(..)` names where it goes.
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
+}
+
 // `#[derive(OutSlot)]` plus `#[publishes(Event)]` by hand.
 struct Analytics;
 
