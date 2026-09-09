@@ -152,7 +152,8 @@
   `#[message(headers(..))]` 契约；
 - 发出的消息：schema 取自类型自身声明的契约。
 
-schema 描述的是字段的逻辑类型：`task_id: integer`。
+schema 描述的是字段的逻辑类型：`task_id: integer`。文档的其余内容由
+[AsyncAPI 指南](asyncapi.md)讲解。
 
 ## 测试
 
