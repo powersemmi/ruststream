@@ -7,7 +7,8 @@ module's handlers into a single group. `include_router` mounts that group on a b
 
 A `Router` mirrors the broker scope. `include` is the one entry point. It mounts a definition of any
 form: plain, raw, batch, reply-publishing, injected. The definition itself picks the form.
-`with_codec` switches the decode codec for the chain (see [Codecs](codecs.md#per-handler)).
+`with_codec` switches the decode codec for the registrations that follow it; the ones already
+mounted keep theirs (see [Codecs](codecs.md#per-handler)).
 
 The subscription source comes from the definition. `#[subscriber(..)]` takes the broker's own source
 expression, builder chain included, so you name no source at the mount site. Every call consumes the
