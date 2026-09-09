@@ -8,15 +8,15 @@ lifetimes:
 | Application | the state type `S` | the whole service | shared resources: pools, clients, configuration |
 | Delivery | `Context<'_, C, S>` | one message | the channel name, a headers working copy, the broker's typed per-delivery context `C` (read by key), and the typed shared state `S` |
 
-The state is produced once, at startup, and is a single typed value of your own choosing. A
-`Context` is built fresh for every delivery and threaded as `&mut` through the middleware chain into
-the handler, so middleware and the handler observe (and can enrich) the same per-message view.
+The state is produced once, at startup. Its type is yours to choose. A `Context` is built fresh
+for every delivery and passed as `&mut` through the middleware chain into the handler. Middleware
+and the handler work with the same object, so the handler sees everything middleware put into it.
 
 ## Application level: typed state
 
-The shared application state is one typed value `S` (a struct you define, or `()` when the service
-needs none). It is produced by an `on_startup` hook - the value the hook returns becomes the state,
-fixing the app's state type:
+The shared application state is one typed value `S`: a struct you define, or `()` when the service
+needs none. An `on_startup` hook produces it, and the type the hook returns becomes the app's state
+type.
 
 === "Macros"
 
@@ -30,20 +30,22 @@ fixing the app's state type:
     --8<-- "examples/manual/context.rs:app"
     ```
 
-The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
-the third `Context` generic (`Context<'_, C, S>`), and the runtime only lets that handler mount on
-an app whose state type matches. A handler that names no state type is generic over it, so it mounts
-on any app. `publish(..)` handlers follow the same rule with one twist: one that ignores the state
-omits the `Context` parameter entirely and still mounts on a stateful app, but one that declares a
-`Context` without naming a state type pins the state to `()`, so name the app's state type
-explicitly to mount such a handler on a stateful app.
+The state type is checked at compile time. A handler that reads the state names the state type as
+the third type parameter of `Context` (`Context<'_, C, S>`) and mounts only on an app with that
+same state type. A handler that names no state type is generic over it and mounts on any app.
 
-Handlers borrow the state with `ctx.state()`, which returns `&S`, the typed state itself - no
-lookup and no `Option` to unwrap. The state is shared behind an `Arc` once the service runs, so
-handlers get cheap shared references, not copies; interior mutability (an `AtomicU64`, a
-mutex-guarded map) is the tool when a shared value must change at runtime. For data scoped to one
-message rather than the whole service, use the [per-delivery context](#per-delivery-context)
-instead. See [Lifespan](lifespan.md) for the startup-hook contract.
+`publish(..)` handlers follow the same rule, with one special case. One that does not read the
+state omits the `Context` parameter entirely and still mounts on a stateful app. One that declares a
+`Context` without naming a state type pins the state to `()`. Name the app's state type explicitly
+to mount such a handler on a stateful app.
+
+A handler reads the state with `ctx.state()`, which returns `&S`. The state is in shared ownership,
+so every handler works with one value. A value that has to change while the service runs is kept
+behind interior mutability: an `AtomicU64`, a map under a mutex.
+
+Data scoped to one message rather than the whole service lives in the
+[per-delivery context](#per-delivery-context). The startup hook is described in
+[Lifespan](lifespan.md).
 
 ```rust
 --8<-- "examples/context.rs:state"
@@ -51,15 +53,17 @@ instead. See [Lifespan](lifespan.md) for the startup-hook contract.
 
 ## Injecting dependencies: extractor parameters
 
-Reaching for a dependency through `ctx.state().field` always works, but a handler can also take it
-as a parameter. Any handler parameter after the message (and the optional `&mut Context`) whose type
-implements `FromContext` is an **extractor**: the runtime resolves it from the delivery before the
-body runs, and a failed extraction settles the message by the rejection's `HandlerOutcome` without
-running the body.
+A dependency is always reachable through `ctx.state().field`, but a handler can also take it as a
+parameter.
 
-To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler -
-no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S>`), including types
-from other crates - a broker publisher, a client pool:
+An **extractor** is a handler parameter whose type implements `FromContext`. Extractors come after
+the message and after the optional `&mut Context` parameter. The runtime resolves an extractor from
+the delivery before the handler body runs. An extractor that returns a rejection settles the message
+by its outcome, and the body does not run.
+
+To inject a piece of the state, derive `FromRef` on the state and take `State<T>` in the handler.
+`State<T>` works with a field of any type (`T: FromRef<S>`), including a type from another crate,
+such as a broker publisher or a client pool:
 
 === "Macros"
 
@@ -73,7 +77,7 @@ from other crates - a broker publisher, a client pool:
     --8<-- "examples/manual/from_context.rs:state"
     ```
 
-The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
+The handler takes `State<FieldType>` as a parameter:
 
 === "Macros"
 
@@ -87,17 +91,19 @@ The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
     --8<-- "examples/manual/from_context.rs:handler"
     ```
 
-A field that should not be injectable, or whose type another field already claims, opts out with
-`#[from_ref(skip)]`; two fields may not share a type, since injection by type would be ambiguous. For
-a custom extractor that does more than read the state - an auth guard that rejects, a request-scoped
-resolver - implement `FromContext` directly: it borrows the `&mut Context`, so it can read headers,
-broker fields, or a scratch value a middleware left, and return a `Rejection` to settle the delivery.
+Two state fields cannot share a type, because injection goes by type. With `#[from_ref(skip)]` you
+can exclude a field: one you do not want injected, or one whose type another field already claims.
+
+An extractor that does more than read the state is one you write yourself, through `FromContext`:
+an access check that rejects the delivery, a lookup scoped to one request. Such an extractor
+receives the `&mut Context` and can read headers, broker fields, or a scratch value middleware left.
+It returns a `Rejection` to settle the delivery.
 
 ## Delivery level: `Context`
 
-A `#[subscriber]` handler opts in by declaring a second parameter after the payload; omit it when
-the handler needs nothing but the message. The macro resolves the type itself, so `Context` needs
-no import when it appears only in handler signatures:
+A `#[subscriber]` handler declares the context as a second parameter after the payload; a handler
+that needs nothing but the message leaves it out. The macro fills in the type, so `Context` needs no
+import while it appears only in handler signatures:
 
 === "Macros"
 
@@ -111,55 +117,56 @@ no import when it appears only in handler signatures:
     --8<-- "examples/manual/context.rs:handler"
     ```
 
-What the context exposes:
+What the context gives you:
 
 | Method | Returns | Purpose |
 |---|---|---|
-| `name()` | `&str` | the channel / subject the message arrived on |
+| `name()` | `&str` | the channel or subject the message arrived on |
 | `headers()` | `&HeaderMap` | the working copy of the message headers |
 | `headers_mut()` | `&mut HeaderMap` | the same copy, for middleware to enrich |
-| `state()` | `&S` | the typed shared application state, borrowed directly |
+| `state()` | `&S` | the typed shared application state |
 | `context(KEY)` | `KEY::Value` | a [broker field](#per-delivery-context) read by compile-time key |
-| `set(KEY, v)` | `()` | write a per-delivery [scratch value](#per-delivery-context) (middleware) |
-| `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) gated on the settlement outcome |
-| `after_ack(fut)` / `after_settle(fut)` | `()` | post-settle hook sugar (after an ack / after any settlement) |
+| `set(KEY, v)` | `()` | a per-delivery [scratch value](#per-delivery-context), for middleware |
+| `after(outcome).then(fut)` | `()` | a [post-settle hook](#post-settle-hooks) selected by the settlement outcome |
+| `after_ack(fut)` / `after_settle(fut)` | `()` | sugar: a hook after an ack, a hook after any settlement |
 
 ## Per-delivery context
 
-Beside the shared application state, the context carries the broker's typed per-delivery context,
-read by **compile-time key** and free on the delivery path. A key is a selector the broker exports;
-`ctx.context(KEY)` reads the field straight off the context, so a handler reads native delivery
-metadata - a stream id, an offset, a delivery handle - without the broker serializing it into the
-byte-only headers. A key the subscription's broker does not carry is a compile error, not a
-runtime miss.
+Besides the shared application state, the context holds the broker's typed per-delivery context: the
+delivery's own metadata, such as a stream id, an offset, a delivery handle.
+
+A handler reads them by **compile-time key**. A key is a selector the broker exports;
+`ctx.context(KEY)` returns the field straight from the context, with no serializing into the
+byte-only headers. Such a read costs nothing on the delivery path. A key the subscription's broker
+does not have is a compile error.
 
 ```rust
 --8<-- "examples/context_field.rs:field"
 ```
 
-A broker with no per-delivery fields uses `()`, the default, so a `#[subscriber]` handler that
-names no context type - and takes no [`Ctx` extractor](#context-fields-as-parameters) - sees
-`Context<'_>`. Middleware can also carry a typed scratch value to a
-downstream handler: a writable key (`FieldMut`) lets a layer `ctx.set(KEY, value)` and the handler
-`ctx.context(KEY)` it back - a correlation id, an authenticated user a layer resolved - without
-serializing it into the headers. The context is built fresh per delivery, so one delivery's values
-never leak into the next.
+A broker with no per-delivery fields has `()` as its context type, the default: a handler that names
+no context type and takes no [`Ctx` extractor](#context-fields-as-parameters) sees `Context<'_>`.
 
-A [batch handler](subscribers.md#batch-subscribers) gets one context per batch, and it carries the
-broker's *subscription-scoped* fields only - a seek handle, a stream name - which a batch body
-names as its context type
-(`ctx: &mut Context<'_, MemoryBatchContext>` on the in-memory broker) and reads with
-`ctx.context(..)`. Per-delivery data stays out: a batch spans many deliveries, so a position or a
-header rides the elements instead. The per-delivery and batch context types are distinct, so a
-batch body asking for the per-delivery one does not compile, and a broker with nothing
-subscription-scoped leaves batches on the `()` default.
+Middleware can pass a typed scratch value to a handler further down the chain: a correlation id, a
+user a layer authenticated. On a writable key (`FieldMut`) the layer calls `ctx.set(KEY, value)`,
+and the handler reads the value back with `ctx.context(KEY)`. The next delivery does not see these
+values.
+
+A [batch handler](subscribers.md#batch-subscribers) gets one context per batch, and it holds the
+broker's *subscription-scoped* fields only: a seek handle, a stream name. Per-delivery data stays
+out: a batch spans many deliveries, so a position or a header is stored on its elements instead.
+
+A batch body names that type as its context type (`ctx: &mut Context<'_, MemoryBatchContext>` on
+the in-memory broker) and reads the fields with `ctx.context(..)`. The per-delivery and batch
+context types are distinct, so a batch body that asks for the per-delivery one does not compile. A
+broker with no subscription-scoped fields has `()` as its batch context type.
 
 ## Context fields as parameters
 
-A field can also arrive as a handler argument, the way `State<T>` injects a state component: the
-`Ctx<K>` extractor binds the value the key `K` reads. The handler needs no `&mut Context`
-parameter at all: the `#[subscriber]` macro projects the subscription's context type from the
-first `Ctx` key in the signature.
+A context field can also arrive as a handler argument, the way `State<T>` injects a piece of the
+state: the `Ctx<K>` extractor binds the value the key `K` reads. The `&mut Context` parameter is
+then unnecessary: the `#[subscriber]` macro derives the subscription's context type from the first
+`Ctx` key in the signature.
 
 ```rust
 --8<-- "examples/ctx_extractor.rs:key"
@@ -177,21 +184,23 @@ first `Ctx` key in the signature.
     --8<-- "examples/manual/ctx_extractor.rs:handler"
     ```
 
-Three things to know:
+Three properties of this form:
 
-- Values are owned: an extractor binds before the handler body runs, so it cannot borrow from the
-  context. Keys yielding borrowed values (a name as `&str`) stay readable through
-  `ctx.context(KEY)` with a declared ctx parameter.
-- With a `&mut Context<'_, C>` parameter also present, every `Ctx` key must read that same `C`.
-- The projection is syntactic: the macro recognizes the literal `Ctx<K>` shape (any path ending in
-  `Ctx` with one type argument). A type alias hides it, and the context type falls back to `()`.
+- Values arrive owned: the extractor binds before the handler body runs and cannot borrow from the
+  context. A key that yields a borrowed value (a name as `&str`) is read through
+  `ctx.context(KEY)`, with the `ctx` parameter declared.
+- If the handler also takes a `&mut Context<'_, C>` parameter, every `Ctx` key must read that same
+  `C`.
+- The type is derived syntactically: the macro recognizes the written form `Ctx<K>`, any path
+  ending in `Ctx` with one type argument. Behind a type alias the macro does not see that form, and
+  the context type becomes `()`.
 
 ## The headers working copy
 
-`ctx.headers()` is not the broker message itself: each delivery clones the incoming headers into a
-working copy that lives in the context. That makes it a scratchpad for the dispatch chain -
-middleware earlier in the chain can stamp values onto it with `headers_mut()`, and the handler
-reads the enriched result:
+Every delivery copies the incoming headers into the context, and `ctx.headers()` returns that copy,
+not the headers of the broker message itself. The copy is a scratchpad for the whole dispatch
+chain: middleware earlier in the chain can write values into it with `headers_mut()`, and the
+handler reads the result:
 
 ```rust
 --8<-- "examples/context.rs:enrich"
@@ -212,31 +221,35 @@ Mounted globally, the layer runs before every handler, so `handle` above always 
     --8<-- "examples/manual/context.rs:app"
     ```
 
-Two boundaries to keep in mind:
+The copy has two boundaries:
 
-- Mutations stay within the delivery: the broker message and other subscribers' deliveries are
-  untouched.
-- Outgoing messages do not inherit the copy. Replies and manual publishes start from fresh
-  headers; attach outgoing metadata in the [publish pipeline](publishing.md#the-publish-pipeline)
-  (a `PublishTransform` or `PublishLayer`) instead.
+- Changes stay inside the delivery: the broker message and other subscribers' deliveries do not see
+  them.
+- Outgoing messages do not get this copy: a reply and a manual publish start from empty headers.
+  Metadata for an outgoing message is set in the
+  [publish pipeline](publishing.md#the-publish-pipeline), through a `PublishTransform` or a
+  `PublishLayer`.
 
 ## Publishing from a handler
 
-To publish from inside a handler (beyond the `publish(..)` reply form), do not put the publisher
-in the state: take it as a handler parameter with `Out` - the pattern
-`Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body. The policy is
-attached where the handler is included, the concrete publisher type is inferred from it, and
-the runtime pairs it after the broker connects. What leaves through the slot travels the same
-[publish pipeline](publishing.md#the-publish-pipeline) a reply does: the app-wide `publish_layer`
-chain, under the slot's own `.out(marker, policy).transform(..)` steps. The full pattern and its
-snippet live in
+Besides the `publish(..)` reply form, a handler can publish through an `Out` slot. The publisher
+for that is not kept in the state but taken as a handler parameter: the pattern
+`Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
+
+You name the policy where you include the handler in the app. The concrete publisher type is
+inferred from it, and the policy instantiates the publisher on the connected broker.
+
+Everything published through the slot goes through the same
+[publish pipeline](publishing.md#the-publish-pipeline) as a reply: the app-wide `publish_layer`
+chain, under the slot's own `.out(marker, policy).transform(..)` steps. The full pattern with its
+code example is in
 [Publishing from inside a handler](publishing.md#publishing-from-inside-a-handler).
 
 ## Post-settle hooks
 
-Sometimes a handler needs a side effect to fire *after* the message has been settled - a
-non-critical notification, slow follow-up work, a cache warm-up - without it gating the ack
-decision or affecting redelivery. Register one on the context:
+On the context you can register a side effect that runs *after* the message has been settled: a
+non-critical notification, slow follow-up work, a cache warm-up. Such an effect does not influence
+the ack decision or redelivery.
 
 === "Macros"
 
@@ -250,41 +263,43 @@ decision or affecting redelivery. Register one on the context:
     --8<-- "examples/manual/context.rs:handler"
     ```
 
-The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has
-acked the message, off the delivery path, so it never delays the ack or the next delivery.
+The handler above ends with `ctx.after_ack(..)`. The continuation runs only after the broker has
+acked the message, and off the delivery path, so it delays neither the ack nor the next delivery.
 
 Three forms, all additive:
 
-- `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`, matched **by
-  kind**. The four kinds are distinct: `ack()`, `drop()` (nack, no requeue), `retry()` (nack,
-  requeue), and `retry_after()` (matched regardless of the delay). Drop and retry are separate
-  mechanics, so a hook gated on `drop()` does not fire on a `retry()` settlement, and vice versa.
+- `ctx.after(outcome).then(fut)` - runs only if the message settles by `outcome`. Outcomes are
+  matched **by kind**, and there are four kinds: `ack()`, `drop()` (nack, no requeue), `retry()`
+  (nack, requeue) and `retry_after()` (matched at any delay). A hook on `drop()` does not fire when
+  the message settles by `retry()`, and the other way round.
 - `ctx.after_ack(fut)` - sugar for `ctx.after(HandlerOutcome::ack()).then(fut)`.
 - `ctx.after_settle(fut)` - runs after the message settles, whatever the outcome.
 
-A handler can also attach a continuation through its return value: any outcome carries one through
-`.and_after(fut)`, which is how a batch handler gets per-element continuations. See
-[Post-settle continuations](subscribers.md#post-settle-continuations) for that form; the semantics
-below apply to both.
+A continuation can also be attached to the return value: `.and_after(fut)` exists on any outcome,
+and that is how a batch handler gets a continuation per element. That form is described in
+[Post-settle continuations](subscribers.md#post-settle-continuations); everything below applies to
+both.
 
-Multiple registrations accumulate and every matching one runs, on a tracked task set off the
-delivery path. The semantics are **at-most-once**: the message is already settled before any hook
-runs, so a hook that panics, or that is lost when the process crashes, never causes a redelivery.
-Do not put work whose loss must redeliver the message in a hook; settle by outcome and let the
-broker retry instead. A graceful shutdown drains in-flight hooks (bounded by `shutdown_timeout`);
-an aborted shutdown may drop them.
+Registrations accumulate, and every matching one runs, off the delivery path in a tracked task set.
+
+The semantics are **at-most-once**: the message settles before any hook starts, so a panic in a
+hook, or a crash of the process, does not cause a redelivery. Do not put work into a hook when its
+loss must redeliver the message: settle the message by the right outcome and let the broker retry.
+
+A graceful shutdown waits for in-flight hooks within `shutdown_timeout`; an aborted shutdown may
+lose them.
 
 On the batch path a `Context` is one per *batch*, so a hook runs after the whole batch has settled.
-Because a batch has per-element outcomes, the outcome gate is ill-defined there: only
-`after_settle` hooks fire (the gated `after(..)` / `after_ack` forms are ignored on a batch).
+A batch has an outcome per element, so selection by outcome is undefined there: only `after_settle`
+hooks fire, and `after(..)` and `after_ack` are ignored on a batch.
 
 ## Context in middleware
 
-Every middleware form receives the same `&mut Context` the handler will see:
+Every middleware form receives the same `&mut Context` the handler gets:
 
-- A static layer's `Handler::handle(&self, msg, ctx)` - as in the example above.
-- A dynamic `DynMiddleware::handle(&self, input, ctx, next)` - inspect or enrich, then
-  `next.run(input, ctx)`.
+- A static layer - through `Handler::handle(&self, msg, ctx)`, as in the example above.
+- A dynamic middleware - through `DynMiddleware::handle(&self, input, ctx, next)`: it reads or
+  enriches the context, then calls `next.run(input, ctx)`.
 
 The middleware forms themselves are covered in [Middleware](middleware.md). The full program for
 this page is
