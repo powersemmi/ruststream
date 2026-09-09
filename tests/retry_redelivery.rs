@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
+use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, RETRY_COUNT_HEADER, RustStream};
 use ruststream::subscriber;
 use ruststream::testing::{Outcome, TestApp};
@@ -48,11 +48,8 @@ impl BoundSubscription {
     }
 }
 
-impl<C> SubscriptionSource<C> for BoundSubscription
-where
-    C: Subscribe<Subscriber = MemorySubscriber>,
-{
-    type Subscriber = UnsettledSubscriber;
+impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
+    type Subscriber = UnsettledSubscriber<C::Subscriber>;
 
     fn name(&self) -> &str {
         self.subscription
@@ -84,11 +81,8 @@ impl SilentSubscription {
     }
 }
 
-impl<C> SubscriptionSource<C> for SilentSubscription
-where
-    C: Subscribe<Subscriber = MemorySubscriber>,
-{
-    type Subscriber = UnsettledSubscriber;
+impl<C: Subscribe> SubscriptionSource<C> for SilentSubscription {
+    type Subscriber = UnsettledSubscriber<C::Subscriber>;
 
     fn name(&self) -> &str {
         self.topic
@@ -99,24 +93,24 @@ where
     }
 }
 
-/// The in-memory subscriber with its native delayed redelivery taken away, so a `retry_after`
+/// The broker's subscriber with its native delayed redelivery taken away, so a `retry_after`
 /// takes the runtime's deferred re-publish instead of the broker's own timer.
-struct UnsettledSubscriber(MemorySubscriber);
+struct UnsettledSubscriber<S>(S);
 
-impl Subscriber for UnsettledSubscriber {
-    type Message = UnsettledMessage;
-    type Error = <MemorySubscriber as Subscriber>::Error;
+impl<S: Subscriber> Subscriber for UnsettledSubscriber<S> {
+    type Message = UnsettledMessage<S::Message>;
+    type Error = S::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         self.0.stream().map(|item| item.map(UnsettledMessage))
     }
 }
 
-/// A delivery that acknowledges like the in-memory broker's own but keeps the trait default for
+/// A delivery that acknowledges like the broker's own but keeps the trait default for
 /// [`IncomingMessage::supports_nack_after`], which is what nearly every real broker ships.
-struct UnsettledMessage(MemoryMessage);
+struct UnsettledMessage<M>(M);
 
-impl IncomingMessage for UnsettledMessage {
+impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
     fn payload(&self) -> &[u8] {
         self.0.payload()
     }
