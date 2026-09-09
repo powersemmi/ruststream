@@ -88,7 +88,7 @@ use crate::runtime::inject::FromStartup;
 use crate::runtime::inject::{InjectCall, InjectDef};
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publish::{
-    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity,
+    Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity, PublishSink,
     TransactionScope, TypedTransaction, message_of,
 };
 use crate::runtime::router::IncludeDef;
@@ -254,6 +254,91 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline, Body>
         T: OutgoingDestination + PublishedThrough<M>,
     {
         message_of(self, value, &self.codec)
+    }
+
+    /// Starts the same typed publish, but sends it through `sink` instead of straight through
+    /// the entry.
+    ///
+    /// This is what a broker's publisher adapter calls. An adapter that contributes something
+    /// per publish - an ordering key, a routing hint, a stamp - wraps the entry and becomes the
+    /// sink, and the codec has to keep coming from the entry: it is the include site's, the most
+    /// specific level that named one. Starting a fresh builder on the adapter instead would
+    /// resolve the crate default and silently encode those messages differently from every other
+    /// message the same registration sends.
+    ///
+    /// `sink` is normally `&adapter`, and the adapter publishes by delegating to the entry, so
+    /// the message still travels the slot's publish path and keeps its test-capture attribution.
+    /// The adapter's [`base_headers`](crate::Publisher::base_headers) are written underneath the
+    /// publish's own, which is how the per-publish contribution reaches the wire.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::runtime::{HandlerOutcome, Out};
+    /// use ruststream::{HeaderMap, Outgoing, OutgoingMessage, Publisher, subscriber};
+    /// use serde::Serialize;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Event { id: u64 }
+    ///
+    /// #[derive(Outgoing, Serialize)]
+    /// #[outgoing(name = "events.done")]
+    /// struct Done {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// A broker adapter: every publish built on it carries one header of the broker's own.
+    /// struct Tagged<'a, P: ?Sized> {
+    ///     inner: &'a P,
+    ///     base: HeaderMap,
+    /// }
+    ///
+    /// impl<P: Publisher + ?Sized> Publisher for Tagged<'_, P> {
+    ///     type Error = P::Error;
+    ///
+    ///     fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_>,
+    ///     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+    ///         self.inner.publish(msg)
+    ///     }
+    ///
+    ///     fn base_headers(&self) -> Option<&HeaderMap> {
+    ///         Some(&self.base)
+    ///     }
+    /// }
+    ///
+    /// #[subscriber("events")]
+    /// async fn on_event(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome {
+    ///     let mut base = HeaderMap::new();
+    ///     base.insert("lane", event.id.to_string());
+    ///     let tagged = Tagged { inner: out, base };
+    ///
+    ///     // Leaves through the adapter, encodes with the codec the include site named.
+    ///     if out
+    ///         .message_through(&tagged, &Done { id: event.id })
+    ///         .publish()
+    ///         .await
+    ///         .is_err()
+    ///     {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// ```
+    pub fn message_through<'a, S, T, Index>(
+        &'a self,
+        sink: S,
+        value: &'a T,
+    ) -> PublishBuilder<S, MessageBody<'a, T>, &'a E, HeadersUnset, T::Form>
+    where
+        S: PublishSink,
+        Body: ContainsMessage<T, Index>,
+        T: OutgoingDestination + PublishedThrough<M>,
+    {
+        message_of(sink, value, &self.codec)
     }
 }
 

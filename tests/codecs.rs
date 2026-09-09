@@ -15,10 +15,13 @@
 
 mod common;
 
+use std::future::Future;
+
 use common::Order;
 use ruststream::codec::{CborCodec, MsgpackCodec};
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
+use ruststream::{HeaderMap, OutgoingMessage};
 
 #[subscriber("orders-cbor")]
 async fn cbor_order(order: &Order) -> HandlerOutcome {
@@ -146,4 +149,85 @@ async fn a_slot_codec_outranks_the_surface_codec_for_that_slot() {
         .assert_called_once()
         .decoded_as::<Order>()
         .with_codec(&MsgpackCodec, &Order { id: 7 });
+}
+
+#[derive(OutSlot)]
+#[publishes(Order)]
+struct Keyed;
+
+/// The shape a broker ships for a per-publish setting of its own: it wraps the publisher, adds
+/// a header every message carries, and delegates the send.
+struct Tagged<'a, P: ?Sized> {
+    inner: &'a P,
+    base: HeaderMap,
+}
+
+impl<P: Publisher + ?Sized> Publisher for Tagged<'_, P> {
+    type Error = P::Error;
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner.publish(msg)
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        Some(&self.base)
+    }
+}
+
+/// Publishes through the adapter rather than straight through the slot.
+#[subscriber("orders-adapter")]
+async fn tagged_mirror(order: &Order, Out(out): Out<impl Publisher, Keyed>) -> HandlerOutcome {
+    let mut base = HeaderMap::new();
+    base.insert("lane", order.id.to_string());
+    let tagged = Tagged { inner: out, base };
+
+    if out
+        .message_through(&tagged, order)
+        .to("orders-tagged")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// An adapter in the way does not move the publish off the codec ladder: the bytes are the
+/// slot's `cbor`, not the crate default, and the adapter's own header still reaches the wire.
+/// Starting a fresh builder on the adapter is what used to resolve the default instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_publish_through_an_adapter_keeps_the_mount_site_codec() {
+    let app = RustStream::new(AppInfo::new("adapter-codec", "0.1.0")).with_broker_codec(
+        MemoryBroker::new(),
+        MsgpackCodec,
+        |b| {
+            b.include(tagged_mirror)
+                .out(Keyed, Publish)
+                .codec(CborCodec)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 7 })
+        .with_codec(MsgpackCodec)
+        .to("orders-adapter")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.out::<Keyed>()
+        .assert_called_once()
+        .decoded_as::<Order>()
+        .with_codec(&CborCodec, &Order { id: 7 })
+        .with_header("lane", "7");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders-tagged")
+        .assert_called_once()
+        .with_codec(&CborCodec, &Order { id: 7 });
 }
