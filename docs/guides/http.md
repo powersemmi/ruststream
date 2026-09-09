@@ -1,9 +1,9 @@
 # HTTP frameworks
 
-A service that serves an HTTP API and consumes messages runs both sides in one process, on one
-tokio runtime: your HTTP framework (axum, actix-web, or any other tokio-based stack) beside the
-RustStream app. RustStream is not an HTTP framework. The wiring below is axum, and the pattern
-that keeps the two sides consistent is a transactional outbox.
+RustStream is not an HTTP framework. A service that serves an HTTP API and consumes messages runs
+both sides in one process, on one tokio runtime. Your HTTP framework (axum, actix-web, or any other
+tokio-based stack) runs beside the RustStream app. The wiring below uses axum. A transactional
+outbox keeps the two sides consistent.
 
 The full compiled example lives at
 [`examples/http_outbox.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/http_outbox.rs):
@@ -14,8 +14,8 @@ cargo run --example http_outbox --features macros,memory,json
 
 ## Running beside an HTTP server
 
-Both sides come up in `main`. `start()` brings the messaging side up in the background and returns
-a `RunningApp` handle that coordinates the two lifetimes:
+Both sides start in `main`. `start()` runs the messaging side in the background and returns a
+`RunningApp` handle that coordinates the two lifetimes:
 
 === "Macros"
 
@@ -29,41 +29,41 @@ a `RunningApp` handle that coordinates the two lifetimes:
     --8<-- "examples/manual/http_outbox.rs:wiring"
     ```
 
-`start()` runs the state producer, connects the brokers and opens the subscriptions. It resolves
-once the service is running, so a startup failure surfaces before the HTTP side accepts traffic.
+`start()` connects the brokers and opens the subscriptions. It resolves once the service is
+running, so you get a startup error before the HTTP side accepts traffic.
 
-`stopping()` is an owned future that resolves if the messaging side tears itself down on a
-fail-fast failure. Plug it into axum's `with_graceful_shutdown` and the process stops serving HTTP
-instead of answering requests behind a dead consumer. `shutdown()` is the explicit graceful
-teardown, run once the HTTP server has stopped: the `on_shutdown` hooks, a drain of in-flight
-handlers bounded by the [shutdown timeout](lifespan.md#shutdown-timeout), then broker shutdown.
+`stopping()` returns an owned future. It resolves when the messaging side has stopped itself on a
+fail-fast failure. You can plug it into axum's `with_graceful_shutdown`, and the HTTP server stops
+with it.
 
-The publisher arrives through a bound token. `.bindable()` wraps the broker and `bind(..)` mints
-the token before the app consumes it; `running.publisher(token)` pairs it once `start()` has
-connected the broker. The paired publisher is a plain value, safe to clone into whatever state
-the HTTP framework carries.
+`shutdown()` is the explicit graceful teardown. Call it once the HTTP server has stopped. The
+teardown sequence and the [shutdown timeout](lifespan.md#shutdown-timeout) are in the lifespan
+guide.
+
+The HTTP side gets the publisher through a binding token. `.bindable()` wraps the broker,
+`bind(..)` issues the token before the app consumes the broker, and `running.publisher(token)`
+pairs the token with the connected broker. The paired publisher is a plain value, and you can
+clone it into whatever state the HTTP framework holds.
 
 ## A healthz endpoint
 
-`start()` is the readiness gate; the health probe covers everything after it.
-`RunningApp::health()` hands out a cheap, cloneable `HealthProbe` that a route can own:
+`start()` reports readiness at startup. The health probe reports the service state after that.
+`RunningApp::health()` hands out a cloneable `HealthProbe`:
 
 ```rust
 --8<-- "examples/http_outbox.rs:healthz"
 ```
 
-`state()` is a lock-free snapshot backed by a watch channel: `Running`, `ShuttingDown`, `Stopped`,
-or `Failed { reason }` carrying the fail-fast diagnostic. The probe outlives `shutdown()`, so the
-route keeps answering with the terminal state. That closes the gap `stopping()` alone leaves: when
-the messaging side fail-fasts and a sibling task keeps the process alive, `/healthz` flips to 503
-instead of serving a permanent 200 for a dead consumer.
+`state()` returns a lock-free snapshot: `Running`, `ShuttingDown`, `Stopped`, or
+`Failed { reason }` carrying the fail-fast diagnostic. The probe keeps working after `shutdown()`
+and reports the terminal state. On a fail-fast failure `/healthz` answers 503, even while sibling
+tasks keep the process alive.
 
-The route carries its own state (`get(healthz).with_state(running.health())`), so it composes
-with whatever state the rest of the router holds - the full wiring above registers it beside
-`/orders`.
+The route has its own state (`get(healthz).with_state(running.health())`), so the rest of the
+router can hold any state at all. The wiring above registers `/healthz` beside `/orders`.
 
-The subscriber side is an ordinary handler; the same service consumes what its HTTP endpoints
-produce, and any other service subscribed to the broker sees the events too:
+The subscriber side is an ordinary handler. The same service consumes the events its HTTP
+endpoints produce, and any other service subscribed to the broker sees them too:
 
 === "Macros"
 
@@ -80,21 +80,22 @@ produce, and any other service subscribed to the broker sees the events too:
 ## Publishing straight from a request
 
 The simplest integration puts the publisher into the HTTP framework's state and publishes on the
-request path, exactly like [publishing from inside a handler](publishing.md):
-`publisher.message(&event).publish().await`. The
-[metrics guide's complete server](metrics.md) does this to drive its counters.
+request path: `publisher.message(&event).publish().await`, exactly as when
+[publishing from inside a handler](publishing.md). The
+[metrics guide's complete server](metrics.md) is built this way.
 
-The trade-off is coupling: a broker outage now fails or stalls HTTP requests, and a crash after
-the database write but before the publish loses the event (or publishes an event for a write that
-rolled back, in the opposite order). If the endpoint also writes to a database, that gap is a
-consistency bug waiting for a deploy window. The fix is the transactional outbox.
+The price is coupling. When the broker is unavailable, the HTTP request returns an error or waits.
+If the endpoint also writes to a database, a gap opens between the write and the publish. A crash
+in that gap loses the event. With the two steps in the opposite order, it leaves an event published
+for a write that rolled back. That is a consistency bug, and it shows up at the next deploy. The
+transactional outbox closes the gap.
 
 ## Transactional outbox
 
-The endpoint records the event beside the business write and a relay moves it to the broker
-afterwards, so neither side can happen without the other. The pattern is not specific to HTTP and
-has a page of its own: [transactional outbox](transactional-outbox.md). The example this guide
-runs, `examples/http_outbox.rs`, is the same one.
+The endpoint records the event beside the business write, and a relay moves it to the broker
+afterwards, so the write and the event only appear together. The pattern is not specific to HTTP
+and has [a page of its own](transactional-outbox.md). That page works through the same example,
+`examples/http_outbox.rs`.
 
 ## Try it
 
@@ -103,5 +104,5 @@ curl -X POST http://127.0.0.1:8080/orders \
   -H 'content-type: application/json' -d '{"id":1,"item":"book"}'
 ```
 
-The response returns as soon as the store commits; the `fulfil` handler logs the order a moment
-later, when the relay has published the event.
+The response returns as soon as the store commits the write. The `fulfil` handler logs the order a
+moment later, once the relay has published the event.

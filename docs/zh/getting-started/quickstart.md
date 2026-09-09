@@ -1,6 +1,6 @@
 # 快速上手
 
-要最快跑起一个服务，就用 `cargo generate` 生成项目骨架。
+要让服务跑起来，最快的方式是用 `cargo generate` 生成项目骨架。
 
 ## 生成项目骨架
 
@@ -10,10 +10,9 @@ cargo generate --git https://github.com/powersemmi/ruststream templates/memory -
 cd my-service
 ```
 
-生成骨架只需要 `cargo generate`，不需要 `ruststream` CLI。`templates/memory` 是内存版的起步模板
-（不依赖外部 Broker）；每个 Broker crate 都自带模板（例如
-`--git https://github.com/powersemmi/ruststream-nats templates/nats`）。上面的命令会生成一个符合
-Rust 习惯、由多个文件组成的项目：
+生成骨架只需要 `cargo generate`。`templates/memory` 是基于内存 Broker 的起步模板。每个 Broker crate
+都自带模板（例如 `--git https://github.com/powersemmi/ruststream-nats templates/nats`）。
+`cargo generate` 会生成一个符合 Rust 习惯的多文件项目：
 
 ```
 my-service/
@@ -26,14 +25,14 @@ my-service/
 
 ## 运行起来
 
-`#[ruststream::app]` 会生成 `main`，因此生成的二进制程序已经认识框架的这些命令：
+`#[ruststream::app]` 会生成 `main`，因此二进制程序已经支持框架的命令：
 
 ```bash
 cargo run -- run                # 或者：装了 CLI 之后用 ruststream run
 ```
 
-`cargo run -- run` 会启动一个 tokio 运行时并一直运行服务，直到你按下 ++ctrl+c++（`ruststream run`
-这个 CLI 命令只是转发到它的便捷写法）。骨架项目用的是内存 Broker，所以运行时不需要任何外部依赖。
+`cargo run -- run` 会启动 tokio 运行时。服务会一直运行，直到你按下
+++ctrl+c++。运行服务不需要外部 Broker。
 
 ## 生成 AsyncAPI 文档
 
@@ -41,7 +40,7 @@ cargo run -- run                # 或者：装了 CLI 之后用 ruststream run
 cargo run -- asyncapi gen
 ```
 
-这会把 AsyncAPI 文档以 JSON 打印出来；输出相关的参数（`-o`、`--yaml`）以及文档本身，参见
+该命令以 JSON 格式打印 AsyncAPI 文档。输出选项（`-o`、`--yaml`）和文档本身，参见
 [AsyncAPI 指南](../guides/asyncapi.md)。
 
 ## 入口点长什么样
@@ -58,10 +57,10 @@ cargo run -- asyncapi gen
     --8<-- "examples/manual/tutorial/main.rs:main"
     ```
 
-你写的是一个构建服务的函数；宏把它变成一个 `main`，由这个 `main` 来分发 `run` 和 `asyncapi gen`。
+你写的是一个构建服务的函数，`#[ruststream::app]` 把它变成 `main`。
 
 ## 下一步
 
-- 在[教程](tutorial.md)中理解每一个部分。
+- 在[教程](tutorial.md)中理解每个部分。
 - 在[订阅者](../guides/subscribers.md)中了解处理器的各种写法。
-- 从 [CLI](../guides/cli.md) 驱动这一切。
+- 用 [CLI](../guides/cli.md) 管理服务。

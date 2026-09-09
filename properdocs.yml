@@ -124,6 +124,8 @@ plugins:
             Testing: 测试
             Brokers: Broker
             Benchmarks: 基准测试
+            Broker authors: Broker 作者
+            API reference: API 参考
 
 # The benchmarks page builds its table in the browser from the results each broker publishes with
 # its own site. The script is a no-op on every other page.

@@ -10,10 +10,10 @@ cargo generate --git https://github.com/powersemmi/ruststream templates/memory -
 cd my-service
 ```
 
-Scaffolding needs only `cargo generate`, not the `ruststream` CLI. `templates/memory` is the
-in-memory starter (no external broker); each broker crate ships its own template (for example
-`--git https://github.com/powersemmi/ruststream-nats templates/nats`). This writes an idiomatic,
-multi-file project:
+Scaffolding needs only `cargo generate`. `templates/memory` is the starter template for the
+in-memory broker. Each broker crate ships its own template (for example
+`--git https://github.com/powersemmi/ruststream-nats templates/nats`). `cargo generate` writes an
+idiomatic, multi-file project:
 
 ```
 my-service/
@@ -32,9 +32,8 @@ my-service/
 cargo run -- run                # or: ruststream run, with the CLI installed
 ```
 
-`cargo run -- run` starts a tokio runtime and runs the service until you press ++ctrl+c++ (the
-`ruststream run` CLI is a convenience that forwards to it). The scaffold uses the in-memory broker,
-so it runs with no external dependencies.
+`cargo run -- run` starts a tokio runtime. The service runs until you press ++ctrl+c++. It needs
+no external broker.
 
 ## Generate the AsyncAPI document
 
@@ -42,8 +41,8 @@ so it runs with no external dependencies.
 cargo run -- asyncapi gen
 ```
 
-This prints the AsyncAPI document as JSON; the output flags (`-o`, `--yaml`) and the document
-itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
+The command prints the AsyncAPI document as JSON. The output flags (`-o`, `--yaml`) and the
+document itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
 
 ## What the entry point looks like
 
@@ -59,8 +58,7 @@ itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
     --8<-- "examples/manual/tutorial/main.rs:main"
     ```
 
-You write a function that builds the service; the macro turns it into a `main` that dispatches
-`run` and `asyncapi gen`.
+You write a function that builds the service; `#[ruststream::app]` turns it into `main`.
 
 ## Next
 

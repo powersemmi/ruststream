@@ -1,26 +1,24 @@
 # Failure policy
 
-Two things can go wrong before the handler logic runs: the handler body can
-**panic**, and an incoming payload can fail to **decode**. RustStream settles both through one
-vocabulary, set per subscriber with the `on_failure(..)` clause, but with different defaults,
-because the two failures mean different things.
+A message goes unhandled for two reasons: the handler body **panics**, or the incoming payload does
+not **decode**. One set of policy values covers both cases. You can set the value per subscriber
+with the `on_failure(..)` clause. The defaults for panic and decode differ, because the two failures
+mean different things.
 
 ## Defaults
 
 With no clause, a subscriber uses the built-in defaults:
 
-- **panic = `fail_fast`**: a panic is an internal bug. The runtime logs a loud error naming the
-  subscription, then starts a graceful shutdown (it cancels the shutdown token and runs the
-  shutdown hooks) and makes [`run`](../index.md) return `Err` with a non-zero exit, so an
-  orchestrator restarts the service and the operator lands in the logs.
-- **decode = `drop`**: a decode failure is usually bad external input. Dropping the one bad message
-  (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
-  an untrusted topic would be a poison-message or denial-of-service footgun. The same policy covers
-  a [typed header contract](headers.md) that fails to parse - headers are the same class of
-  external input as the payload, so one `decode` key settles both - and a payload type that
-  deserializes itself ([`#[derive(Deserialized)]`](subscribers.md#raw-subscribers)) whose own
-  constructor rejects the bytes: a failed flatbuffers root is the same class of bad input as a
-  failed JSON parse, so it settles by the same key.
+- **panic = `fail_fast`**: a panic is a bug in the code. The runtime logs an error naming the
+  subscription and starts a graceful shutdown: it cancels the shutdown token and runs the shutdown
+  hooks. [`run`](../index.md) returns `Err` with a non-zero exit code, which an orchestrator uses to
+  restart the service.
+- **decode = `drop`**: a decode failure usually means bad external input. The runtime drops the one
+  bad message (a nack without requeue) and keeps the service running: on an untrusted topic,
+  stopping it would be a denial of service. The same key settles the message when a
+  [typed header contract](headers.md) does not parse. It also applies when a payload type that
+  [deserializes itself](subscribers.md#raw-subscribers) (`#[derive(Deserialized)]`) rejects the
+  bytes in its own constructor.
 
 === "Macros"
 
@@ -36,8 +34,8 @@ With no clause, a subscriber uses the built-in defaults:
 
 ## Setting a policy
 
-`on_failure(panic = .., decode = ..)` overrides either key (both are optional; an omitted key keeps
-its default):
+`on_failure(panic = .., decode = ..)` sets the value for either key. A key you omit keeps its
+default:
 
 === "Macros"
 
@@ -61,10 +59,9 @@ The policy values are:
 | `retry_after(<dur>)`  | Requeue after a delay (see the delayed-redelivery section in [Subscribers](subscribers.md)). |
 | `skip`                | Acknowledge the failed message to move past it. Not success: the message is gone, unprocessed. |
 
-`skip` is the deliberate poison-message escape hatch: it advances past a message that cannot be
-processed rather than dropping or retrying it. Pick `retry` for decode failures with care: a
-payload that can never decode will redeliver forever unless the broker has a dead-letter or
-max-deliveries policy.
+Pick `retry` for decode failures with care: a payload that never decodes is redelivered forever,
+unless the broker has a dead-letter or max-deliveries policy. `skip` is the deliberate escape hatch
+for a poison message.
 
 === "Macros"
 
@@ -80,13 +77,15 @@ max-deliveries policy.
 
 ## How it behaves
 
-- A panic is caught (`catch_unwind`), so a panicking handler never kills the dispatch loop. Under
-  `fail_fast` the message is left unsettled, so a broker with redelivery hands it back after the
-  restart; under the other policies it is settled and the subscriber keeps consuming. Catching only
-  applies under an unwinding panic profile; with `panic = "abort"` the process is already gone.
-- A decode failure surfaces as a `Result`, so no unwinding is involved; the `decode` policy settles
-  the message directly (see [Codecs](codecs.md#decode-failures)).
-- On the batch path the policy applies per batch decode (each element decodes independently) and to
-  a panic in the batch handler. There is no per-element panic handling.
+- The runtime catches a panic (`catch_unwind`), so a panicking handler never stops the dispatch
+  loop. Under `fail_fast` the message stays unsettled, and a broker with redelivery delivers it
+  again after the restart. Under the other policies the runtime settles the message and the
+  subscriber keeps consuming. Catching works only when a panic unwinds: in a build with
+  `panic = "abort"` the process is already gone.
+- Decoding returns a `Result` instead of panicking, so nothing unwinds here. The `decode` key
+  settles the message directly (see [Codecs](codecs.md#decode-failures)).
+- On the batch path each element decodes independently, and the `decode` key applies to each of
+  them. The `panic` key applies to a panic in the batch handler. There is no per-element panic
+  handling.
 
-This is the full example: [`examples/failure_policy.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/failure_policy.rs).
+The full example: [`examples/failure_policy.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/failure_policy.rs).

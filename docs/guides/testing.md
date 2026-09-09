@@ -1,33 +1,30 @@
 # Testing
 
-Your real handlers, middleware and codecs are testable without a broker server. A service is tested
-at two levels:
+A RustStream service is tested at two levels:
 
-1. **In-process unit tests** drive your real handlers, middleware, and codecs with the
-   [`TestApp`](#unit-testing-a-service-with-testapp) harness - no server, no docker, no network
-   (the in-process broker's `connect` is I/O-free). This is the default path and it covers handler
-   logic end to end: decode, dispatch, the
-   outcome (ack / nack / drop / panic / decode failure), and any messages the handler publishes.
+1. **In-process unit tests** drive your real handlers, middleware and codecs with the
+   [`TestApp`](#unit-testing-a-service-with-testapp) harness: no server, no docker, no network.
+   This is the default path, and it covers handler logic end to end: decode, dispatch, the
+   outcome (ack / nack / drop / panic / decode failure), and everything the handler publishes
+   downstream.
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
-   the semantics only a real server has (durable consumers, redelivery timers, partitions).
+   the semantics only a real server has: durable consumers, redelivery timers, partitions.
 
-!!! warning "What the harness does and does not model"
-    The harness drives a broker's **in-process transport**: publishing fans a message out to the
-    subscribers whose subject matches, runs your handler through the real dispatch path, and records
-    the outcome and any downstream publishes. It does **not** model JetStream durable cursors,
-    `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or consumer groups, or
-    RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns; test them in the
+!!! warning "What the in-process transport covers"
+    The harness drives a broker's **in-process transport**: it delivers a message to every
+    subscriber whose subject matches, runs your handler through the real dispatch path, and records
+    the outcome together with any downstream publishes. Storage and redelivery semantics are the
+    real server's; check them in the
     [integration suite](#integration-tests-against-a-real-broker).
 
-    What `MemoryBroker` is and is not is stated on its own page: [the memory
-    broker](../brokers/memory.md).
+    `MemoryBroker` has its own page: [the memory broker](../brokers/memory.md).
 
 ## Unit-testing a service with `TestApp`
 
-`TestApp` takes a built `RustStream` application, connects its brokers (I/O-free for the in-process
-bus), mounts the handlers, and records every delivery. You publish input, and the publish drives the
-whole reaction to a standstill before it returns - the handler, its downstream publishes, any
-cross-broker cascade. Then you assert.
+`TestApp` takes a built `RustStream` application, connects its brokers, mounts the handlers, and
+records every delivery. Connecting the in-process bus does no I/O. You publish an input. The
+publish drives the whole reaction to completion before it returns: the handler, its downstream
+publishes, any cross-broker cascade. Then you assert.
 
 The handler under test (in a real service it lives in your handler module and the test imports it):
 
@@ -58,9 +55,9 @@ The test:
     ```
 
 !!! info "This test runs in this repository's CI"
-    The code above is embedded from
+    The code above comes from
     [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
-    which `cargo test --all-features` runs on every change - the example cannot silently rot.
+    and `cargo test --all-features` runs it on every change, so the example cannot rot unnoticed.
 
 Enable the `testing` feature in your dev-dependencies:
 
@@ -71,22 +68,24 @@ ruststream = { version = "0.7", features = ["testing", "memory", "macros", "json
 
 ### Addressing brokers
 
-`tb.broker::<MemoryBroker>()` addresses the broker by type; `tb.broker_named("ingress")` addresses
-it by the label from [`with_broker_labeled`](asyncapi.md) when a service mounts several brokers and
-their subjects collide. The unscoped `tb.message(&value).to(name)` is a convenience for
-single-broker apps and reports `TestError::Ambiguous` when more than one broker is registered.
+`tb.broker::<MemoryBroker>()` addresses the broker by type. `tb.broker_named("ingress")` addresses
+it by the label from [`with_broker_labeled`](asyncapi.md), for a service that mounts several
+brokers with colliding subjects. In a single-broker app you can leave the broker unnamed:
+`tb.message(&value).to(name)` works without it, and returns `TestError::Ambiguous` when more than
+one broker is registered.
 
-Input goes in through the same publish builder the service publishes through: `message(&value)`
-publishes a `#[derive(Outgoing)]` value on the wire its type selects, `with_headers(&meta)`
+Input goes in through the same publish builder the service publishes through. `message(&value)`
+publishes a `#[derive(Outgoing)]` value to the destination its type declares, `with_headers(&meta)`
 attaches a typed header contract, and `to(name)` names the subject when the value's type does not.
-Bytes that are not a model - an undecodable payload for a decode policy, or the input of a handler
-that [deserializes the bytes itself](subscribers.md#raw-subscribers) - travel as a
-`#[derive(Outgoing, Serialized)]` newtype through that same entry, so a test says what it is
-injecting rather than dropping anonymous bytes on the subject.
+
+Bytes that are not a model go through that same entry, wrapped in a
+`#[derive(Outgoing, Serialized)]` newtype. That is how you inject an undecodable payload for a
+decode policy, or the input of a handler that
+[deserializes the bytes itself](subscribers.md#raw-subscribers): the test names what it injects.
 
 ### Asserting on a handler
 
-`tb.broker::<B>().subscriber(name)` returns a fluent builder over what that handler received:
+`tb.broker::<B>().subscriber(name)` returns an assertion builder over what that handler received:
 
 | Method | Asserts |
 |---|---|
@@ -96,115 +95,115 @@ injecting rather than dropping anonymous bytes on the subject.
 | `settled(HandlerOutcome::ack())` | how everything the most recent call carried settled |
 | `assert_batch_sizes(&[2, 1])` | the batches the body was handed, in arrival order |
 | `assert_outcome(Outcome::Drop)` | the classified outcome (ack / nack / drop / decode-failure / panic) |
-| `panicked()` | the handler panicked on the last call |
-| `assert_last_failed_to_decode()` | the payload failed to decode |
+| `panicked()` | the handler panicked on the most recent call |
+| `assert_last_failed_to_decode()` | the payload did not decode |
 
-What these count is the handler CALL, not the message. A single-message handler is called once per
-delivery, so the two coincide; a batch handler is called once per batch, so `assert_called_once()`
-means one batch arrived whatever its size, `settled(..)` covers every element of it, and
-`received_raw()` still lists the elements one by one. The two assertions that name a single
-expected payload (`with`, `with_raw`) report the batch size rather than silently checking one
-element of it. An element the decode policy rejected before the body ran is settled by that policy
-and is not part of the batch the handler saw, so it does not appear.
+These assertions count the handler CALL, not the message. A single-message handler is called on
+every delivery, so a call and a message are one and the same. A batch handler is called once per
+batch: `assert_called_once()` means one batch of any size, `settled(..)` covers every element in
+it, and `received_raw()` lists the elements one by one.
 
-A batch reaches the body whole, which is why one batch is one call. Where the batches fall is the
-broker's answer to the [`batch(n)`](subscribers.md#batch-subscribers) the mount named, and
-`assert_batch_sizes` is where that is visible: a log of three replayed under `batch(2)` reaches the
-body as `[2, 1]` - two calls, because the broker built two batches. A single-message handler is
-called per delivery, so the same run reports `[1, 1, 1]`.
+`with` and `with_raw` name a single expected payload, so on a batch the assertion does not hold and
+reports the batch size. An element the decode policy rejected before the body ran is settled by
+that policy, and it is not in the batch the handler saw.
+
+The broker decides where the batches fall, in answer to the
+[`batch(n)`](subscribers.md#batch-subscribers) the mount named, and `assert_batch_sizes` is what
+shows them: a log of three replayed under `batch(2)` reaches the body as `[2, 1]`. The same run on
+a single-message handler reports `[1, 1, 1]`.
 
 !!! note "Filling a batch with more than one element"
-    `tb.message(&value).publish()` drives the whole reaction to a standstill before it returns, and
+    `tb.message(&value).publish()` drives the whole reaction to completion before it returns, and
     a settled reaction closes the batch of a broker that assembles its batches on the client.
-    Injecting messages one call at a time therefore produces one batch per message, each holding a
-    single element, whatever size the mount named. Take a producer handle off the broker before the
-    app is built, publish the whole run through it - nothing settles on the way - and drive the
-    reaction once with `tb.settle()`. A broker that batches natively is unaffected: there the broker
-    decides where a batch ends.
+    Publishing one message per call therefore produces one batch per message, each holding a single
+    element, whatever size the mount named. Take a publisher handle off the broker before the app
+    is built and publish the whole run through it: nothing settles on the way. Then drive the
+    reaction to completion once, with `tb.settle()`. A broker that batches natively is unaffected:
+    there the broker decides where a batch ends.
 
-`tb.broker::<B>().published::<T>(name)` asserts on what the handler published downstream, read from
-the broker's publish log: `.assert_called_once()` / `.assert_called(n)` /
+`tb.broker::<B>().published::<T>(name)` reads the broker's publish log and asserts on what the
+handler published downstream: `.assert_called_once()` / `.assert_called(n)` /
 `.assert_not_called()` pin the count, `.with(&Receipt { id: 1 })` / `.with_raw(bytes)` the most
-recent payload, and `.with_header("x-app", b"1")` the header a publish middleware or a
-[`PublishTransform`](publishing.md) stamped on the way out.
+recent payload, and `.with_header("x-app", b"1")` a header that a publish middleware or a
+[`PublishTransform`](publishing.md) added.
 
-Beyond the assertions, the messages themselves are retrievable for custom checks:
+The messages themselves are available too, when you want a check of your own:
 `subscriber(name).received::<T>()` / `.received_raw()` returns what the handler received, and
-`published::<T>(name).decoded()` / `.messages()` returns every message published to the channel - both
-in order.
+`published::<T>(name).decoded()` / `.messages()` returns every message published to the channel.
+Both lists are in arrival order.
 
 Two more views keep what a flat list drops. `subscriber(name).batches::<T>()` / `.batches_raw()`
-returns the deliveries grouped by CALL - one inner vector per call - so a test can pin how a stream
-was cut into batches, which `received::<T>()` flattens away. `subscriber(name).outcomes()` returns
-the classified outcome of every call in order, which is what a redelivery sequence (a nack, then the
-redelivery's ack) is compared against; `settled(..)` and `assert_outcome(..)` read the most recent
+group the deliveries by CALL, one inner vector per call: the test sees how the stream was cut into
+batches, a boundary `received::<T>()` erases. `subscriber(name).outcomes()` returns the classified
+outcome of every call in order, which is what you compare a redelivery sequence against (a nack,
+then the ack on the redelivery), while `settled(..)` and `assert_outcome(..)` read the most recent
 call only.
 
-The decoding helpers (`with`, `received`, `decoded`) use the default codec. If a handler or publisher
-was mounted with a different codec (`with_broker_codec`, `Router::with_codec`), pass it explicitly with the
-`_with` / `with_codec` variants - `subscriber(name).with_codec(&CborCodec, &expected)`,
-`.received_with(&CborCodec)`, `published::<T>(name).with_codec(&CborCodec, &expected)`,
-`.decoded_with(&CborCodec)` - while `with_raw` / `received_raw` / `messages` stay codec-free.
+The decoding methods (`with`, `received`, `decoded`) use the default codec. If a handler or
+publisher was mounted with a different codec (`with_broker_codec`, `Router::with_codec`), pass it
+explicitly through the `_with` / `with_codec` variants:
+`subscriber(name).with_codec(&CborCodec, &expected)`, `.received_with(&CborCodec)`,
+`published::<T>(name).with_codec(&CborCodec, &expected)`, `.decoded_with(&CborCodec)`.
+`with_raw` / `received_raw` / `messages` use no codec.
 
 ### A message that serializes itself
 
-A value on a [byte lane](codecs.md#binary-protocols-are-not-codecs) has nothing between it and the
-wire, and every typed assertion above has a codec in it: `with(&value)`, `received::<T>()` and
-their `_with(codec)` variants all decode with one, which a `Serialized` / `Deserialized` type never
-resolves. The two codec-free assertions are what a test on this lane uses - `with_raw(bytes)` for
-the payload, `received_raw()` for reading a delivery back - and the type's own format supplies the
-rest:
+A value on a [byte lane](codecs.md#binary-protocols-are-not-codecs) is published without a codec,
+and every typed assertion above uses one: `with(&value)`, `received::<T>()` and their
+`_with(codec)` variants all decode, and a `Serialized` / `Deserialized` type resolves no codec at
+all. A test on this lane rests on the two codec-free assertions: `with_raw(bytes)` for the payload,
+`received_raw()` for reading a delivery back. The type's own format supplies the rest:
 
 ```rust
 --8<-- "tests/self_serialising.rs:assertions"
 ```
 
-The expected bytes come from the format rather than from the harness: a hand-rolled frame is short
-enough to write out, and a generated message produces its own, so a `prost` message is
-`with_raw(&order.encode_to_vec())`. Reading a delivery back is `Deserialized::from_payload` over
-the owned `Bytes` that `received_raw()` returns - the same reader the lane ran on the way in, so
-the assertion is against the model type without a codec anywhere. The publish side splits the same
-way: `published::<T>(name).with_raw(bytes)` and `.messages()` are codec-free, `.with(&value)` and
-`.decoded()` are not.
+The expected bytes come from the format, not from the harness: a hand-rolled frame is short enough
+to write out in full, and a generated message produces its own bytes, so a `prost` message is
+`with_raw(&order.encode_to_vec())`. You read a delivery back with `Deserialized::from_payload` over
+the owned `Bytes` that `received_raw()` returns, the same reader that parsed the input, so the
+assertion is against the model type and still without a codec. The publish side is the same:
+`published::<T>(name).with_raw(bytes)` and `.messages()` use no codec, `.with(&value)` and
+`.decoded()` do.
 
 ### Asserting on Out slots
 
-A handler's [`Out` slot](publishing.md#named-slots) is also its testing identity:
-`tb.out::<Marker>()` returns exactly the messages published through that injected publisher -
-destinations and headers included, across all brokers - with the same assertion surface as
-`published` (`assert_called_once`, `with_raw`, `messages`; chain `.decoded_as::<T>()` for the
-typed `with`). The slot view only adds attribution: the broker's per-channel publish log sees
-the same messages.
+A handler's [`Out` slot](publishing.md#named-slots) identifies it in a test as well.
+`tb.out::<Marker>()` returns exactly the messages published through that injected publisher,
+destinations and headers included, across every broker. The assertions are the same as on
+`published`: `assert_called_once`, `with_raw`, `messages`; for the typed `with`, chain
+`.decoded_as::<T>()`. The slot only adds attribution: the broker's per-channel publish log sees the
+same messages.
 
 ```rust
 --8<-- "tests/out_slots.rs:slot_capture"
 ```
 
-Publishes that leave the handler task (a spawned sibling task, a settled owned transaction's
-buffer) are not attributed to the slot; assert on the broker's publish log for those.
+Publishes that leave the handler task (a spawned sibling task, the buffer of a settled owned
+transaction) are not attributed to the slot: assert on the broker's publish log for those.
 
 ### Failure policy, panic, and shutdown
 
 The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a
-first-class path. Under the default `panic = fail_fast`, a handler panic tears the service down just
-as in production:
+full scenario here. Under the default `panic = fail_fast`, a handler panic shuts the service down
+exactly as it does in production:
 
 ```rust
 --8<-- "tests/testing_harness.rs:panic"
 ```
 
-Under `on_failure(panic = skip)` the panic is acked and consumption continues, so `tb.assert_running()`
-holds. `run_result()` returns what the real [`run`](lifespan.md) would: `Ok` while healthy, an error
-once a fail-fast failure shut the service down.
+Under `on_failure(panic = skip)` the panic settles with an ack, consumption continues, and
+`tb.assert_running()` holds. `run_result()` returns what the real [`run`](lifespan.md) would
+return: `Ok` while the service is running, and an error once a fail-fast failure has stopped it.
 
 !!! note "Panic catching needs unwinding"
-    The harness rides the runtime's `catch_unwind`, so a deliberate panic does not kill the test
-    thread. A build compiled with `panic = "abort"` cannot catch handler panics.
+    The harness relies on the runtime's `catch_unwind`, so a deliberate panic does not kill the
+    test thread. A build compiled with `panic = "abort"` cannot catch a handler panic.
 
 ### Delayed redelivery (`retry_after`)
 
 A handler that returns `retry_after(delay)` schedules a delayed redelivery. `publish` records the
-immediate `NackAfter` settlement and returns; the redelivery is driven separately by advancing a
+immediate `NackAfter` outcome and returns; you drive the redelivery separately, by advancing a
 paused clock:
 
 === "Macros"
@@ -221,8 +220,8 @@ paused clock:
 
 ## Integration tests against a real broker
 
-Behaviour that depends on real broker semantics belongs in a separate suite gated behind an
-environment variable, so the default `cargo test` stays fast and offline:
+Put behaviour that depends on real broker semantics in a separate suite, and gate it behind an
+environment variable. The plain `cargo test` then stays fast and needs no network:
 
 <!-- inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here -->
 ```rust title="tests/integration_nats.rs"
@@ -247,11 +246,11 @@ docker run -d -p 4222:4222 nats:latest -js
 NATS_TEST_URL=nats://127.0.0.1:4222 cargo test --test integration_nats
 ```
 
-Handler logic belongs on the in-process path, broker semantics on the real one. Keep both suites
-over the same handler modules so the production code has a single source of truth.
+Handler logic is checked on the in-process path, broker semantics on the real server. Keep both
+suites over the same handler modules, so the production code has a single source of truth.
 
 !!! note "Writing a broker crate?"
-    The machinery that makes `TestApp` work against a broker - the in-process transport and the
-    `TestableBroker` contract - is the broker author's side of this story. It lives in
+    The in-process transport and the `TestableBroker` contract that let `TestApp` work against a
+    broker are the broker author's job. They are described in
     [Broker authors: test support](../broker-authors/index.md#test-support) and
     [Conformance](../broker-authors/conformance.md).
