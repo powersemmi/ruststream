@@ -113,11 +113,13 @@ jobs:
           cargo check --locked --no-default-features --features msgpack,memory,macros
 
       # Stable only: the UI snapshots record rustc's exact wording, and beta renders wording
-      # stable has not shipped. Unset elsewhere, the two tests skip themselves.
+      # stable has not shipped. Unset elsewhere, the two tests skip themselves. REQUIRE_UI_TESTS
+      # makes a skip a failure wherever the opt-in is set, so losing the opt-in turns this job red
+      # instead of leaving a green run in which the compile-fail cases checked nothing.
       - name: cargo test
         env:
           RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
-          RUN_SCAFFOLD_BUILD: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
+          REQUIRE_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
         # --no-fail-fast: a failing target must not hide failures in the targets behind it;
         # the log then lists every red test, not just the first binary's.
         run: cargo test --locked --workspace --all-features --no-fail-fast
@@ -135,6 +137,7 @@ jobs:
         if: matrix.toolchain == 'stable'
         env:
           RUN_UI_TESTS: '1'
+          REQUIRE_UI_TESTS: '1'
         run: |
           cargo test --locked --no-default-features --lib
           cargo check --locked --workspace --no-default-features --features testing,memory,macros
@@ -445,9 +448,16 @@ jobs:
           # package discovery never parses its placeholder name. Assert that cargo-generate did
           # drop the suffix, otherwise the append below would quietly write a manifest of its own.
           test -f "$RUNNER_TEMP/smoke/Cargo.toml"
-          # The requirement is checked as the template writes it. `[patch]` redirects where a
-          # crate comes from, not what the manifest asks for, so a requirement this checkout
-          # cannot satisfy fails here - which is what a user's first build would do.
+          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
+          # Cargo keeps pre-releases out of a range that does not name one. So while the
+          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
+          # Point the rendered copy at the version actually being built; the template keeps the
+          # requirement a user writes for the release it targets.
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "ruststream") | .version')
+          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
+            "$RUNNER_TEMP/smoke/Cargo.toml"
+          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
           {
             echo ""
             echo "[patch.crates-io]"
