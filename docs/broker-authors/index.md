@@ -425,6 +425,12 @@ of your per-delivery context and publish `ContextField` keys for them. The in-me
 `MemoryContext`, with its `Position` and `SeekHandle` keys, is the model. The batch forms take the
 seeker from the batch context below, which carries no position.
 
+A `DescribeServer` description reports the host and port clients connect to. Credentials never
+appear in it: the document is generated to be published. A broker configured from a URL therefore
+builds its description with `ServerSpec::from_url`, which drops the user name and password, and not
+by trimming the scheme off the URL and passing the rest on. A broker that configures several
+addresses joins them from `ServerSpec::host_from_url`.
+
 These traits are the vocabulary a handler body writes. A body bounds its slot with the capability
 it needs (`Out<impl TransactionalPublisher, Journal>`, or `where W: TransactionalPublisher` on the
 manual path) and never with a type of yours, and the mount site checks the bound policy's live form

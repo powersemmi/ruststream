@@ -463,6 +463,10 @@ pub struct ServerSpec {
     /// The host (and optional port) clients connect to, e.g. `"nats.example.com:4222"`. `None` for
     /// an in-process broker with no network address (the in-memory broker), reachable only within
     /// the running service; such a server carries no `host` in the `AsyncAPI` document.
+    ///
+    /// Credentials never belong here. A broker configured from a URL takes its host through
+    /// [`from_url`](Self::from_url), which drops the userinfo a URL like
+    /// `amqp://user:password@host` carries.
     pub host: Option<String>,
     /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`, or `"memory"` for the in-process
     /// broker.
@@ -486,6 +490,64 @@ impl ServerSpec {
             description: None,
             security: Vec::new(),
         }
+    }
+
+    /// Describes a server reachable at the host and port `url` names, over `protocol`.
+    ///
+    /// This is how a broker configured from a URL describes itself. Broker URLs carry credentials
+    /// (`amqp://user:password@host:5672`) and a server description is published in the service's
+    /// `AsyncAPI` document, so the userinfo is dropped here rather than left to each broker crate
+    /// to remember. The scheme goes with it, as does anything after the host: a path, a vhost, a
+    /// query.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ServerSpec;
+    ///
+    /// let spec = ServerSpec::from_url("amqp://svc:secret@broker.example.com:5672/prod", "amqp");
+    ///
+    /// assert_eq!(spec.host.as_deref(), Some("broker.example.com:5672"));
+    /// assert_eq!(spec.protocol, "amqp");
+    /// ```
+    #[must_use]
+    pub fn from_url(url: &str, protocol: impl Into<String>) -> Self {
+        Self::new(Self::host_from_url(url), protocol)
+    }
+
+    /// The host and port `url` names, without the scheme, the userinfo, or anything after the
+    /// host.
+    ///
+    /// [`from_url`](Self::from_url) is the whole job for a broker configured from one URL. This is
+    /// the piece for a broker that configures several addresses and joins them into one host
+    /// string itself.
+    ///
+    /// Never fails: a server description must not hold up startup over a URL the connection
+    /// itself will reject.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ServerSpec;
+    ///
+    /// assert_eq!(
+    ///     ServerSpec::host_from_url("nats://user:pass@nats.example.com:4222"),
+    ///     "nats.example.com:4222",
+    /// );
+    /// assert_eq!(ServerSpec::host_from_url("redis://cache:6379"), "cache:6379");
+    /// ```
+    #[must_use]
+    pub fn host_from_url(url: &str) -> String {
+        let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+        // The last '@' is the boundary, because a password may itself contain one.
+        let after_userinfo = after_scheme
+            .rsplit_once('@')
+            .map_or(after_scheme, |(_, rest)| rest);
+        after_userinfo
+            .split(['/', '?'])
+            .next()
+            .unwrap_or(after_userinfo)
+            .to_owned()
     }
 
     /// Describes an in-process server with no network address (the in-memory broker), reachable only
@@ -855,14 +917,43 @@ impl SecurityScheme {
 /// network address (the in-memory broker) describes itself with
 /// [`ServerSpec::in_process`], so it still gets a label / identity for multi-broker routing.
 ///
+/// # The host is a coordinate, not the configuration
+///
+/// A description carries the host and port clients connect to, and nothing else the broker was
+/// configured with. Credentials in particular never appear in it: the document is generated to be
+/// published and shared, so a password that reaches it has left the service.
+///
+/// A broker configured from a URL therefore describes itself with
+/// [`ServerSpec::from_url`], which drops the userinfo, rather than trimming the scheme off the URL
+/// and passing the rest to [`ServerSpec::new`]. A broker that configures several addresses joins
+/// them from [`ServerSpec::host_from_url`].
+///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Broker, DescribeServer, ServerSpec};
+/// use ruststream::{Broker, ConnectedBroker, DescribeServer, ServerSpec};
+/// # struct AmqpBroker { url: String }
+/// # struct ConnectedAmqp;
+/// # impl Broker for AmqpBroker {
+/// #     type Error = std::io::Error;
+/// #     type Connected = ConnectedAmqp;
+/// #     async fn connect(self) -> Result<ConnectedAmqp, Self::Error> { Ok(ConnectedAmqp) }
+/// # }
+/// # impl ConnectedBroker for ConnectedAmqp {
+/// #     type Error = std::io::Error;
+/// #     type Closed = ();
+/// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+/// # }
 ///
-/// fn describe<B: DescribeServer>(broker: &B) -> ServerSpec {
-///     broker.describe_server()
+/// impl DescribeServer for AmqpBroker {
+///     fn describe_server(&self) -> ServerSpec {
+///         ServerSpec::from_url(&self.url, "amqp")
+///     }
 /// }
+///
+/// let broker = AmqpBroker { url: "amqp://svc:secret@broker:5672".to_owned() };
+///
+/// assert_eq!(broker.describe_server().host.as_deref(), Some("broker:5672"));
 /// ```
 pub trait DescribeServer: Broker {
     /// Returns the server coordinates for this broker.

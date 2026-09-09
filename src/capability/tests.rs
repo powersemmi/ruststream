@@ -17,6 +17,41 @@ fn in_process_spec_starts_without_security() {
 }
 
 #[test]
+fn the_host_survives_a_scheme_userinfo_a_path_and_a_query() {
+    let cases = [
+        ("amqp://localhost:5672", "localhost:5672"),
+        ("amqp://user:pass@broker:5672", "broker:5672"),
+        ("amqps://broker:5671/vhost", "broker:5671"),
+        ("nats://broker:4222/?tls=true", "broker:4222"),
+        ("redis://:secret@cache:6379", "cache:6379"),
+        // No scheme at all: a bare address is already the coordinate.
+        ("broker:5672", "broker:5672"),
+        // A password may contain '@', so the boundary is the last one, not the first.
+        ("amqp://user:p@ss@broker:5672", "broker:5672"),
+        // A host without a port stays a host.
+        ("mqtt://user:pass@broker", "broker"),
+    ];
+    for (url, expected) in cases {
+        assert_eq!(ServerSpec::host_from_url(url), expected, "url {url:?}");
+    }
+}
+
+/// The document a service generates is meant to be published, so a URL that authenticates the
+/// connection must not describe the server it reaches.
+#[test]
+fn a_url_carrying_credentials_describes_a_server_without_them() {
+    let spec = ServerSpec::from_url("amqp://svc:secret@broker.example.com:5672/prod", "amqp");
+
+    assert_eq!(spec.host.as_deref(), Some("broker.example.com:5672"));
+    assert_eq!(spec.protocol, "amqp");
+
+    let host = spec.host.expect("a networked broker describes a host");
+    assert!(!host.contains("secret"), "the description leaked {host:?}");
+    assert!(!host.contains("svc"), "the description leaked {host:?}");
+    assert!(!host.contains('@'), "the description leaked {host:?}");
+}
+
+#[test]
 fn constructors_produce_their_kind() {
     let cases = [
         (

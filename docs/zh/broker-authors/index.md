@@ -391,6 +391,11 @@ ack 记账。
 `ContextField` 键。范本是内存 Broker 的 `MemoryContext` 及其 `Position` 和 `SeekHandle` 键。批量的
 那些写法从下面的批量上下文拿到 seeker，那里没有位置。
 
+`DescribeServer` 给出的服务器描述，报告客户端所连接的主机和端口。凭据绝不出现在其中，因为这份文档
+就是为了发布而生成的。因此，用 URL 配置的 Broker 通过 `ServerSpec::from_url` 构建描述，它会去掉
+URL 里的用户名和密码，而不是只去掉协议前缀。配置了多个地址的 Broker，用 `ServerSpec::host_from_url`
+把它们拼起来。
+
 这些 trait 就是处理器主体所写的词汇。主体用它需要的那项能力约束自己的槽位
 （`Out<impl TransactionalPublisher, Journal>`，手动路径上是 `where W: TransactionalPublisher`），
 从不写你的任何类型。挂载点在编译期按这个约束检查一次所绑定策略的活形态。
