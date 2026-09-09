@@ -56,7 +56,7 @@ use tracing::Instrument;
 
 use crate::HeaderMap;
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
+    BlanketLayer, Context, ForReply, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
     PublishTransform,
 };
 
@@ -256,7 +256,7 @@ where
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TracePropagation;
 
-impl<C> PublishTransform<C> for TracePropagation {
+impl<C> PublishTransform<ForReply<C>> for TracePropagation {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(traceparent) = cx.headers().get_str(TRACEPARENT) {
             out.headers_mut()

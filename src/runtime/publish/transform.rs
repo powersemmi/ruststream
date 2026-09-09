@@ -1,6 +1,7 @@
 //! Per-delivery publish context and the transform stacks layered over a publisher.
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use super::Outgoing;
 use crate::HeaderMap;
@@ -58,31 +59,137 @@ impl<C> fmt::Debug for PublishContext<'_, C> {
     }
 }
 
-/// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent, with
-/// read access to the originating delivery through [`PublishContext`].
+/// What one publish position hands its transforms.
+///
+/// A reply is published by the runtime, which still holds the delivery being answered, so a
+/// transform there can read it. A message leaving an [`Out`](crate::runtime::Out) slot is
+/// published by the handler body, which has already read whatever it wanted from its own
+/// [`Context`](crate::runtime::Context), so there is no delivery left to hand on. The difference
+/// between the two positions is exactly this view, not two interfaces: [`PublishTransform`] takes
+/// the kind as a parameter and every position picks its own at compile time.
+///
+/// The set is closed - [`ForReply`] and [`ForSlot`] - and nothing below the mount site asks which
+/// one it got.
+pub trait ContextKind {
+    /// The view a transform of this kind reads, borrowed for the length of one publish.
+    type View<'a>
+    where
+        Self: 'a;
+}
+
+/// The kind of a reply position: the transform reads the delivery it answers, as a
+/// [`PublishContext`] over the handler's own context type `C`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ForReply<C = ()>(PhantomData<fn() -> C>);
+
+impl<C> ContextKind for ForReply<C> {
+    type View<'a>
+        = PublishContext<'a, C>
+    where
+        Self: 'a;
+}
+
+/// The kind of an [`Out`](crate::runtime::Out) slot position: the transform reads a
+/// [`SlotContext`], which names the slot and nothing else.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ForSlot;
+
+impl ContextKind for ForSlot {
+    type View<'a>
+        = SlotContext<'a>
+    where
+        Self: 'a;
+}
+
+/// What a transform on an [`Out`](crate::runtime::Out) slot gets to read: the slot's own name.
+///
+/// A slot publish is issued by the handler body, so the delivery that prompted it is the body's to
+/// read and to put on the message; by the time a transform runs there is no delivery left. What
+/// remains is which slot the message is leaving through, which is worth having when one transform
+/// value is named on several slots. `#[non_exhaustive]`, because a position that later carries
+/// more can carry it here without a new interface.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct SlotContext<'a> {
+    slot: &'a str,
+}
+
+impl<'a> SlotContext<'a> {
+    /// Builds the view from the marker the mount site bound.
+    pub(crate) const fn new(slot: &'a str) -> Self {
+        Self { slot }
+    }
+
+    /// The slot's [`OutSlot::NAME`](crate::runtime::OutSlot::NAME).
+    #[must_use]
+    pub const fn slot(&self) -> &'a str {
+        self.slot
+    }
+}
+
+/// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent, with read
+/// access to whatever its position hands it.
 ///
 /// The publish-side counterpart to the consume-side [`Layer`](crate::runtime::Layer): zero-cost composition,
-/// no `dyn` dispatch. Composed onto a reply's wiring by the `.transform(..)` step of a mount
-/// site's chain. Use for
+/// no `dyn` dispatch. Composed onto a position by the `.transform(..)` step of a mount site's
+/// chain. Use for
 /// per-destination transforms that belong to the publisher itself - a Confluent / Avro envelope, a
 /// fixed content-type header, or stamping the delivery's trace / correlation id onto the reply
-/// (read it from `cx`). The `C` parameter is the originating handler's context type; a transform
-/// that ignores the context is generic over it (mounts on any handler). For cross-cutting
+/// (read it from `cx`). For cross-cutting
 /// *observation* across every publish (metrics), use the app-wide [`PublishLayer`](crate::runtime::PublishLayer) via
 /// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer) instead; the per-publisher
 /// transforms run first (closest to the value), then the app-wide publish pipeline, then the send.
 ///
+/// # Which positions a transform mounts on
+///
+/// `K` is the position's [`ContextKind`], and writing the impl is how a transform says where it
+/// belongs. A transform that reads nothing is generic over the kind and mounts anywhere:
+///
+/// ```
+/// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform};
+///
+/// struct Envelope;
+///
+/// impl<K: ContextKind> PublishTransform<K> for Envelope {
+///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+///         out.headers_mut().insert("x-envelope", b"1".to_vec());
+///     }
+/// }
+/// ```
+///
+/// One that reads the delivery names [`ForReply`], and naming it on a slot is then a compile error
+/// at the mount site:
+///
+/// ```
+/// use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform};
+///
+/// struct StampSource;
+///
+/// impl<C> PublishTransform<ForReply<C>> for StampSource {
+///     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+///         out.headers_mut().insert("x-source", cx.name().as_bytes().to_vec());
+///     }
+/// }
+/// ```
+///
 /// # Where the destination comes from
 ///
-/// A transform named with `.transform(..)` runs over a reply whose destination is already
-/// resolved, from the reply type's declaration or from the mount site. A transform that decides
-/// that destination itself is the same trait named on a different step: `.redirect(..)` runs it
-/// first and exists only where the reply type leaves the destination open, so a declaration and
-/// the wire cannot disagree. [`Outgoing::set_name`] is callable from either step - what the two
-/// steps differ in is which one the mount site has declared to own the destination.
-pub trait PublishTransform<C = ()>: Send + Sync {
-    /// Transforms `out` in place before it is sent, reading the delivery through `cx`.
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
+/// A transform named with `.transform(..)` runs over a message whose destination is already
+/// resolved, from the message type's declaration, the mount site or the call site. A transform
+/// that decides that destination itself is the same trait named on a different step:
+/// `.redirect(..)` runs it first and exists only where the destination is left open, so a
+/// declaration and the wire cannot disagree. [`Outgoing::set_name`] is callable from either step -
+/// what the two steps differ in is which one the mount site has declared to own the destination.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a publish transform for `{K}`",
+    note = "a transform states its position by the kind it implements: `PublishTransform<K>` for \
+            every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the \
+            delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A \
+            slot publish is issued by the handler body, so it has no delivery to hand on"
+)]
+pub trait PublishTransform<K: ContextKind>: Send + Sync {
+    /// Transforms `out` in place before it is sent, reading the position's view through `cx`.
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>);
 }
 
 /// The empty redirect position of a reply wiring: the reply goes where its declaration says.
@@ -151,23 +258,23 @@ impl<T, PL> LowerRedirect<PL> for Redirected<T> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishTransformIdentity;
 
-impl<C> PublishTransform<C> for PublishTransformIdentity {
-    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
+impl<K: ContextKind> PublishTransform<K> for PublishTransformIdentity {
+    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &K::View<'_>) {}
 }
 
 /// Composes two [`PublishTransform`]s: `inner` runs first, then `outer`. Built by a chain's
 /// `.transform(..)` step; you rarely name it directly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishTransformStack<Inner, Outer> {
-    // The reply wiring builds the stack when a transform is layered on.
-    pub(super) inner: Inner,
-    pub(super) outer: Outer,
+    // A reply wiring and a slot attachment both build the stack when a transform is layered on.
+    pub(crate) inner: Inner,
+    pub(crate) outer: Outer,
 }
 
-impl<C, Inner: PublishTransform<C>, Outer: PublishTransform<C>> PublishTransform<C>
+impl<K: ContextKind, Inner: PublishTransform<K>, Outer: PublishTransform<K>> PublishTransform<K>
     for PublishTransformStack<Inner, Outer>
 {
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>) {
         self.inner.apply(out, cx);
         self.outer.apply(out, cx);
     }
@@ -230,7 +337,7 @@ impl<C, Inner: BatchPublishTransform<C>, Outer: BatchPublishTransform<C>> BatchP
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ForBatch<L>(L);
 
-impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
+impl<C, L: PublishTransform<ForReply<C>>> BatchPublishTransform<C> for ForBatch<L> {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         self.0.apply(out, cx);
     }
@@ -245,7 +352,7 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::{for_batch, Outgoing, PublishContext, PublishTransform};
+/// use ruststream::runtime::{for_batch, ContextKind, Outgoing, PublishTransform};
 /// # use ruststream::subscriber;
 /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
 /// # struct Order { id: u64 }
@@ -257,8 +364,8 @@ impl<C, L: PublishTransform<C>> BatchPublishTransform<C> for ForBatch<L> {
 /// # }
 ///
 /// struct Stamp;
-/// impl<C> PublishTransform<C> for Stamp {
-///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+/// impl<K: ContextKind> PublishTransform<K> for Stamp {
+///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
 ///         out.headers_mut().insert("x-stamp", b"1".to_vec());
 ///     }
 /// }

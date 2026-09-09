@@ -14,7 +14,7 @@ use std::time::Duration;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
-use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishTransform};
+use ruststream::runtime::{ContextKind, Outgoing, PublishLayer, PublishNext, PublishTransform};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Subscribe, SubscriptionSource};
 use serde::{Deserialize, Serialize};
@@ -195,8 +195,8 @@ async fn scope_default_codec_drops_per_call_codec() {
 /// A static (zero-cost) publish transform composed onto the reply wiring.
 struct StaticEnvelope;
 
-impl<C> PublishTransform<C> for StaticEnvelope {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &ruststream::runtime::PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for StaticEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-static", b"1".to_vec());
     }
 }

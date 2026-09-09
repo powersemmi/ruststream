@@ -14,7 +14,7 @@ use ruststream::memory::prelude::*;
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::{
-    OutTransform, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
+    ContextKind, ForReply, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
     PublishTransform,
 };
 use serde::{Deserialize, Serialize};
@@ -195,24 +195,25 @@ async fn route(
 // --8<-- [end:declared]
 
 // --8<-- [start:static_transform]
-/// A static, per-publisher transform: stamps an envelope header on every outgoing message.
+/// A static, per-publisher transform: stamps an envelope header on every outgoing message. It
+/// reads no context, so one impl serves every position - a reply and an `Out` slot alike.
 struct EnvelopeTransform;
 
-impl<C> PublishTransform<C> for EnvelopeTransform {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
 // --8<-- [end:static_transform]
 
 // --8<-- [start:slot_transform]
-/// A static, per-slot transform: it stamps what leaves one `Out` slot. There is no
-/// `PublishContext` here - the body issues a slot publish itself, so the delivery is the body's
-/// own to read and put on the message.
+/// A static, per-slot transform: it stamps what leaves one `Out` slot. A slot position hands its
+/// transforms a `SlotContext`, which names the slot and nothing else: the body issues a slot
+/// publish itself, so the delivery is the body's own to read and put on the message.
 struct OutboxEnvelope;
 
-impl OutTransform for OutboxEnvelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
@@ -224,7 +225,7 @@ impl OutTransform for OutboxEnvelope {
 /// which is when the mount site's own destination stands.
 struct ReplyTo;
 
-impl<C> PublishTransform<C> for ReplyTo {
+impl<C> PublishTransform<ForReply<C>> for ReplyTo {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)

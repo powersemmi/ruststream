@@ -31,7 +31,8 @@ use crate::runtime::publish::{LowerOutRedirect, LowerOutTransforms, RawReplyWiri
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{
-    BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, SlotCodec, WithSource,
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
+    WithSource,
 };
 
 use super::builder::Router;
@@ -115,6 +116,7 @@ macro_rules! impl_inject_out_commit {
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
                 $layers: LowerOutTransforms<RoutePipe>,
                 $rd: LowerOutRedirect<$attach, SlotPipeline<$layers, RoutePipe>>,
@@ -176,6 +178,7 @@ macro_rules! impl_inject_out_commit {
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
                 $layers: LowerOutTransforms<RoutePipe>,
                 $rd: LowerOutRedirect<$attach, SlotPipeline<$layers, RoutePipe>>,
@@ -251,6 +254,7 @@ macro_rules! impl_publishing_out_commit {
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
                 $layers: LowerOutTransforms<RoutePipe>,
                 $rd: LowerOutRedirect<$attach, SlotPipeline<$layers, RoutePipe>>,
@@ -318,6 +322,7 @@ macro_rules! impl_publishing_out_commit {
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
                 $layers: LowerOutTransforms<RoutePipe>,
                 $rd: LowerOutRedirect<$attach, SlotPipeline<$layers, RoutePipe>>,
@@ -385,6 +390,7 @@ macro_rules! impl_publishing_out_commit {
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
                 $layers: LowerOutTransforms<RoutePipe>,
                 $rd: LowerOutRedirect<$attach, SlotPipeline<$layers, RoutePipe>>,

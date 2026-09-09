@@ -1,5 +1,5 @@
 use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, Outgoing, PublishContext, PublishTransform, RustStream};
+use ruststream::runtime::{AppInfo, ContextKind, Outgoing, PublishTransform, RustStream};
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +15,8 @@ struct Receipt {
 
 struct Stamp;
 
-impl<C> PublishTransform<C> for Stamp {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for Stamp {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamp", b"1".to_vec());
     }
 }

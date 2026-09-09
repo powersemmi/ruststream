@@ -14,7 +14,7 @@ use common::{Order, Receipt};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{Outgoing, PublishContext, PublishTransform};
+use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
 
@@ -375,7 +375,7 @@ impl Field<TraceCtx> for Correlation {
 
 struct PropagateCorrelation;
 
-impl PublishTransform<TraceCtx> for PropagateCorrelation {
+impl PublishTransform<ForReply<TraceCtx>> for PropagateCorrelation {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()

@@ -347,15 +347,12 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前，有三类变换运行，而且它们可以组合：
+消息离开进程之前，有两个层次运行，而且它们可以组合：
 
-- **回复接线上的静态 `PublishTransform`**，在 `.out(Reply, ..)` 之后用 `.transform(..)` 添加。这是
-  零成本、按目的地生效的变换：一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
-  关联 id 写进回复。它们离值最近，在应用级管线之前运行。
-- **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
-  添加。它在顺序里的位置相同，作用于从该槽位出去的消息：一层 outbox 信封、一个固定的 content
-  type 和一个租户标记。它不接受 `PublishContext`。槽位上的发布由处理器函数体自己发出，因此那次
-  投递也由函数体自己读取、自己写进消息。
+- **某一个位置上的静态 `PublishTransform`**，在点名该位置的那个 `.out(..)` 之后用
+  `.transform(..)` 添加：回复用 `.out(Reply, ..)`，`Out` 槽位用 `.out(marker, policy)`。这是
+  零成本、按目的地生效的变换：一层信封、一个固定的 content type、把这次投递的链路追踪 / 关联 id
+  写进回复，或者给槽位加一层 outbox 信封和一个租户标记。它们离值最近，在应用级管线之前运行。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信
   包装），作用于每一条发布出去的消息。它包在发送外面，因此能观察到发送的结果。整条链会组合成一个
   具体类型，于是它成为应用类型的一部分：构建器通常返回 `impl App`，从不把它写出来，而具体的
@@ -364,12 +361,31 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
   进每一个会发布的处理器），最后添加的中间件在最外层运行。默认情况没有中间件，就是直接发送。中间件
   的组合要到运行时才决定时，可以把它包进 `PublishDynStack`（`DynStack` 在发布侧的对应物）再添加。
 
-静态的 `PublishTransform` 实现 `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`。`PublishContext`
-只读地给出产生这条回复的那次投递：它的 channel、入站消息头和 Broker 的单条投递类型化上下文。该
-上下文按 `Field` 键读取。因此变换可以把入站消息里的值转移到回复上：
+### 变换拿到什么 { #what-a-transform-is-handed }
+
+变换实现 `apply(&mut Outgoing<'_>, &K::View<'_>)`，其中 `K` 是这个位置的上下文种类。两个位置的差
+别正在于此，而种类由挂载点在编译期选定：
+
+| 位置 | 种类 | 变换读到什么 |
+|---|---|---|
+| 回复，在 `.out(Reply, ..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
+| `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
+
+什么都不读的变换，写一个覆盖所有种类的实现，两个位置都能挂：
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
+```
+
+`ForReply` 交出产生这条回复的那次投递：它的 channel、入站消息头和 Broker 的单条投递类型化上下文。
+该上下文按 `Field` 键读取。因此变换可以把入站消息里的值转移到回复上；而写出这个种类，就等于声明它
+只属于回复。此后把它挂到槽位上，是挂载点处的一个编译错误。
+
+`ForSlot` 只交出槽位的名字：槽位上的发布由处理器函数体自己发出，函数体早已从自己的 `Context` 里
+读走想要的东西并写进消息，到这一步已经没有投递可交。
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
 ```
 
 批量处理器的回复不经过按消息生效的 `.transform(..)` 栈。用 `.batch_transform(..)` 给它们添加变换，
@@ -380,12 +396,6 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 是 Broker 的批次上下文。要读入站消息的变换，应当留在按消息的那条路上：在那里，一条回复和它的投递是
 同一件事。
 
-`OutTransform` 实现 `apply(&mut Outgoing<'_>)`，只作用在一个槽位上：
-
-```rust
---8<-- "examples/publishing.rs:slot_transform"
-```
-
 ### 按消息指定目的地 { #naming-a-destination-per-message }
 
 消息发往何处是声明出来的：在消息类型上用 `#[outgoing(name = "..")]`，在挂载点用
@@ -393,7 +403,7 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 队列放在 `reply-to` 消息头里，ZeroMQ 的 `ROUTER` 则把每条回复发给提问的那一方。
 
 `.redirect(..)` 就是把目的地交给变换的那个步骤。它接受的正是 `.transform(..)` 接受的
-`PublishTransform`，而那个变换读取这次投递并写入名字：
+`PublishTransform`，种类与它所在的位置一致，而那个变换写入名字：
 
 ```rust
 --8<-- "examples/publishing.rs:redirect"
@@ -413,7 +423,7 @@ channel 的那种回复，根本无从重定向。挂载点的 `publish("answers
 批的回复无法重定向：它们以整个批的名义发布，而一个批作答许多条投递，不带其中任何一条的消息头。一个
 位置只接受一次重定向，因此在它上面写第二个 `.redirect(..)` 无法通过编译。
 
-`Out` 槽位接受同一个步骤，用的正是它那里 `.transform(..)` 接受的 `OutTransform`。
+`Out` 槽位接受同一个步骤，用的正是它那里 `.transform(..)` 接受的 `ForSlot` 变换。
 
 被重定向的槽位，其 `#[publishes(..)]` 列表里的每个类型都必须把目的地留空。函数体每次发布仍然要写
 `.to(..)`，重定向再改写这个名字。没有列表的标记接受任何已声明的消息，因此根本无法重定向，单个匿名

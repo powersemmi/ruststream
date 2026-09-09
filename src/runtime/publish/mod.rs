@@ -117,9 +117,8 @@ pub use builder::{
 pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
 pub use out::{
-    LowerOutRedirect, LowerOutTransforms, NoOutRedirect, OutPipeline, OutRedirected, OutTransform,
-    OutTransformIdentity, OutTransformStack, PipelinePublishError, RedirectStack, RedirectedSend,
-    RedirectedSendPolicy,
+    LowerOutRedirect, LowerOutTransforms, NoOutRedirect, OutPipeline, OutRedirected,
+    PipelinePublishError, RedirectStack, RedirectedSend, RedirectedSendPolicy, SlotTransforms,
 };
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
@@ -132,9 +131,10 @@ pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };
 pub use transform::{
-    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch,
-    LowerRedirect, NoRedirect, PublishContext, PublishTransform, PublishTransformIdentity,
-    PublishTransformStack, RedirectSlotOpen, Redirected, for_batch,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ContextKind,
+    ForBatch, ForReply, ForSlot, LowerRedirect, NoRedirect, PublishContext, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, RedirectSlotOpen, Redirected, SlotContext,
+    for_batch,
 };
 pub use wiring::{
     AddBatchReplyTransform, AddReplyRedirect, AddReplyTransform, CodecSlotOpen, Direct,

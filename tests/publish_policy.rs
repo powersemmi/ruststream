@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use ruststream::OutgoingMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{Outgoing, PublishContext, PublishTransform};
+use ruststream::runtime::{ContextKind, Outgoing, PublishTransform};
 use ruststream::testing::expect_published;
 
 use common::{Order, Receipt, Wire, connected};
@@ -21,8 +21,8 @@ use common::{Order, Receipt, Wire, connected};
 /// Stamps every outgoing reply, so the test can prove the transform stack survived pairing.
 struct Envelope;
 
-impl<C> PublishTransform<C> for Envelope {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for Envelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }

@@ -15,8 +15,8 @@ use common::Order;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    OutTransform, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform,
+    ContextKind, ForReply, ForSlot, Outgoing, PublishContext, PublishLayer, PublishNext,
+    PublishPipeline, PublishTransform, SlotContext,
 };
 use ruststream::testing::TestApp;
 
@@ -38,16 +38,27 @@ impl PublishLayer for AppStamp {
 /// A per-slot transform: the outbox envelope one destination wants and the others do not.
 struct Envelope;
 
-impl OutTransform for Envelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for Envelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
+    }
+}
+
+/// A per-slot transform reading the one thing a slot position hands it: which slot the message is
+/// leaving through. One value can then ride several slots and still tell them apart.
+struct StampSlot;
+
+impl PublishTransform<ForSlot> for StampSlot {
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
+        out.headers_mut()
+            .insert("x-slot", cx.slot().as_bytes().to_vec());
     }
 }
 
 /// A per-reply transform, stamping the delivery the reply answers.
 struct StampSource;
 
-impl<C> PublishTransform<C> for StampSource {
+impl<C> PublishTransform<ForReply<C>> for StampSource {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source", cx.name().as_bytes().to_vec());
@@ -231,4 +242,37 @@ async fn a_reply_and_a_slot_carry_their_own_transforms_under_one_app_layer() {
         None,
         "the reply's transform does not reach the slot",
     );
+}
+
+/// A slot position hands its transforms the slot's own name, so one transform value named on two
+/// slots stamps each with the slot it left through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slot_transform_reads_the_slot_it_rides() {
+    let app = RustStream::new(AppInfo::new("out-slot-context", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(mirror)
+                .out(Audit, Publish)
+                .transform(StampSlot)
+                .out(Journal, Publish)
+                .transform(StampSlot)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 21 })
+        .to("out.orders")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("out.audit")
+        .assert_called_once()
+        .with_header("x-slot", b"Audit");
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("out.journal")
+        .assert_called_once()
+        .with_header("x-slot", b"Journal");
 }

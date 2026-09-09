@@ -114,9 +114,10 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         RouterWith::new(self.def, self.attach.codec_last(codec), self.router)
     }
 
-    /// Composes a static transform onto everything that leaves the position named last: a
-    /// [`PublishTransform`](crate::runtime::PublishTransform) on the reply, an
-    /// [`OutTransform`](crate::runtime::OutTransform) on a slot.
+    /// Composes a static [`PublishTransform`](crate::runtime::PublishTransform) onto everything
+    /// that leaves the position named last, of that position's own
+    /// [`ContextKind`](crate::runtime::ContextKind): a reply hands the transform the delivery it
+    /// answers, a slot hands it the slot's name.
     ///
     /// The step repeats and the first one added runs first (closest to the encoded value), so a
     /// chain can name one per position:
@@ -134,9 +135,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Hands the destination of everything leaving the position named last to a transform: the
-    /// same [`PublishTransform`](crate::runtime::PublishTransform) on the reply and
-    /// [`OutTransform`](crate::runtime::OutTransform) on a slot that
-    /// [`transform`](Self::transform) takes, named on the step that owns the destination.
+    /// same [`PublishTransform`](crate::runtime::PublishTransform) that
+    /// [`transform`](Self::transform) takes there, named on the step that owns the destination.
     ///
     /// This is the step that may move a message off the channel its declaration names, so the
     /// declaration has to leave that open: a reply type or a slot message type carrying

@@ -25,8 +25,8 @@ use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publish::{
     AddBatchReplyTransform, AddReplyRedirect, AddReplyTransform, CallCodec, CodecSlotOpen,
     LowerOutRedirect, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, NoOutRedirect,
-    OutRedirected, OutTransformIdentity, OutTransformStack, PublishingDirectly, RedirectSlotOpen,
-    TransactionalReply, UnnamedCodec,
+    OutRedirected, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
+    RedirectSlotOpen, TransactionalReply, UnnamedCodec,
 };
 use crate::runtime::router::{DefaultReply, ReplyAttachment, SoloReplyMount};
 #[cfg(feature = "testing")]
@@ -518,7 +518,8 @@ impl<M> MissingSlot<M> {
 }
 
 /// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
-/// [`OutTransform`] stack the `.transform(..)` steps after it compose.
+/// [`PublishTransform`](crate::runtime::PublishTransform) stack the `.transform(..)` steps after it
+/// compose.
 ///
 /// The stack is pure declaration, like the policy: it lowers onto the app's publish pipeline at
 /// the mount ([`LowerOutTransforms`]), and the composed pipeline is what the slot entry publishes
@@ -529,7 +530,7 @@ impl<M> MissingSlot<M> {
 pub struct OutAttachment<
     M,
     Policy,
-    Layers = OutTransformIdentity,
+    Layers = PublishTransformIdentity,
     Enc = UnnamedCodec,
     Rd = NoOutRedirect,
 > {
@@ -549,7 +550,7 @@ impl<M, Policy> OutAttachment<M, Policy> {
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
             policy,
-            layers: OutTransformIdentity,
+            layers: PublishTransformIdentity,
             enc: UnnamedCodec::new(),
             redirect: NoOutRedirect,
             _marker: PhantomData,
@@ -562,10 +563,10 @@ impl<M, Policy, Layers, Enc, Rd> OutAttachment<M, Policy, Layers, Enc, Rd> {
     pub(crate) fn add_transform<N>(
         self,
         transform: N,
-    ) -> OutAttachment<M, Policy, OutTransformStack<Layers, N>, Enc, Rd> {
+    ) -> OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc, Rd> {
         OutAttachment {
             policy: self.policy,
-            layers: OutTransformStack {
+            layers: PublishTransformStack {
                 inner: self.layers,
                 outer: transform,
             },
@@ -625,14 +626,15 @@ impl<M, Policy, Layers, Enc, Rd> OutAttachment<M, Policy, Layers, Enc, Rd> {
         pipeline: Pipeline,
     ) -> (Rd::Policy, Enc::Codec, Rd::Pipeline)
     where
+        M: OutSlot,
         Enc: SlotCodec<Surface>,
         Layers: LowerOutTransforms<Pipeline>,
         Rd: LowerOutRedirect<Policy, Layers::Out>,
     {
         let codec = self.enc.resolve(surface);
-        let (policy, pipeline) = self
-            .redirect
-            .lower(self.policy, self.layers.lower(pipeline));
+        let (policy, pipeline) =
+            self.redirect
+                .lower(M::NAME, self.policy, self.layers.lower(M::NAME, pipeline));
         (policy, codec, pipeline)
     }
 }
@@ -1312,7 +1314,7 @@ macro_rules! impl_step_at {
         {
             type Out = (
                 $($before,)*
-                WithSource<OutAttachment<M, Policy, OutTransformStack<Layers, N>, Enc, Rd>>,
+                WithSource<OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc, Rd>>,
                 $($after,)*
             );
 

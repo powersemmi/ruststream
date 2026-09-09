@@ -12,7 +12,7 @@ mod common;
 use common::{Order, Receipt};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{OutTransform, Outgoing, PublishContext, PublishTransform};
+use ruststream::runtime::{ContextKind, ForReply, Outgoing, PublishContext, PublishTransform};
 use ruststream::testing::TestApp;
 
 /// The one header the reply-to pattern reads, as a delivery carries it.
@@ -27,7 +27,7 @@ fn reply_to(name: &'static str) -> HeaderMap {
 /// transform; what makes it the destination's owner is the step it is named on.
 struct ReplyTo;
 
-impl<C> PublishTransform<C> for ReplyTo {
+impl<C> PublishTransform<ForReply<C>> for ReplyTo {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
@@ -40,8 +40,8 @@ impl<C> PublishTransform<C> for ReplyTo {
 /// An ordinary transform beside the redirect: it owns the headers and nothing else.
 struct Stamp;
 
-impl<C> PublishTransform<C> for Stamp {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for Stamp {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         let destination = out.name().as_bytes().to_vec();
         out.headers_mut().insert("x-destination", destination);
     }
@@ -156,8 +156,8 @@ async fn without_the_step_the_declared_destination_stands() {
 /// The slot counterpart: a shard router deciding where each message goes.
 struct ByTenant;
 
-impl OutTransform for ByTenant {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for ByTenant {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         if let Some(tenant) = out.headers().get("x-tenant")
             && let Ok(tenant) = std::str::from_utf8(tenant)
         {

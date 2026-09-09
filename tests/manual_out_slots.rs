@@ -13,7 +13,7 @@ use std::convert::Infallible;
 use ruststream::PairError;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{OutTransform, Outgoing};
+use ruststream::runtime::{ContextKind, Outgoing, PublishTransform};
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -391,8 +391,8 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
 /// The slot transform the mount below composes on top of the entry's publish path.
 struct Envelope;
 
-impl OutTransform for Envelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for Envelope {
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

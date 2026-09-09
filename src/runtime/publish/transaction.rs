@@ -46,8 +46,7 @@ impl<T> Admits<T, ()> for AnyDeclared {}
 /// per-batch transaction the runtime drives for a `.transactional()` reply wiring.
 ///
 /// The scope encodes values with the surface's codec and sends them into the open transaction
-/// directly: it opens on the surface's own publisher, so a slot's
-/// [`OutTransform`](crate::runtime::OutTransform) stack, the reply
+/// directly: it opens on the surface's own publisher, so the position's
 /// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide
 /// [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware do not run here.
 ///
@@ -218,9 +217,9 @@ impl<P, Enc, Admit> fmt::Debug for TransactionScope<'_, P, Enc, Admit> {
 /// after settling is a compile error.
 ///
 /// Like the scope, it encodes values and buffers them directly: the publish paths a mount site
-/// composes - a slot's [`OutTransform`](crate::runtime::OutTransform) stack, the reply
-/// [`PublishTransform`](crate::runtime::PublishTransform) stack, the app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware - end in a send, and
+/// composes - the position's [`PublishTransform`](crate::runtime::PublishTransform) stack and the
+/// app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware - end in a
+/// send, and
 /// the buffer is not one, so none of them run here. `Admit` is the
 /// surface the transaction was opened on and gates what [`message`](Self::message) admits, as
 /// on the scope (see [`Admits`]).

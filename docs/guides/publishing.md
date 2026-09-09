@@ -389,16 +389,13 @@ an `Out` slot, without the handler knowing about it.
 
 ## The publish pipeline
 
-Three kinds of transform run before a message leaves the process, and they compose:
+Two levels run before a message leaves the process, and they compose:
 
-- **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
-  `.out(Reply, ..)`. Zero-cost transforms for one destination: an envelope, a fixed content type,
-  the delivery's trace / correlation id on the reply. They run closest to the value, before the
-  app-wide pipeline.
-- **Static `OutTransform`** on one `Out` slot, chained with `.transform(..)` after
-  `.out(marker, policy)`. It takes the same place in the order, and works on what leaves through
-  that slot: an outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext`:
-  the body itself issues a slot publish, so the body reads the delivery and puts it on the message.
+- **Static `PublishTransform`** on one position, chained with `.transform(..)` after the
+  `.out(..)` that named it: after `.out(Reply, ..)` for a reply, after `.out(marker, policy)` for
+  an `Out` slot. Zero-cost transforms for one destination: an envelope, a fixed content type, the
+  delivery's trace / correlation id on a reply, an outbox envelope or a tenant tag on a slot. They
+  run closest to the value, before the app-wide pipeline.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can read its result. The chain composes into a concrete type and becomes part of the
@@ -409,13 +406,33 @@ Three kinds of transform run before a message leaves the process, and they compo
   outermost. The default (no middleware) is a direct send. You can wrap a middleware set decided at
   run time in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that instead.
 
-A static `PublishTransform` implements `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`. The
-`PublishContext` gives read-only access to the delivery that produced the reply: its channel, the
-incoming headers, and the broker's typed per-delivery context, read by `Field` key. So a transform
-can copy a value from the incoming message to the reply:
+### What a transform is handed
+
+A transform implements `apply(&mut Outgoing<'_>, &K::View<'_>)`, where `K` is the position's
+context kind. The kind is what the two positions differ in, and it is chosen at the mount site:
+
+| position | kind | what the transform reads |
+|---|---|---|
+| reply, after `.out(Reply, ..)` | `ForReply<C>` | `PublishContext<'_, C>`: the delivery being answered |
+| `Out` slot, after `.out(marker, policy)` | `ForSlot` | `SlotContext<'_>`: the slot's own name |
+
+A transform that reads nothing writes one impl for every kind and mounts on either position:
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
+```
+
+`ForReply` hands over the delivery that produced the reply: its channel, the incoming headers, and
+the broker's typed per-delivery context, read by `Field` key. So a transform can copy a value from
+the incoming message to the reply, and by naming that kind it says it belongs on a reply. Mounting
+it on a slot is then a compile error at the mount site.
+
+`ForSlot` hands over the slot's name and nothing else, because a slot publish is issued by the
+handler body: the body has already read whatever it wanted from its own `Context` and put it on the
+message, so there is no delivery left to pass on.
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
 ```
 
 A batch handler's replies go past the per-message `.transform(..)` stack. You can add a transform
@@ -427,12 +444,6 @@ batch's, not a delivery's: a batch spans many deliveries, so `name()` is the sub
 `headers()` is empty, and `context(..)` reads the broker's batch context. A transform that reads
 the incoming message belongs on the per-message path, where a reply and its delivery are one.
 
-An `OutTransform` implements `apply(&mut Outgoing<'_>)` and works on one slot:
-
-```rust
---8<-- "examples/publishing.rs:slot_transform"
-```
-
 ### Naming a destination per message
 
 Where a message goes is declared: on the message type with `#[outgoing(name = "..")]`, at the mount
@@ -441,7 +452,8 @@ destination to declare. An AMQP request carries the queue to answer on in its `r
 and a ZeroMQ `ROUTER` addresses each answer to the peer that asked.
 
 `.redirect(..)` is the step that gives a transform the destination. It takes the same
-`PublishTransform` as `.transform(..)`, and that transform reads the delivery and sets the name:
+`PublishTransform` as `.transform(..)`, of the same kind as the position it rides, and that
+transform sets the name:
 
 ```rust
 --8<-- "examples/publishing.rs:redirect"
@@ -464,7 +476,7 @@ A batch's replies cannot be redirected: they are published against the batch, wh
 deliveries and carries none of their headers. A position takes one redirect, so a second
 `.redirect(..)` on it does not compile.
 
-An `Out` slot takes the same step, with the `OutTransform` that `.transform(..)` takes there.
+An `Out` slot takes the same step, with the `ForSlot` transform that `.transform(..)` takes there.
 
 Every type in a redirected slot's `#[publishes(..)]` list has to leave its destination open. The
 body still writes `.to(..)` on every publish, and the redirect writes over that name. A marker with

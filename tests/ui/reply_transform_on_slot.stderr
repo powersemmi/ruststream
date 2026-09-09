@@ -1,0 +1,41 @@
+error[E0277]: `StampSource` is not a publish transform for `ForSlot`
+  --> tests/ui/reply_transform_on_slot.rs:52:14
+   |
+52 |             .build();
+   |              ^^^^^ unsatisfied trait bound
+   |
+   = note: a transform states its position by the kind it implements: `PublishTransform<K>` for every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A slot publish is issued by the handler body, so it has no delivery to hand on
+help: the trait `PublishTransform<ForSlot>` is not implemented for `StampSource`
+      but trait `PublishTransform<ForReply<_>>` is implemented for it
+  --> tests/ui/reply_transform_on_slot.rs:27:1
+   |
+27 | impl<C> PublishTransform<ForReply<C>> for StampSource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `ForReply<_>`, found `ForSlot`
+   = note: required for `PublishTransformStack<PublishTransformIdentity, StampSource>` to implement `PublishTransform<ForSlot>`
+   = note: required for `ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>` to implement `PublishLayer`
+   = note: required for `PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>` to implement `OutPipeline`
+note: required for `mirror` to implement `Handle<Order, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>>`
+  --> tests/ui/reply_transform_on_slot.rs:34:1
+   |
+34 | #[subscriber("orders")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound introduced here
+35 | async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
+   |          ^^^^^^
+   = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>, (), mirror, ruststream::runtime::Probed>>` to implement `runtime::inject::InjectCall<()>`
+   = note: 1 redundant requirement hidden
+   = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>, (), mirror, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `runtime::inject::InjectCall<()>`
+   = note: required for `runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>, (), mirror, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, ()>`
+   = note: required for `(runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>, (), mirror, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, MemoryPublisher, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>>,)>, (), mirror, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((MemoryPublish, JsonCodec, PublishStack<ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, StampSource>>, PublishIdentity>),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: 1 redundant requirement hidden
+   = note: required for `RouterWith<runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<mirror, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Audit, MemoryPublish, PublishTransformStack<PublishTransformIdentity, StampSource>>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn build(self)
+   |            ----- required by a bound in this associated function
+   |     where
+   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
+   = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)
