@@ -214,11 +214,33 @@ impl<T> OpenForm<T> for CallerName {}
 
 /// A slot marker's `#[publishes(..)]` dictionary as a type-level list: `(First, (Second, ()))`.
 ///
-/// [`OutSlot::outgoing`] reports the same list as data, for the document; this is the same list as
-/// types, so a mount-site step can ask something of every member at compile time. Written by
-/// `#[derive(OutSlot)]`; a hand-written marker adds it when it wants the steps that read it
-/// (today, `.redirect(..)`).
-#[doc(hidden)]
+/// [`OutSlot::outgoing`] reports the same list as data, for the generated document; this is the
+/// same list as types, so a mount-site step can ask something of every member at compile time.
+/// `#[derive(OutSlot)]` writes it, and a hand-written marker writes it to reach the steps that
+/// read it - today, `.redirect(..)` through [`OpenDestinations`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::prelude::*;
+/// use ruststream::runtime::SlotDictionary;
+///
+/// struct Progress;
+///
+/// struct ChunkDone;
+///
+/// struct Events;
+///
+/// impl OutSlot for Events {
+///     const NAME: &'static str = "Events";
+/// }
+///
+/// // What `#[derive(OutSlot)]` + `#[publishes(ChunkDone, Progress)]` generates, next to one
+/// // `PublishedThrough` impl per listed type.
+/// impl SlotDictionary for Events {
+///     type Publishes = (ChunkDone, (Progress, ()));
+/// }
+/// ```
 pub trait SlotDictionary {
     /// The listed types, nested right: `()` closes the list.
     type Publishes;
@@ -240,15 +262,16 @@ impl<Head: OpenDestination, Tail: OpenDictionary> OpenDictionary for (Head, Tail
 /// everything that may leave the slot, so checking it once at the mount settles every publish the
 /// handler will make - and a handler body needs no bound of its own for it.
 ///
-/// A marker without a dictionary - the implicit [`DefaultSlot`] among them - admits every message,
-/// so it can promise nothing here and cannot be redirected.
+/// A marker earns this through its [`SlotDictionary`], never by claiming it. One without a
+/// dictionary - the implicit [`DefaultSlot`] among them - admits every message, so it can promise
+/// nothing here and cannot be redirected.
 #[diagnostic::on_unimplemented(
     message = "the `{Self}` slot cannot be redirected",
     label = "`.redirect(..)` needs to know what leaves this slot",
     note = "a redirected slot names every message's destination, so the marker has to declare \
             what leaves it and none of that may fix its own channel: give the marker a \
-            dictionary (`#[derive(OutSlot)] #[publishes(..)]`) of types that take their \
-            destination from the call site"
+            dictionary (`#[derive(OutSlot)] #[publishes(..)]`, or a `SlotDictionary` impl by \
+            hand) of types that take their destination from the call site"
 )]
 pub trait OpenDestinations {}
 

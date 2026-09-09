@@ -139,11 +139,11 @@ pub use slot::{
     BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,
     MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OpenDestination,
     OpenDictionary, OpenForm, OutAttachment, RedirectAt, RedirectLast, RedirectPosition, ReplyLast,
-    ReplyOpen, ReplyStep, SlotCodec, SlotDictionary, SlotPos, TransactionalLast, TransformAt,
-    TransformLast, WithSource,
+    ReplyOpen, ReplyStep, SlotCodec, SlotPos, TransactionalLast, TransformAt, TransformLast,
+    WithSource,
 };
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, OpenDestinations, OutMessages, OutSlot,
-    PublishedThrough, Reply, SlotPublisher, Unrestricted,
+    PublishedThrough, Reply, SlotDictionary, SlotPublisher, Unrestricted,
 };
 pub use typed::{Typed, typed};
