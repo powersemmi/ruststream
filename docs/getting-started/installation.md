@@ -25,18 +25,18 @@ are always compiled. Everything else is an additive feature you enable when you 
 
 | Feature | Pulls in | What it gives you |
 |---|---|---|
-| `json` *(default)* | serde_json | `JsonCodec` |
-| `msgpack` | rmp-serde | `MsgpackCodec` |
-| `cbor` | ciborium | `CborCodec` |
+| `json` *(default)* | `serde_json` | `JsonCodec` |
+| `msgpack` | `rmp-serde` | `MsgpackCodec` |
+| `cbor` | `ciborium` | `CborCodec` |
 | `memory` | - | `MemoryBroker`, the in-memory reference broker |
-| `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]`, and the derives (`Outgoing`, `OutSlot`, `OutMessages`, `Deserialized`, `Serialized`, `FromRef`, `MessageInfo`) |
-| `asyncapi` | schemars, serde_norway | AsyncAPI generation and the HTML viewer |
-| `metrics` | prometheus | Prometheus middleware and exporter |
-| `logging` | tracing-subscriber | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |
-| `otel` | opentelemetry, opentelemetry-otlp | OTLP export for traces and metrics, and W3C trace-context propagation ([OpenTelemetry](../guides/opentelemetry.md)) |
-| `testing` | inventory | `TestApp` and the assertion builders ([Testing](../guides/testing.md)) |
-| `conformance` | inventory | the broker-author conformance harness |
-| `cli` | clap, anyhow | the `ruststream` binary |
+| `macros` | `ruststream-macros` | `#[subscriber]`, `#[ruststream::app]`, and the derives (`Outgoing`, `OutSlot`, `OutMessages`, `Deserialized`, `Serialized`, `FromRef`, `MessageInfo`) |
+| `asyncapi` | `schemars`, `serde_norway` | AsyncAPI generation and the HTML viewer |
+| `metrics` | `prometheus` | Prometheus middleware and exporter |
+| `logging` | `tracing-subscriber` | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |
+| `otel` | `opentelemetry`, `opentelemetry-otlp` | OTLP export for traces and metrics, and W3C trace-context propagation ([OpenTelemetry](../guides/opentelemetry.md)) |
+| `testing` | `inventory` | `TestApp` and the assertion builders ([Testing](../guides/testing.md)) |
+| `conformance` | `inventory` | the broker-author conformance harness |
+| `cli` | `clap`, `anyhow` | the `ruststream` binary |
 
 You can enable several codecs at once (see [Codecs](../guides/codecs.md)). To drop the bundled JSON
 codec (for example in a broker crate that needs only the traits and the runtime), disable the
