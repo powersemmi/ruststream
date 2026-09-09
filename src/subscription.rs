@@ -468,7 +468,8 @@ where
 #[cfg(all(test, feature = "memory"))]
 mod tests {
     use super::*;
-    use crate::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource};
+    use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPosition, MemorySource};
+    use crate::{Broker, Buffered};
 
     /// The generic clone keeps the assertion honest: a `Copy` placeholder would otherwise make
     /// the call read as redundant at the call site.
@@ -496,6 +497,41 @@ mod tests {
             "orders"
         );
         assert!(format!("{source:?}").contains("StartAt"));
+    }
+
+    /// The name source has no address of its own: the broker's answer for that name is what it
+    /// reports, and a decorator reports whatever it wraps.
+    #[tokio::test]
+    async fn a_source_reports_the_address_its_broker_gives_the_name() {
+        let connected = MemoryBroker::new()
+            .connect()
+            .await
+            .expect("the in-memory broker connects");
+        let address = RedeliveryAddress::new("orders");
+        assert_eq!(address.as_str(), "orders");
+        assert_eq!(address.to_string(), "orders");
+
+        assert_eq!(
+            Name::new("orders")
+                .redelivery_address(&connected)
+                .await
+                .expect("the in-memory broker answers without a lookup"),
+            Some(address.clone()),
+        );
+        assert_eq!(
+            StartAt::new(MemorySource::new("orders"), MemoryPosition::start())
+                .redelivery_address(&connected)
+                .await
+                .expect("a start position changes no address"),
+            Some(address.clone()),
+        );
+        assert_eq!(
+            Buffered::new(MemorySource::new("orders"))
+                .redelivery_address(&connected)
+                .await
+                .expect("client-side batching changes no address"),
+            Some(address),
+        );
     }
 
     /// The wrapper hides the descriptor a broker's settings trait is bound to, so it hands it
