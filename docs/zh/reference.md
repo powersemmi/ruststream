@@ -2,8 +2,8 @@
 
 完整的 Rust API 参考由 rustdoc 生成，发布在 docs.rs 上。本站讲解概念，提供指南。
 
-- **[docs.rs 上的 ruststream](https://docs.rs/ruststream)**，即该 crate。在启用全部 feature 的构建里，
-  运行时、编解码器、AsyncAPI、指标和 conformance 各模块都可见：
+- **[docs.rs 上的 ruststream](https://docs.rs/ruststream)**，即该 crate。AsyncAPI、指标和 conformance
+  各模块只在启用相应 feature 的构建里可见：
   [docs.rs/ruststream（全部 feature）](https://docs.rs/crate/ruststream/latest/features)。
 
 `ruststream` 命令行工具由同一个 crate 的 `cli` feature 提供。参见

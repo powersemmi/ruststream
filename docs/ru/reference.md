@@ -3,8 +3,8 @@
 Полный справочник по Rust API генерирует rustdoc, а публикует его docs.rs. Этот сайт объясняет
 концепции и даёт руководства.
 
-- **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Модули рантайма, кодеков,
-  AsyncAPI, метрик и conformance видны в сборке со всеми фичами:
+- **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Модули AsyncAPI, метрик и
+  conformance видны только в сборке с их фичами:
   [docs.rs/ruststream (все фичи)](https://docs.rs/crate/ruststream/latest/features).
 
 Командная утилита `ruststream` поставляется в том же крейте за фичей `cli`. См.
