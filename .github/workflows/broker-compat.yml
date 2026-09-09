@@ -88,15 +88,17 @@ jobs:
         continue-on-error: true
         working-directory: broker
         run: |
+          # Each check keeps its own pipeline, because a brace group feeding `tee` runs in a
+          # subshell: a failure recorded inside it never reaches the status this step exits with.
           set -o pipefail
           status=0
-          {
-            echo "\$ cargo check --workspace --all-targets --all-features"
-            cargo check --workspace --all-targets --all-features 2>&1 || status=1
-            echo
-            echo "\$ cargo check --workspace --no-default-features"
-            cargo check --workspace --no-default-features 2>&1 || status=1
-          } | tee "$RUNNER_TEMP/check.log"
+          log="$RUNNER_TEMP/check.log"
+          : > "$log"
+          echo "\$ cargo check --workspace --all-targets --all-features" | tee -a "$log"
+          cargo check --workspace --all-targets --all-features 2>&1 | tee -a "$log" || status=1
+          echo | tee -a "$log"
+          echo "\$ cargo check --workspace --no-default-features" | tee -a "$log"
+          cargo check --workspace --no-default-features 2>&1 | tee -a "$log" || status=1
           exit "$status"
 
       - name: Report the verdict to the broker repository
