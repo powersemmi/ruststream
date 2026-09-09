@@ -128,6 +128,85 @@ async fn macro_builder_chain_in_decorator() {
         .settled(HandlerOutcome::ack());
 }
 
+// A descriptor built on typestates, the shape a broker reaches for when two delivery models share
+// no settings. Naming the group moves the value to a second type, so the setting cannot be named
+// twice and cannot be named on a form that has no group. `MemorySource` has no second state to
+// model - it carries a name and nothing else - so the case lives here rather than on the memory
+// broker.
+#[derive(Clone)]
+struct GroupedStream {
+    name: String,
+}
+
+/// The same subscription once a group is named. Only this form is a source: an ungrouped
+/// `GroupedStream` implements no `SubscriptionSource`, so it cannot be mounted by mistake.
+#[derive(Clone)]
+struct GroupedStreamWithGroup {
+    name: String,
+    group: String,
+}
+
+impl GroupedStream {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+        }
+    }
+
+    /// The step that changes the type, which is what the decorator's ascription is for.
+    fn group(self, group: &str) -> GroupedStreamWithGroup {
+        GroupedStreamWithGroup {
+            name: self.name,
+            group: group.to_owned(),
+        }
+    }
+}
+
+impl SubscriptionSource<ConnectedMemoryBroker> for GroupedStreamWithGroup {
+    type Subscriber = MemorySubscriber;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<MemorySubscriber, MemoryError> {
+        // The memory broker has no group concept; the field is carried to prove the second state
+        // holds data the first one cannot.
+        let _ = self.group;
+        Subscribe::subscribe(connected, &self.name).await
+    }
+}
+
+// The chain ends on a different type from the one its constructor names, so the decorator names
+// what the expression produces.
+#[subscriber(GroupedStream::new("typestate.stream").group("workers") as GroupedStreamWithGroup)]
+async fn on_typestate(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn macro_typestate_chain_in_decorator() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_typestate));
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 8, total: 1.0 })
+        .to("typestate.stream")
+        .publish()
+        .await
+        .expect("publish failed");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("typestate.stream")
+        .assert_called_once()
+        .with(&Order { id: 8, total: 1.0 })
+        .settled(HandlerOutcome::ack());
+}
+
 /// An order placed by a customer.
 #[derive(MessageInfo)]
 #[allow(dead_code)]

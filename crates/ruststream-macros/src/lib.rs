@@ -157,6 +157,24 @@ use parse::{SubscriberArgs, doc_description};
 /// publishes its position and seek-handle keys, and the handler reads them with the `Ctx`
 /// extractor like any other broker field.
 ///
+/// The source is a subject string, or the broker's own descriptor named by its constructor
+/// (`RedisStream::new("orders")`, `RedisStream { .. }`), with a builder chain on it if the
+/// descriptor has one. The attribute reads the type off that constructor, because a macro is
+/// handed tokens and cannot ask for the type of an expression, and it takes every later step to
+/// return that same type. Two shapes fall outside that: a chain built on typestates, where a step
+/// moves the value to another type, and a source a free function returns. Both name what the
+/// expression produces, and the chain is then free to end wherever it likes:
+///
+/// ```ignore
+/// // `group(..)` returns a different type from the one `new` names.
+/// #[subscriber(GroupedStream::new("orders").group("workers") as GroupedStreamWithGroup)]
+/// async fn handle(order: &Order) -> HandlerOutcome { /* ... */ }
+/// ```
+///
+/// The name is checked rather than trusted: one that is not what the expression produces is a
+/// compile error naming the type it actually produces. The same form names a `start_at(..)`
+/// position whose tokens do not carry its type.
+///
 /// A `start_at(<position>)` clause opens the subscription at that position instead of the
 /// broker's default, seeking before the first delivery ("start from the latest on deploy",
 /// "replay the whole log"). The position is the broker's own type, named by its constructor

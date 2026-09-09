@@ -1,4 +1,4 @@
-error: expected `Type::new(..)`: the path must name a type and an associated constructor - a free function does not expose its type to the macro
+error: expected `Type::new(..)`: the path must name a type and an associated constructor - a free function does not expose its type to the macro. Name it with `<expression> as <Type>` when the tokens do not carry it
   --> tests/ui/subscriber_source_free_function.rs:15:14
    |
 15 | #[subscriber(stream("orders"))]

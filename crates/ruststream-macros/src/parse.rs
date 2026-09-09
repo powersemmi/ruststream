@@ -6,8 +6,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit,
-    Meta, Path, Token, Type, TypePath, parenthesized, token,
+    Attribute, Error, Expr, ExprCall, ExprCast, ExprLit, ExprMethodCall, ExprPath, ExprStruct,
+    Ident, Lit, Meta, Path, Token, Type, TypePath, parenthesized, token,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
@@ -340,12 +340,17 @@ fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
 
 /// Derives the subscription `Source` type and a constructor expression from the macro argument.
 ///
-/// A string literal `"orders"` becomes `(Name, Name::new("orders"))`; a constructor expression
-/// `RedisStream::new(..)` or `RedisStream { .. }` becomes `(RedisStream, <the expr verbatim>)` by
-/// pulling the type out of the call/struct path. A builder chain
-/// `SubscribeOptions::new(..).jetstream(..)` is followed down its receivers to that base
-/// constructor, so fluent options that return `Self` can be written inline. Free functions
-/// (`redis::stream(..)`) are still rejected - their result type is not visible in the tokens.
+/// A string literal `"orders"` becomes `(Name, Name::new("orders"))`. Otherwise the type is read
+/// out of the tokens: `RedisStream::new(..)` and `RedisStream { .. }` carry it in the call or
+/// struct path, and a builder chain `RedisStream::new(..).group(..)` is followed down its
+/// receivers to that base constructor.
+///
+/// Reading tokens only reaches so far. A macro cannot ask for the type of an expression, so the
+/// chain is assumed to stay on the type its base constructor names, and a source built by a free
+/// function exposes no type at all. Both are answered by the ascription form,
+/// `<expression> as <Type>`, which names what the expression produces; the expression is then
+/// passed through [`SourceIs`](::ruststream::runtime::SourceIs), so a name that does not match is
+/// a compile error that says so.
 ///
 /// The two open forms carry the kind alone: they become `Unnamed<Kind>`, which is no
 /// subscription source until the mount site names it.
@@ -364,8 +369,14 @@ pub(crate) fn source_tokens(source: &SourceArg) -> syn::Result<(TokenStream2, To
                     quote!(::ruststream::Name::new(#name)),
                 ));
             }
-            let ty = source_type(expr)?;
-            return Ok((quote!(#ty), quote!(#expr)));
+            let (value, ty) = match ascription(expr) {
+                Some((value, ty)) => (value, ty.clone()),
+                None => (expr, source_type(expr)?),
+            };
+            return Ok((
+                quote!(#ty),
+                quote!(::ruststream::runtime::source_is::<#ty, _>(#value)),
+            ));
         }
     };
     Ok((
@@ -374,23 +385,40 @@ pub(crate) fn source_tokens(source: &SourceArg) -> syn::Result<(TokenStream2, To
     ))
 }
 
+/// Splits the ascription form `<expression> as <Type>` into the expression and the type it names.
+///
+/// It parses as a cast, which is why the macro can read it: a cast between two subscription
+/// sources is not a thing anyone writes, so the tokens are free for this.
+pub(crate) fn ascription(expr: &Expr) -> Option<(&Expr, &Type)> {
+    match expr {
+        Expr::Cast(ExprCast { expr, ty, .. }) => Some((expr, ty)),
+        _ => None,
+    }
+}
+
 /// Derives the position type from a `start_at(..)` argument, the same way [`source_tokens`]
 /// recovers the source type: the constructor path (`MemoryPosition::start()`,
-/// `KafkaPosition::latest()`, a builder chain on one) names the type.
+/// `KafkaPosition::latest()`, a builder chain on one) names the type, and
+/// `<expression> as <Type>` names it outright.
 pub(crate) fn position_type(expr: &Expr) -> syn::Result<Type> {
+    if let Some((_, ty)) = ascription(expr) {
+        return Ok(ty.clone());
+    }
     source_type(expr).map_err(|_| {
         Error::new_spanned(
             expr,
             "expected a position constructor `Type::latest()` / `Type::new(..)` / `Type { .. }`, \
-             or a builder chain on one - a free function does not expose its type to the macro",
+             or a builder chain on one - a free function does not expose its type to the macro. \
+             Name it with `<expression> as <Type>` when the tokens do not carry it",
         )
     })
 }
 
 /// Recovers the source type from a constructor expression, following a builder chain's receivers
 /// down to the base `Type::new(..)` / `Type { .. }`. Methods in the chain are assumed to return
-/// `Self`; a builder that returns a different type produces a type-mismatch the user can see and
-/// fix. Free functions and other shapes are rejected (their type is not visible in the tokens).
+/// `Self`, which the generated [`SourceIs`](::ruststream::runtime::SourceIs) bound checks; a chain
+/// that changes type names the result with `<expression> as <Type>` instead. Free functions and
+/// other shapes are rejected here, because their type is not in the tokens at all.
 fn source_type(expr: &Expr) -> syn::Result<Type> {
     match expr {
         Expr::Call(ExprCall { func, .. }) => match &**func {
@@ -416,7 +444,8 @@ fn type_from_constructor_path(path: &Path) -> syn::Result<Type> {
         return Err(Error::new_spanned(
             path,
             "expected `Type::new(..)`: the path must name a type and an associated constructor - \
-             a free function does not expose its type to the macro",
+             a free function does not expose its type to the macro. Name it with \
+             `<expression> as <Type>` when the tokens do not carry it",
         ));
     }
     let segments = path.segments.iter().take(n - 1).cloned().collect();
@@ -492,7 +521,8 @@ fn unsupported_source(expr: &Expr) -> Error {
     Error::new_spanned(
         expr,
         "expected a string literal name, `Type::new(..)`, `Type { .. }`, or a builder chain on \
-         one of those - a free function does not expose its type to the macro",
+         one of those - a free function does not expose its type to the macro. Name it with \
+         `<expression> as <Type>` when the tokens do not carry it",
     )
 }
 

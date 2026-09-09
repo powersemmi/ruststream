@@ -1,0 +1,18 @@
+error[E0277]: the subscription source is a `GroupedStream`, not the `Stream` the attribute expects
+  --> tests/ui/subscriber_source_ascription_wrong_type.rs:31:1
+   |
+31 | #[subscriber(Stream::new("orders").group("workers") as Stream)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this expression produces `GroupedStream`
+   |
+help: the trait `ruststream::runtime::SourceIs<Stream>` is not implemented for `GroupedStream`
+  --> tests/ui/subscriber_source_ascription_wrong_type.rs:14:1
+   |
+14 | struct GroupedStream {
+   | ^^^^^^^^^^^^^^^^^^^^
+   = note: `#[subscriber(..)]` reads the source type from the constructor at the head of the expression and expects every later step to return it. `#[subscriber(<expression> as <Type>)]` names what the expression produces instead; check that the type it names is the one the last step returns.
+note: required by a bound in `ruststream::runtime::source_is`
+  --> src/runtime/settings.rs
+   |
+   | pub fn source_is<Named, Actual: SourceIs<Named>>(source: Actual) -> Named {
+   |                                 ^^^^^^^^^^^^^^^ required by this bound in `source_is`
+   = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

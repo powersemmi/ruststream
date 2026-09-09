@@ -1,4 +1,4 @@
-error: expected a position constructor `Type::latest()` / `Type::new(..)` / `Type { .. }`, or a builder chain on one - a free function does not expose its type to the macro
+error: expected a position constructor `Type::latest()` / `Type::new(..)` / `Type { .. }`, or a builder chain on one - a free function does not expose its type to the macro. Name it with `<expression> as <Type>` when the tokens do not carry it
   --> tests/ui/subscriber_start_at_free_fn.rs:15:33
    |
 15 | #[subscriber("orders", start_at(latest()))]

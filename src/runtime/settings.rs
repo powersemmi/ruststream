@@ -45,6 +45,43 @@ use super::failure::FailurePolicies;
 use super::input::{Decoded, DecodedPair, Provided};
 use super::router::{IncludeDef, InputCodec};
 
+/// Holds the `#[subscriber(..)]` attribute to the source type it read out of the tokens.
+///
+/// A macro is handed tokens, not types, so the attribute recovers the source type from the
+/// constructor at the head of the source expression and takes every later step to return that
+/// same type. The blanket impl makes the bound trivially true when it does, and the message below
+/// is what a broker author sees when it does not.
+///
+/// The way out is to name the type: `#[subscriber(<expression> as <Type>)]`. That is also how a
+/// source a free function builds gets in, since its type is nowhere in the tokens either.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "the subscription source is a `{Self}`, not the `{Named}` the attribute expects",
+    label = "this expression produces `{Self}`",
+    note = "`#[subscriber(..)]` reads the source type from the constructor at the head of the \
+            expression and expects every later step to return it. \
+            `#[subscriber(<expression> as <Type>)]` names what the expression produces instead; \
+            check that the type it names is the one the last step returns."
+)]
+pub trait SourceIs<Named> {
+    /// Passes the source through once the bound has proved it is a `Named`.
+    fn source_is(self) -> Named;
+}
+
+impl<S> SourceIs<S> for S {
+    fn source_is(self) -> S {
+        self
+    }
+}
+
+/// Wraps a fixed source expression in the [`SourceIs`] bound. Called by the `#[subscriber]`
+/// expansion, and an identity at run time.
+#[doc(hidden)]
+#[inline]
+pub fn source_is<Named, Actual: SourceIs<Named>>(source: Actual) -> Named {
+    source.source_is()
+}
+
 /// A setting the attribute left out, still fillable at the mount site.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Open;

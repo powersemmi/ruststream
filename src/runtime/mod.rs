@@ -131,7 +131,7 @@ pub use settings::{
     StartAtStep, SubscriberBuilder, SubscriberSettings, WorkersStep,
 };
 #[doc(hidden)]
-pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
+pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith, SourceIs, source_is};
 #[doc(hidden)]
 pub use slot::{
     BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,

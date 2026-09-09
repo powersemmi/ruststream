@@ -258,8 +258,22 @@ a user then names it directly in the attribute,
 `#[subscriber(OrdersStream::new("orders", "workers"))]`.
 
 The macro reads the type out of the constructor call, and accepts a builder chain on it as well
-(`#[subscriber(OrdersStream::new("orders").durable("workers"))]`), as long as each method returns
-`Self`.
+(`#[subscriber(OrdersStream::new("orders").durable("workers"))]`), taking each step to return
+`Self`. It reads tokens, not types, which is as far as reading gets.
+
+Build the descriptor on typestates when two of your delivery models share no settings, so a setting
+that belongs to one is not a method on the other. A step then moves the value to another type, and
+the attribute names what the expression produces:
+
+<!-- inline-rust: the shape against a broker-crate descriptor with no in-repo compiled home; the compiled case is tests/macro_subscriber.rs -->
+```rust
+#[subscriber(OrdersStream::new("orders").durable("workers") as DurableOrdersStream)]
+async fn handle(order: &Order) -> HandlerOutcome { /* ... */ }
+```
+
+The name is checked rather than trusted: one that is not what the expression produces is a compile
+error naming the type it actually produces. The same form gets a descriptor built by a free
+function into the attribute.
 
 `type Subscriber` is declared on the source, so one broker can offer several kinds of subscription
 (pub/sub and streams) with different subscriber types, or serve them all from one descriptor that

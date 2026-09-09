@@ -10,8 +10,8 @@ use quote::{ToTokens, quote};
 use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type, TypePath};
 
 use crate::parse::{
-    FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type, source_tokens,
-    vec_element,
+    FailurePolicyArg, SubscriberArgs, WorkersArg, ascription, doc_description, position_type,
+    source_tokens, vec_element,
 };
 
 pub(crate) fn subscriber(args: &SubscriberArgs, func: &ItemFn) -> syn::Result<TokenStream> {
@@ -764,9 +764,11 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
     let (settings_source_ty, start_at_step, position_state) = match &args.start_at {
         Some(position) => {
             let position_ty = position_type(position)?;
+            // The ascription names the type; what reaches `start_at` is the expression under it.
+            let position_expr = ascription(position).map_or(position, |(value, _)| value);
             (
                 quote!(::ruststream::StartAt<#source_ty, #position_ty>),
-                quote!(.start_at(#position)),
+                quote!(.start_at(#position_expr)),
                 quote!(::ruststream::runtime::Fixed),
             )
         }
