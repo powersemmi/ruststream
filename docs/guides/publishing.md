@@ -389,19 +389,16 @@ an `Out` slot, without the handler knowing about it.
 
 ## The publish pipeline
 
-Four kinds of transform run before a message leaves the process, and they compose:
+Three kinds of transform run before a message leaves the process, and they compose:
 
 - **Static `PublishTransform`** on the reply wiring, chained with `.transform(..)` after
   `.out(Reply, ..)`. Zero-cost transforms for one destination: an envelope, a fixed content type,
-  the delivery's trace / correlation id on the reply. They rewrite the headers and the payload, and
-  leave the destination alone.
+  the delivery's trace / correlation id on the reply. They run closest to the value, before the
+  app-wide pipeline.
 - **Static `OutTransform`** on one `Out` slot, chained with `.transform(..)` after
-  `.out(marker, policy)`. It rewrites the headers and the payload of what leaves through that slot:
-  an outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext`: the body
-  itself issues a slot publish, so the body reads the delivery and puts it on the message.
-- **Static `RedirectTransform`** on the reply wiring, chained with `.redirect(..)` after
-  `.out(Reply, ..)`, and its slot counterpart `OutRedirect` after `.out(marker, policy)`. It is the
-  one transform that names a message's destination, and it names it per message.
+  `.out(marker, policy)`. It takes the same place in the order, and works on what leaves through
+  that slot: an outbox envelope, a fixed content type, a tenant tag. It takes no `PublishContext`:
+  the body itself issues a slot publish, so the body reads the delivery and puts it on the message.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can read its result. The chain composes into a concrete type and becomes part of the
@@ -443,7 +440,8 @@ site with `publish("dest")`, or at a slot's call site with `.to(..)`. Some answe
 destination to declare. An AMQP request carries the queue to answer on in its `reply-to` header,
 and a ZeroMQ `ROUTER` addresses each answer to the peer that asked.
 
-A `RedirectTransform` reads the delivery and names the reply's destination:
+`.redirect(..)` is the step that gives a transform the destination. It takes the same
+`PublishTransform` as `.transform(..)`, and that transform reads the delivery and sets the name:
 
 ```rust
 --8<-- "examples/publishing.rs:redirect"
@@ -455,18 +453,18 @@ Name it on the chain with `.redirect(..)`:
 --8<-- "examples/publishing.rs:redirect_mount"
 ```
 
-`.redirect(..)` applies to a reply type that leaves its destination open; on a type carrying
-`#[outgoing(name = "receipts")]` it is a compile error naming the reply type. The mount site's
-`publish("answers")` stays the reply's declared destination. It is the name the generated document
-reports, and where a reply goes when the redirect leaves the name alone.
+The step is what the compiler holds you to, not the transform. `.redirect(..)` applies to a reply
+type that leaves its destination open; on a type carrying `#[outgoing(name = "receipts")]` it is a
+compile error naming the reply type. A reply whose channel the document reports therefore has no
+way to be redirected. The mount site's `publish("answers")` stays the reply's declared destination.
+It is the name the generated document reports, and where a reply goes when the redirect leaves the
+name alone.
 
 A batch's replies cannot be redirected: they are published against the batch, which answers many
 deliveries and carries none of their headers. A position takes one redirect, so a second
 `.redirect(..)` on it does not compile.
 
-An `Out` slot takes the same step with an `OutRedirect`, which has the same
-`apply(&mut Outgoing<'_>)` as an `OutTransform` and names the destination of every message leaving
-the slot.
+An `Out` slot takes the same step, with the `OutTransform` that `.transform(..)` takes there.
 
 Every type in a redirected slot's `#[publishes(..)]` list has to leave its destination open. The
 body still writes `.to(..)` on every publish, and the redirect writes over that name. A marker with

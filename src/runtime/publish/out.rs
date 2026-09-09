@@ -34,13 +34,12 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolic
 /// [`Context`](crate::runtime::Context) and put on the message. A transform wanted on both a reply
 /// and a slot implements both traits; the two bodies are the same line.
 ///
-/// # Contract
+/// # Where the destination comes from
 ///
-/// Like [`PublishTransform`](super::PublishTransform), it owns the headers and the payload and
-/// must leave the destination alone: where a slot message goes is its own `#[derive(Outgoing)]`
-/// declaration, or the `.to(..)` the call site named, and the generated document reports that.
-/// A transform that decides the destination is an [`OutRedirect`] instead, and it rides the mount
-/// chain's `.redirect(..)` step.
+/// A transform named with `.transform(..)` runs over a message whose destination the call site has
+/// already settled, from its `#[derive(Outgoing)]` declaration or from `.to(..)`. A transform that
+/// decides that destination itself is the same trait named on a different step: `.redirect(..)`
+/// runs it first, and it applies only to a slot whose whole dictionary leaves the destination open.
 ///
 /// # Examples
 ///
@@ -81,85 +80,8 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolic
 /// }
 /// # }
 /// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a slot transform",
-    note = "an `OutTransform` rewrites a slot message's headers and payload and leaves its \
-            destination alone; one that names the destination per message implements \
-            `OutRedirect` and rides the chain's `.redirect(..)` step instead"
-)]
 pub trait OutTransform: Send + Sync {
     /// Transforms `out` in place before the app-wide pipeline runs and the message is sent.
-    fn apply(&self, out: &mut Outgoing<'_>);
-}
-
-/// A static redirect on one [`Out`](crate::runtime::Out) slot: it names the destination of every
-/// message leaving the slot.
-///
-/// The slot counterpart of [`RedirectTransform`](super::RedirectTransform), the way
-/// [`OutTransform`] is the slot counterpart of [`PublishTransform`](super::PublishTransform), and
-/// the only transform on this path allowed to call [`Outgoing::set_name`]. Composed onto a slot by
-/// the `.out(marker, policy).redirect(..)` step; it runs first, before the slot's ordinary
-/// transforms and the app-wide pipeline.
-///
-/// A redirected slot gives up two things, both at compile time. Its marker's `#[publishes(..)]`
-/// dictionary must leave every destination open (`#[derive(Outgoing)]` with no
-/// `#[outgoing(name = "..")]`), because a type that names its own channel is published there and
-/// the document says so. And it offers plain sending only: a broker transaction, a caller-owned
-/// transaction and a request / reply round trip all reach the broker without the slot's publish
-/// path, so a handler whose `Out` parameter asks for one of them fails to mount on it.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::{HandlerOutcome, Out, OutRedirect, Outgoing};
-/// # use ruststream::{OutSlot, Outgoing as OutgoingDerive, subscriber};
-/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
-/// # struct Order { id: u64, region: String }
-/// # #[derive(OutgoingDerive, serde::Serialize, schemars::JsonSchema)]
-/// # struct Audited { id: u64 }
-/// # #[derive(OutSlot)]
-/// # #[publishes(Audited)]
-/// # struct Audit;
-/// # #[subscriber("orders")]
-/// # async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
-/// #     let sent = audit.message(&Audited { id: order.id }).to("audit").publish().await;
-/// #     if sent.is_err() {
-/// #         return HandlerOutcome::retry();
-/// #     }
-/// #     HandlerOutcome::ack()
-/// # }
-///
-/// /// Sends every audit record to the shard its tenant header names.
-/// struct ByTenant;
-///
-/// impl OutRedirect for ByTenant {
-///     fn apply(&self, out: &mut Outgoing<'_>) {
-///         if let Some(tenant) = out.headers().get("x-tenant")
-///             && let Ok(tenant) = std::str::from_utf8(tenant)
-///         {
-///             out.set_name(format!("audit.{tenant}"));
-///         }
-///     }
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(mirror).out(Audit, Publish).redirect(ByTenant).build();
-///     })
-/// }
-/// # }
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a slot redirect",
-    note = "`.redirect(..)` on a slot takes an `OutRedirect`, the one transform that names a \
-            message's destination; a transform that only rewrites headers and payload implements \
-            `OutTransform` and rides `.transform(..)` instead"
-)]
-pub trait OutRedirect: Send + Sync {
-    /// Names the destination of `out` before the slot's transforms and the app-wide pipeline run.
     fn apply(&self, out: &mut Outgoing<'_>);
 }
 
@@ -243,7 +165,8 @@ impl<Pipeline, Inner, Outer> LowerOutTransforms<Pipeline> for OutTransformStack<
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoOutRedirect;
 
-/// The redirect position of one slot's attachment, filled by a chain's `.redirect(..)` step.
+/// The redirect position of one slot's attachment, filled by a chain's `.redirect(..)` step: the
+/// [`OutTransform`] that step named, held until the slot is wired.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OutRedirected<T>(pub(crate) T);
@@ -255,8 +178,8 @@ pub struct OutRedirected<T>(pub(crate) T);
 /// The empty position hands both back unchanged, so a slot with no redirect pays nothing. A named
 /// one puts the redirect at the head of the pipeline - it names the destination, then the slot's
 /// own transforms rewrite headers and payload, then the app-wide middleware runs, then the send -
-/// and narrows the policy to [`RedirectedSendPolicy`], because the capabilities beside a plain publish
-/// reach the broker without the pipeline and would leave the redirect behind.
+/// and narrows the policy to [`RedirectedSendPolicy`], because the capabilities beside a plain
+/// publish reach the broker without the pipeline and would leave the redirect behind.
 #[doc(hidden)]
 pub trait LowerOutRedirect<Policy, Pipeline> {
     /// The policy the runtime pairs for this slot.
@@ -293,7 +216,7 @@ impl<Policy, Pipeline, T> LowerOutRedirect<Policy, Pipeline> for OutRedirected<T
     }
 }
 
-/// A slot's [`OutRedirect`] in front of the rest of its publish path.
+/// The transform a slot's `.redirect(..)` step named, in front of the rest of its publish path.
 ///
 /// A pipeline shape of its own rather than one more [`PublishStack`], so the redirect is visible in
 /// the slot's type and runs before the slot's attributed leaf - what a test harness records and
@@ -306,7 +229,7 @@ pub struct RedirectStack<Rd, Tail> {
     tail: Tail,
 }
 
-impl<Rd: OutRedirect, Tail: PublishPipeline> PublishPipeline for RedirectStack<Rd, Tail> {
+impl<Rd: OutTransform, Tail: PublishPipeline> PublishPipeline for RedirectStack<Rd, Tail> {
     async fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
@@ -317,7 +240,7 @@ impl<Rd: OutRedirect, Tail: PublishPipeline> PublishPipeline for RedirectStack<R
     }
 }
 
-impl<Rd: OutRedirect, Tail: PublishPipeline> OutPipeline for RedirectStack<Rd, Tail> {
+impl<Rd: OutTransform, Tail: PublishPipeline> OutPipeline for RedirectStack<Rd, Tail> {
     type Error<E: StdError + Send + Sync + 'static> = PipelinePublishError;
 
     fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> PipelinePublishError {

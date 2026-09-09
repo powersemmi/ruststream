@@ -1,5 +1,5 @@
-//! Redirected publishing: the `.redirect(..)` step names a destination per delivery, and an
-//! ordinary transform still cannot.
+//! Redirected publishing: the `.redirect(..)` step hands a transform the destination, and the
+//! declaration stands wherever the step is not named.
 #![cfg(all(
     feature = "memory",
     feature = "macros",
@@ -12,9 +12,7 @@ mod common;
 use common::{Order, Receipt};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{
-    OutRedirect, Outgoing, PublishContext, PublishTransform, RedirectTransform,
-};
+use ruststream::runtime::{OutTransform, Outgoing, PublishContext, PublishTransform};
 use ruststream::testing::TestApp;
 
 /// The one header the reply-to pattern reads, as a delivery carries it.
@@ -25,10 +23,11 @@ fn reply_to(name: &'static str) -> HeaderMap {
 }
 
 /// The reply-to pattern the two motivating brokers implement: the answer goes where the request
-/// asked to be answered, and to the declared fallback when it asked for nothing.
+/// asked to be answered, and to the declared fallback when it asked for nothing. It is an ordinary
+/// transform; what makes it the destination's owner is the step it is named on.
 struct ReplyTo;
 
-impl<C> RedirectTransform<C> for ReplyTo {
+impl<C> PublishTransform<C> for ReplyTo {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
@@ -129,10 +128,10 @@ async fn the_redirect_settles_the_destination_before_the_transforms_run() {
         .with_header("x-destination", b"redirect.inbox.6");
 }
 
-/// Without a redirect the reply goes where the mount site says, and the transform stack cannot
-/// move it: the destination it reads is the declared one.
+/// Without the step, the reply goes where the mount site declared, and the transform stack runs
+/// over that destination rather than deciding it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_transform_alone_cannot_move_the_reply() {
+async fn without_the_step_the_declared_destination_stands() {
     let app = RustStream::new(AppInfo::new("redirect-none", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
@@ -157,7 +156,7 @@ async fn a_transform_alone_cannot_move_the_reply() {
 /// The slot counterpart: a shard router deciding where each message goes.
 struct ByTenant;
 
-impl OutRedirect for ByTenant {
+impl OutTransform for ByTenant {
     fn apply(&self, out: &mut Outgoing<'_>) {
         if let Some(tenant) = out.headers().get("x-tenant")
             && let Ok(tenant) = std::str::from_utf8(tenant)

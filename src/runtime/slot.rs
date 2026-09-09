@@ -765,7 +765,7 @@ pub trait TransformAt<N, Index> {
     message = "this slot is already redirected",
     label = "`.redirect(..)` names the slot's destinations, and they are named",
     note = "a slot names each message's destination once: drop one of the `.redirect(..)` calls, \
-            or fold the two decisions into a single `OutRedirect`"
+            or fold the two decisions into the single transform the step takes"
 )]
 pub trait RedirectAt<N, Index> {
     /// The attachment tuple with that slot's redirect named.

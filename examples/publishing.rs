@@ -15,7 +15,7 @@ use ruststream::memory::prelude::*;
 // `ruststream::runtime::Outgoing`.
 use ruststream::runtime::{
     OutTransform, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform, RedirectTransform,
+    PublishTransform,
 };
 use serde::{Deserialize, Serialize};
 
@@ -219,12 +219,12 @@ impl OutTransform for OutboxEnvelope {
 // --8<-- [end:slot_transform]
 
 // --8<-- [start:redirect]
-/// A redirect: the one transform that names where a reply goes. This one answers where the
+/// An ordinary transform, named on the step that owns the destination. This one answers where the
 /// request asked to be answered, and leaves the name alone for a request that asked for nothing -
 /// which is when the mount site's own destination stands.
 struct ReplyTo;
 
-impl<C> RedirectTransform<C> for ReplyTo {
+impl<C> PublishTransform<C> for ReplyTo {
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)

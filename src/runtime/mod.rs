@@ -101,20 +101,20 @@ pub use publish::{
     CodecSlotOpen, Direct, EncodeOutcome, InTransaction, LowerOutRedirect, LowerOutTransforms,
     LowerRedirect, MapReplyPolicy, NameReplyCodec, NoOutRedirect, NoRedirect, OutRedirected,
     PayloadError, PublishingDirectly, RawReplyWiring, RedirectSlotOpen, RedirectStack, Redirected,
-    RedirectedSend, RedirectedSendPolicy, Redirecting, ReplyPublisher, ReplyWiring, Transactional,
+    RedirectedSend, RedirectedSendPolicy, ReplyPublisher, ReplyWiring, Transactional,
     TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, EncodedWire, ForBatch, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
-    MessageWire, MissingSegment, OutPipeline, OutRedirect, OutTransform, OutTransformIdentity,
+    MessageWire, MissingSegment, OutPipeline, OutTransform, OutTransformIdentity,
     OutTransformStack, Outgoing, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec,
     PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt,
     PublishHeaders, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink,
-    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack,
-    RedirectTransform, ResolvedName, SatisfiesContract, SerializePayloadError, SerializedWire,
-    SuppliedName, TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders,
-    TypedTransaction, UnnamedCodec, for_batch,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, ResolvedName,
+    SatisfiesContract, SerializePayloadError, SerializedWire, SuppliedName, TemplateAddress,
+    TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec,
+    for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.

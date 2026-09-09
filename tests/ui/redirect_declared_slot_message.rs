@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, OutRedirect, Outgoing as OutgoingMessage, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Out, OutTransform, Outgoing as OutgoingMessage, RustStream};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ struct Audit;
 
 struct ByTenant;
 
-impl OutRedirect for ByTenant {
+impl OutTransform for ByTenant {
     fn apply(&self, out: &mut OutgoingMessage<'_>) {
         out.set_name("audit.north");
     }
