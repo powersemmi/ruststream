@@ -57,7 +57,7 @@ ruststream = { version = "0.7", default-features = false }
 该 crate 会从 `ruststream` 重新导出自己需要的东西。
 
 每个 Broker 独立管理版本和发布，因此确切的依赖写法要看它自己的文档。那里给出当前版本，以及用于
-处理器测试的 `testing` feature。同一份文档还描述了它的 `Config` 和各项能力。
+处理器测试的 `testing` feature。同一份文档还描述了它的连接选项和各项能力。
 
 可用的 Broker 列在 [Broker](../brokers/index.md) 一节，从那里可以进到每个 Broker 的文档。
 想自己写一个 Broker，参见 [Broker 作者](../broker-authors/index.md)。

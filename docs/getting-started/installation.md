@@ -61,7 +61,7 @@ the process, depend on that broker's crate; it re-exports from `ruststream` ever
 
 Each broker has its own version and its own release cycle, so the exact dependency line, with the
 current version and the `testing` feature for handler tests, is in the broker's own documentation.
-The same documentation describes the broker's `Config` and its capabilities.
+The same documentation describes the broker's connection options and its capabilities.
 
 The available brokers are listed under [Brokers](../brokers/index.md); the link there leads to each
 broker's documentation and its installation instructions. To write your own broker, see
