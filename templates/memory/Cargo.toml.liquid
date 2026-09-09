@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi", "logging"] }
+# The lower bound names the pre-release on purpose: cargo excludes pre-releases from a range that
+# does not mention one, so a plain `0.7` would refuse the 0.7.0-rc candidates and a scaffold would
+# not resolve until the final release. This admits them and 0.7.0 alike.
+ruststream = { version = ">=0.7.0-rc.2, <0.8.0", features = ["macros", "memory", "json", "asyncapi", "logging"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
