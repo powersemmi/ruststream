@@ -38,16 +38,23 @@ Protobuf - the confusion the byte lanes exist to prevent. So a binary protocol g
 and nothing is resolved between the type and the wire.
 
 Generated code is not edited by hand, but every generator can decorate what it emits.
-`prost-build` takes `message_attribute`, so the whole recipe is two lines of build configuration:
+`prost-build` takes `message_attribute`, so the whole recipe is two attributes on every generated
+message:
 
 <!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
 ```rust
 // build.rs
 prost_build::Config::new()
-    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(
+        ".",
+        "#[derive(ruststream::Serialized, ruststream::Deserialized, ruststream::Outgoing)]",
+    )
     .message_attribute(".", "#[wire(prost)]")
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
+
+The third derive declares where the message is sent, which is what a typed publish and a reply
+both read.
 
 Every message in the schema then arrives on the lanes already, as if it had been written out. The
 Manual tab is the same message with the derives expanded - two lane impls, the wire spellings they

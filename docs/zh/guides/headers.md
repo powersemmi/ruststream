@@ -134,8 +134,8 @@ derive 了 `Outgoing` 又 derive 了 [`Serialized`](subscribers.md#raw-subscribe
 
 ## 回复形式
 
-`publish("dest")` 形式的处理器不需要额外声明：回复类型自带的契约会喂给文档，而目的地已经写在属性
-里了。
+回复形式的处理器不需要额外声明。回复类型上的一个 derive 同时声明消息头契约和目的地，文档两者都会
+报告。
 
 === "宏"
 

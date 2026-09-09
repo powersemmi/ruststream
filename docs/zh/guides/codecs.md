@@ -35,16 +35,21 @@ feature 都不开也照样运行，什么都不会少。
 字节路径，类型与线之间不解析任何东西。
 
 生成出来的代码不靠手改，但给自己产出的代码加注解，是每个生成器都会的。`prost-build` 接受
-`message_attribute`，于是整份配方就是构建配置里的两行：
+`message_attribute`，于是整份配方就是给每个生成的消息加两个属性：
 
 <!-- inline-rust: the service's own build script, which has no compiled home in this repository -->
 ```rust
 // build.rs
 prost_build::Config::new()
-    .message_attribute(".", "#[derive(ruststream::Serialized, ruststream::Deserialized)]")
+    .message_attribute(
+        ".",
+        "#[derive(ruststream::Serialized, ruststream::Deserialized, ruststream::Outgoing)]",
+    )
     .message_attribute(".", "#[wire(prost)]")
     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 ```
+
+第三个 derive 声明消息发往何处，类型化发布和回复都读这份声明。
 
 此后 schema 里的每个消息一到手就已经在字节路径上，如同手写出来的一样。「手写」这一栏是同一个消息把
 derive 展开后的样子：两个字节路径的 impl、它们选定的传输方式，以及出站声明：

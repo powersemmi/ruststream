@@ -37,8 +37,8 @@ use crate::runtime::{
 };
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
-    Broker, BuildBatchContext, HeaderMap, Name, OutSlot, OutgoingMessage, PairError, PublishPolicy,
-    Publisher, Seeker, Unnamed,
+    Broker, BuildBatchContext, CallerName, HeaderMap, Name, OutSlot, OutgoingDestination,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, Seeker, Unnamed,
 };
 
 use super::eager::{construct, settle_batch};
@@ -57,6 +57,10 @@ struct Meta {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Confirmation {
     id: u64,
+}
+
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
 }
 
 /// The construction failure of the validating input below.

@@ -22,8 +22,26 @@ surprise.
 
 ## Replying from a handler
 
-Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
-sends it:
+A reply is a message this service sends, so its type derives `Outgoing`. Return the reply value
+and write `publish` on the subscriber; `#[outgoing(name = "..")]` on the type is the destination:
+
+=== "Macros"
+
+    ```rust
+    use ruststream::Outgoing;
+
+    --8<-- "examples/publishing.rs:reply_declared"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_declared"
+    ```
+
+A reply type that declares no name takes one from the mount site: `publish("responses")` on the
+attribute, `.to("responses")` on the chain. On a type that fixes its own name that mount-site name
+is a default and does not apply.
 
 === "Macros"
 

@@ -26,8 +26,8 @@ const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
 struct Frame<'a>(&'a [u8]);
 
 /// The named reply the byte-lane handlers return: its bytes leave on the wire as they are, with
-/// no codec in between.
-#[derive(Serialized)]
+/// no codec in between, at the subject the mount site names.
+#[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
 /// The named wire this suite injects its deliberately unstructured payloads through. Publishing

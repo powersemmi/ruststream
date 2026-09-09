@@ -8,7 +8,7 @@ struct Order {
     id: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ruststream::Outgoing)]
 struct Receipt {
     id: u32,
 }

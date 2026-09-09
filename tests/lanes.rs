@@ -15,8 +15,9 @@ use ruststream::testing::TestApp;
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
-/// A self-serialized reply: its bytes leave exactly as returned, with no codec.
-#[derive(Serialized)]
+/// A self-serialized reply: its bytes leave exactly as returned, with no codec, at the subject
+/// the mount site names.
+#[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
 #[derive(

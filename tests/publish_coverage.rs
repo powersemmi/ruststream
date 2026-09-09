@@ -22,6 +22,7 @@ use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::RustStreamError;
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{OutgoingMessage, PairError};
+use serde::Serialize;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
 use tracing_subscriber::Layer;
@@ -120,16 +121,21 @@ impl PublishPolicy<ConnectedMemoryBroker> for FailsOncePolicy {
     }
 }
 
+/// What the publishing handlers below answer with: the id alone, under a declared name, because
+/// a reply is published like any other message.
+#[derive(Debug, Serialize, Outgoing)]
+struct Acked(u32);
+
 /// A publishing handler whose decode failure is declared fatal.
 #[subscriber("pubff", publish("pubff.out"), on_failure(decode = fail_fast))]
-async fn pubff(order: &Order) -> u32 {
-    order.id
+async fn pubff(order: &Order) -> Acked {
+    Acked(order.id)
 }
 
 /// A publishing handler whose reply leaves through the publisher that fails once.
 #[subscriber("flaky", publish("flaky.out"))]
-async fn flaky(order: &Order) -> u32 {
-    order.id
+async fn flaky(order: &Order) -> Acked {
+    Acked(order.id)
 }
 
 /// `decode = fail_fast` on a publishing handler tears the service down, and the warning names

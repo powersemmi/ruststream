@@ -151,6 +151,17 @@ pub trait OutgoingDestination {
     const PARAMETERS: &'static [&'static str] = &[];
 }
 
+// The same two bare payloads that carry no header contract declare no destination either: a
+// `Vec<Item>` batch body and a plain text message are sent wherever the call site says. The
+// orphan rule keeps a downstream crate from declaring it, so the declaration lives here.
+impl<T> OutgoingDestination for Vec<T> {
+    type Form = CallerName;
+}
+
+impl OutgoingDestination for String {
+    type Form = CallerName;
+}
+
 /// The destination form of a type declaring one literal name: the address is fixed, so the
 /// publish builder resolves it without asking the call site.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

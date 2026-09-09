@@ -467,8 +467,8 @@ mod typed_headers_spec {
         id: u64,
     }
 
-    #[derive(MessageInfo, Serialize, JsonSchema)]
-    #[message(headers(DoneMeta))]
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(headers = DoneMeta)]
     struct Response {
         ok: bool,
     }

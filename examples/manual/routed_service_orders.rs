@@ -36,6 +36,11 @@ struct Confirmation {
     accepted: bool,
 }
 
+// The reply declares no destination of its own, so the chain's `.to(..)` names it.
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
+}
+
 /// The service's error type. `is_transient` is what lets the handler distinguish a retryable blip
 /// (ask for redelivery) from a permanent failure (drop the message).
 #[derive(Debug, thiserror::Error)]

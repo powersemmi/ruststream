@@ -185,9 +185,9 @@ where
 /// mount site's chain built.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a mountable reply definition",
-    note = "a `replying(..)` chain needs a destination before it mounts: chain `.to(\"subject\")`, \
-            or declare a fixed name on the reply type (`#[derive(Outgoing)]` with \
-            `#[outgoing(name = \"..\")]`)"
+    note = "a reply needs a destination before it mounts: declare one on the reply type \
+            (`#[derive(Outgoing)]` with `#[outgoing(name = \"..\")]`), or name the default with \
+            `publish(\"subject\")` on the attribute and `.to(\"subject\")` on the chain"
 )]
 pub trait PublishingDef: Send + Sync {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`

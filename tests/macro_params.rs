@@ -22,7 +22,7 @@ struct Ping {
     id: u64,
 }
 
-#[derive(MessageInfo, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
 struct Pong {
     id: u64,
 }

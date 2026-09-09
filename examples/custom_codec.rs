@@ -79,7 +79,7 @@ struct Order {
     id: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Outgoing)]
 struct Receipt {
     id: u64,
 }

@@ -43,6 +43,10 @@ struct Confirmation {
     accepted: bool,
 }
 
+impl OutgoingDestination for Confirmation {
+    type Form = CallerName;
+}
+
 /// The HTTP request body on its way to the bus: bytes that arrived from outside, with no model of
 /// their own. What `#[derive(Outgoing, Serialized)]` writes is these three impls - the bytes are
 /// already the payload so no codec runs on them, the wire spelling routes the publish onto that

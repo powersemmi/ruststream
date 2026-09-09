@@ -24,7 +24,8 @@ struct Request {
     id: u64,
 }
 
-#[derive(Debug, Serialize)]
+// The derive with no `name`: a reply the mount site sends where it says.
+#[derive(Debug, Serialize, Outgoing)]
 struct Response {
     ok: bool,
 }
@@ -34,6 +35,20 @@ struct Response {
 struct Event {
     id: u64,
 }
+
+// --8<-- [start:reply_declared]
+// The reply type fixes its destination, so the clause names none.
+#[derive(Debug, Serialize, Outgoing)]
+#[outgoing(name = "receipts")]
+struct Receipt {
+    id: u64,
+}
+
+#[subscriber("receipt-requests", publish)]
+async fn issue_receipt(req: &Request) -> Receipt {
+    Receipt { id: req.id }
+}
+// --8<-- [end:reply_declared]
 
 // --8<-- [start:reply]
 // A `publish(..)` handler that does not read the app state omits the `Context` parameter entirely;
@@ -273,6 +288,8 @@ fn app() -> impl App {
                 seed_events(seeder).await.map_err(std::io::Error::other)
             });
             // --8<-- [start:reply_mount]
+            // the reply type carries the destination, so the mount site adds nothing to it
+            b.include(issue_receipt);
             // static, per-reply: the chain names the policy and composes the transform at
             // compile time; the runtime pairs it with the connected broker at startup
             b.include(respond)

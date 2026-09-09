@@ -297,7 +297,7 @@ async fn per_element_outcomes_retry_individually() {
     );
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
 struct Confirmation {
     id: u32,
     accepted: bool,

@@ -258,7 +258,7 @@ struct Request {
     n: u32,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ruststream::Outgoing)]
 struct Response {
     doubled: u32,
 }
@@ -322,7 +322,7 @@ async fn macro_publisher_replies_cross_broker() {
         .with(&Response { doubled: 42 });
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ruststream::Outgoing)]
 struct Confirmation {
     id: u32,
     accepted: bool,

@@ -578,7 +578,7 @@ lane never calls one - which also makes this the subscriber form that works with
 feature enabled at all. For a custom serialization format you want *typed* handlers for,
 implement [`Codec`](codecs.md) instead and keep the typed path.
 
-A handler on this lane replies through the same `publish("dest")` clause every reply form uses,
+A handler on this lane replies through the same `publish` clause every reply form uses,
 and the reply *type* picks the wire by the same mnemonic: a `serde::Serialize` reply encodes
 through the reply codec, a `#[derive(Serialized)]` reply produces its own bytes and leaves
 byte-for-byte, exactly as the handler returned it. Return the reply directly, or as

@@ -23,7 +23,7 @@ struct Order {
     id: u64,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Outgoing)]
 struct Digest {
     id: u64,
 }

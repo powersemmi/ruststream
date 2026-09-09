@@ -22,7 +22,7 @@ struct Order {
     id: u64,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug, Clone)]
 struct Confirmation {
     id: u64,
 }

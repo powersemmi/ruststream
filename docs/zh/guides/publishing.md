@@ -18,7 +18,25 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 
 ## 从处理器回复
 
-用 `publish(..)` 指定一个回复目的地，然后返回回复值。运行时会把它编码并发送出去：
+回复是服务发出的消息，所以回复类型要 derive `Outgoing`。返回回复值，并在订阅者上写 `publish`；
+目的地由类型上的 `#[outgoing(name = "..")]` 声明：
+
+=== "宏"
+
+    ```rust
+    use ruststream::Outgoing;
+
+    --8<-- "examples/publishing.rs:reply_declared"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "examples/manual/publishing.rs:reply_declared"
+    ```
+
+没有声明名字的回复类型，则从挂载点取名字：属性上写 `publish("responses")`，链上写
+`.to("responses")`。类型自己固定了名字时，挂载点的名字只是默认值，不会生效。
 
 === "宏"
 

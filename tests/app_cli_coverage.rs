@@ -41,8 +41,9 @@ use common::{Order, Receipt, Wire};
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
-/// The reply the byte-level relay returns: its bytes leave on the wire as they are.
-#[derive(Serialized)]
+/// The reply the byte-level relay returns: its bytes leave on the wire as they are, at the
+/// subject the mount site names.
+#[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is

@@ -18,13 +18,14 @@ struct Order {
     quantity: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
+#[outgoing(name = "confirmations")]
 struct Confirmation {
     id: u64,
     accepted: bool,
 }
 
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", publish)]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
         id: order.id,

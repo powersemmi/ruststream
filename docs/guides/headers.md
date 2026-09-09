@@ -148,8 +148,8 @@ the contract's fields serialize over that base field by field - see
 
 ## The reply form
 
-A `publish("dest")` handler needs no extra declaration: the reply type's own contract feeds
-the document, and the destination is already in the attribute.
+A replying handler needs no extra declaration. One derive on the reply type states its header
+contract and its destination, and the document reports both.
 
 === "Macros"
 

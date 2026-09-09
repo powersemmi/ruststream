@@ -58,8 +58,9 @@ pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
     Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DecodeOutcome, DocState,
-    Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDocs, ProbedReplyDef,
-    ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily, probed_def, probed_reply_def,
+    Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDeclaredReplyDef,
+    ProbedDocs, ProbedReplyDef, ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily,
+    probed_declared_reply_def, probed_def, probed_reply_def,
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,
@@ -68,8 +69,9 @@ pub use handle::{
 };
 #[doc(hidden)]
 pub use handle::{
-    EntryMarkers, OutPos, ReplyDest, ReplyFormFor, ReplyHeadersSchema, ReplyRoute, SelectSlot,
-    UnbuiltDefinition, WireDocs,
+    EntryMarkers, OutPos, ReplyAddress, ReplyDest, ReplyDestination, ReplyFormFor,
+    ReplyHeadersSchema, ReplyRoute, SelectSlot, UnbuiltDefinition, WireDocs,
+    declared_reply_destination, reply_destination,
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
