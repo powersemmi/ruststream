@@ -233,8 +233,21 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 给描述符一个关联构造函数（`OrdersStream::new(..)`），而不是自由函数：这样用户就能在属性里直接写出
 它，`#[subscriber(OrdersStream::new("orders", "workers"))]`。
 
-宏从这次构造调用里读出类型，只要每个方法都返回 `Self`，也接受在它之上的构建器链
-（`#[subscriber(OrdersStream::new("orders").durable("workers"))]`）。
+宏从这次构造调用里读出类型，也接受在它之上的构建器链
+（`#[subscriber(OrdersStream::new("orders").durable("workers"))]`），并认定每一步都返回 `Self`。
+宏读到的是词法记号而不是类型，读也就读到这里为止。
+
+当你的两种投递模型不共享任何设置时，把描述符建在类型状态上：属于一种模型的设置根本不会是另一种模
+型的方法。这样链上的一步会把值转成另一个类型，属性则写出表达式产出的类型：
+
+<!-- inline-rust: 面向 Broker crate 描述符的写法，本仓库里没有可编译的落点；可编译的用例在 tests/macro_subscriber.rs -->
+```rust
+#[subscriber(OrdersStream::new("orders").durable("workers") as DurableOrdersStream)]
+async fn handle(order: &Order) -> HandlerOutcome { /* ... */ }
+```
+
+这个类型会被核对，而不是被当真：写得与表达式产出的类型不符，就是一个指出真实类型的编译错误。自由
+函数返回的描述符，也用同一种写法进入属性。
 
 `type Subscriber` 声明在来源上，所以一个 Broker 可以提供多种订阅方式（pub/sub 和流），各带不同的订阅
 者类型；也可以像 [NATS 示例](example-nats.md)那样，用一个在内部分支的描述符服务全部方式。
