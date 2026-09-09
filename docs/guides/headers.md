@@ -164,7 +164,8 @@ With the `asyncapi` feature, `build_spec` adds a headers schema to every message
   `#[message(headers(..))]` contract when the handler extracts the headers by hand;
 - for a sent message, from the contract declared on the type itself.
 
-Schemas describe the logical field types: `task_id: integer`.
+Schemas describe the logical field types: `task_id: integer`. The rest of the document is covered by
+the [AsyncAPI guide](asyncapi.md).
 
 ## Testing
 
