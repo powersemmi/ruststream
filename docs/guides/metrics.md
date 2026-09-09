@@ -24,7 +24,8 @@ later:
     --8<-- "examples/manual/metrics_http.rs:wiring"
     ```
 
-`consume_layer` records every handled message; `publish_layer` records every published message.
+`consume_layer` records every handled message; `publish_layer` records every publish attempt,
+including the ones that return an error.
 `Metrics::with_registry(registry)` collects into your own registry instead of the default one.
 
 ## Metrics emitted

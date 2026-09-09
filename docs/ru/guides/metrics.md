@@ -24,7 +24,8 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
     --8<-- "examples/manual/metrics_http.rs:wiring"
     ```
 
-`consume_layer` учитывает каждое обработанное сообщение, `publish_layer` - каждое опубликованное.
+`consume_layer` учитывает каждое обработанное сообщение, `publish_layer` - каждую попытку
+публикации, включая те, что вернули ошибку.
 `Metrics::with_registry(registry)` собирает метрики в ваш реестр вместо реестра по умолчанию.
 
 ## Какие метрики отдаются
