@@ -1,32 +1,27 @@
 # Typed headers
 
-Message headers travel as an untyped `name -> bytes` map, `HeaderMap`. When an application
-carries a real contract in them (ids, sequence numbers, totals), one struct can declare that
-contract and drive all three surfaces at once: runtime extraction on the consume side, the
-publish builder on the produce side, and the headers schema in the generated AsyncAPI document.
+Message headers are an untyped `name -> bytes` map. Typed headers are a struct that declares which
+headers a message has and of which types. You can declare it on the subscriber and on the publisher.
 
 ## The contract
 
-A header contract is a flat struct: each field names a header, values are scalars (numbers,
-booleans, strings, raw bytes, unit-only enums) or `Option`s of them. On the wire every value is
-string-encoded - the framework parses `"3"` into a `u32` field and writes it back the same way -
-while schemas keep describing the logical types.
+A header contract is a flat struct with scalar fields: numbers, booleans, strings, raw bytes,
+unit-only enums.
 
 ```rust
 --8<-- "examples/typed_headers.rs:contracts"
 ```
 
-Field names are the wire names; use `#[serde(rename = "x-task-id")]` for names that are not
-Rust identifiers. An `Option` field is `None` when the header is absent; a missing non-`Option`
-header is a contract violation.
+If a header name is not a valid Rust identifier, you can set it with
+`#[serde(rename = "x-task-id")]`. An `Option` field declares an optional header.
+
+A header value is stored as a string: the framework parses `"3"` into a `u32` field and writes it
+back the same way.
 
 ## Receiving: the `Headers` extractor
 
-`Headers<T>` is an extractor parameter: the runtime parses the delivery headers into `T`
-before the body runs, so the handler starts from validated, typed values. A violation (missing
-header, unparsable value) never reaches the body - the delivery settles by the subscriber's
-`on_failure(decode = ..)` policy, the same one that covers a payload that does not decode
-(drop by default), after a `WARN` naming the subscription and the contract type.
+`Headers<T>` is an extractor: the runtime parses the delivery's headers into the contract `T` before
+the body runs.
 
 === "Macros"
 
@@ -40,14 +35,14 @@ header, unparsable value) never reaches the body - the delivery settles by the s
     --8<-- "examples/manual/typed_headers.rs:handler"
     ```
 
-`Headers` composes with a self-deserializing body (`&Frame<'_>` next to its typed headers) and
-with every other extractor.
+When a required header is missing or a value does not parse, the delivery never reaches the body.
+The subscriber's `on_failure(decode = ..)` policy settles it, the same policy that covers a payload
+that does not decode (`drop` by default). Before that the framework writes a `WARN` naming the
+subscription and the contract type.
 
-On a batch handler the headers stay per-delivery, so the batch pairs each element with its own
-contract: the input is `&[Message<H, T>]`, and `element.headers` sits next to `element.body`.
-The pairing holds by construction - an element whose payload or headers fail to materialize is
-settled by the same `on_failure(decode = ..)` policy and never reaches the handler, exactly as
-on the single-message path. A `Headers<..>` parameter is rejected there, naming the pair input.
+`Headers` composes with every other extractor and with a body that deserializes itself.
+
+In a batch the headers stay per-delivery, so the input of a batch handler is `&[Message<H, T>]`.
 
 === "Macros"
 
@@ -61,25 +56,25 @@ on the single-message path. A `Headers<..>` parameter is rejected there, naming 
     --8<-- "examples/manual/typed_headers.rs:batch"
     ```
 
-Mounting reads the same as every other form and on both surfaces: `b.include(bulk)` on a broker
-scope, `Router::include` on the router path. The contract type travels in the input axis, so
-the ordinary batch route decodes it next to each payload.
+An element whose payload or headers do not parse never reaches the handler: the same policy settles
+it. A `Headers<..>` parameter does not compile here, and the error names the pair input.
 
-When one channel carries messages whose headers differ per event kind, keep the standard
-extractor out of it and write your own [`FromContext`] extractor: read the discriminator
-header off the untyped map ([`HeaderMap::get_str`]), then build the contract that kind calls
-for. Declare the union of shapes on the input type (see the next section) so the document
-still shows the full contract.
+You mount a batch handler like any other: `b.include(bulk)` on a broker scope, `Router::include` on
+the router path.
+
+When one subscription receives messages with different sets of headers, you can write your own
+[`FromContext`] extractor instead of `Headers`: it reads the discriminator header from the untyped
+map ([`HeaderMap::get_str`]) and builds the contract that kind of event calls for. Declare the union
+of the shapes on the input type (see the next section).
 
 [`FromContext`]: https://docs.rs/ruststream/latest/ruststream/runtime/trait.FromContext.html
 [`HeaderMap::get_str`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.get_str
 
 ## Declaring a contract on a message type
 
-`#[derive(Outgoing)]` accepts `headers = Meta` next to the destination: the contract becomes
-part of the type. The publish builder then demands exactly those headers, and the AsyncAPI
-document renders the schema next to the payload wherever the type appears. See
-[publishing](publishing.md#declaring-where-a-message-goes) for the destination half.
+`#[derive(Outgoing)]` takes `headers = Meta` next to the destination: the contract becomes part of
+the type. How the destination is declared is covered in
+[publishing](publishing.md#declaring-where-a-message-goes).
 
 === "Macros"
 
@@ -115,41 +110,34 @@ The `Out` parameter's optional third position declares the message set this hand
 - `Out<impl Publisher, Events, (ChunkDone, Progress)>` - an inline list;
 - `Out<impl Publisher, Events, ChunkDone>` - one declared type (a `#[derive(Outgoing)]` type
   declares itself);
-- `Out<impl Publisher, Events, ConvertSends>` - a `#[derive(OutMessages)]` enum whose variants
-  each wrap one model: a reusable, named set (the enum is a type-level declaration and is
-  never constructed).
+- `Out<impl Publisher, Events, ConvertSends>` - a `#[derive(OutMessages)]` enum whose variants each
+  wrap one model: a named set several handlers can share. The enum is a type-level declaration and
+  is never constructed.
 
-The body then publishes through the builder (the handler above), and the compiler enforces the
+The body then publishes through the publish builder (the handler above), and the compiler checks the
 whole declaration:
 
-- a `message(..)` of a type outside the declared set does not compile - the handler publishes
-  what it declared, nothing else;
-- a type declaring `headers = Meta` publishes only through
-  `.message(&value).with_headers(&meta)` - forgetting the headers, or passing the wrong headers
-  type, does not compile;
-- the destination comes from the type's own declaration, so a fixed name needs nothing at the
-  call site and a templated one demands its placeholders;
-- the capability position is checked against the include-site policy statically, as always:
-  `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` demands a policy whose
-  live publisher is transactional, and the declared publishes ride inside the scope the entry
-  opens, under the same declaration.
+- a `message(..)` of a type outside the declared set does not compile;
+- a type declaring `headers = Meta` publishes only through `.message(&value).with_headers(&meta)`;
+- the destination comes from the type's own declaration: a fixed name needs nothing at the call
+  site, a templated one demands its placeholders;
+- the capability position is checked against the policy you name when registering the handler:
+  `Out<impl TransactionalPublisher, Events, (ChunkDone, Progress)>` demands a policy that constructs
+  a transactional publisher, and the declared publishes run inside that publisher's transaction,
+  under the same declaration.
 
-A payload the service already holds encoded, or a foreign type that cannot carry a declaration
-(a bare `Vec<Frame>`), goes out in a newtype deriving both `Outgoing` and
-[`Serialized`](subscribers.md#raw-subscribers). Such a newtype is a first-class member of the
-dictionary - it declares its destination and headers like any model and publishes through the
-same typed entry, `out.message(&export)`: the type routes the publish onto the serialized wire,
-so its bytes leave as they are while every headers position works unchanged.
+You can wrap a payload the service already holds encoded, or a foreign type that takes no
+declaration of its own (`Vec<Frame>`), in a newtype that derives `Outgoing` and
+[`Serialized`](subscribers.md#raw-subscribers). It declares its headers like any model and publishes
+through the same `out.message(&export)`, byte for byte.
 
-The contract fills that position once. What the publisher itself contributes travels
-underneath: a handle carrying an argument for every message it sends exposes it as a base, and
-the contract's fields serialize over that base field by field - see
-[where the headers come from](publishing.md#where-the-headers-come-from).
+A publisher can set a base of headers of its own, and the contract's fields are written over that
+base; see [where the headers come from](publishing.md#where-the-headers-come-from).
 
 ## The reply form
 
-A `publish("dest")` handler needs no extra declaration: the reply type's own contract feeds
-the document, and the destination is already in the attribute.
+A handler with `publish("dest")` needs no extra declaration: the destination is in the attribute,
+the headers are in the reply type's contract.
 
 === "Macros"
 
@@ -163,30 +151,25 @@ the document, and the destination is already in the attribute.
     --8<-- "examples/manual/typed_headers.rs:reply"
     ```
 
-At runtime, reply headers stay where they were: a `PublishTransform` on the reply publisher
-sets them, and [`HeaderMap::insert_typed`] serializes a contract value into the map from inside
-a transform.
+A `PublishTransform` on the reply publisher sets the reply headers: inside a transform,
+[`HeaderMap::insert_typed`] writes a contract value into the map.
 
 [`HeaderMap::insert_typed`]: https://docs.rs/ruststream/latest/ruststream/struct.HeaderMap.html#method.insert_typed
 
 ## What the document shows
 
-With the `asyncapi` feature, `build_spec` renders:
+With the `asyncapi` feature, `build_spec` adds a headers schema to every message in the document:
 
-- the headers schema of every receive message - from the handler's `Headers<T>` parameter,
-  or from the input type's `#[message(headers(..))]` contract when the handler extracts by
-  hand;
-- a `send` operation per declared outgoing message - the reply of every `publish(..)` form and
-  every message type a slot declares - each with its payload and headers schemas.
+- for a received message, from the handler's `Headers<T>` parameter, or from the input type's
+  `#[message(headers(..))]` contract when the handler extracts the headers by hand;
+- for a sent message, from the contract declared on the type itself.
 
-Schemas describe the logical field types (`task_id: integer`), while wire values are
-string-encoded headers.
+Schemas describe the logical field types: `task_id: integer`.
 
 ## Testing
 
-The in-process harness drives the whole path: `with_headers(&meta)` on the injection builder sends
-a delivery carrying a typed contract, and the publish log shows the headers a typed publish
-produced.
+The in-process harness drives the whole path: `with_headers(&meta)` on the injection builder sends a
+delivery with a typed contract, and the publish log shows the headers a typed publish produced.
 
 ```rust
 --8<-- "examples/typed_headers.rs:drive"
