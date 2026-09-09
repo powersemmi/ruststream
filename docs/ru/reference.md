@@ -1,13 +1,13 @@
 # Справочник API
 
-Полный справочник по Rust API генерирует rustdoc, а публикуется он на docs.rs. Этот сайт объясняет
-концепции и даёт руководства; источник истины по каждому типу, трейту и сигнатуре функции - docs.rs.
+Полный справочник по Rust API генерирует rustdoc, а публикует его docs.rs. Этот сайт объясняет
+концепции и даёт руководства.
 
-- **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Соберите его со всеми фичами,
-  чтобы увидеть модули рантайма, кодеков, AsyncAPI, метрик и conformance:
+- **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Модули рантайма, кодеков,
+  AsyncAPI, метрик и conformance видны в сборке со всеми фичами:
   [docs.rs/ruststream (все фичи)](https://docs.rs/crate/ruststream/latest/features).
 
-Командная утилита `ruststream` - это фича `cli` того же крейта, а не отдельный крейт; см.
+Командная утилита `ruststream` поставляется в том же крейте за фичей `cli`. См.
 [руководство по CLI](guides/cli.md).
 
 ## Локальная сборка справочника
@@ -21,15 +21,15 @@ cargo doc --all-features --open
 | Элемент | Модуль | Назначение |
 |---|---|---|
 | `RustStream` | `ruststream::runtime` | объект приложения |
-| `RunningApp` | `ruststream::runtime` | запущенный сервис: готовность, сигнал fail-fast, мягкая остановка |
-| `Router` | `ruststream::runtime` | группа обработчиков с отложенным связыванием |
-| `Handle`, `subscriber` | `ruststream::runtime` | единственный трейт тела ручного пути и его единственный конструктор монтирования |
+| `RunningApp` | `ruststream::runtime` | дескриптор запущенного сервиса: готовность, сигнал отказа в режиме fail-fast, штатная остановка |
+| `Router` | `ruststream::runtime` | группа обработчиков, которая получает брокер при монтировании |
+| `Handle`, `subscriber` | `ruststream::runtime` | ручная регистрация: трейт тела обработчика и его привязка к источнику подписки |
 | `FromContext`, `State`, `FromRef` | `ruststream::runtime` / `ruststream` | параметры-экстракторы обработчика и derive для внедрения состояния |
 | `Broker`, `Subscribe`, `Subscriber`, `Publisher`, `IncomingMessage` | `ruststream` | контракт брокера |
 | `SubscriptionSource`, `Name` | `ruststream` | дескрипторы подписки |
 | `JsonCodec`, `MsgpackCodec`, `CborCodec` | `ruststream::codec` | кодеки формата передачи |
-| `build_spec` | `ruststream::asyncapi` | генерация AsyncAPI |
+| `build_spec` | `ruststream::asyncapi` | генерация документа AsyncAPI |
 | `Metrics` | `ruststream::metrics` | метрики Prometheus |
-| `TestApp` | `ruststream::testing` | обвязка для юнит-тестов приложения прямо в процессе |
+| `TestApp` | `ruststream::testing` | внутрипроцессная обвязка для юнит-тестов приложения |
 | `TestableBroker` | `ruststream::testing` | контракт тестового транспорта брокера |
-| `harness::run_suite` | `ruststream::conformance` | набор проверок conformance |
+| `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов брокеров |
