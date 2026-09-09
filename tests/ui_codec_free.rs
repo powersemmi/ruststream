@@ -14,9 +14,27 @@
     not(any(feature = "json", feature = "cbor", feature = "msgpack"))
 ))]
 
+/// Whether this run skips the snapshots, and whether skipping them is allowed. The counterpart of
+/// the guard in `tests/ui.rs`; each test binary carries its own, because this one compiles only
+/// where no codec feature resolves.
+///
+/// # Panics
+///
+/// Panics when a run that requires the snapshots is not set up to run them.
+fn skip_snapshots() -> bool {
+    let opted_in = std::env::var("RUN_UI_TESTS").as_deref() == Ok("1");
+    let required = std::env::var("REQUIRE_UI_TESTS").as_deref() == Ok("1");
+    assert!(
+        opted_in || !required,
+        "REQUIRE_UI_TESTS=1 but RUN_UI_TESTS is not 1: this run would have skipped the UI \
+         snapshots and reported success"
+    );
+    !opted_in
+}
+
 #[test]
 fn ui_codec_free() {
-    if std::env::var("RUN_UI_TESTS").as_deref() != Ok("1") {
+    if skip_snapshots() {
         eprintln!("skipping trybuild UI tests; set RUN_UI_TESTS=1 (stable toolchain) to run them");
         return;
     }
