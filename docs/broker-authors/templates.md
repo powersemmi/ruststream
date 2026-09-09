@@ -42,8 +42,8 @@ An API change that breaks a scaffold stops that crate's CI, not a user's first b
    (`cargo generate --path templates/<name> --name smoke`),
 3. runs `cargo check` in the scaffold.
 
-While the supported `ruststream` is still unpublished, the job edits the rendered manifest twice.
-First it rewrites the `ruststream` version requirement to the version being built:
+The job edits the rendered manifest twice. First it rewrites the `ruststream` version requirement to
+the version being built, which is what lets an unpublished pre-release resolve at all:
 `[patch.crates-io]` redirects where a crate comes from, not which versions a requirement accepts,
 and cargo keeps a pre-release out of a range that does not name one. Then it adds the
 `[patch.crates-io]` entry itself, pointing at the local `ruststream` checkout. That is the
