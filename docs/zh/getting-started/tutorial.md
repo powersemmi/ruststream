@@ -165,6 +165,6 @@ Broker crate 加进依赖，在那里构造它，例如用 `NatsBroker::new("nat
 ## 下一步
 
 - [中间件](../guides/middleware.md)：围绕处理器的横切逻辑。
-- [Lifespan](../guides/lifespan.md)：共享状态与启动/关闭钩子。
+- [生命周期](../guides/lifespan.md)：共享状态与启动/关闭钩子。
 - [测试](../guides/testing.md)：在进程内测试你刚写好的处理器。
 - [指标](../guides/metrics.md)：Prometheus 计数器与直方图。

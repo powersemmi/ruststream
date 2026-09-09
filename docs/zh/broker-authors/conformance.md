@@ -141,7 +141,7 @@ async fn passes_request_reply() {
 同样的解法。
 
 内存 Broker 原生实现了每一项能力，五个套件都在进程内通过（见
-[Memory](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明每个套件究竟期望什么。
+[内存 Broker](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明每个套件究竟期望什么。
 
 ## 作者检查清单
 

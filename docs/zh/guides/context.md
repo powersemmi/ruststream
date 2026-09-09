@@ -39,7 +39,7 @@
 是同一个值。运行期间必须改变的值，用内部可变性来保存：`AtomicU64`，或者互斥量保护的映射。
 
 只属于一条消息而不属于整个服务的数据，交给[按投递的上下文](#per-delivery-context)。启动钩子见
-[Lifespan](lifespan.md)。
+[生命周期](lifespan.md)。
 
 ```rust
 --8<-- "examples/context.rs:state"
