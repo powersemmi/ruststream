@@ -84,19 +84,9 @@ impl ScopeDelivery {
         self.scope_id
     }
 
-    /// Pairs the scope's fallback publisher with `address`, or reports why the pair cannot be
-    /// formed.
-    fn pair(&self, address: Option<Arc<str>>) -> Option<DeferredRetry> {
-        let publisher = Arc::clone(self.retry_publisher.as_ref()?);
-        Some(DeferredRetry {
-            publisher,
-            address: address?,
-        })
-    }
-
-    /// Whether this scope wired a deferred-retry publisher at all.
-    fn defers_retries(&self) -> bool {
-        self.retry_publisher.is_some()
+    /// The publisher this scope defers retries through, if it wired one.
+    fn retry_publisher(&self) -> Option<&Arc<dyn ErasedPublisher>> {
+        self.retry_publisher.as_ref()
     }
 }
 
@@ -157,19 +147,25 @@ where
     B: Broker,
     Source: SubscriptionSource<Connected<B>>,
 {
-    let address = if scope.defers_retries() {
-        let reported = source
-            .redelivery_address(connected)
-            .await
-            .map_err(|err| Box::new(err) as BoxError)?
-            .ok_or_else(|| RetryAddressError::Unaddressed {
-                subscription: subscription.to_owned(),
-                source_type: type_name::<Source>(),
-                broker: type_name::<Connected<B>>(),
-            })?;
-        Some(Arc::from(reported.as_str()))
-    } else {
-        None
+    // The publisher and the address are read into the pair together, so a fallback that holds one
+    // without the other is never built.
+    let retry = match scope.retry_publisher() {
+        Some(publisher) => {
+            let reported = source
+                .redelivery_address(connected)
+                .await
+                .map_err(|err| Box::new(err) as BoxError)?
+                .ok_or_else(|| RetryAddressError::Unaddressed {
+                    subscription: subscription.to_owned(),
+                    source_type: type_name::<Source>(),
+                    broker: type_name::<Connected<B>>(),
+                })?;
+            Some(DeferredRetry {
+                publisher: Arc::clone(publisher),
+                address: Arc::from(reported.as_str()),
+            })
+        }
+        None => None,
     };
     let subscriber = source
         .subscribe(connected)
@@ -177,7 +173,7 @@ where
         .map_err(|err| Box::new(err) as BoxError)?;
     Ok((
         subscriber,
-        Arc::new(Delivery::for_subscription(scope, scope.pair(address))),
+        Arc::new(Delivery::for_subscription(scope, retry)),
     ))
 }
 
@@ -191,7 +187,7 @@ pub(crate) fn open_mounted_subscriber(
     scope: &ScopeDelivery,
     subscription: &str,
 ) -> Result<Arc<Delivery>, BoxError> {
-    if scope.defers_retries() {
+    if scope.retry_publisher().is_some() {
         return Err(Box::new(RetryAddressError::Sourceless {
             subscription: subscription.to_owned(),
         }));
