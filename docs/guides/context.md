@@ -31,7 +31,7 @@ type.
     ```
 
 The state type is checked at compile time. A handler that reads the state names the state type as
-the third type parameter of `Context` (`Context<'_, C, S>`) and mounts only on an app with that
+the last type parameter of `Context` (`Context<'_, C, S>`) and mounts only on an app with that
 same state type. A handler that names no state type is generic over it and mounts on any app.
 
 `publish(..)` handlers follow the same rule, with one special case. One that does not read the
