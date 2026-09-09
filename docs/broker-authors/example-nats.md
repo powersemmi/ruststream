@@ -1,16 +1,16 @@
 # A worked example: a NATS broker
 
-This page follows how the real [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats)
+This page shows how the real [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats)
 crate implements the contract on top of the [`async-nats`](https://docs.rs/async-nats) client. It is
 a complete broker in miniature: the `Broker` -> `ConnectedBroker` -> `Closed` ladder, one
-subscription type that serves both Core NATS and JetStream behind a single `SubscribeOptions`
-descriptor, a publisher that forwards headers, and the capabilities the transport actually has.
+subscription type for Core NATS and JetStream behind a single `SubscribeOptions` descriptor, a
+publisher that forwards headers, and the capabilities the transport has.
 
-Read it as an illustration of the contract, not as the crate's source: the code below is trimmed to
-what each rule of [the contract](index.md) asks for, and the crate itself carries the options, the
-tuning and the typed per-delivery context that a real broker grows. Item names follow the
-`async-nats` API, which moves between releases; the client version a broker crate tracks is that
-crate's own business, and its documentation states it.
+Read the page as an illustration of the contract, not as the crate's source: the code below is
+trimmed to what each rule of [the contract](index.md) asks for, and the crate itself also has the
+options, the tuning and the typed delivery context of a real broker. Item names come from the
+`async-nats` API, which changes between releases. A broker crate chooses the client version itself,
+and its documentation states it.
 
 ```toml title="Cargo.toml"
 [features]
@@ -28,8 +28,9 @@ Everything else is the client and its support: `async-nats`, plus `bytes`, `futu
 
 ## Errors
 
-One crate-level enum, variants by source, `#[non_exhaustive]` so new variants are not breaking. The
-sources are boxed `std` errors, so the public API does not leak the `async-nats` error types.
+One enum for the whole crate, variants by source, `#[non_exhaustive]` so that new variants are not a
+breaking change. Each source is stored as a boxed `std` error, so the `async-nats` error types do
+not appear in the public API.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -58,19 +59,20 @@ pub enum NatsError {
 }
 ```
 
-`Closed` carries the subject rather than saying only that the connection is gone: an error a
-service reads at three in the morning names what it could not reach.
+`Closed` names the subject, not just the fact that the connection is gone: an error a service reads
+at three in the morning says what it could not reach.
 
 ## The broker ladder
 
-`new` is synchronous and records only the address. The consuming `connect` dials and returns the
-connected form, which holds the live client directly: there is no "maybe connected" state for its
-own operations to check. Publishers are handed out from the connected form and nowhere else, so a
-publisher without a connection is not representable.
+`new` is synchronous and records only the address. `connect` consumes `self`, establishes the
+connection and returns the connected form: it holds the live client directly, and there is no
+"maybe connected" state for its own operations to check. The connected form hands out publishers,
+and nothing else does, so a publisher without a connection is not representable.
 
-What a publisher does outlive is the connection itself, and that is the one thing types cannot
-settle: it is an aliasing question, not an ordering one. The connection therefore carries a closed
-flag, set before the drain begins, and every aliased handle reads the client through it.
+A publisher can outlive the connection, and types do not rule that out: the question is not the
+order of calls, but that several handles refer to one connection. The connection therefore has a
+closed flag: `shutdown` sets it before calling `drain`, and every such handle reads the client
+through it.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -176,17 +178,18 @@ pub struct ClosedNatsBroker {
 }
 ```
 
-Consuming `self` rules out a second `connect`, and a publish or subscribe after shutdown, on the
-owner path. `shutdown` does all fallible teardown, returns the witness, and never panics. A
-publisher created earlier reports `Closed` afterwards instead of succeeding against a dead
-connection - the aliased-handle contract the lifecycle check verifies.
+On the owner's path, consuming `self` rules out a second `connect` and a publish or subscribe after
+shutdown. `shutdown` does all the teardown that can return an error, returns the witness, and never
+panics. A publisher created earlier returns `Closed` after shutdown instead of publishing
+successfully into a closed connection: that is the contract for such handles, and the `lifecycle`
+check verifies it.
 
 ## One subscription for Core and JetStream
 
-Core NATS is fire-and-forget; JetStream is persisted and acknowledged. Both sit behind a single
-`SubscribeOptions` descriptor and a single `NatsSubscriber`. `SubscribeOptions` is the
-`SubscriptionSource`; the broker dispatches on whether `jetstream(..)` was called. Each builder
-method maps onto one keyword of the `#[subscriber(..)]` decorator.
+Core NATS is fire-and-forget; JetStream stores messages and requires acknowledgement. One
+`SubscribeOptions` descriptor and one `NatsSubscriber` cover both. `SubscribeOptions` is the
+`SubscriptionSource`, and the broker picks the branch by whether `jetstream(..)` was called. Each
+builder method corresponds to one named parameter of the `#[subscriber(..)]` attribute.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -264,8 +267,8 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 }
 ```
 
-Because the `#[subscriber(..)]` macro accepts a builder chain, the whole descriptor sits inline in
-the decorator:
+The `#[subscriber(..)]` macro accepts a builder chain, so the whole descriptor fits inside the
+attribute:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -275,8 +278,8 @@ async fn handle(order: &Order) -> HandlerOutcome {
 }
 ```
 
-By-name subscriptions reuse the same path: implement `Subscribe` by delegating to
-`SubscribeOptions::new(name)`, so `#[subscriber("orders")]` works too.
+Subscriptions by subject name reuse the same path: you can implement `Subscribe` by delegating to
+`SubscribeOptions::new(name)`, and then the `#[subscriber("orders")]` form works too.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -291,9 +294,9 @@ impl Subscribe for ConnectedNatsBroker {
 }
 ```
 
-The connected form's own `subscribe_with` validates the options and branches once
-(`queue_group_ref`, `stream_ref`, and `durable_ref` are small `pub(crate)` getters returning
-`Option<&str>`); the client comes from the connection, which is where the closed check lives:
+The connected form's own `subscribe_with` validates the options and branches exactly once
+(`queue_group_ref`, `stream_ref` and `durable_ref` are small `pub(crate)` getters returning
+`Option<&str>`); it takes the client from the connection, where the closed check runs:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -349,9 +352,9 @@ impl ConnectedNatsBroker {
 
 ## The subscriber
 
-`NatsSubscriber` wraps either an `async-nats` core subscription or a JetStream pull stream, behind
-one `Message` type. `stream` branches with `futures::future::Either` and takes the inner stream out
-on first poll, so it is single-use (the contract allows one `stream` call).
+`NatsSubscriber` wraps either an `async-nats` Core subscription or a JetStream pull stream and hides
+both behind one `Message` type. `stream` branches with `futures::future::Either` and takes the inner
+stream out on the first poll, so it is single-use: the contract allows exactly one `stream` call.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -394,11 +397,11 @@ impl Subscriber for NatsSubscriber {
 
 ## The message
 
-`NatsMessage` is an enum: a core delivery (no ack) or a JetStream delivery (real ack). Both are
-boxed because the wrapped `async-nats` messages are large. `ack`/`nack` on a core delivery return
-`AckError::Unsupported` - a non-error the runtime accepts; on JetStream they confirm, with `nack`
-mapping to `nak` (redeliver) when the handler asks for it and to `term` (drop a poison message)
-when it does not.
+`NatsMessage` is an enum: a Core delivery (no ack) or a JetStream delivery (a real ack). Both
+variants are boxed because the wrapped `async-nats` messages are large. `ack` and `nack` on a Core
+delivery return `AckError::Unsupported`. That is not an error, and the runtime accepts it. On
+JetStream they confirm the delivery, and `nack` maps to `nak` (redeliver) when the handler asks for
+it and to `term` (drop a poison message) when it does not.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -444,9 +447,9 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-The conformance lifecycle check accepts `AckError::Unsupported`, so Core NATS passes it. Each
-message converts its headers once at construction; the two converters are the one spot that
-tracks the `async-nats` version:
+The `lifecycle` check from the conformance suite accepts `AckError::Unsupported`, so Core NATS
+passes it. Each message converts its headers once, at construction; these two functions are the only
+place that depends on the `async-nats` version:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -480,8 +483,9 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 ## Publishing
 
-The publisher shares the connection with the broker that paired it and reads the client through the
-closed check on every publish, forwarding headers when present.
+The publisher and the connected broker on which the policy instantiated it share ownership of the
+connection. On every publish the publisher reads the client through the closed check and forwards
+the headers when they are present.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -514,8 +518,9 @@ impl Publisher for NatsPublisher {
 
 ## Capabilities
 
-NATS supports request-reply natively, so implement `RequestReply` on the publisher and bound the wait
-with the caller's timeout, mapping an elapsed timer to `RequestTimeout`.
+NATS has request-reply at the transport level, so you can implement `RequestReply` on the
+publisher. The wait is bounded by the caller's timeout, and an elapsed timer maps to
+`RequestTimeout`.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -548,34 +553,36 @@ impl RequestReply for NatsPublisher {
 }
 ```
 
-A JetStream pull consumer fetches in batches on the wire, so `BatchSubscriber` reports what the
-transport already does rather than emulating anything: one stream item is one fetch, bounded by a
-batch size and an expiry, and an empty fetch is retried so a batch is never empty. The Core arm of
-the same subscriber has no wire-level batching, so a batch there is whatever the client has already
-buffered locally, capped and never padded with latency the transport does not have. A broker
-without either would leave the capability out and let users reach for the client-side
+A JetStream pull consumer fetches messages in batches at the protocol level, so `BatchSubscriber`
+delivers the transport's own batches instead of emulating them. One stream item is one fetch,
+bounded by a batch size and an expiry. An empty fetch is retried, so a batch never arrives empty.
+The Core arm of the same subscriber has no batching at the protocol level, so a batch there is
+whatever the client has already buffered locally, bounded only by the batch size. A broker that
+has neither leaves the capability unimplemented, and its users batch with the client-side
 [`buffered`](../guides/subscribers.md#batch-subscribers) adapter instead.
 
-`DescribeServer` puts the broker in the generated AsyncAPI document. It sits on the **unconnected**
-broker, because the document is generated from a service that has not dialled anything: it reports
-the configured address. The coordinates the server itself announces (a cluster route, a discovered
-peer) are only knowable once connected, so they belong on an accessor of the connected form, not on
-this trait.
+`DescribeServer` puts the broker in the generated AsyncAPI document. It is implemented on the
+**unconnected** broker, because the document is generated from a service that has not connected to
+anything: the trait reports the configured address. The coordinates the server itself announces (a
+cluster route, a discovered peer) are known only after connecting, so they belong on an accessor
+of the connected form, not on this trait.
 
-Everything else is left out, because the transport does not have it: NATS has no transactions, so
-`TransactionalPublisher` and `OwnedTransactions` are absent, and so is `Seekable` - a JetStream
-consumer, whose stream is a replayable log, is where a NATS `Seekable` would live.
+Everything else is left unimplemented, because the transport does not have it. NATS has no
+transactions, so there is no `TransactionalPublisher` and no `OwnedTransactions`. There is no
+`Seekable` either: a NATS `Seekable` would be built on a JetStream consumer, whose stream is a
+replayable log.
 
 ## The publish policy
 
-`NatsPublisher` is the live half; `PublishPolicy` supplies its declaration half, so registrations
-can name a publisher before any connection exists. Core NATS publishing carries no per-publisher
-options - the subject and the headers travel with each message - so the policy is a unit marker
-(mirroring the in-memory broker's `MemoryPublish`), and pairing only clones the connection handle.
-It is infallible here; a broker that does real work bringing a publisher alive (a transactional
-producer) wraps its failure with `PairError::new`. Because the plain policy is usable as-is, the
-connected form also implements `DefaultPublish` (see [the contract](index.md#publishpolicy)) so a
-`publish(..)` handler compiles without an explicit publisher.
+`NatsPublish` is the policy that constructs the publisher `NatsPublisher`. You specify the policy
+when registering the handler, and it instantiates the publisher at startup, on the connected
+broker. Core NATS publishing has no per-publisher options, because the subject and the headers are
+set on every message. The policy here is an empty structure, and `pair` only copies the connection
+handle, so it cannot return an error. A broker whose publisher creation can return an error (a
+transactional producer) wraps that error with `PairError::new`. Because the plain policy is usable
+as is, the connected form also implements `DefaultPublish` (see
+[the contract](index.md#publishpolicy)), and a handler with `publish(..)` then compiles without an
+explicit publisher.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -596,7 +603,7 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 
 ## The prelude
 
-The crate's prelude is what a mount site globs: the core prelude, then the broker and its
+A mount site imports the crate's prelude in full: the core prelude, then the broker and its
 descriptor, then the policies under the uniform names ([the contract](index.md#broker-prelude)).
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -612,8 +619,8 @@ pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
 
 ## Wiring it into an app
 
-With the broker in hand, an application looks exactly like any other; nothing about the handlers or
-codecs is NATS-specific.
+Once the broker is ready, an application looks like any other: nothing in the handlers or the
+codecs is specific to NATS.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -628,8 +635,9 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## Proving it
 
-Ship an in-process transport implementing `TestableBroker` on its connected form under a `testing`
-feature (its connected type registered with `register_testable_broker!`) that does core routing only (a subject matcher fanning published
-messages out to subscribers), then run the conformance suite against it. The transport must not
-simulate JetStream cursors, redelivery timers, or retention; those are checked end to end against a
-real `nats-server`. See [Conformance](conformance.md).
+Ship an in-process transport under a `testing` feature that does basic routing only: a subject
+matcher that delivers a published message to every subscriber of the subject at once. It
+implements `TestableBroker` on its connected form, and that type is registered with
+`register_testable_broker!`. Run the conformance suite against it. Such a transport must not
+simulate JetStream cursors, redelivery timers or retention: those are checked by the end-to-end
+suite against a real `nats-server`. See [Conformance](conformance.md).
