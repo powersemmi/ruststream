@@ -30,7 +30,7 @@ ruststream = { version = "0.7", default-features = false }
 ## Ошибки
 
 Один enum на весь крейт, варианты по источникам, `#[non_exhaustive]` - чтобы новые варианты не
-ломали совместимость. Источники хранятся как боксированные ошибки `std`, поэтому публичный API не
+были ломающим изменением. Источники хранятся как боксированные ошибки `std`, поэтому публичный API не
 протекает типами ошибок `async-nats`.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -297,7 +297,7 @@ impl Subscribe for ConnectedNatsBroker {
 
 Собственный `subscribe_with` подключённой формы проверяет опции и разветвляется ровно один раз
 (`queue_group_ref`, `stream_ref` и `durable_ref` - маленькие геттеры `pub(crate)`, возвращающие
-`Option<&str>`); клиента он берёт из соединения, где и живёт проверка на закрытие:
+`Option<&str>`); клиента он берёт из соединения, где эта проверка на закрытие и выполняется:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -575,7 +575,7 @@ NATS-варианта `Seekable` занял бы consumer JetStream, поток 
 
 `NatsPublisher` - живая половина, а декларативную половину даёт `PublishPolicy`: благодаря ей
 регистрация может назвать издателя ещё до того, как появится хоть какое-то соединение. Публикация в
-Core NATS не несёт опций на уровне издателя (субъект и заголовки едут вместе с каждым сообщением),
+Core NATS не несёт опций на уровне издателя (субъект и заголовки передаются с каждым сообщением),
 поэтому политика здесь - unit-маркер (по образцу `MemoryPublish` у in-memory брокера), а сопряжение
 только клонирует хендл соединения. Упасть оно здесь не может; брокер, которому для оживления
 издателя нужна настоящая работа (например, транзакционный продюсер), оборачивает свою неудачу через

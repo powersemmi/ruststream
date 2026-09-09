@@ -56,6 +56,16 @@ handed out from the connected form, clones of a shareable broker) must surface a
 used after shutdown - never a silent success against a dead connection. The lifecycle check
 drives that path too.
 
+The in-memory broker walks the whole ladder in a few lines, and every sketch below it on this page
+is cut from that same file, so a contract that moves takes the page's code with it:
+
+```rust
+--8<-- "src/memory/mod.rs:ladder"
+```
+
+`ClosedMemoryBroker` is the witness carrying teardown diagnostics the paragraph above describes:
+it reports how many subscriber registrations the shutdown dropped.
+
 ### `Subscribe`
 
 Implement `Subscribe` on the connected form to support subscribing by name. This is what
@@ -67,6 +77,12 @@ pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
+```
+
+Opening a subscription is all it has to do:
+
+```rust
+--8<-- "src/memory/mod.rs:subscribe"
 ```
 
 ### `Subscriber`
@@ -98,7 +114,11 @@ pub trait IncomingMessage: Send + Sync {
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
-    // Defaulted: a plain nack(true). Override when the transport has native
+    // Defaulted: false. The runtime reads this first and never calls
+    // nack_after without it, so override the pair together.
+    fn supports_nack_after(&self) -> bool;
+
+    // Defaulted: AckError::Unsupported. Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
     // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
@@ -109,8 +129,27 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-A broker that overrides neither defaulted method still works with every runtime feature:
-`retry_after` falls back to an immediate requeue, and keyed lanes rotate keyless messages.
+Delayed redelivery is two methods, and `supports_nack_after` is the one the runtime asks:
+overriding `nack_after` alone leaves it at `false`, and the override is never called. The
+`nack_after` default answers `AckError::Unsupported` rather than quietly settling as a plain
+`nack(true)`, because a transport that cannot hold a message back should say so instead of turning
+a back-off into a redelivery storm.
+
+A broker that overrides none of the three still works with every runtime feature. Where there is no
+native delayed redelivery the runtime carries `retry_after` itself: it drops the delivery and
+re-publishes a copy to the same source after the delay, through the publisher the application wired
+with `BrokerScope::retry_via`, carrying an incremented retry-count header. Only with no such
+publisher does the delay degrade to an immediate requeue. Keyed lanes rotate keyless messages.
+
+What "overrides nothing" gets you is not something a broker can be pointed at to show - every
+broker in this workspace overrides these - so the core pins it with a test, and this is that test:
+
+```rust
+--8<-- "src/message.rs:incoming_defaults"
+```
+
+`nack_after` reports that the delay cannot be honoured rather than quietly settling as a plain
+`nack(true)`, which is what lets the runtime tell the two cases apart and run its own fallback.
 
 ### `Publisher`
 
@@ -182,6 +221,12 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
+Both halves, on a broker whose policy carries no options at all:
+
+```rust
+--8<-- "src/memory/mod.rs:publish_policy"
+```
+
 ## Subscription sources
 
 `Subscribe` covers the by-name case. When a subscription needs broker-specific options (a consumer
@@ -213,13 +258,8 @@ so one definition can be mounted on two brokers.
 A kind identified by a name and nothing else also implements `FromName`, whose single
 constructor builds it from that name:
 
-<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
 ```rust
-impl FromName for OrdersStream {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name)
-    }
-}
+--8<-- "src/memory/mod.rs:from_name"
 ```
 
 `#[subscriber(OrdersStream)]` is then legal: the attribute fixes the kind, and the mount site
@@ -613,7 +653,11 @@ Ship an in-process transport implementing `TestableBroker` on its **connected fo
 `testing` feature (registered with `register_testable_broker!` for that connected type, since the
 harness connects every broker before recovering its transport) so users can unit-test handlers
 against your broker with the `TestApp` harness. The transport does **core routing only**: it dispatches published messages to matching
-subscribers and treats ack/nack as effectively a no-op. Do not simulate broker-specific semantics
+subscribers, and it answers `ack` / `nack` the way the real transport answers - in memory where the
+transport acknowledges (`nack(requeue = true)` puts the delivery back), with
+`AckError::Unsupported` where it cannot acknowledge at all (ZeroMQ, MQTT `QoS 0`, Redis pub/sub).
+A stand-in that claims a settlement its transport never performs is what makes a handler's retry
+pass in a test and lose the message in production. Do not simulate broker-specific semantics
 (durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
 end against a real server.
 
@@ -629,3 +673,70 @@ reaction has settled), and routes delayed redeliveries through `Coordinator::sch
 That one type then works with both `TestApp` and the conformance suite. See
 [Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
 prove the implementation with `run_suite` and the `lifecycle` ladder check.
+
+### Writing one you can trust
+
+A stand-in is the type a service's whole test suite runs against, so every difference between it
+and the real transport is a green test for behaviour production does not have. The differences that
+matter are not exotic ones, and each rule below costs about one test.
+
+**Run the core's contract suites against the stand-in, not only against a server.** The suites are
+written against the traits and do not care which side of the wire answers them, so the stand-in can
+sit in the same harness a real broker does - at the price of a `#[tokio::test]`:
+
+```rust
+--8<-- "tests/conformance_self.rs:run_suite"
+```
+
+Run `lifecycle` first. It walks `new` -> `connect` -> subscribe -> publish -> ack -> `shutdown` and
+then asks what a stand-in almost never gets asked: does a publisher created before the shutdown
+fail afterwards? A real client answers "not connected"; a stand-in whose publish is a channel send
+has no reason to, and accepts the message instead.
+
+```rust
+--8<-- "tests/conformance_self.rs:lifecycle"
+```
+
+Add every `capabilities::*` suite your capabilities justify on the same footing.
+
+**Offer the capability surface the real broker offers.** The `testing` feature is for tests, and a
+release build turns it off, which is what makes the two directions unequal. Falling short is the
+one that costs: a capability the real broker has and the stand-in lacks cannot be mounted in
+process at all, so the behaviour behind it goes untested. Going over is a smaller matter - a
+transaction or a request-reply that only the stand-in offers fails to compile in your own release
+build, which is annoying and caught early.
+
+**Settle the way the transport settles.** Where the real `ack` reports `AckError::Unsupported` - a
+fire-and-forget transport, an at-most-once quality of service - the stand-in reports it too.
+Answering `Ok(())` to keep a suite quiet is how a handler returning `HandlerOutcome::retry()` passes
+in process and loses the message in production. The suites accept the honest answer.
+
+**Reproduce what the client does; do not fake what the broker does.** The split is not about
+effort, it is about which side the behaviour lives on. Competing consumers, group distribution,
+correlation and reply routing, and buffering until commit are client-side or routing-level, and an
+in-process copy of them is exact. Cluster atomicity, fencing, broker-held timeouts and
+exactly-once are broker-side, and an in-process copy of them is fiction.
+
+Competing consumers is the one to get right, because getting it wrong looks like success: handing
+every message to every subscriber of a queue is a fan-out, not a queue. Two workers sharing one
+then each run the whole stream, and a test that counts what was processed sees the work done and
+reports no error.
+
+**Give every gap a comment naming the assertion it makes unsound** - not that the feature is
+missing, but which test a reader may no longer trust, and what does cover it:
+
+<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+```rust
+// No fencing: a second producer claiming the same transactional id is not rejected here, so a
+// test cannot assert the first one is fenced out. `capabilities::transactions` against a real
+// server is what covers that.
+```
+
+**Pin the gap with a test as well.** A comment goes stale the first time someone "fixes" the
+stand-in to route what it deliberately does not; a test asserting the handler is *not* reached
+fails that day and explains itself.
+
+**Mount the stand-in with the production wiring.** Your own subscription sources and publish
+policies have to work against it unchanged, so a service tests the routes file it ships. If a user
+must swap `OrdersStream` for something else to get a test running, the test no longer covers the
+mount.

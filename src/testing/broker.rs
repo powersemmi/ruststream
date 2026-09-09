@@ -19,6 +19,15 @@ use super::Coordinator;
 /// [`TestApp`](super::TestApp) harness (application unit tests) and
 /// [`conformance::harness::run_suite`](crate::conformance::harness::run_suite) (routing self-check).
 ///
+/// The stand-in answers settlement the way the real transport answers it. A transport that cannot
+/// acknowledge (`ZeroMQ`, MQTT `QoS 0`, Redis pub/sub, Core NATS) reports
+/// [`AckError::Unsupported`](crate::AckError::Unsupported) from its deliveries in production, so
+/// the stand-in reports it too: both the harness and
+/// [`run_suite`](crate::conformance::harness::run_suite) accept that answer, while a stand-in that
+/// claims success makes a handler's retry look settled in a test and lose the message in
+/// production. Either way the delivery is released to [`Coordinator::consumed`] once (from its
+/// `Drop`, which a refused settlement reaches like any other).
+///
 /// To plug into the harness, the broker also:
 /// - calls [`Coordinator::enqueued`] on every live enqueue into a subscriber and
 ///   [`Coordinator::consumed`] when a delivery is acked, nacked, or dropped (so the harness can tell

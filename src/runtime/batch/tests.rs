@@ -1,16 +1,19 @@
 use std::future::ready;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
+use bytes::Bytes;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
-use super::super::dispatch::Delivery;
+use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
 use super::super::failure::ErrorShutdown;
 use super::super::input::Decoded;
 use super::*;
 use crate::codec::JsonCodec;
-use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage};
+use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
@@ -141,7 +144,7 @@ async fn per_element_outcomes_carry_delays() {
         let outcomes: Vec<HandlerOutcome> = batch
             .iter()
             .map(|n| match n {
-                1 => HandlerOutcome::retry_after(std::time::Duration::from_secs(5)),
+                1 => HandlerOutcome::retry_after(Duration::from_secs(5)),
                 _ => HandlerOutcome::ack(),
             })
             .collect();
@@ -157,7 +160,7 @@ async fn per_element_outcomes_carry_delays() {
 
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
-    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    tokio::time::advance(Duration::from_secs(5)).await;
     tokio::task::yield_now().await;
 
     let redelivered = stream.next().await.unwrap().unwrap();
@@ -371,7 +374,7 @@ async fn a_refused_ack_does_not_abort_the_batch() {
         batch,
         BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
-        &TaskTracker::new(),
+        &Delivery::empty(),
     )
     .await;
 
@@ -395,7 +398,7 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
         batch,
         BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
-        &TaskTracker::new(),
+        &Delivery::empty(),
     )
     .await;
     drop(guard);
@@ -437,7 +440,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
         vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
         BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
-        &TaskTracker::new(),
+        &Delivery::empty(),
     )
     .await;
     drop(guard);
@@ -558,5 +561,221 @@ async fn a_failed_construction_is_settled_and_the_rest_reach_the_batch() {
     assert_eq!(
         seen.lock().unwrap().as_slice(),
         [b"one".to_vec(), b"two".to_vec()],
+    );
+}
+
+/// A delivery with no native delayed redelivery: `supports_nack_after` stays at the trait default
+/// (`false`), which is what nearly every broker ships, so a `retry_after` settlement has to take
+/// the runtime's broker-agnostic fallback. The memory broker's own message answers `true` and
+/// would settle natively, hiding the fallback these tests are about.
+struct PlainMessage {
+    payload: Bytes,
+    dropped: Arc<AtomicUsize>,
+}
+
+impl PlainMessage {
+    /// One delivery per payload, all counting their drops into `dropped`.
+    fn batch(payloads: &[&'static [u8]], dropped: &Arc<AtomicUsize>) -> Vec<Self> {
+        payloads
+            .iter()
+            .map(|payload| Self {
+                payload: Bytes::from_static(payload),
+                dropped: Arc::clone(dropped),
+            })
+            .collect()
+    }
+}
+
+impl IncomingMessage for PlainMessage {
+    fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
+        EMPTY.get_or_init(HeaderMap::new)
+    }
+
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
+    }
+
+    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        if !requeue {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+        ready(Ok(()))
+    }
+}
+
+/// The delay every fallback test defers by. Its only requirement is being far enough from zero
+/// that the paused clock has to move for the deferred copy to land.
+const DEFER: Duration = Duration::from_secs(30);
+
+/// Reads the `expected` deferred copies the fallback re-published, as (payload, retry count)
+/// pairs sorted by payload, and asserts nothing else was published.
+///
+/// The clock is paused, so it advances only when the runtime runs dry - which is exactly when the
+/// deferred task is parked on its timer. The outer timeout is another such timer, far past the
+/// fallback's, so a lost copy fails the test instead of hanging it.
+async fn deferred_copies(
+    sub: &mut MemorySubscriber,
+    expected: usize,
+) -> Vec<(Vec<u8>, Option<String>)> {
+    let mut stream = std::pin::pin!(sub.stream());
+    let mut copies = Vec::with_capacity(expected);
+    for _ in 0..expected {
+        let msg = tokio::time::timeout(DEFER * 100, stream.next())
+            .await
+            .expect("the deferred re-publish is the only retry an unsettled delivery gets")
+            .expect("the subscriber outlives the deferred publish")
+            .expect("the memory broker delivers what it accepted");
+        copies.push((
+            msg.payload().to_vec(),
+            msg.headers().get_str(RETRY_COUNT_HEADER).map(str::to_owned),
+        ));
+    }
+    assert!(futures::poll!(stream.next()).is_pending());
+    copies.sort();
+    copies
+}
+
+/// A uniform `retry_after` over a batch of deliveries without native delayed redelivery: every
+/// element is dropped and re-published after the delay, rather than settled with an unsupported
+/// `nack_after` and lost. Covers the uniform arm of `settle_batch`.
+#[tokio::test(start_paused = true)]
+async fn a_uniform_batch_retry_after_defers_a_republish() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
+        HandlerOutcome::retry_after(DEFER)
+    });
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let state = ();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    handler
+        .handle_batch(PlainMessage::batch(&[b"1", b"2"], &dropped), &mut ctx)
+        .await;
+
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        deferred_copies(&mut sub, 2).await,
+        [
+            (b"1".to_vec(), Some("1".to_owned())),
+            (b"2".to_vec(), Some("1".to_owned())),
+        ],
+    );
+}
+
+/// A per-element `retry_after` next to an ack: only the deferred element comes back, and only
+/// after the delay. Covers the per-element arm of `settle_batch`.
+#[tokio::test(start_paused = true)]
+async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
+        vec![HandlerOutcome::retry_after(DEFER), HandlerOutcome::ack()]
+    });
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let state = ();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    handler
+        .handle_batch(PlainMessage::batch(&[b"1", b"2"], &dropped), &mut ctx)
+        .await;
+
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        deferred_copies(&mut sub, 1).await,
+        [(b"1".to_vec(), Some("1".to_owned()))],
+    );
+}
+
+/// An element the codec could not decode, under a `retry_after` decode policy: the rejection is
+/// deferred rather than dropped on the floor. Covers the decode-rejection settle in
+/// `decode_batch`.
+#[tokio::test(start_paused = true)]
+async fn a_deferred_decode_rejection_is_republished() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
+        HandlerOutcome::ack()
+    })
+    .with_decode(FailurePolicy::RetryAfter(DEFER));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let state = ();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    handler
+        .handle_batch(
+            PlainMessage::batch(&[b"not json", b"1"], &dropped),
+            &mut ctx,
+        )
+        .await;
+
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        deferred_copies(&mut sub, 1).await,
+        [(b"not json".to_vec(), Some("1".to_owned()))],
+    );
+}
+
+/// A batch handler over self-constructed payload views that defers every element it is given,
+/// for the split-batch test below.
+struct DeferFrames;
+
+impl<'p> SliceHandler<Frame<'p>> for DeferFrames {
+    fn handle_slice(
+        &self,
+        batch: &[Frame<'p>],
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = BatchResult> {
+        ready(BatchResult::PerElement(
+            batch
+                .iter()
+                .map(|_| HandlerOutcome::retry_after(DEFER))
+                .collect(),
+        ))
+    }
+}
+
+/// A batch whose rejected element was deferred past the handler call, with both the rejection and
+/// the handler's own outcome asking for `retry_after`: each takes the fallback on its own. Covers
+/// both settles in `settle_split_batch` - the rejected index and the accepted remainder.
+#[tokio::test(start_paused = true)]
+async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    // The middle element is empty, which `Frame` refuses to construct from.
+    let handler = DeserializedBatch::<_, Frame<'static>, _>::over(DeferFrames)
+        .with_decode(FailurePolicy::RetryAfter(DEFER));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let state = ();
+    let headers = HeaderMap::new();
+    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
+    handler
+        .handle_batch(
+            PlainMessage::batch(&[b"one", b"", b"two"], &dropped),
+            &mut ctx,
+        )
+        .await;
+
+    assert_eq!(dropped.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        deferred_copies(&mut sub, 3).await,
+        [
+            (Vec::new(), Some("1".to_owned())),
+            (b"one".to_vec(), Some("1".to_owned())),
+            (b"two".to_vec(), Some("1".to_owned())),
+        ],
     );
 }

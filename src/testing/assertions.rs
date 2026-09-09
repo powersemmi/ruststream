@@ -325,7 +325,14 @@ impl<'a> SubscriberAssertions<'a> {
     }
 
     /// Asserts the most recent call settled with `outcome`'s status (any continuation on the
-    /// expected value is ignored: the harness compares how the broker settled).
+    /// expected value is ignored: the harness compares the settlement itself).
+    ///
+    /// The settlement recorded is the one the dispatcher applied to the delivery, which is what
+    /// the handler answered. A transport that cannot acknowledge refuses it with
+    /// [`AckError::Unsupported`](crate::AckError::Unsupported) and the dispatcher logs the refusal,
+    /// so a requeue such a transport cannot perform still reads back here as a requeue; what shows
+    /// the difference is the redelivery it does not produce, counted by
+    /// [`assert_called`](Self::assert_called).
     ///
     /// A batch settles per element, so this asserts EVERY element of the most recent batch settled
     /// that way - which is what a uniform answer (`HandlerOutcome::ack()` for the whole slice)

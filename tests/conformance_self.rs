@@ -15,6 +15,7 @@ async fn memory_broker_passes_conformance_suite() {
 }
 // --8<-- [end:run_suite]
 
+// --8<-- [start:lifecycle]
 // `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked
 // (`Fn(&str) -> _` / `Fn(&B) -> _`), so a bare method path - which binds one concrete lifetime -
 // would not type-check.
@@ -28,6 +29,7 @@ async fn memory_broker_passes_lifecycle() {
     )
     .await;
 }
+// --8<-- [end:lifecycle]
 
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

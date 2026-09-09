@@ -12,6 +12,28 @@ use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
 use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
 
+/// What a test delivery's transport does when asked to settle. The three cases differ in kind,
+/// not degree, so they are variants rather than a flag plus an error slot.
+#[derive(Clone, Copy)]
+enum Settlement {
+    /// Settlement lands, as on a broker with acknowledgements.
+    Accepted,
+    /// The transport has no settlement at all (MQTT `QoS` 0, `ZeroMQ`, Redis pub/sub).
+    Unsupported,
+    /// The transport does settle, but the broker rejected this one.
+    Rejected,
+}
+
+impl Settlement {
+    fn apply(self) -> Result<(), AckError> {
+        match self {
+            Self::Accepted => Ok(()),
+            Self::Unsupported => Err(AckError::Unsupported),
+            Self::Rejected => Err(AckError::Timeout),
+        }
+    }
+}
+
 /// A delivery without native delayed redelivery: `supports_nack_after` stays at the trait
 /// default (`false`), and the default `nack_after` would error. It records how it was settled
 /// so a test can assert the fallback dropped it rather than calling `nack(true)`.
@@ -20,6 +42,7 @@ struct PlainMessage {
     headers: HeaderMap,
     // 0 = unset, 1 = nack(false) (dropped), 2 = nack(true) (requeued).
     settled: Arc<AtomicU8>,
+    settlement: Settlement,
 }
 
 impl IncomingMessage for PlainMessage {
@@ -32,13 +55,13 @@ impl IncomingMessage for PlainMessage {
     }
 
     fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-        ready(Ok(()))
+        ready(self.settlement.apply())
     }
 
     fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         self.settled
             .store(if requeue { 2 } else { 1 }, Ordering::SeqCst);
-        ready(Ok(()))
+        ready(self.settlement.apply())
     }
 }
 
@@ -123,6 +146,7 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
             payload: Bytes::from_static(payload.as_bytes()),
             headers: HeaderMap::new(),
             settled: Arc::new(AtomicU8::new(0)),
+            settlement: Settlement::Accepted,
         })
     }));
     ScriptedSubscriber { items }
@@ -160,6 +184,14 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
 }
 
 fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage {
+    plain_on(name_headers, settled, Settlement::Accepted)
+}
+
+fn plain_on(
+    name_headers: &[(&str, &str)],
+    settled: &Arc<AtomicU8>,
+    settlement: Settlement,
+) -> PlainMessage {
     let mut headers = HeaderMap::new();
     for (k, v) in name_headers {
         headers.insert((*k).to_owned(), Bytes::copy_from_slice(v.as_bytes()));
@@ -168,6 +200,7 @@ fn plain(name_headers: &[(&str, &str)], settled: &Arc<AtomicU8>) -> PlainMessage
         payload: Bytes::from_static(b"body"),
         headers,
         settled: Arc::clone(settled),
+        settlement,
     }
 }
 
@@ -300,6 +333,56 @@ async fn fallback_defers_republish_to_source_with_incremented_retry_count() {
         Some("1"),
         "the first deferred republish must carry retry-count 1",
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn fallback_defers_republish_when_the_transport_cannot_settle() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    let settled = Arc::new(AtomicU8::new(0));
+    let msg = plain_on(&[], &settled, Settlement::Unsupported);
+    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+        .await
+        .expect("an unsettleable transport is not a settle failure");
+    // The drop is still attempted; the transport just has nothing to drop it with.
+    assert_eq!(settled.load(Ordering::SeqCst), 1);
+
+    tokio::time::advance(Duration::from_secs(30)).await;
+    tokio::task::yield_now().await;
+
+    let mut stream = std::pin::pin!(sub.stream());
+    let redelivered = stream
+        .next()
+        .await
+        .expect("the deferred copy is the only way the message survives here")
+        .unwrap();
+    assert_eq!(redelivered.payload(), b"body");
+    assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), Some("1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_rejected_settle_aborts_the_fallback() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("orders");
+    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+
+    let settled = Arc::new(AtomicU8::new(0));
+    let msg = plain_on(&[], &settled, Settlement::Rejected);
+    let failed = settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+        .await
+        .expect_err("a broker that rejected the settle must be reported");
+    assert!(matches!(failed, AckError::Timeout));
+    // The abort happens at the settle, so the drop was attempted before it was reported.
+    assert_eq!(settled.load(Ordering::SeqCst), 1);
+
+    tokio::time::advance(Duration::from_secs(30)).await;
+    tokio::task::yield_now().await;
+
+    // The original is still the broker's to redeliver, so a deferred copy would duplicate it.
+    let mut stream = std::pin::pin!(sub.stream());
+    assert!(futures::poll!(stream.next()).is_pending());
 }
 
 #[tokio::test(start_paused = true)]

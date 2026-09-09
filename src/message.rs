@@ -325,7 +325,11 @@ mod tests {
         use crate::AckError;
 
         // A minimal IncomingMessage that overrides nothing optional, pinning the trait defaults
-        // (the in-memory and broker impls override them).
+        // (the in-memory and broker impls override them). The broker-authors page shows this
+        // test, because it is the one place the defaults are visible: every broker in the
+        // workspace overrides them, so nothing else can be pointed at to say what "do nothing"
+        // gets you, and a default that changes under the page fails here.
+        // --8<-- [start:incoming_defaults]
         struct Stub {
             payload: Vec<u8>,
             headers: HeaderMap,
@@ -363,5 +367,6 @@ mod tests {
             stub.nack_after(Duration::from_secs(1)).await,
             Err(AckError::Unsupported)
         ));
+        // --8<-- [end:incoming_defaults]
     }
 }
