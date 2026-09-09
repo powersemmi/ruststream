@@ -1,19 +1,16 @@
 # Логирование
 
-RustStream шлёт структурированные события [`tracing`](https://docs.rs/tracing) на всём пути
-диспетчеризации, при публикации и на переходах жизненного цикла сервиса. Сам он не ставит ни одного
-подписчика `tracing` - этот выбор за приложением. Фича `logging` предлагает готовый вариант: цветной
-консольный подписчик, управляемый через `RUST_LOG`.
+RustStream выдаёт структурированные события [`tracing`](https://docs.rs/tracing) при
+диспетчеризации, при публикации и на переходах жизненного цикла сервиса. Подписчика событий
+`tracing` ставит само приложение. Фича `logging` предлагает готовый вариант: цветной консольный
+подписчик, управляемый через `RUST_LOG`.
 
-Это не то же самое, что middleware [`TracingLayer`](middleware.md#built-in-layers). `TracingLayer`
-*порождает* событие на каждое сообщение, а фича `logging` ставит подписчика, который *отрисовывает*
-события (и собственные события RustStream, и ваши) в терминал. Чтобы видеть логи по каждому
-сообщению, используйте их вместе.
+Событие на каждое сообщение выдаёт middleware [`TracingLayer`](middleware.md#built-in-layers), а
+подписчик из фичи `logging` его печатает.
 
 ## Со сгенерированным CLI
 
-Когда фича `logging` включена, CLI из `#[ruststream::app]` сам вызывает установку логгера на команде
-`run`, поэтому сгенерированный по шаблону сервис логирует сразу:
+С включённой фичей `logging` CLI из `#[ruststream::app]` ставит подписчика сам, по команде `run`.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging"] }
@@ -23,12 +20,12 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging
 RUST_LOG=ruststream=debug,info cargo run -- run
 ```
 
-Вывод идёт в **stderr** (чтобы stdout оставался чистым для `asyncapi gen`), а цвета включаются
-автоматически, когда stderr - это терминал.
+Подписчик пишет в **stderr**, чтобы stdout оставался чистым для `asyncapi gen`. Цвета включаются,
+когда stderr - это терминал.
 
 ## Вручную
 
-Установите логгер по умолчанию один раз, в самом начале `main`:
+Поставьте подписчика по умолчанию один раз, в самом начале `main`:
 
 <!-- inline-rust: manual logger-init fragment; the shipped logging example uses the automatic #[ruststream::app] installer, so there is no compiled call site for the by-hand path -->
 ```rust
@@ -36,8 +33,7 @@ ruststream::logging::init()?;
 tracing::info!("service starting");
 ```
 
-`init` берёт фильтр из `RUST_LOG`, а если переменной нет - откатывается на `info`. Умолчания
-настраиваются через билдер `Logging`:
+Без `RUST_LOG` фильтр - `info`. Изменить умолчания можно через билдер `Logging`:
 
 <!-- inline-rust: manual Logging-builder fragment; the by-hand init path has no compiled call site (the logging example uses the automatic installer) -->
 ```rust
@@ -49,13 +45,11 @@ Logging::new()
     .try_init()?;
 ```
 
-`init` и `try_init` никогда не заменяют уже установленного подписчика: повторный вызов (или вызов
-после того, как подписчика поставил другой крейт) возвращает `LoggingInitError::AlreadyInitialized`,
-а не паникует.
+`init` и `try_init` не заменяют подписчика, которого уже поставили вы или другой крейт: такой вызов
+возвращает `LoggingInitError::AlreadyInitialized`.
 
 ## Свой подписчик
 
-Фича `logging` - необязательный сахар. RustStream только шлёт события `tracing`, поэтому подойдёт
-любой подписчик: поставьте `tracing-subscriber`, `tracing-bunyan-formatter`, слой OpenTelemetry или
-то, что принято в вашем стеке, - через него потекут те же самые события. В этом случае фичу `logging`
-можно не включать.
+Вместо фичи `logging` вы можете поставить любого подписчика событий `tracing`: собранного на крейте
+`tracing-subscriber`, на `tracing-bunyan-formatter`, со слоем OpenTelemetry или принятого в вашем
+стеке.
