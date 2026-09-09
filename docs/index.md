@@ -1,16 +1,16 @@
 # RustStream
 
-**RustStream** subscribes a Rust service to event streams and publishes to them without binding the
-service to one message broker. The core is traits and a router runtime; codecs, AsyncAPI generation,
-Prometheus metrics, and a conformance harness for broker authors ship with it.
+**RustStream** subscribes a Rust service to event streams and publishes messages to them. The
+service is not bound to one message broker. The core is traits and a router runtime. Codecs,
+AsyncAPI generation, Prometheus metrics, and a conformance harness for broker authors ship with it.
 
 Two architectural commitments shape the framework:
 
 1. **A real interface for third-party brokers.** The core holds only traits and types, with zero
-   broker dependencies. Each broker is an independent crate, and the contract is checked by the
-   `conformance` harness.
+   broker dependencies. Each broker is an independent crate. The `conformance` harness checks the
+   contract.
 2. **Broker-specific config stays in broker crates.** The core carries no broker-specific config or
-   defaults. Each broker crate owns its own `Config`, so an upstream change hits one broker crate,
+   defaults. Each broker crate owns its own `Config`. An upstream change affects only that crate,
    not the framework.
 
 === "Macros"
@@ -25,19 +25,19 @@ Two architectural commitments shape the framework:
     --8<-- "examples/manual/quickstart.rs"
     ```
 
-`#[ruststream::app]` generates `main`, so `cargo run -- run` starts the service and
-`cargo run -- asyncapi gen` prints its AsyncAPI document - no runtime boilerplate.
+`#[ruststream::app]` generates `main` with all the runtime boilerplate. `cargo run -- run` starts
+the service, and `cargo run -- asyncapi gen` prints its AsyncAPI document.
 
 ## Design principles
 
-- **Fully async, tokio-based.** No blocking APIs in the public surface.
-- **Generic core, no `dyn` in the contract.** Associated types and native `async fn in trait`;
-  type erasure, where a service needs it, lives in the runtime rather than the contract.
-- **Subscribers are `Stream`s, not callbacks.** Back-pressure for free; the callback DX is built on
-  top in the runtime.
-- **Ack consumes `self`.** You cannot ack twice - the compiler enforces it.
-- **Capability traits for optional features** (`BatchSubscriber`, `TransactionalPublisher`,
-  `RequestReply`, `Partitioned`, `Seekable`) - never forced into the mandatory interface.
+- **Fully async, tokio-based.** The public API has no blocking calls.
+- **Generic core, no `dyn` in the contract.** The contract is built on associated types and native
+  `async fn in trait`. The runtime performs type erasure where a service needs it.
+- **Subscribers are `Stream`s, not callbacks.** The `Stream` itself provides back-pressure. The
+  runtime builds callbacks on top of it.
+- **Ack consumes `self`.** A second ack is a compile error.
+- **Capability traits for optional features.** `BatchSubscriber`, `TransactionalPublisher`,
+  `RequestReply`, `Partitioned`, and `Seekable` are not part of the mandatory interface.
 
 ## Where to go next
 
@@ -56,7 +56,8 @@ Two architectural commitments shape the framework:
 ## Scope of this repository
 
 This site documents `ruststream`, the broker-agnostic core crate. Concrete brokers (NATS, Kafka,
-RabbitMQ, Redis, MQTT, and more) live in their own crates and pull `ruststream` from crates.io.
+RabbitMQ, Redis, MQTT, and more) ship as separate crates. Each of them depends on `ruststream` from
+crates.io.
 
 The Rust API reference is published on [docs.rs](https://docs.rs/ruststream) - see
 [API reference](reference.md).

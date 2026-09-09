@@ -1,9 +1,9 @@
 # Memory
 
-`MemoryBroker`, behind the `memory` feature, is a complete broker that runs entirely inside your
-process: the one to reach for when a queue belongs to a single application rather than to a
-network, with no external service involved. The default `cargo generate` template
-(`templates/memory`) uses it, and a fresh project runs with zero dependencies.
+`MemoryBroker`, behind the `memory` feature, is a complete broker that runs inside your process: it
+keeps publications in a per-topic log, like Kafka. It suits a queue that belongs to a single
+application rather than to a network. The default `cargo generate` template (`templates/memory`)
+uses it, so a fresh project runs with no external dependencies.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
@@ -18,95 +18,86 @@ let broker = MemoryBroker::new();
 
 ## The prelude a mount site imports { #prelude }
 
-`ruststream::memory::prelude` is this broker's glob, shaped like every broker crate's: it
-re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
-`MemoryError`, the context keys `MemoryContext` / `MemoryBatchContext` / `Position` /
-`SeekHandle` and `MemoryPosition`), then the publish policies under the uniform names a mount
-site writes - `Publish`, `TransactionalPublish` and `Request`, all three aliases of
-`MemoryPublish` / `MemoryRequest`. Because the in-memory publisher carries both transaction
-kinds, `TransactionalPublish` is the same policy as `Publish` here; a broker with a separate
-transactional configuration aliases a different one.
+`ruststream::memory::prelude` is this broker's glob, built like the prelude of every broker crate.
+It re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
+`MemoryError`, `MemoryPosition` and the context keys `MemoryContext` / `MemoryBatchContext` /
+`Position` / `SeekHandle`), then the publish policies under the uniform names `Publish`,
+`TransactionalPublish` and `Request`. All three are aliases of `MemoryPublish` and `MemoryRequest`.
+This broker's publisher implements both transaction kinds, so `TransactionalPublish` here is the
+same policy as `Publish`; on a broker with a separate transactional configuration that name points
+to a different policy.
 
 <!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
 ```rust
 use ruststream::memory::prelude::*;
 ```
 
-The glob also brings the capability traits this broker implements on its live values
-(`TransactionalPublisher`, `OwnedTransactions`, `Transaction`, `RequestReply`, `Positioned`,
-`Seeker`), so the operations they carry are in scope wherever the policies are. `Partitioned` is
-left out on purpose: in scope it makes `msg.partition_key()` ambiguous with the defaulted
-`IncomingMessage` method, so a service reading partition keys imports it explicitly. A handler
-body keeps `use ruststream::prelude::*;` - it names capabilities, never policies, so it does not
-know which broker runs it - and a file holding both a body and its mount site is served by the
-broker glob alone.
+The same glob brings in the capability traits this broker implements (`TransactionalPublisher`,
+`OwnedTransactions`, `Transaction`, `RequestReply`, `Positioned`, `Seeker`), so their operations are
+in scope wherever the policies are. `Partitioned` stays out: in scope it makes
+`msg.partition_key()` ambiguous with the method of the same name on `IncomingMessage`. A service
+that reads partition keys imports `Partitioned` itself.
+
+A handler body keeps `use ruststream::prelude::*;`: it names capabilities, never policies, and does
+not know which broker runs it. A file holding both a body and its mount site needs the broker glob
+alone.
 
 ## Semantics
 
-- **Exact name matching.** A subscription to `orders` receives messages published to `orders`; no
-  wildcard or pattern matching (those are broker-specific; the NATS test broker has real subject
-  matching).
-- **Fan-out.** Every subscriber of a name receives every message published to it after the
-  subscription opened; messages published earlier are not delivered by default, though the
-  `Seekable` capability can replay them from the publish log.
+- **Topic names match in full.** A subscription to `orders` receives the messages published to
+  `orders`.
+- **Fan-out.** Every subscriber of a topic receives every message published to it after the
+  subscription.
 - **Ack is a no-op; `nack(requeue: true)` redelivers** the same payload to the same subscriber.
-- **Cheap to clone.** Clones share state, so a clone held by a test observes everything the app
-  publishes.
+- **Shared ownership.** `MemoryBroker` is a reference-counted handle: all its owners work with one
+  state, so a clone held by a test sees everything the application publishes.
 
-It is a real broker rather than a test double: the runtime drives it through the same dispatch path
-it drives a production broker through, so a handler, its middleware and its decoding behave here
-exactly as they will in production. What it does not do is emulate any particular broker's delivery
-semantics - durable cursors, redelivery timers, partitions, dead-letter routing - so a test passing
-here does not say the same code passes against Kafka.
+A handler, its middleware and its decoding behave here as they do against a networked broker: the
+runtime dispatches messages through the same path.
 
 ## Capabilities
 
-Every capability trait has a native implementation over the broker's own in-process semantics, not
-a simulation of another broker's:
+Every capability trait is implemented over this broker's own in-process semantics:
 
-- **Request / reply.** `broker.requester()` returns a `MemoryRequester` whose `request` publishes
-  with a unique in-process inbox in the `reply-to` header and resolves on the first message
-  delivered there; the `MemoryRequest` policy pairs into it, so a slot bound with
-  `Out<impl RequestReply, ..>` binds to `MemoryRequest`. A responder reads `reply-to` from the
-  request and publishes its reply to that name. Requests nobody answers fail with
-  `RequestError::Timeout`.
-- **Batches.** `MemorySubscriber` implements `BatchSubscriber` natively: a batch is the first
-  awaited delivery plus everything already buffered, capped at the size the registration named
-  with `batch(n)`. Partial batches ship immediately, so no deadline timer is involved.
-- **Transactions.** `MemoryPublisher`, what the `MemoryPublish` policy pairs into, carries both
-  transaction kinds, so a slot or wiring bound with `TransactionalPublisher` or
-  `OwnedTransactions` binds to `MemoryPublish`. Publishes inside a scope are buffered and
-  fan out together in publish order on commit; an abort discards them; every owned transaction
-  buffers on its own. Misuse on the raw handle errors with `MemoryError` per the broker contract:
-  a second begin while one is open returns `TransactionBusy` (the open transaction is untouched),
-  and a commit or abort without one returns `NoTransaction`. Clones of a publisher handle do not
-  share its transaction.
-- **Partition keys.** `MemoryMessage` implements `Partitioned`, reading the key from the
-  well-known `partition-key` header (`memory::PARTITION_KEY_HEADER`).
-- **Seeking.** `MemorySubscriber` implements `Seekable` over the broker's per-name publish log:
-  mint a `MemorySeeker` before opening the stream, then `seek` to a `MemoryPosition` - captured
-  from a delivered message (`Positioned::position`, which redelivers exactly that message) or
-  constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the queued
-  deliveries before the target; seeking at or past the end of the log skips everything published
-  so far. The scope is one subscriber instance, and a seek through a handle aliasing a shut-down
-  bus errors with `MemoryError::ShutDown`. Inside an application, the delivery context
-  (`MemoryContext`) carries the position and the seeker, read by the `Position` / `SeekHandle`
-  keys (see [Seeking](../guides/subscribers.md#seeking)). A batch body names `MemoryBatchContext`
-  instead: it carries the subscription's seeker under that same `SeekHandle` key and no position,
-  because a batch spans many deliveries.
-- **Shutdown.** The ladder is fully typed: `MemoryBroker::connect(self)` yields
-  `ConnectedMemoryBroker`, and its consuming `shutdown` yields `ClosedMemoryBroker`, a witness
-  reporting how many subscriber registrations the teardown dropped. Aliased handles used after the
-  shutdown - publishers, transaction commits, requests - error with `MemoryError::ShutDown` /
-  `RequestError::ShutDown` instead of silently succeeding.
-
-`DescribeServer` is not implemented: the in-memory broker has no network coordinates to report.
+- **Request / reply.** `broker.requester()` gives you a `MemoryRequester`: its `request` publishes
+  the message and names a unique in-process reply topic in the `reply-to` header, and completes
+  with the first message delivered there. The responder reads `reply-to` from the request and
+  publishes its reply to that topic. A request nobody answers returns `RequestError::Timeout`.
+  `MemoryRequest` is the policy that constructs `MemoryRequester`, so you bind a slot bound with
+  `Out<impl RequestReply, ..>` to `MemoryRequest`.
+- **Batches.** `MemorySubscriber` implements `BatchSubscriber`: a batch is the first delivery to
+  arrive plus everything already buffered, capped at the size the handler registration named with
+  `batch(n)`. A partial batch is delivered immediately.
+- **Transactions.** `MemoryPublish` is the policy that constructs `MemoryPublisher`, which
+  implements both transaction kinds, so you bind a slot or a wiring bound with
+  `TransactionalPublisher` or `OwnedTransactions` to `MemoryPublish`. Publishes inside a transaction
+  scope are buffered: `commit` delivers them to every subscriber at once in publish order, `abort`
+  discards them. Every owned transaction buffers on its own, and clones of a publisher handle do not
+  share its transaction. Out-of-order calls on the publisher itself return `MemoryError`: a second
+  `begin_transaction` while one is open returns `TransactionBusy` and leaves the open transaction
+  untouched, and a `commit` or `abort` without one returns `NoTransaction`.
+- **Partition keys.** `MemoryMessage` implements `Partitioned` and reads the key from the
+  `partition-key` header (`memory::PARTITION_KEY_HEADER`).
+- **Seeking.** `MemorySubscriber` implements `Seekable` over the per-topic publish log: get a
+  `MemorySeeker` before reading starts, then call `seek` with a `MemoryPosition`, taken from a
+  delivered message with `Positioned::position` (which delivers that same message again) or
+  constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the deliveries
+  queued before the target; seeking to the end of the log or past it skips everything published so
+  far. A seek acts on one subscriber instance. Through a handle to a bus that has already shut down
+  it returns `MemoryError::ShutDown`. Inside an application, `MemoryContext` holds the position
+  of the message and the `MemorySeeker`, and a handler reads them under the `Position` and
+  `SeekHandle` keys (see [Seeking](../guides/subscribers.md#seeking)). A batch handler reads
+  `MemoryBatchContext`: it holds `SeekHandle` but no `Position`, because a batch spans many
+  deliveries.
+- **Shutdown.** `MemoryBroker::connect(self)` gives `ConnectedMemoryBroker`, and its `shutdown`
+  consumes `self` and returns `ClosedMemoryBroker`, which reports how many subscriber registrations
+  the shutdown dropped. After that, a publish, a transaction commit or a request through a handle
+  handed out earlier returns `MemoryError::ShutDown` or `RequestError::ShutDown`.
 
 ## Subscription source
 
 `ConnectedMemoryBroker` implements `Subscribe`, so `#[subscriber("orders")]` works directly. The
-descriptor type is `MemorySource` - it carries no extra options (the in-memory broker has none) but keeps the
-descriptor form uniform across brokers. From the
+`MemorySource` descriptor names the same subscription, in the form every broker uses. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
@@ -128,9 +119,7 @@ example:
 
 ## For testing
 
-`ConnectedMemoryBroker` implements `TestableBroker` and is registered with
-`register_testable_broker!` (the harness connects every broker before recovering its in-process
-transport), so the [`TestApp`](../guides/testing.md) harness drives it directly: build an app on a
-`MemoryBroker`, hand it to `TestApp::start`, publish, and assert on what the handlers received and
-published. See
-[Testing](../guides/testing.md#unit-testing-a-service-with-testapp) for the full pattern.
+You test an application built on `MemoryBroker` with the [`TestApp`](../guides/testing.md) harness:
+build the app, hand it to `TestApp::start`, publish messages, and assert on what the handlers
+received and published. [Testing](../guides/testing.md#unit-testing-a-service-with-testapp) walks
+through the full pattern.

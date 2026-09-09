@@ -2,7 +2,7 @@
 
 By the end of this page you have a running orders service: a message type, a handler, a reply, and a
 router that collects them. It runs on the in-memory broker, so there is nothing external to start.
-Swapping in a real broker is a one-line change, covered at the end.
+Swapping in a real broker is a one-line change, and step 7 shows it.
 
 ## 1. Create the crate
 
@@ -25,7 +25,7 @@ serde = { version = "1", features = ["derive"] }
 ## 2. Define a message and a handler
 
 A handler is an `async fn` whose first parameter is the decoded payload. The `#[subscriber]` macro
-turns it into a mountable definition named after the function.
+turns it into a subscriber definition named after the function.
 
 === "Macros"
 
@@ -40,11 +40,11 @@ turns it into a mountable definition named after the function.
     ```
 
 A handler returns a [`HandlerOutcome`](../guides/subscribers.md#acking): an `ack`, or a `nack` that
-drops or requeues the message. Returning `()` or `Result<(), E>` also works - they convert into an
-outcome (`Ok` acks, `Err` drops).
+drops or requeues the message. You can return `()` or `Result<(), E>` instead, where `Ok` acks and
+`Err` drops.
 
-The `JsonSchema` derive is what puts the payload's schema in the AsyncAPI document of step 6, and
-the type's doc comment becomes the message description. It needs no dependency of its own: the
+The `JsonSchema` derive puts the payload's schema into the AsyncAPI document of step 6. The type's
+doc comment becomes the message description there. You need no extra dependency for it: the
 `asyncapi` feature re-exports `schemars`.
 
 ## 3. Wire it into an app
@@ -61,12 +61,10 @@ the type's doc comment becomes the message description. It needs no dependency o
     --8<-- "examples/manual/tutorial/first_app.rs:app"
     ```
 
-The macro turns `handle` into a value named after the function, so you import and pass it directly.
-
 !!! tip "Codec defaults"
-    `include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
-    `msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
-    once with `with_broker_codec(broker, codec, |b| ...)`. See
+    `include` decodes with the default codec, so it needs no codec argument. The default is `json`
+    when the feature is enabled, otherwise `cbor`, otherwise `msgpack`. You can set one codec for
+    all the broker's handlers at once with `with_broker_codec(broker, codec, |b| ...)`. See
     [Codecs](../guides/codecs.md) for the full resolution rules.
 
 Run it:
@@ -92,8 +90,8 @@ derive on the reply type says where it goes:
     --8<-- "examples/manual/tutorial/orders.rs:confirm"
     ```
 
-Mount it next to `handle`, with the same plain `include`; the reply goes out through the broker's
-default publish policy under the default codec:
+Mount `confirm` next to `handle` with the same `include`. The reply is published with the broker's
+default publish policy and encoded with the default codec.
 
 === "Macros"
 
@@ -107,12 +105,12 @@ default publish policy under the default codec:
     --8<-- "examples/manual/tutorial/reply_app.rs:reply"
     ```
 
-See [Publishing & replies](../guides/publishing.md) for the full picture, including publishing from
-inside a handler.
+Publishing from inside a handler and the other ways to publish are in
+[Publishing & replies](../guides/publishing.md).
 
 ## 5. Organize with a router
 
-As handlers grow, keep them in their own module and collect them into a
+As the number of handlers grows, keep them in their own module and collect them into a
 [`Router`](../guides/routing.md):
 
 === "Macros"
@@ -127,11 +125,11 @@ As handlers grow, keep them in their own module and collect them into a
     --8<-- "examples/manual/tutorial/routes.rs:routes"
     ```
 
-A registration on a router ends in an explicit terminal. `.out(Reply, ..)` names the reply's
-publish policy - a policy is pure declaration, so the router still needs no broker - and
-`.build()` commits, taking the broker's own default policy when nothing named one: the explicit
-spelling of what step 4 got by default.
-[Routing](../guides/routing.md) covers the rest of the router surface.
+`include` adds a plain handler to the router directly. A handler that publishes a reply hands back
+a mount chain instead: `.out(Reply, ..)` names the reply's publish policy, and `.build()` finishes
+the registration. Without `.out(Reply, ..)`, `.build()` takes the broker's default publish policy -
+the same one `include` took in step 4. [Routing](../guides/routing.md) covers the rest of the router
+surface.
 
 === "Macros"
 
@@ -151,26 +149,26 @@ spelling of what step 4 got by default.
 cargo run -- asyncapi gen
 ```
 
-Every subscriber becomes a channel and a `receive` operation. `handle` and `confirm` share the
-`orders` channel and still get one operation each, because they open separate subscriptions; the
-reply adds a `send` operation on `confirmations`. Both payload types derive `schemars::JsonSchema`,
-so the document carries their schemas under `components.messages`, each with the type's doc comment
-as its description. The output flags (`-o`, `--yaml`) and the document itself are covered in
-[AsyncAPI](../guides/asyncapi.md).
+Every subscriber adds a channel and a `receive` operation to the document. `handle` and `confirm`
+share the `orders` channel and get one operation each, because their subscriptions are separate. The
+reply adds a `send` operation on `confirmations`.
+
+The document keeps the payload schemas under `components.messages`. The output flags (`-o`,
+`--yaml`) and the document itself are covered in [AsyncAPI](../guides/asyncapi.md).
 
 ## 7. Swap in a real broker
 
-Nothing above is tied to the in-memory broker. The broker is chosen at `with_broker`, so swapping
-is a one-line change: add the broker crate as a dependency and construct it there (for example
-`NatsBroker::new("nats://localhost:4222")` instead of `MemoryBroker::new()`); the handlers, router,
-and codecs are unchanged. The available brokers and the side-by-side swap for each of them are in
-[Brokers](../brokers/index.md#switching-brokers).
+Nothing above is tied to the in-memory broker: the broker is chosen at `with_broker`, so the swap is
+a one-line change. Add the broker crate as a dependency and construct it there instead of
+`MemoryBroker::new()`, for example `NatsBroker::new("nats://localhost:4222")`. The handlers, the
+router and the codecs stay as they are. [Brokers](../brokers/index.md#switching-brokers) lists the
+available brokers and the swap for each of them.
 
 !!! info "The complete service is a compiled example"
-    Every snippet on this page is embedded from
+    Every snippet on this page comes from
     [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    in the repository, which CI builds on every change: `first_app.rs` and `reply_app.rs` are the
-    service as steps 3 and 4 leave it, `main.rs` the finished one. Run it yourself with
+    in the repository, which CI builds on every change. `first_app.rs` and `reply_app.rs` are the
+    service as steps 3 and 4 leave it, and `main.rs` is the finished one. Run it yourself with
     `cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
 
 ## Next steps

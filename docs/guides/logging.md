@@ -1,18 +1,16 @@
 # Logging
 
 RustStream emits structured [`tracing`](https://docs.rs/tracing) events throughout dispatch,
-publishing, and the service lifecycle. It installs no subscriber on its own - that choice belongs to
-the application. The `logging` feature provides one: a colored console subscriber driven by
-`RUST_LOG`.
+publishing, and the service lifecycle. The application installs the subscriber for those events.
+The `logging` feature ships a ready-made one: a colored console subscriber driven by `RUST_LOG`.
 
-This is separate from the [`TracingLayer`](middleware.md#built-in-layers) middleware. `TracingLayer`
-*emits* an event per message; the `logging` feature installs a subscriber that *renders* events
-(RustStream's own and yours) to the terminal. Use them together to see per-message logs.
+The [`TracingLayer`](middleware.md#built-in-layers) middleware emits the per-message event, and the
+subscriber from the `logging` feature prints it.
 
 ## With the generated CLI
 
-When the `logging` feature is enabled, the `#[ruststream::app]` CLI calls the logger for you on the
-`run` command, so a scaffolded service logs out of the box:
+With the `logging` feature enabled, the CLI from `#[ruststream::app]` installs the subscriber
+itself on the `run` command.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging"] }
@@ -22,12 +20,12 @@ ruststream = { version = "0.7", features = ["macros", "memory", "json", "logging
 RUST_LOG=ruststream=debug,info cargo run -- run
 ```
 
-Output goes to **stderr** (keeping stdout clean for `asyncapi gen`), with colors enabled
-automatically when stderr is a terminal.
+The subscriber writes to **stderr**, so stdout stays clean for `asyncapi gen`. Colors turn on when
+stderr is a terminal.
 
 ## By hand
 
-Install the default logger once, early in `main`:
+Install the default subscriber once, early in `main`:
 
 <!-- inline-rust: manual logger-init fragment; the shipped logging example uses the automatic #[ruststream::app] installer, so there is no compiled call site for the by-hand path -->
 ```rust
@@ -35,8 +33,7 @@ ruststream::logging::init()?;
 tracing::info!("service starting");
 ```
 
-`init` reads the filter from `RUST_LOG`, falling back to `info`. Tune the defaults through the
-`Logging` builder:
+Without `RUST_LOG` the filter is `info`. You can change the defaults through the `Logging` builder:
 
 <!-- inline-rust: manual Logging-builder fragment; the by-hand init path has no compiled call site (the logging example uses the automatic installer) -->
 ```rust
@@ -48,12 +45,11 @@ Logging::new()
     .try_init()?;
 ```
 
-`init` / `try_init` never replace an existing subscriber: a second call (or one after another crate
-installed a subscriber) returns `LoggingInitError::AlreadyInitialized` rather than panicking.
+A subscriber that you or another crate already installed stays in place: `init` and `try_init`
+return `LoggingInitError::AlreadyInitialized`.
 
 ## Bring your own subscriber
 
-The `logging` feature is optional sugar. Because RustStream only emits `tracing` events, any
-subscriber works - install `tracing-subscriber`, `tracing-bunyan-formatter`, an OpenTelemetry layer,
-or whatever your stack uses, and the same events flow through it. Skip the `logging` feature when you
-do.
+Instead of the `logging` feature you can install any subscriber for `tracing` events: one built on
+the `tracing-subscriber` or `tracing-bunyan-formatter` crates, one with an OpenTelemetry layer, or
+the one your stack already uses.

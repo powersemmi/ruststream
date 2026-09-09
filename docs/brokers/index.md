@@ -1,9 +1,10 @@
 # Brokers
 
-Handlers, routers, codecs, and middleware are broker-agnostic, so moving a service between brokers
-is a one-line change at `with_broker`. The framework ships a full in-memory broker for queues that
-stay inside a single application; brokers backed by an external service are separate crates you add
-as a dependency.
+Handlers, routers, codecs, and middleware are broker-agnostic. You can move a service to another
+broker by changing one line at `with_broker`.
+
+The framework ships a full in-memory broker for queues that stay inside a single application.
+Brokers backed by an external service are separate crates you add as a dependency.
 
 Each broker crate has its own documentation site, linked in the Docs column and from the
 **Brokers** menu.
@@ -28,9 +29,8 @@ To implement a broker for another transport, see [Broker authors](../broker-auth
 
 ## Switching brokers
 
-Every broker constructs synchronously and connects lazily (the runtime calls `Broker::connect` once
-at startup), so the same handlers and routers run on any of them; only the broker construction
-differs by one line inside `with_broker`.
+Every broker is constructed synchronously. The runtime connects it when the application starts.
+The examples below differ only in the line that constructs the broker.
 
 === "Memory"
 
@@ -113,7 +113,7 @@ differs by one line inside `with_broker`.
     }
     ```
 
-Each broker crate documents its own `Config` and connection options. Subscriptions that need
-broker-specific options (consumer groups, durable names) use that broker's descriptor in the
-`#[subscriber(..)]` decorator; see
+Each broker crate documents its own connection options. When a subscription needs broker-specific
+options (consumer groups, durable names), you can write that broker's descriptor in the
+`#[subscriber(..)]` attribute; see
 [broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors).

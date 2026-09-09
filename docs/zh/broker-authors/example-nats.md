@@ -1,14 +1,14 @@
 # 实例讲解：一个 NATS Broker
 
-本页跟着真实的 [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) crate 走一遍，看它
-如何在 [`async-nats`](https://docs.rs/async-nats) 客户端之上实现契约。它是一个麻雀虽小、五脏俱全的
-Broker：`Broker` -> `ConnectedBroker` -> `Closed` 阶梯、用一个 `SubscribeOptions` 描述符同时支撑
-Core NATS 与 JetStream 的单一订阅类型、一个会转发消息头的发布者，以及这套传输真正具备的各项能力。
+本页讲解真实的 [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) crate 如何在
+[`async-nats`](https://docs.rs/async-nats) 客户端之上实现契约。它是一个完整的小型 Broker：
+`Broker` -> `ConnectedBroker` -> `Closed` 阶梯、一种订阅类型用一个 `SubscribeOptions` 描述符
+同时服务 Core NATS 与 JetStream、一个转发消息头的发布者，以及这套传输真正具备的各项能力。
 
-把它当作契约的图解来读，而不是该 crate 的源码：下面的代码只保留[契约](index.md)每一条规则所要求的
-部分，真实 Broker 会长出来的选项、调优参数和逐条投递的类型化上下文，都在 crate 自己那里。各个条目
-的名字跟随 `async-nats` 的 API，而它会随版本变动；一个 Broker crate 跟踪哪个客户端版本是这个 crate
-自己的事，由它自己的文档说明。
+把本页当作契约的图解来读，而不是该 crate 的源码。下面的代码只保留[契约](index.md)每一条规则所要求
+的部分，真实 Broker 才有的选项、调优参数和类型化的投递上下文都在 crate 里。各个条目的名字取自
+`async-nats` 的 API，而它每个版本都在变。客户端版本由 Broker crate 自己选定，并写在该 crate 的
+文档里。
 
 ```toml title="Cargo.toml"
 [features]
@@ -25,8 +25,8 @@ ruststream = { version = "0.7", default-features = false }
 
 ## 错误
 
-一个 crate 级别的枚举，按来源划分变体，并标注 `#[non_exhaustive]`，这样新增变体不构成破坏性变更。
-各个来源都是装箱后的 `std` 错误，因此公开 API 不会泄漏 `async-nats` 的错误类型。
+整个 crate 一个错误枚举，变体按来源划分，并标注 `#[non_exhaustive]`，这样新增变体不是破坏性变更。
+各个来源都保存为装进 `Box` 的 `std` 错误，所以公开 API 里不出现 `async-nats` 的错误类型。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -55,17 +55,18 @@ pub enum NatsError {
 }
 ```
 
-`Closed` 带上了 subject，而不是只说连接已经没了：一个服务在凌晨三点读到的错误，要说清它没能到达的
-是什么。
+`Closed` 会带上 subject，而不是只说连接已经不在了。一个服务在凌晨三点读到的错误，要说清它没能到达
+的是什么。
 
 ## Broker 阶梯
 
-`new` 是同步的，只记录地址。消费 `self` 的 `connect` 负责拨号，并返回已连接形态，它直接持有活跃的
-客户端：不存在“可能已连接”这种状态需要它自己的操作去检查。发布者只从已连接形态交出，别无他处，
-于是“没有连接的发布者”根本无法表达。
+Broker 作者实现的是 `new` -> `connect(self)` -> `shutdown(self)` 这条阶梯。`new` 是同步的，只记录
+地址。`connect` 消费 `self`，建立连接，返回已连接形态。已连接形态直接持有活跃的客户端，它自己的
+操作没有“可能已连接”这种状态要检查。发布者只由已连接形态交出，所以没有连接的发布者不可表示。
 
-发布者确实会比连接本身活得久，而这是类型唯一定不下来的事：它是别名问题，不是顺序问题。所以连接
-自身带一个 closed 标志，在 drain 开始之前置位，每个别名句柄都通过它读取客户端。
+发布者可能比连接活得更久，而类型排除不了这一点。问题不在调用顺序，而在于多个句柄指向同一条连接。
+所以连接里有一个关闭标志：`shutdown` 在调用 `drain` 之前把它置位，每个这样的句柄都通过它读取
+客户端。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -171,16 +172,15 @@ pub struct ClosedNatsBroker {
 }
 ```
 
-消费 `self` 在所有者这条路径上排除了第二次 `connect`，也排除了关闭之后再发布或再订阅。`shutdown`
-完成全部可失败的拆除工作，交回那个见证值，并且绝不 panic。先前创建的发布者在此之后报告 `Closed`，
-而不是对着一条已死的连接照样成功 - 这正是生命周期检查所验证的别名句柄契约。
+从所有者这一侧看，消费 `self` 排除了第二次 `connect`，也排除了关闭之后再发布或再订阅。`shutdown`
+完成全部可能返回错误的收尾工作，交回见证值，并且绝不 panic。先前创建的发布者在 Broker 关闭后返回
+`Closed`，而不是对着一条已关闭的连接照样发布成功：这正是 `lifecycle` 检查为这类句柄验证的契约。
 
 ## Core 与 JetStream 共用一种订阅
 
-Core NATS 是发完即忘的；JetStream 则会持久化并需要确认。两者都收在一个 `SubscribeOptions` 描述符和
-一个 `NatsSubscriber` 背后。`SubscribeOptions` 就是
-`SubscriptionSource`；Broker 依据是否调用过 `jetstream(..)` 来分发。每个构建器方法都对应
-`#[subscriber(..)]` 属性宏的一个关键字。
+Core NATS 是发完即忘的，JetStream 会保存消息并要求确认投递。两种模式共用一个 `SubscribeOptions`
+描述符和一个 `NatsSubscriber`。`SubscribeOptions` 就是 `SubscriptionSource`，Broker 依据是否调用过
+`jetstream(..)` 选择分支。每个构建器方法对应 `#[subscriber(..)]` 属性里的一个具名参数。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -258,7 +258,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 }
 ```
 
-由于 `#[subscriber(..)]` 宏接受构建器链式调用，整个描述符可以直接内联写在属性宏里：
+`#[subscriber(..)]` 宏接受构建器的链式调用，所以整个描述符可以直接写在属性里：
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -268,8 +268,8 @@ async fn handle(order: &Order) -> HandlerOutcome {
 }
 ```
 
-按名字订阅走的是同一条路径：实现 `Subscribe` 时委托给 `SubscribeOptions::new(name)`，于是
-`#[subscriber("orders")]` 这种写法同样可用。
+按 subject 名订阅走的是同一条路径：你可以实现 `Subscribe`，委托给 `SubscribeOptions::new(name)`，
+于是 `#[subscriber("orders")]` 这种写法也能用。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -284,9 +284,9 @@ impl Subscribe for ConnectedNatsBroker {
 }
 ```
 
-已连接形态自己的 `subscribe_with` 会先校验选项，然后只分支一次（`queue_group_ref`、`stream_ref` 和
-`durable_ref` 是几个返回 `Option<&str>` 的小 `pub(crate)` getter）；客户端来自那条连接，closed 检查
-就住在那里：
+已连接形态自己的 `subscribe_with` 先校验选项，然后只分支一次（`queue_group_ref`、`stream_ref` 和
+`durable_ref` 是几个返回 `Option<&str>` 的小 `pub(crate)` getter）；客户端取自那条连接，关闭检查
+也在那里：
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -342,9 +342,9 @@ impl ConnectedNatsBroker {
 
 ## 订阅者
 
-`NatsSubscriber` 包装的要么是 `async-nats` 的 core 订阅，要么是 JetStream 的拉取流，两者都藏在同一个
-`Message` 类型之后。`stream` 用 `futures::future::Either` 做分支，并在首次轮询时把内部的流取走，所以
-它只能使用一次（契约允许调用一次 `stream`）。
+`NatsSubscriber` 包装 `async-nats` 的 core 订阅或 JetStream 的拉取流，对外只暴露一个 `Message`
+类型。`stream` 用 `futures::future::Either` 分支，并在首次轮询时取走内部的流，所以它只能用一次：
+契约只允许调用一次 `stream`。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -387,10 +387,10 @@ impl Subscriber for NatsSubscriber {
 
 ## 消息
 
-`NatsMessage` 是一个枚举：要么是 core 投递（没有 ack），要么是 JetStream 投递（有真正的 ack）。两者
-都做了装箱，因为其中包装的 `async-nats` 消息很大。对 core 投递调用 `ack`/`nack` 会返回
-`AckError::Unsupported`，这是运行时接受的非错误结果；在 JetStream 上它们才真正生效，其中 `nack` 在
-处理器要求重新投递时映射为 `nak`（重投），在处理器不要求时映射为 `term`（丢弃毒消息）。
+`NatsMessage` 是一个枚举：要么是 core 投递（没有 ack），要么是 JetStream 投递（有真正的 ack）。
+两个变体都做了装箱，因为其中包装的 `async-nats` 消息很大。对 core 投递调用 `ack` 和 `nack` 会返回
+`AckError::Unsupported`，这不是错误，运行时接受这种返回。在 JetStream 上它们确认投递，其中 `nack`
+在处理器要求重新投递时映射为 `nak`，不要求时映射为 `term`（丢弃毒消息）。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -436,8 +436,8 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-conformance 生命周期检查接受 `AckError::Unsupported`，所以 Core NATS 能通过它。每条消息在构造时
-一次性转换自己的消息头；这两个转换函数是唯一需要跟随 `async-nats` 版本变化的地方：
+conformance 的 `lifecycle` 检查接受 `AckError::Unsupported`，所以 Core NATS 能通过。每条消息在
+构造时转换一次自己的消息头。这两个转换函数是唯一跟随 `async-nats` 版本变化的地方：
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -471,8 +471,8 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 ## 发布
 
-发布者与配对出它的 Broker 共享同一条连接，每次发布都经由 closed 检查读取客户端，并在存在消息头时
-把它们一并转发。
+策略在已连接 Broker 上实例化发布者，发布者与这个 Broker 共同拥有这条连接。每次发布时，发布者都
+经由关闭检查读取客户端，并在有消息头时把它们一并转发。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -505,8 +505,8 @@ impl Publisher for NatsPublisher {
 
 ## 各项能力
 
-NATS 原生支持请求-响应，因此在发布者上实现 `RequestReply`：用调用方给出的超时时间限定等待，并把
-计时器超时映射为 `RequestTimeout`。
+NATS 在传输层就有请求-响应，所以你可以在发布者上实现 `RequestReply`。等待由调用方的超时时间限定，
+计时器触发后映射为 `RequestTimeout`。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -539,28 +539,28 @@ impl RequestReply for NatsPublisher {
 }
 ```
 
-JetStream 拉取消费者在协议层面本来就是按批取数据，所以 `BatchSubscriber` 报告的是传输已经在做的
-事，而不是模拟出来的：流里的一项就是一次取数，由一个批大小和一个过期时间限定，取空时会重试，因此
-一个批次永远不会是空的。同一个订阅者的 Core 分支没有协议层面的批，所以那里的批次就是客户端本地已经
-缓冲下来的内容，加一个上限，绝不用传输本来没有的延迟去凑数。两者都没有的 Broker 会略去这项能力，
-让用户改用客户端侧的 [`buffered`](../guides/subscribers.md#batch-subscribers) 适配器。
+JetStream 的拉取消费者在协议层面就按批取消息，所以 `BatchSubscriber` 交出的是传输本身的批，而不是
+模拟出来的批。流里的一项就是一次拉取，由批大小和等待时限限定；拉取为空时会重试，所以批不会是空的。
+同一个订阅者的 Core 分支在协议层面没有批，那里的批就是客户端已经放进本地缓冲的内容，只受大小限制。
+两者都没有的 Broker 会让这项能力保持未实现，用户改用客户端侧的
+[`buffered`](../guides/subscribers.md#batch-subscribers) 适配器。
 
-`DescribeServer` 把该 Broker 写进生成的 AsyncAPI 文档。它落在**未连接**的 Broker 上，因为文档是从
-一个尚未拨号的服务生成的：它报告的是配置里的地址。服务端自己宣告的坐标（一条集群路由、一个发现到
-的对端）只有连上之后才知道，所以它们属于已连接形态上的访问器，不属于这个 trait。
+`DescribeServer` 把该 Broker 写进生成的 AsyncAPI 文档。它实现在**未连接**的 Broker 上，因为文档由
+一个尚未连接的服务生成：该 trait 报告的是配置里的地址。服务端自己宣告的坐标（集群路由、发现到的
+对端）只有连接之后才知道，所以它们属于已连接形态的 getter，不属于该 trait。
 
-其余的都略去了，因为传输层没有这些东西：NATS 没有事务，所以 `TransactionalPublisher` 和
-`OwnedTransactions` 都不在，`Seekable` 也一样 - NATS 的 `Seekable` 该待的地方是 JetStream 消费者，
+其余能力没有实现，因为传输层没有对应的东西。NATS 没有事务，所以 `TransactionalPublisher` 和
+`OwnedTransactions` 都不在。`Seekable` 也不在：NATS 版本的 `Seekable` 会建在 JetStream 消费者上，
 它的流本身就是一份可回放的日志。
 
 ## 发布策略
 
-`NatsPublisher` 是活的那一半；声明的那一半由 `PublishPolicy` 提供，于是在任何连接存在之前，注册代码
-就能指名一个发布者。Core NATS 的发布不带任何按发布者划分的选项（subject 和消息头随每条消息一起
-走），所以该策略只是一个单元标记（与内存 Broker 的 `MemoryPublish` 如出一辙），而配对只是克隆一下
-连接句柄。这里不会失败；如果某个 Broker 要做真正的工作才能让发布者活起来（比如事务性生产者），就用
-`PairError::new` 包装它的失败。由于朴素的策略可以直接拿来用，已连接形态还实现了 `DefaultPublish`
-（参见[契约](index.md#publishpolicy)），这样不指定发布者的 `publish(..)` 处理器也能通过编译。
+`NatsPublish` 是构造发布者 `NatsPublisher` 的策略。你在注册处理器时指定策略，策略在启动时于已连接
+的 Broker 上实例化发布者。Core NATS 的发布没有发布者级别的选项，因为 subject 和消息头在每条消息里
+给出。所以这里的策略是一个空结构体，`pair` 只复制连接句柄，不会返回错误。如果某个 Broker 创建发布者
+时可能返回错误（例如事务性的发布者），就用 `PairError::new` 包装该错误。既然简单的策略可以直接
+使用，已连接形态还实现了 `DefaultPublish`（参见[契约](index.md#publishpolicy)），于是没有显式指定
+发布者的 `publish(..)` 处理器也能通过编译。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -579,10 +579,10 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 }
 ```
 
-## 这个 crate 的 prelude
+## crate 的 prelude
 
-crate 的 prelude 就是挂载点会 glob 的东西：先是核心 prelude，再是 Broker 和它的描述符，最后是统一
-名字下的策略（见[契约](index.md#broker-prelude)）。
+挂载点会整体引入 crate 的 prelude：先是核心 prelude，再是 Broker 和它的描述符，最后是统一名字下的
+策略（见[契约](index.md#broker-prelude)）。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -597,7 +597,7 @@ pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
 
 ## 接入到应用里
 
-有了该 Broker，应用写起来和其他任何应用完全一样；处理器和编解码器都没有任何 NATS 专有的东西。
+Broker 就绪之后，应用与其他任何应用没有区别：处理器和编解码器里都没有 NATS 专有的东西。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -612,7 +612,7 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## 验证它
 
-在 `testing` feature 下提供一个进程内传输，让它的已连接形态实现 `TestableBroker`（该已连接类型用
-`register_testable_broker!` 注册），并且只做核心路由（一个 subject 匹配器，把发布出去的消息扇出给
-各个订阅者），然后拿 conformance 校验套件跑它。该传输不得模拟 JetStream 的游标、重新投递计时器或
-保留策略；那些要端到端地对着真实的 `nats-server` 来验证。参见 [Conformance](conformance.md)。
+在 `testing` feature 下提供一个进程内传输，它只做基础路由：一个 subject 匹配器，把发布的消息一次
+扇出给所有订阅者。它在自己的已连接形态上实现 `TestableBroker`，该类型用 `register_testable_broker!`
+注册。在它上面跑一遍 conformance 套件。这种传输切勿模拟 JetStream 的游标、重新投递计时器和保留期：
+那些要对着真实的 `nats-server` 端到端地验证。参见 [Conformance](conformance.md)。

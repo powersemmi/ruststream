@@ -1,24 +1,24 @@
 # 编写一个 Broker
 
-Broker 是一个实现了核心 trait 的独立 crate。它以关闭默认 feature 的方式依赖 `ruststream`，因此只引入
-trait 接口和运行时，既不会带上自带的 JSON 编解码器，也不会带上任何别的 Broker：
+Broker 是一个实现了核心 trait 的独立 crate。它依赖 `ruststream` 并关闭默认 feature，因此只拿到 trait
+接口和运行时，不带内置的 JSON 编解码器，也不带别的 Broker：
 
 ```toml
 [dependencies]
 ruststream = { version = "0.7", default-features = false }
 ```
 
-本页就是这份契约。实现必需的 trait，暴露你自己的 `Config`，为你的 Broker 支持的功能补上能力 trait，
-然后用 [conformance 校验套件](conformance.md)证明结果。想看一份基于真实客户端的完整实现，参见
+本页就是这份契约。实现必需的 trait，定义你自己的 `Config`，为你的 Broker 支持的功能实现能力 trait，
+再用 [conformance 校验套件](conformance.md)验证结果。基于真实客户端的完整实现见
 [NATS 完整示例](example-nats.md)。
 
 ## 必需的 trait
 
 ### `Broker` 与 `ConnectedBroker`
 
-Broker 只负责生命周期，而生命周期是一串消费 `self` 的状态转移：每个状态都是不同的类型，因此顺序错乱的
-调用无法通过编译。Broker 本身既不携带订阅者类型，也不携带发布者类型，所以同一个应用里可以混用不同种类
-的 Broker。
+Broker 只负责生命周期。生命周期是一串状态转移：每个状态都是不同的类型，转移消费掉当前状态并交出下一
+个状态，因此顺序错乱的调用无法通过编译。Broker 不指定订阅者类型，也不指定发布者类型，所以一个应用可
+以混用不同种类的 Broker。
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -35,33 +35,36 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 }
 ```
 
-`shutdown` 不得阻塞，也不得 panic；所有可失败的拆解工作都在这里做完，并返回一个 `Result`。`Closed`
-见证值没有任何发布或订阅接口；把拆解过程的诊断信息（flush 结果、丢弃计数）当作普通数据放进去，或者
-直接用 `()`。
+`shutdown` 不得阻塞，也不得 panic。所有可能返回错误的资源释放都在这里做完，并返回 `Result`。`Closed`
+是关闭的见证：把清理时的诊断信息（缓冲区刷新结果、丢弃计数）当作普通数据放进去，或者直接用 `()`。
 
-构造过程是**同步且不做 I/O 的**：`new(addrs)` 只记录配置，所有网络工作都发生在 `connect` 里（由运行时
-在启动时调用一次），而已连接形态直接持有活的客户端，它自身的操作永远不必检查“也许已连接”的状态。
-Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者像内存 Broker 那样，保留一份可共享的进程内
-状态），这样在应用还在组装、`connect` 尚未运行时就能先把发布者发出去；该单元服务的是那些提前拿到的
-句柄，而不是已连接形态。[conformance 校验套件](conformance.md)会端到端地证明这道阶梯，而
-[NATS 示例](example-nats.md)在一个真实客户端上把整道阶梯走了一遍。
+构造是**同步且不做 I/O 的**：`new(addrs)` 只记录配置。所有网络工作都发生在 `connect` 里，运行时在启
+动时调用它一次。已连接形态直接持有活的客户端，因此它自身的操作不必检查“是否已经连接”。
 
-在一个已经关闭的 Broker 上，根本没有发布或订阅方法可调用，所以持有者一侧的误用通不过编译。别名仍是
-一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
-使用时必须报错，绝不能在一条已死的连接上悄悄地返回成功。生命周期检查同样会走到这条路径。
+Broker 还可以额外持有一个由 `connect` 填充的共享单元，或者像内存 Broker 那样持有可共享的进程内状态。
+这样在应用还在组装、`connect` 还没运行的时候，就可以先把发布者交出去：该单元服务的是这些提前拿到的
+句柄，而不是已连接形态。
 
-内存 Broker 用几行就走完了整道阶梯，本页下面的每一段草图也都是从同一个文件里裁出来的：契约一动，
-页面上的代码就跟着动：
+[conformance 校验套件](conformance.md)会验证整条转移链，[NATS 示例](example-nats.md)则在真实客户端上
+走完这条链。
+
+在一个已经关闭的 Broker 上，没有发布或订阅方法可以调用，所以持有者一侧的误用通不过编译。共用连接只能
+在运行时检查：共用它的句柄（已连接形态交出去的发布者、可共享 Broker 的克隆）在关闭之后使用时必须返回
+错误，绝不能悄悄返回成功。`lifecycle` 检查也会走到这条路径。
+
+内存 Broker 用几行就走完整条转移链。本页下面的每一段示例也都出自同一个文件，契约一改，页面上的代码就
+跟着改：
 
 ```rust
 --8<-- "src/memory/mod.rs:ladder"
 ```
 
-`ClosedMemoryBroker` 就是上一段说的那种带拆卸诊断的见证：它报告这次关闭摘掉了多少个订阅者注册。
+`ClosedMemoryBroker` 就是上面说的那种带清理诊断的见证：它报告这次关闭移除了多少个订阅者注册。
 
 ### `Subscribe`
 
-在已连接形态上实现 `Subscribe`，即可支持按名字订阅。`#[subscriber("name")]` 用的就是它。
+在已连接形态上实现 `Subscribe`，服务就能按主题、subject 或队列的名字订阅。`#[subscriber("name")]` 用
+的就是它。
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -71,7 +74,7 @@ pub trait Subscribe: ConnectedBroker {
 }
 ```
 
-要做的只是开一条订阅：
+要做的只有建立一条订阅：
 
 ```rust
 --8<-- "src/memory/mod.rs:subscribe"
@@ -79,7 +82,7 @@ pub trait Subscribe: ConnectedBroker {
 
 ### `Subscriber`
 
-订阅者是一个由到达消息组成的 `Stream`。背压由流天然提供。
+订阅者是入站消息的 `Stream`。背压由 `Stream` 本身给出。
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -90,13 +93,13 @@ pub trait Subscriber: Send {
 }
 ```
 
-`stream` 取的是 `&mut self`，因此两次 poll 之间缓冲的状态都存放在该可变借用之后，
-从而保证了它的取消安全。
+`stream` 取 `&mut self`，因此两次 poll 之间缓冲的状态都存放在这个可变借用后面，取消安全正来自这
+一点。
 
 ### `IncomingMessage`
 
-一条投递到的消息会暴露自己的载荷和消息头，并以 ack 或 nack 结算。ack 会消费 `self`，因此两次 ack 是
-编译错误。
+一条投递过来的消息交出自己的载荷和消息头，并由 ack 确认或由 nack 退回。ack 消费 `self`，因此两次 ack
+是编译错误。
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -121,24 +124,24 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-延迟重投由两个方法组成，运行时问的是 `supports_nack_after`：只覆盖 `nack_after`，这道闸门仍然是
-`false`，覆盖的实现一次也不会被调用。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是
-悄悄按一次普通的 `nack(true)` 结算：传输压不住这条消息，就得说出来，否则一次退避就变成一场重投风暴。
+延迟重新投递由两个方法组成，运行时问的是 `supports_nack_after`。只覆盖 `nack_after`，这个标志仍然是
+`false`，运行时一次也不会调用这个覆盖。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是按
+一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
-这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重投的地方，
-`retry_after` 由运行时自己扛：它丢弃这条投递，并在延迟之后把一份副本发布回同一个来源 - 走应用通过
-`BrokerScope::retry_via` 接上的那个发布者 - 并把重试计数消息头加一。只有在没有这个发布者时，延迟才
-退化为立即重新入队。按键分道则会轮转那些没有键的消息。
+这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
+方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后把一份副本发布回同一个来源，用的是应
+用通过 `BrokerScope::retry_via` 接上的那个发布者，同时把重试计数消息头加一。只有在没有这个发布者的时
+候，延迟才退化成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
 
-「什么都不覆盖」会得到什么，没有哪个 Broker 能拿来演示：本工作区里的 Broker 个个都覆盖了它们。所以
-核心用一个测试把这份行为钉住，就是下面这个：
+“什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
+法。所以这份行为由核心的一个测试固定下来：
 
 ```rust
 --8<-- "src/message.rs:incoming_defaults"
 ```
 
-`nack_after` 报告的是这个延迟没法兑现，而不是悄悄按一次普通的 `nack(true)` 结算：正因如此，运行时
-才分得清这两种情况，并启用自己那条兜底路径。
+正是 `Unsupported` 这个答复让运行时分得清两种情况：传输没有延迟投递，还是延迟已经生效。分清之后，它
+才走自己的备用路径。
 
 ### `Publisher`
 
@@ -153,25 +156,27 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
-`OutgoingMessage` 借用自己的名字和载荷，因此发布不会强制带来一次分配。
+`OutgoingMessage` 借用自己的名字和载荷，因此发布不强制分配内存。
 
-这是发布接口，而不是服务代码要写的那一个：应用通过构建器发布
-（`publisher.message(&value).publish()`），由构建器解析目的地、编解码器（在这条线需要它的时候）
-和消息头，然后恰好调用一次该方法。实现 `publish`，整个构建器就随之而来；没有别的
-东西要提供。
+服务写的不是这个方法，而是构建器：`publisher.message(&value).publish()` 选定目的地、编解码器和消息
+头，然后恰好调用一次 `publish`。实现 `publish`，整个构建器就在它之上工作起来。
 
-一个为一整串消息携带同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），
-应当把该参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。构建器会以这层底作为出站
-映射的起点，再把调用点的消息头逐个键覆盖上去，因此调用点取胜（参见
-[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。`Transaction` 上有同样带
-默认实现的方法，因此从这样的发布者开启的事务行为完全一致。没有东西要补的发布者两个都不必实现。
+为一整串消息持有同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），把这个
+参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。
+
+构建器以这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
+（参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
+
+`Transaction` 上有同样带默认实现的方法，因此从这样的发布者开启的事务行为一致。没有东西要补的发布者两
+个都不必实现。
 
 ### `PublishPolicy`
 
-Broker 的发布者是一份策略（一个 exchange、一个队列超时、一个事务 id）加上活连接的组合。就沿着这条缝
-把它拆开：提供一个可以随处构造的**策略**类型，它只带构建器选项，不带任何发布接口；再实现
-`PublishPolicy`，把它与已连接形态配对成活的发布者。对那些在发布者激活时要真干活的 Broker（初始化
-一个事务性 producer），配对是异步且可失败的；对大多数 Broker 而言，它只是一次廉价的构造调用。
+Broker 的发布者由两部分组成：一份策略（一个 exchange、一个队列超时、一个事务 id）和一条活连接。提供
+一个单独的**策略**类型：它在任何地方都能构造，持有构建器选项。
+
+在它上面实现 `PublishPolicy`：策略在已连接形态上构造出活的发布者，而 `pair` 就是这个构造函数。它是异
+步的，也可以返回错误，需要初始化事务性 producer 的 Broker 就在这里做这件事。
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -181,20 +186,22 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 }
 ```
 
-这里的错误类型是做了类型擦除的 `PairError`：用 `PairError::new` 包住你的 Broker 的失败。配对在启动时
-对每个发布者只做一次，绝不出现在热路径上。
+错误类型是做了类型擦除的 `PairError`：用 `PairError::new` 包住你的 Broker 自己的错误。策略在启动时把
+发布者实例化一次，因此 `pair` 不会落到热路径上。
 
-为每一种真正意义上的发布**模式**提供一对策略与活形态，并且让模式的选择成为策略类型之间的转移，而不是
-一个运行时标志：普通策略配对出普通的发布者，而 `transactional_id(..)` 这一步构建器调用会转移到另一个
-独立的事务性策略类型，其活形态实现 `TransactionalPublisher`，于是普通发布者上压根没有事务接口。内存
-Broker 的 `MemoryPublish` / `MemoryRequest` 是最小的参考实现（没有选项，所以它们是单元标记类型）；
-核心提供的类型化组合子以函子的方式实现 `PublishPolicy`，于是用户可以在你的策略配对之前，在它之上
-组合编解码器和变换。
+为每一种真正意义上的发布**模式**提供一对策略和活形态，并且让模式的选择成为策略类型之间的转移，而不是
+一个运行时标志。普通策略构造出普通的发布者，而 `transactional_id(..)` 这一步构建器调用把它转成另一个
+独立的事务性策略类型，它的活形态实现 `TransactionalPublisher`。于是普通发布者上根本没有事务接口。
 
-如果普通策略用默认值就能用（多数如此），那就在已连接形态上再实现 `DefaultPublish` 来指明它。随后，
-挂载一个不带显式 `.out(Reply, ..)` 的 `publish("dest")` 处理器时，运行时就会构造出默认的回复发布者：
-只写 `b.include(def)` 也能编译通过。发布者总是需要显式选项的 Broker 不实现它，它们的用户要在每次
-注册时附上一个策略。
+最小的参考实现是内存 Broker 的 `MemoryPublish` 和 `MemoryRequest`：它们没有选项，所以是空结构体。
+
+核心的类型化组合子以函子的方式实现 `PublishPolicy`，所以用户可以在策略构造出发布者之前，先在它之上组
+合编解码器和变换。
+
+如果普通策略用自己的默认值就够用（几乎总是如此），就在已连接形态上再实现 `DefaultPublish`，在那里指
+名这个策略。这样，带 `publish("dest")` 的处理器在没有显式 `.out(Reply, ..)` 的情况下挂载，运行时自己
+就把回复用的发布者实例化出来，只写 `b.include(def)` 也能编译。发布者总是需要显式选项的 Broker 不实现
+`DefaultPublish`，它们的用户在每次注册处理器时指定策略。
 
 <!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -203,7 +210,7 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
-两半合在一起，来自一个策略完全不带任何选项的 Broker：
+下面是这两半，取自一个策略完全没有选项的 Broker：
 
 ```rust
 --8<-- "src/memory/mod.rs:publish_policy"
@@ -211,8 +218,8 @@ pub trait DefaultPublish: ConnectedBroker {
 
 ## 订阅来源 { #subscription-sources }
 
-`Subscribe` 覆盖的是按名字订阅的情形。当一次订阅需要 Broker 专有的选项（一个消费者组、一个持久化名称、
-一份投递策略）时，就暴露一个实现了 `SubscriptionSource` 的描述符类型：
+`Subscribe` 覆盖的是一个名字就够用的情形。订阅需要你的 Broker 专有的选项（消费者组、持久化名称、投递
+策略）时，定义一个实现 `SubscriptionSource` 的描述符类型：
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -223,32 +230,34 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 }
 ```
 
-给描述符配一个关联构造函数（`OrdersStream::new(..)`），而不是一个自由函数，这样用户就能在属性里直接
-写出它的名字：`#[subscriber(OrdersStream::new("orders", "workers"))]`。宏会从这次构造调用里读出类型，
-并且只要每个方法都返回 `Self`，也接受在它之上的构建器链式调用
-（`#[subscriber(OrdersStream::new("orders").durable("workers"))]`）。由于 `type Subscriber` 定义在源
-上，一个 Broker 可以提供多种订阅方式（pub/sub 与流），各带不同的订阅者类型；也可以像
-[NATS 示例](example-nats.md)那样，用一个在内部分支的描述符把它们全部承载起来。
+给描述符一个关联构造函数（`OrdersStream::new(..)`），而不是自由函数：这样用户就能在属性里直接写出
+它，`#[subscriber(OrdersStream::new("orders", "workers"))]`。
 
-给描述符派生 `Clone`：它是配置，挂载点会为每次注册重新构造它，这样同一个定义可以挂到两个 Broker 上。
+宏从这次构造调用里读出类型，只要每个方法都返回 `Self`，也接受在它之上的构建器链
+（`#[subscriber(OrdersStream::new("orders").durable("workers"))]`）。
+
+`type Subscriber` 声明在来源上，所以一个 Broker 可以提供多种订阅方式（pub/sub 和流），各带不同的订阅
+者类型；也可以像 [NATS 示例](example-nats.md)那样，用一个在内部分支的描述符服务全部方式。
+
+给描述符派生 `Clone`：它是配置，挂载点为每次注册重新构造它，所以同一个定义可以同时挂到两个
+Broker 上。
 
 ### 用一个字符串命名一种订阅方式
 
-如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 `FromName`，其唯一的构造函数用该名字把
-它构造出来：
+只由一个名字确定、再没有别的标识的订阅方式，还会实现 `FromName`：它唯一的构造函数用这个名字构造出
+值。
 
 ```rust
 --8<-- "src/memory/mod.rs:from_name"
 ```
 
-于是 `#[subscriber(OrdersStream)]` 就合法了：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
-需要不止一个名字才能成立（既要一个主题，*又*要一个订阅名），它就不实现 `FromName`，于是这种写法对它
-无法通过编译。
+于是 `#[subscriber(OrdersStream)]` 就合法了：属性指定订阅方式，值由挂载点补上。确实需要不止一个名字
+才能成立的方式（既要一个主题，*又*要一个订阅名）不实现 `FromName`，这种写法对它就通不过编译。
 
 ### 用你自己的词汇表达配置
 
-核心无从知道一次订阅还有流、持久化名称或消费者组这些东西，所以它只暴露一个钩子：`map_source`，一个作用在
-挂载点正在构造的源之上的变换；而你的 crate 在它之上叠加自己的 trait，并约束到你自己的源类型：
+核心不知道订阅还有流、持久化名称或消费者组，所以只给出一个钩子：`map_source`，一个作用在挂载点正在
+构造的来源之上的变换。你的 crate 在它之上叠加自己的 trait，并约束到你自己的来源类型：
 
 <!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
@@ -259,7 +268,7 @@ pub trait NatsSubscriber {
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-// 四个状态槽位依次是（工作者、失败策略、起始位置、批次大小）；`Codec` 是这次注册自己的解码覆盖，
+// 四个状态槽位依次是（工作者、失败策略、起始位置、批大小）；`Codec` 是这次注册自己的解码覆盖，
 // 在没人指定之前是 `()`。两者都原样传递下去。
 impl<Def, Workers, Failures, StartPosition, Batch, Codec> NatsSubscriber
     for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartPosition, Batch), Codec>
@@ -276,13 +285,13 @@ where
 }
 ```
 
-对源类型的 trait 约束意味着，这些方法在别的 Broker 的构建器上根本不存在。用户像用任何扩展 trait
-那样导入它，就能用到这些方法。下文中 `Out` 槽位的词汇采用的也是同一种扩展形态。
+对来源类型的约束意味着，这些方法在别的 Broker 的构建器上根本不存在。下文 `Out` 槽位的词汇用的也是同
+一种扩展形态。
 
-有一项核心设定改变的不是状态槽位，而是源类型本身：`start_at(..)` 会把描述符包进
-`StartAt<SubscribeOptions, Position>`，于是恰恰在那些指定了起始位置的订阅上，你的方法不再在作用域
-里。为这种情形再写一个针对被包装源的 impl。`StartAt::map_inner` 能够到里面的描述符，并原样交还位置，
-所以每个方法仍旧只有一行：
+有一项核心设定改变的不是状态槽位，而是来源类型本身：`start_at(..)` 把描述符包进
+`StartAt<SubscribeOptions, Position>`。于是恰恰在指定了起始位置的订阅上，你的方法不在作用域里，这种
+情形由第二个针对包装后来源的 impl 补上。`StartAt::map_inner` 取出里面的描述符，并原样交还位置，所以
+每个方法仍旧只有一行：
 
 <!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
 ```rust
@@ -313,9 +322,9 @@ where
 
 ### 用你自己的词汇表达发布者配置
 
-发布这一侧是对称的。挂载点用 `.out(marker, policy)` 指定发布策略 - `Reply` 对应带
-`publish("dest")` 的处理器返回的值，`Out` 槽位的标记对应槽位 - 而 `MapPublisher` 就是作用在该位置
-所持策略之上的钩子：
+发布这一侧是对称的。挂载点用 `.out(marker, policy)` 指定发布策略：标记 `Reply` 对应带
+`publish("dest")` 的处理器返回的值，槽位的标记对应 `Out` 槽位。`MapPublisher` 就是作用在这个位置所持
+策略之上的钩子：
 
 <!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
 ```rust
@@ -345,79 +354,92 @@ b.include(confirm).out(Reply, Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 ```
 
-约束落在策略上而不是链上，所以一份实现就同时覆盖回复位置和每一个槽位，路由器和 Broker 作用域也一样。
-`map_publisher` 把策略替换成同一类型的策略，这正是发布者自身配置所产生的结果；换成另一种策略类型意味着
-另一种发布方式，那属于 `.out(marker, policy)` 调用本身。传入一个已经配置好的值
-（`.out(Reply, Publish::default().stream("ORDERS"))`）依然可行：这个钩子是符合工效的镜像，而不是替代。
+约束落在策略上，而不是落在链上，所以一份实现同时适用于回复位置、每一个槽位、路由器和 Broker 作用域。
+
+`map_publisher` 把策略换成同一类型的策略。换成另一种策略类型意味着另一种发布模式，它的位置在
+`.out(marker, policy)` 调用本身。已经配置好的值也可以直接传到那里：
+`.out(Reply, Publish::default().stream("ORDERS"))`。
 
 ## 能力 trait
 
-只实现你的 Broker 真正支持的能力；它们都不属于必需接口。最接近必需的是 `BatchSubscriber`：
+只实现你的 Broker 真正支持的能力，它们都不属于必需接口。最接近必需的是 `BatchSubscriber`：
 [能提供的地方就提供它](#batches-batchsubscriber)，因为每个批量处理器都要它，而自身没有批量能力的
 传输照样可以在客户端攒批。
 
 | trait | 适用于支持这些能力的 Broker |
 |---|---|
-| `BatchSubscriber` | 按批次接收消息（能提供就提供，见下文） |
+| `BatchSubscriber` | 按批接收消息 |
 | `TransactionalPublisher` | 在句柄上围绕发布做 begin / commit / abort |
-| `OwnedTransactions` / `Transaction` | 缓冲区存放在值里的事务，同一个句柄上可同时开启任意多个 |
-| `RequestReply` | 原生的请求-响应（NATS 有，Kafka 没有） |
-| `Partitioned` | 出站消息上的分区键 |
+| `OwnedTransactions` / `Transaction` | 同一个句柄上同时开启任意多个事务，每个各带自己的缓冲区 |
+| `RequestReply` | 做原生的请求-响应 |
+| `Partitioned` | 给出站消息设定分区键 |
 | `Seekable` / `Seeker` | 在可重放的日志中重新定位一个活的订阅 |
-| `Positioned` | 能报告自身日志位置的投递 |
+| `Positioned` | 报告一次投递在日志中的位置 |
 | `DescribeServer` | 为 AsyncAPI 报告一个 `ServerSpec` |
 
-`Seekable` 会在流借用订阅者之前铸出它的 `Seeker` 句柄，因此可以从分发循环之外重新定位一个正在运行的
-订阅。位置由 Broker 自己拥有（在你自己的类型上提供 `KafkaPosition` 风格的构造函数）。通过
-`Positioned::position` 从一条已投递消息上捕获的位置带有钉住的契约：定位到它会精确地重新投递那一条
-消息；而构造出来的位置则保持你的位置类型所记载的语义。写清楚一次定位的作用范围（一个消费者实例，
-还是一个共享的组游标），并重置这次重新定位所作废的一切 ack 记账。要让处理器主体能够定位，就把投递
-位置和订阅的 seeker 作为你的投递上下文的字段携带，并为它们发布 `ContextField` 键：内存 Broker 的
-`MemoryContext` 及其 `Position` / `SeekHandle` 键就是范本。批量的那些写法通过下面的批量上下文拿到
-seeker，它只带句柄、不带位置。
+`Seekable` 在 `stream` 借用订阅者之前交出 `Seeker` 句柄，因此可以从分发循环之外重新定位一个正在
+运行的订阅。
 
-这些 trait 就是处理器主体所写的词汇。主体用它需要的那个能力来约束自己的槽位
-（`Out<impl TransactionalPublisher, Journal>`，手动路径上则是 `where W: TransactionalPublisher`），
-从不写你的任何类型；包含点会按这个约束把所绑定策略的活形态检查一次，在编译期完成。在四种发布者能力
-各自的约束之下，竞技场条目还会在包含点的编解码器和标记的字典之上给出该能力的类型化形态 - 发布构建
-器、事务作用域、拥有式事务、带关联的请求 - 所以服务要用到它们，只需你在实时发布者上实现该 trait。
+位置由 Broker 自己拥有：`KafkaPosition` 风格的构造函数由你在自己的类型上声明。通过
+`Positioned::position` 从一条已投递消息上取到的位置确定了一条契约，定位到它会精确地重新投递这条
+消息。构造出来的位置，语义由你的位置类型自己写明。
 
-### 批次：`BatchSubscriber` {#batches-batchsubscriber}
+写清楚一次定位的作用范围（一个消费者实例，还是一个共享的组游标），并重置这次定位所作废的一切
+ack 记账。
 
-接受 `&[T]` 的处理器消费的是一个批次，而它的挂载点会给出一个数字 - 批次大小 - 运行时把它直接传给
-`BatchSubscriber::batches(size)`。你的订阅者交出的那个批次，就是处理器主体看到的那个批次：运行时
-既不拆分也不合并，因此一个批次绝不能超过 `size` 条消息；传输手上只有更少的消息时，它也可以更短。
+要让处理器主体能够定位，就把投递位置和订阅的 seeker 放进投递上下文的字段，并为它们发布
+`ContextField` 键。范本是内存 Broker 的 `MemoryContext` 及其 `Position` 和 `SeekHandle` 键。批量的
+那些写法从下面的批量上下文拿到 seeker，那里没有位置。
 
-把 `size` 翻译成你的客户端本来就说的话：`XREADGROUP COUNT`、JetStream 的 pull 批次、Kafka 的 poll
-上限。一个批次是怎么攒出来的，其余部分 - 阻塞超时、消费者组、预取窗口 - 仍归你自己的词汇，通过你的设置
-扩展 trait 配置在订阅源上，于是服务写出来是
+这些 trait 就是处理器主体所写的词汇。主体用它需要的那项能力约束自己的槽位
+（`Out<impl TransactionalPublisher, Journal>`，手动路径上是 `where W: TransactionalPublisher`），
+从不写你的任何类型。挂载点在编译期按这个约束检查一次所绑定策略的活形态。
+
+四种发布者能力，每一种在 arena 条目上都有自己的类型化形态：发布构建器、事务作用域、拥有式事务、带
+关联的请求。这些形态建立在挂载点的编解码器和标记的字典之上。服务要用到它们，只需你在活的发布者上
+实现对应的 trait。
+
+### 批：`BatchSubscriber` {#batches-batchsubscriber}
+
+接受 `&[T]` 的处理器消费的是一批消息，挂载点为它写下一个数字，也就是批大小。运行时把这个数字直接
+传给 `BatchSubscriber::batches(size)`。你的订阅者交出的批，就是处理器主体看到的批：运行时既不拆分
+也不合并，所以一批里绝不会超过 `size` 条消息，传输手上只有更少的消息时就更短。
+
+把 `size` 对应到你的客户端已有的说法上：`XREADGROUP COUNT`、JetStream 的 pull 批、Kafka 的 poll
+上限。至于一批怎么攒出来，其余的事（阻塞超时、消费者组、预取窗口）仍归你自己的词汇，通过你的设置
+扩展 trait 配置在订阅来源上。服务于是写成
 `b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))`：核心的词在前，你的词在后。
 
-要把这项能力放到挂载能够到的每一个订阅者上，而不只是你自己的描述符打开的那一个。
-`#[subscriber("topic")]` 走的是 `Subscribe`，因此这种写法下的 `&[T]` 主体要的是
-`Subscribe::Subscriber` 上的 `BatchSubscriber`；只把能力挂在自家描述符订阅者上的 crate，会让字符串
-字面量那种写法编译不过。两者是同一个类型时无事可做；类型不同时两边都得有。
+把这项能力放到挂载能够到的每一个订阅者上，而不只是你自己的描述符打开的那一个。
+`#[subscriber("topic")]` 走的是 `Subscribe`，所以这种写法下的 `&[T]` 主体，要的是
+`Subscribe::Subscriber` 上的 `BatchSubscriber`。
 
-如果传输一次只投递一条消息，不要干脆不实现这项能力：用核心的 `BufferedSubscriber` 在客户端攒批次，
-它的 `batches` 会遵守拿到的批次大小。封住不满一个批次的那个截止时间由你选定，而且它不必是个常量：
-把它放到你的订阅描述符上（`.max_wait(Duration::from_millis(25))`），在订阅打开时交给包装器，这样
-服务就能逐个订阅去调。网络传输要的正是这个：10 ms 的默认值是照进程内总线定的，一旦中间隔着一次网络
-往返，它会把大多数批次封在一条投递上，所以把这个截止时间做成描述符选项的那些 Broker crate 落在
-10 到 50 ms 之间。批次大小则不由你选。订阅者的其余部分都原样穿过这层包装：
+只把能力挂在自家描述符订阅者上的 crate，会让字符串字面量那种写法编译不过。两者是同一个类型时无事
+可做，类型不同时两边都要有。
+
+传输一次只投递一条消息时，也要实现这项能力，用核心的 `BufferedSubscriber` 在客户端攒批：它的
+`batches` 遵守拿到的批大小。批大小不由你选，让不满的批提前结束的那个截止时间由你选，而且它不必是
+常量。
+
+把这个截止时间放到你的订阅描述符上（`.max_wait(Duration::from_millis(25))`），在订阅打开时交给
+包装器，这样服务可以逐个订阅去调。10 ms 的默认值是照进程内总线定的：中间一旦隔着一次网络往返，
+大多数批会在一条投递上就结束，所以把这个截止时间做成描述符选项的 Broker crate 落在 10 到 50 ms
+之间。
+
+订阅者的其余部分原样穿过这层包装：
 
 ```rust
 --8<-- "tests/batch_subscriber.rs:buffered_capability"
 ```
 
-挂载点看不出你走的是两条路里的哪一条，而这正是要点：服务报出批次大小，就拿到批次。
+挂载点看不出你走的是两条路里的哪一条：服务写下批大小，就拿到批。
 
-在攒批会破坏传输自身某项保证的地方，不提供这项能力同样是正当的答复。ZeroMQ 的 ROUTER 就是现实中的
-例子：它按每个对端各自的 `reply-to` 去回复，而一个批次到达它的回复接线时只带着一个覆盖整批的
-`PublishContext`，于是批量回复会顺着某一个对端的地址走，把其余的送错地方。在你的 crate 文档里把这点
-写明；`&[T]` 主体在那种传输上便直接编译不过，这是诚实的结果。
+在攒批会破坏传输自身某项保证的地方，不提供这项能力同样是正当的答复。ZeroMQ 的 ROUTER 是现实中的
+例子：它按每个对端各自的 `reply-to` 回复，而一整批只对应一个 `PublishContext`，于是这一批的回复都
+会发到某一个对端的地址上。在你的 crate 文档里写明这一点：`&[T]` 主体在那种传输上编译不过。
 
-`conformance` 的批量套件会检查这项契约：它用小于整轮消息数的批次大小打开订阅，批次回得更长的
-Broker 会被判失败。它不在 `harness::run_suite` 之内：能力套件由你自己调用，实现了哪项能力就调哪一个。
+`conformance` 的批量套件会检查这项契约：它用小于一轮消息总数的批大小打开订阅，返回的批更长的
+Broker 通不过。它不在 `harness::run_suite` 之内：能力套件由你自己调用，实现了哪项能力就调哪一个。
 
 ### 你的 crate 要提供的 prelude { #broker-prelude }
 
@@ -425,36 +447,41 @@ Broker 会被判失败。它不在 `harness::run_suite` 之内：能力套件由
 顺序分三层：
 
 1. `pub use ruststream::prelude::*;`，让一个 glob 就能服务整个文件；
-2. 服务会写到的、你自己的那部分表面：Broker、它的订阅源、它的错误，以及主体会读的 `ContextField` 键；
-3. 你的发布策略，放在每个 Broker 都用的那套统一名字下 - `Publish`，以及在你有的时候还有
+2. 服务会写到的、你自己的那部分表面：Broker、它的订阅来源、它的 `Config`、它的错误，以及主体会读的
+   `ContextField` 键；
+3. 你的发布策略，用每个 Broker 都用的那套统一名字：`Publish`，以及在你有的时候还有
    `TransactionalPublish` 和 `Request`（`pub use crate::KafkaTransactionalPublish as
-   TransactionalPublish;`）。再把你在实时值上实现的能力 trait 作为一份清单加进去，这样带来策略的那个
+   TransactionalPublish;`）。再把你在活值上实现的能力 trait 作为一份清单加进去，这样带来策略的那个
    glob 也会把它们的操作带进作用域。
 
-这三个名字是策略的名字，因此核心 prelude 在这些名字下什么都不导出：挂载点在哪个 Broker 上读起来都
-一样，换 Broker 换的只是那个 glob。绝不要把策略取名成核心 trait 的名字（`Publisher`、
-`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`），也不要在这些名字下重导出别的东西：
-同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心 trait。
+核心 prelude 在这三个名字下什么都不导出，所以挂载点在哪个 Broker 上读起来都一样。切勿把策略取名成
+核心 trait 的名字（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`），也
+不要在这些名字下重导出别的东西：同时 glob 了两个 prelude 的主体，必须仍然把这些名字解析成核心
+trait。
 
 清单指的是你的 glob 添加的那部分，也就是主体经由你的 Broker 才够得到的消费侧 trait：`Positioned`、
-`Seeker`、`Transaction` 之类。四个发布者能力已经在核心 prelude 里了，再导出一遍什么也不改变。如果
-某个 trait 的方法会和核心的默认方法冲突，就把它留在外面 - 实践中就是 `Partitioned::partition_key`
-与 `IncomingMessage::partition_key` - 让需要它的服务显式导入。`BatchSubscriber` 则根本不属于任何
-清单：调用它的是框架，没有哪个主体会把它写成边界。可以参照的现成例子是
-`ruststream::memory::prelude`。
+`Seeker`、`Transaction` 之类。四个发布者能力已经在核心 prelude 里，再导出一遍什么也不改变。
+
+某个 trait 的方法会和核心的默认方法冲突时，就把它留在清单外面（实践中就是
+`Partitioned::partition_key` 与 `IncomingMessage::partition_key`），让需要它的服务显式导入。
+`BatchSubscriber` 不属于任何清单：调用它的是框架，没有哪个主体会把它写成约束。
+
+可以参照的现成例子是 `ruststream::memory::prelude`。
 
 ### 扩展 `Out` 槽位的词汇
 
-处理器参数 `Out<impl X, Marker>` 接受槽位背后那个活值实现了的任意 `X`；在此之上，核心还会转发它
-自己的那套能力（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`）。当
-活值提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）时，
-就声明你自己的能力 trait，并为这个活值实现它。
+处理器参数 `Out<impl X, Marker>` 接受槽位背后那个活值实现了的任意 `X`。在此之上，核心还会转发它
+自己的那套能力（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`）。活值
+提供的能力不止于此，或者它根本就不是发布者（一个按分区的 producer 缓存、一个分片路由器）时，就
+声明你自己的能力 trait，并为这个活值实现它。
 
-处理器主体手里拿到的并不是那个值，而是竞技场里的条目 `Slot<Marker, W, E, Pipe, Body>`，一扇通向它的透明
-窗口。自动解引用能把方法调用送过这扇窗，却送不过 trait 约束：写成 `fn issue<L: Lanes>(lanes: &L)`
-的辅助函数会以 `E0277` 拒收这个条目。在你的 trait 旁边加上一个全覆盖实现
-`impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`，通过条目的 `Deref` 转发，此后按能力
-泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：
+处理器主体手里拿到的不是那个值，而是 arena 里的条目 `Slot<Marker, W, E, Pipe, Body>`，一扇通向它的
+透明窗口。自动解引用能把方法调用送过这扇窗，却送不过 trait 约束：写成
+`fn issue<L: Lanes>(lanes: &L)` 的辅助函数会以 `E0277` 拒收这个条目。
+
+在你的 trait 旁边加上一个 blanket 实现
+`impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`，通过条目的 `Deref` 转发，
+按能力泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：
 
 === "宏"
 
@@ -471,43 +498,38 @@ Broker 会被判失败。它不在 `harness::run_suite` 之内：能力套件由
 决定 trait 形状的是发送发生在哪里，而形状有两种。
 
 **路由器形状**的能力交出一个发布者，自己从不发送：上面那个按分区的 producer 缓存为某个分片挑出
-一条通路并把它返回。处理器随后经这条通路发出的东西是从包装器外面走的，所以测试套件不会把这次发布
-记到槽位名下（就像一个已结算的 owned 事务的缓冲区那样），要在 Broker 的发布日志上断言它。这就是
-归属的边界，也是交出内层发布者所付的代价。
+发布者并把它返回。经这个发布者做的发布走在槽位视图之外，所以测试套件不会把它记到槽位名下，就像
+一个已结算的 owned 事务的缓冲区那样。改在 Broker 的发布日志上断言它。这是归属的边界，也是交出
+内层发布者所付的代价。
 
 **步骤形状**的能力给一条消息设定一个参数，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。
-不要把发送放进 trait。从你自己的值走出去的发布，就是槽位视图不再看得见的发布，而排序键这类参数
-恰恰是测试要断言的东西。改为走条目自己的类型化发布路径（`out.message(&value).publish()`），把参数
-当作头部携带：为一串消息持有它的发布者从 `Publisher::base_headers` 交出它，为单条消息设定它的调用
-点用 `.with_headers(..)` 写下它，而你的 `publish` 从出站的头部表里读走它，并在上线之前把它剥掉。
-你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它并不会得到。
+不要把发送放进 trait：从你自己的值走出去的发布，槽位视图不再看得见，而排序键这类参数恰恰是测试
+要断言的东西。
+
+把这一步建在条目自己的类型化发布路径上（`out.message(&value).publish()`），参数用消息头携带。为
+一串消息持有它的发布者从 `Publisher::base_headers` 交出它；为单条消息设定它的调用点用
+`.with_headers(..)` 写下它；你的 `publish` 从出站消息头里读走它，并在发送之前把它去掉。
+
+你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它拿不到。
 
 ### 你这个 crate 的 prelude
 
 两种文件导入的东西不一样，正是这种分工让服务保持可移植。处理器主体导入 `ruststream::prelude::*`，
-不导入你的任何东西：它用 Broker 的能力 trait 去约束注入进来的槽位，也就是 `Out<impl Publisher>`、
+不导入你的任何东西：它用核心的能力 trait 去约束注入进来的槽位，也就是 `Out<impl Publisher>`、
 `Out<impl TransactionalPublisher>`、`Out<impl OwnedTransactions>`、`Out<impl RequestReply>`，
-于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。挂载文件导入你的 prelude，因为
-指名 Broker 的地方就在那里。
+于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。
+
+挂载文件导入你的 prelude，因为指名 Broker 的地方就在那里。
 
 这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
-四层，按这个顺序：
+策略别名（`NatsPublish as Publish`、`KafkaTransactionalPublish as TransactionalPublish`、
+`LapinRequest as Request`）让挂载文件在哪个 Broker 上读起来都一样，换 Broker 就是换一行导入。
 
-- 先是 `pub use ruststream::prelude::*;`，让主体本来就认识的一切原样到位；
-- 你自己的示例会写出来的那部分 crate 表面：Broker、它的订阅描述符、它的配置；
-- 你的发布策略，以统一的挂载点名字取别名：`NatsPublish as Publish`、
-  `KafkaTransactionalPublish as TransactionalPublish`、`LapinRequest as Request`，
-  这样无论挂的是哪个 Broker，挂载文件读起来都一样，换 Broker 就是换一行导入；
-- 能力清单：你的 Broker 真正实现了的那些核心能力 trait，好让服务能用什么去约束槽位，从这一个导入
-  就看得出来。
+你这一半的命名规则是：显式 re-export 会一声不响地盖过 glob，所以一个跟核心 trait 同名的名字，会把
+那个 trait 从每个写了这行 glob 的服务手里拿走，而错误出现在服务的文件里，不在你的文件里。
 
-在这些策略名字下，核心一个 trait 都不导出，所以这些别名不会跟任何东西相撞。维持这一点的规则是双向的，
-你这一半是：你的 prelude 不能用自己的任何东西去遮蔽核心的名字。显式 re-export 会一声不响地盖过 glob，
-所以一个跟核心 trait 同名的名字，会把那个 trait 从每个写了这行 glob 的服务手里拿走，而错误浮现在服务
-的文件里，不在你的文件里。
-
-用一个跟在自己 glob 后面的探针把两半都钉死：主体所写的那个约束仍然必须以核心 trait 的身份到达，
-挂载点的名字仍然必须是你的策略。
+用一个跟在自己 glob 后面的探针把两半都固定下来：主体所写的那个约束仍然必须解析成核心 trait，挂载点
+的名字仍然必须是你的策略。
 
 <!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
 ```rust
@@ -525,10 +547,10 @@ fn _q() {
 
 ## 单条投递的上下文与 `Ctx` 键
 
-如果 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号），就把它作为类型化的单条投递上下文
-暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型，好让处理器能
-用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是单元结构体。
-投递路径上既没有 type-map，也没有堆分配。
+Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号）时，把它作为类型化的单条投递上下文
+暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型。处理器
+按键用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是空
+结构体，投递路径上既没有 type-map，也没有堆分配。
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -554,33 +576,37 @@ impl ContextField for Partition {
 
 这段草图读的是一个 `Copy` 标量，拥有和借用没有分别。位置类型不是 `Copy` 时（Pulsar 的消息 id、
 Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::Value<'a>` 对来源的生命周期是泛型的，
-所以键交回的是 `&'a MessageId`，用 `ctx.context(..)` 读它的主体一份都不必复制。必须拥有所有权且为
-`'static` 的只有 `ContextField::Value`，也就是 `Ctx<K>` 提取器背后的那个值，因为提取器的值在主体
-运行之前就要绑定好；这个键会把借用那个键交回的东西克隆一份。一个键通常两个 trait 都实现，各出一种
-形状。
+所以键交回的是 `&'a MessageId`，用 `ctx.context(..)` 读它的主体一份都不必复制。
 
-没有任何单条投递字段的 Broker 用 `()`，整节都可以跳过。
+必须拥有所有权且为 `'static` 的只有 `ContextField::Value`，也就是 `Ctx<K>` 提取器背后的那个值，
+因为提取器的值在主体运行之前就要绑定好；这个键把借用形态交回的东西克隆一份。一个键通常两个 trait
+都实现，各出一种形状。
 
-批量订阅另有自己的上下文，因为一个批次横跨多次投递：把整条*订阅*共享的东西（seek 句柄、流的名字、
-消费者组）攒成第二个结构体，在它上面实现 `BuildBatchContext` - 运行时按批构造一个值，取自该批的
-第一次投递 - 再发布若干 `Field` 键，好让批量函数体用 `ctx.context(..)` 读它。逐次投递的字段不放
-进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则在编译期成立的
-办法：投递上下文并不实现 `BuildBatchContext`，因此批量函数体无法写出它。范本是内存 Broker 的
-`MemoryBatchContext` - 订阅的 seeker，用的还是它的投递上下文所发布的那个 `SeekHandle` 键。订阅级
-上没有东西可交的 Broker 什么都不用实现，批量停在 `()` 这个默认值上。
+没有单条投递字段的 Broker 用 `()`。
+
+批量订阅另有自己的上下文，因为一批横跨多次投递。把整条*订阅*共享的东西（seek 句柄、流的名字、
+消费者组）攒成第二个结构体，在它上面实现 `BuildBatchContext`，再发布若干 `Field` 键，好让批量主体
+用 `ctx.context(..)` 读它。运行时按批构造一个值，取自这一批的第一次投递。
+
+逐次投递的字段不放进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则
+在编译期成立的办法：投递上下文不实现 `BuildBatchContext`，批量主体也就写不出它。
+
+范本是内存 Broker 的 `MemoryBatchContext`：订阅的 seeker 用的还是它的投递上下文所发布的那个
+`SeekHandle` 键。订阅这一级上没有东西可交的 Broker 什么都不用实现，批量停在 `()` 这个默认值上。
 
 ## 异步边界上的中间件 { #middleware-on-the-async-edges }
 
-那些需要围绕编码和解码做异步 I/O 的集成（一个 schema 注册表、一层线上格式的信封）不属于 `Codec`：核心
-的编解码器是同步的，处理器也应当继续用默认的那一个。把它们放到异步边界上：在订阅的投递路径上转码入站
-载荷（赶在编解码器看到它们之前），出站的则用核心的 `PublishLayer` 加上信封，通过
-`RustStream::publish_layer` 在应用级别添加。发布层是异步且可失败的，而 `Outgoing::payload_mut` 的存在
-正是为了包装信封。
+需要围绕编码和解码做异步 I/O 的集成（一个 schema 注册表、一层传输格式的信封）不属于 `Codec`：核心的
+编解码器是同步的，处理器也应当继续用默认的那一个。
+
+把这类集成放到异步边界上。入站载荷在订阅的投递路径上转码，在编解码器看到它们之前完成。出站的用
+核心的 `PublishLayer` 加上信封，通过 `RustStream::publish_layer` 添加到整个应用上。发布层是异步
+的，也可以返回错误，而 `Outgoing::payload_mut` 的存在正是为了包装信封。
 
 ## 配置与默认值
 
-`Config` 归你的 crate 所有；核心不携带任何 Broker 专有的配置。如果某个配置字段没有合理的默认值，就
-不要为它实现 `Default`；强迫用户显式设置，好过发出一个日后可能出问题的默认值。
+`Config` 归你的 crate 所有，核心不带任何 Broker 专有的配置。某个字段没有合理的默认值时，就不要实现
+`Default`：用户于是显式写下这个值，而不是继承一个日后会出问题的默认值。
 
 ## 错误
 
@@ -589,14 +615,17 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 
 ## 测试支持 { #test-support }
 
-在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`（用
-`register_testable_broker!` 为该已连接类型注册，因为套件会先连接每一个 Broker，然后才取回它的
-传输），这样用户就能用 `TestApp` 测试套件对着你的 Broker 单元测试处理器。该传输**只做核心路由**：把
-发布出去的消息分发给匹配的订阅者，并且对 `ack` / `nack` 的答复要和真实传输一致 - 传输能确认时就在
-内存里结算（`nack(requeue = true)` 把这条投递放回去），传输根本无法确认时（ZeroMQ、MQTT `QoS 0`、
-Redis pub/sub）就答 `AckError::Unsupported`。替身若声称一次自己传输做不到的结算，处理器里的重试就会
-在测试里通过，在生产中丢消息。切勿在其中模拟 Broker 专有的语义
-（持久游标、重新投递定时器、偏移量、死信路由）；那些要对着一台真实的服务器端到端地验证。
+在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`。用
+`register_testable_broker!` 为这个已连接类型注册：套件会先连接每一个 Broker，然后才取回它的传输。
+用户于是可以借助 `TestApp`，对着你的 Broker 单元测试处理器。
+
+该传输**只做核心路由**：把发布出去的消息分发给匹配的订阅者，对 `ack` 和 `nack` 的答复与真实传输
+一致。传输能确认的地方，就在内存里结算，`nack(requeue = true)` 把这条投递放回去。传输根本无法确认
+的地方（ZeroMQ、MQTT `QoS 0`、Redis pub/sub），答复仍然是 `AckError::Unsupported`。它一旦声称一次
+真实传输做不到的结算，处理器里的重试就会在测试里通过，在生产中丢消息。
+
+切勿在传输里模拟 Broker 专有的语义（持久游标、重新投递定时器、偏移量、死信路由），那些要对着一台
+真实的服务器端到端地验证。
 
 参考实现就是内存 Broker 自己的那一份（在 `ConnectedMemoryBroker` 上）：
 
@@ -605,15 +634,17 @@ Redis pub/sub）就答 `AckError::Unsupported`。替身若声称一次自己传�
 ```
 
 该传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在结算或丢弃一次投递时调用
-`Coordinator::consumed`（这样套件才能判断反应何时尘埃落定），并把延迟的重新投递交给
-`Coordinator::schedule_redelivery` 去路由。于是同一个类型既适用于 `TestApp`，也适用于 conformance
-校验套件。面向用户的那一侧参见[测试](../guides/testing.md)；用 `run_suite` 和 `lifecycle` 阶梯检查来证明
-你的实现，参见 [Conformance](conformance.md)。
+`Coordinator::consumed`，套件据此判断这次反应已经结束。延迟的重新投递由它交给
+`Coordinator::schedule_redelivery` 去路由。
+
+同一个类型既适用于 `TestApp`，也适用于 conformance 校验套件。面向用户的那一侧参见
+[测试](../guides/testing.md)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
+转移链检查证明你的实现。
 
 ### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }
 
-一个服务的整套测试都跑在这个进程内传输上。因此它和真实传输之间的每一处差异，都会为真实传输并不存在
-的行为开出一条绿灯。这些差异并不冷僻，而下面每一条规则的代价大约就是一个测试。
+一个服务的整套测试都跑在这个进程内传输上。因此它和真实传输之间的每一处差异，都会让一个测试变绿，
+而它测的行为在生产里并不存在。这些差异并不冷僻，而下面每一条规则的代价大约就是一个测试。
 
 **核心的契约套件不能只跑真实服务器，也要跑进程内传输。**套件是照着 trait 写的，并不区分应答的是
 真实 Broker 还是进程内传输。一个 `#[tokio::test]` 就够：
@@ -623,33 +654,35 @@ Redis pub/sub）就答 `AckError::Unsupported`。替身若声称一次自己传�
 ```
 
 先跑 `lifecycle`。它会走一遍 `new` -> `connect` -> 订阅 -> 发布 -> ack -> `shutdown`，然后问出一个
-几乎没人拿去问进程内传输的问题：关闭之前创建的发布者，关闭之后会不会报错？真实客户端答的是
-「未连接」。而发布只是往 channel 里塞一条的进程内传输没有理由报错，它会照单全收。
+几乎没人拿去问进程内传输的问题：关闭之前创建的发布者，在关闭之后会不会返回错误？真实客户端答的是
+“未连接”。而发布只是往 channel 里发一条消息的进程内传输没有理由返回错误，它会把消息收下。
 
 ```rust
 --8<-- "tests/conformance_self.rs:lifecycle"
 ```
 
-你的能力集撑得起的每个 `capabilities::*` 套件，都照此加上。
+`capabilities::*` 套件照此加上，实现了哪项能力就加哪一个。
 
-**能力面要和真实 Broker 对齐。**`testing` 这个 feature 是给测试用的，release 构建会把它关掉，因此
-两个方向的代价并不对等。少一项才是贵的：真实 Broker 有、进程内传输没有的能力，在进程内根本挂载
-不了，它背后的行为也就没人测。多一项则是小事：只有进程内传输提供的事务或 request-reply，在你自己的
-release 构建里就编译不过。恼人，但发现得早。
+**提供的能力要和真实 Broker 一致。**`testing` 这个 feature 是给测试用的，release 构建会把它关掉，
+两个方向的代价因此并不对等。少一项是贵的：真实 Broker 有、进程内传输没有的能力，在进程内根本挂载
+不了，它背后的行为也就没人测。多一项是便宜的：只有进程内传输提供的事务或 request-reply，在你自己的
+release 构建里就编译不过，恼人，但立刻就能发现。
 
 **传输怎么结算，你就怎么结算。**真实的 `ack` 在两处返回 `AckError::Unsupported`：发完即忘的传输，
-以及至多一次的服务质量。进程内传输照样返回它。为了让套件闭嘴而回一个 `Ok(())`，会让一个返回
-`HandlerOutcome::retry()` 的处理器在进程内通过，却在真实 Broker 上丢消息。诚实的答案套件是收的。
+以及至多一次的服务质量。进程内传输照样返回它。为了让套件通过而回一个 `Ok(())`，会让一个返回
+`HandlerOutcome::retry()` 的处理器在进程内通过测试，却在真实 Broker 上丢消息。诚实的答复，套件是
+接受的。
 
-**客户端做的事要复刻，Broker 做的事不要假造。**这条界线无关工作量，只看这套机制运行在哪一侧。竞争
+**客户端做的事要复刻，Broker 做的事不要假造。**这条界线无关工作量，只看机制运行在哪一侧。竞争
 消费、按组分发、关联与回复路由、提交前的缓冲，都由客户端或路由层完成，进程内复刻是精确的。集群
 原子性、fencing、Broker 侧持有的超时和 exactly-once 由 Broker 完成，进程内复刻就是虚构。
 
 竞争消费最该做对，因为做错了看着像成功。把每条消息都发给队列的每个订阅者，那已经不是队列。共用
-一条队列的两个 worker 于是各自跑完整个流，而一个统计处理量的测试只看到活干完了，一个错都不报。
+一条队列的两个工作者于是各自跑完整个流，而一个统计处理条数的测试只看到消息都处理完了，一个错都
+不报。
 
-**每一处缺口都配一句注释，点名它让哪条断言站不住。**不要写「这个功能没有」，要写读者从此不该再信
-哪个测试，以及真正覆盖它的是什么：
+**每一处缺口都配一句注释，点名它让哪条断言站不住。**不要写“这个功能没有”，要写读者从此不该再信
+哪个测试，以及真正验证它的是什么：
 
 <!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
 ```rust
@@ -658,9 +691,9 @@ release 构建里就编译不过。恼人，但发现得早。
 // server is what covers that.
 ```
 
-**再用一个测试把缺口钉住。**某人「修好」进程内传输、让它去路由那些它故意不路由的东西，注释就在那天
-失效。而一个断言处理器*没有*被调用的测试，会在那天挂掉，并且自己把话说清楚。
+**缺口还要用一个测试守住。**某人“修好”进程内传输，让它去路由那些它故意不路由的东西，注释就在那天
+失效。而一个断言这个处理器*没有*运行的测试，会在那天失败，并且自己把话说清楚。
 
 **挂载进程内传输的方式，要和挂载真实 Broker 一样。**你自己的订阅来源和发布策略必须原封不动地对着它
-工作，这样服务测的才是它真正发布的那份路由文件。如果用户非得把 `OrdersStream` 换成别的东西才能把
-测试跑起来，挂载就没有被测到。
+工作，这样服务测的才是它实际交付的那份路由文件。用户非得把 `OrdersStream` 换成别的东西才能把测试
+跑起来，这个测试就不再检验挂载了。

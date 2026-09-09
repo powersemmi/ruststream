@@ -1,12 +1,12 @@
 # Benchmarks
 
-Putting a framework between the broker client and your handler costs something on every message:
-the subscription stream, the decode, the dispatch, the ack. This page publishes what that costs,
-measured against the raw client doing the same work on the same machine.
+A framework between the broker client and your handler costs time on every message: the
+subscription stream, the decode, the dispatch, the ack. This page publishes that cost, measured
+against the raw client doing the same work on the same machine.
 
-Each broker crate measures itself and publishes its own numbers; this page loads them and shows
-them together. Nothing is copied here, so a broker that remeasures changes what you read below on
-its next docs deploy.
+Each broker crate measures itself and publishes its own numbers. This page loads them and shows
+them together. Nothing is copied here, so a broker that remeasures itself changes the table below
+the next time it publishes its documentation.
 
 ## Results
 
@@ -16,66 +16,65 @@ Medians over interleaved pairs, with the observed spread in parentheses.
 
 ## What the number is
 
-The measurement answers one question: what does the layer between the broker client and your
-handler cost per message. It is not a broker comparison. Each row was measured on the machine of
-whoever maintains that broker crate, against a broker on localhost, so the absolute throughput of
-one row says nothing about another; only the two columns within a row are comparable, and that is
-exactly the comparison the page is for.
+Each row was measured by whoever maintains that broker crate, on their own machine, against a
+broker on localhost. Rows are therefore not comparable with each other: the absolute throughput of
+one says nothing about another. Only the two columns inside a row are comparable, and that is the
+comparison this page exists for.
 
-A broker on localhost is the harshest setting for the framework's share of the work. There is no
-network latency for a per-message cost to hide in, so the same absolute overhead is a larger
-fraction here than it would be against a broker across a real network. Read the percentage as an
-upper bound on what a deployed service pays, not as a typical figure.
+A broker on localhost is the harshest setting for the framework. There is no network latency here,
+so the same absolute cost per message comes out as a larger percentage than it would against a
+broker across a real network. Read the percentage as an upper bound on what a deployed service
+pays, not as a typical figure.
 
-Rows marked `broker-bound` mean the raw client was already waiting on the socket for most of the
-run. The framework's work then happens inside time that was being spent waiting anyway, and the
-measured difference collapses toward zero. That is a real result for that workload - it is what
-a saturated consumer looks like - but it is a lower bound on the dispatch cost, not a measurement
-of it, and it must not be read as "free".
+The `broker-bound` mark means the raw client spent most of the run waiting on the socket. The
+framework does its work inside that wait, and the measured difference comes out near zero. For that
+workload it is a real result: this is what a saturated consumer looks like. But the number is a
+lower bound on the cost of dispatch, not a measurement of it, and you cannot read it as "free".
 
 ## Methodology
 
-Every broker crate follows the procedure below, so that a number published for one broker means
-the same thing as a number published for another. A broker that deviates says so on its own page.
+Every broker crate follows the procedure below, so a number published for one broker means the same
+thing as a number published for another. A broker that departs from the procedure says so on its own
+page.
 
 ### The pair
 
 A run is a pair of binaries that differ in exactly one thing: whether the messages arrive through
-RustStream or through the broker client directly.
+RustStream or straight through the broker client.
 
 - **Same client, same client configuration.** Prefetch, ack mode, consumer group, durability,
   connection count and any broker-specific tuning are identical on both sides. The framework side
-  configures the broker through RustStream; the resulting client settings still have to match.
+  configures the broker through RustStream, and the resulting client settings still have to match.
 - **Same ack position.** RustStream acks after the handler returns, so the raw loop acks in the
   same place. Batching acks at the end of the raw run measures a different protocol, not a
   different framework.
 - **Same decode into the same type.** The raw side deserializes the payload into the same struct
   with the same codec and touches a field through `std::hint::black_box`. Skipping this is the
-  easiest way to produce a wrong number: the optimizer removes a decode whose result is unused,
-  and the comparison silently becomes decode against nothing.
+  easiest way to produce a wrong number: the optimizer removes a decode whose result is unused, and
+  the raw side silently stops decoding.
 - **Same payload, byte for byte.** One generator produces the bodies both sides consume.
-- **Same runtime.** Tokio flavor, worker thread count and the number of messages in flight are
-  fixed and equal.
-- **Same build.** Profile, `RUSTFLAGS`, and the allocator match, and the observability features
-  (`logging`, `metrics`, `otel`) are off on both sides or on on both sides. A machine with
-  `-C target-cpu=native` in the environment produces numbers that another machine cannot
-  reproduce; the flags are published with the results.
+- **Same runtime.** The tokio flavor, the worker thread count and the number of messages processed
+  at once are the same on both sides.
+- **Same build.** Profile, `RUSTFLAGS` and the allocator match, and the observability features
+  (`logging`, `metrics`, `otel`) are enabled on both sides or on neither. A machine with
+  `-C target-cpu=native` in the environment produces numbers another machine cannot reproduce. The
+  flags are therefore published with the results.
 
 ### The run
 
-- **The consumer is attached before anything is published.** Otherwise one side drains a backlog
-  the broker already has and the other receives live deliveries, which are different paths through
-  most brokers.
+- **The consumer is attached before the first message is published.** Otherwise one side works
+  through a backlog the broker already holds, and the other receives messages as they are
+  published. In most brokers those are two different paths.
 - **Every run gets its own names.** A fresh subject, queue, stream or consumer group per run, so
-  run N never observes what run N-1 left behind.
-- **The window starts at the first message received and ends when the last one is acked.** A
-  discarded warm-up run precedes the measured ones: connection setup, consumer registration and
-  the first allocations are startup cost, not per-message cost.
-- **The message count makes a run last at least five seconds**, so that startup transients and
-  timer resolution stay in the noise.
-- **Pairs are interleaved, not blocked.** Raw, framework, raw, framework, and so on for at least
-  eleven pairs, discarding the first. Running all of one side and then all of the other attributes
-  every drift of the machine - thermal, background load, page cache - to whichever side ran second.
+  run N never sees what run N-1 left behind.
+- **The window starts at the first message received and ends at the ack of the last one.** A warm-up
+  run precedes the measured ones and its result is discarded. Connection setup, consumer
+  registration and the first allocations are startup cost, not per-message cost.
+- **The message count makes a run last at least five seconds**, so startup transients and timer
+  resolution stay inside the noise.
+- **Pairs are interleaved, not blocked.** Raw, framework, raw, framework and so on, for at least
+  eleven pairs, discarding the first. Running one side to the end and then the other attributes
+  every drift of the machine (thermal, background load, page cache) to whichever side ran second.
 
 ### The report
 
@@ -84,16 +83,16 @@ RustStream or through the broker client directly.
 - **A difference smaller than the spread is published as `indistinguishable`,** never as a
   percentage: a figure below the run-to-run noise reads as precision that was never measured.
 - **A saturated consumer is flagged.** When the raw side spends the run waiting on the broker, the
-  row carries `broker-bound` and its number is understood as a lower bound.
+  row is marked `broker-bound`.
 - **The environment is published with the numbers**: CPU and core count, kernel, how the broker was
   started (image, container, host), the rustc version, the crate versions, the build profile and
-  the flags. Without those a number cannot be reproduced or aged out.
+  the flags. Without them a number cannot be reproduced or declared out of date.
 
 ## Publishing results
 
-A broker crate runs its own harness with `just bench` against the broker in its compose file, and
-publishes the outcome as part of its documentation site: a page a reader can follow, and one JSON
-document this page can read.
+A broker crate runs its own harness with `just bench` against the broker in its compose file. It
+publishes the outcome on its documentation site: a page a reader can follow, and one JSON document
+this page reads.
 
 ### The stable path
 
@@ -101,9 +100,9 @@ document this page can read.
 https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 ```
 
-The file lives at `docs/benchmarks/results.json` in the broker repository, so the docs build copies
-it verbatim and the deploy puts it under the `latest` alias next to the page that explains it. The
-broker sites share this site's origin, so this page reads them directly.
+The file lives at `docs/benchmarks/results.json` in the broker repository. The docs build copies it
+verbatim, and publishing the site puts it under the `latest` alias next to the page that explains
+it. The broker sites share this site's origin, so this page reads them directly.
 
 ### The document
 
@@ -138,11 +137,11 @@ broker sites share this site's origin, so this page reads them directly.
 }
 ```
 
-`schema` is the version of this document, and a reader that does not recognise it shows the broker
-as unpublished rather than guessing. `unit` is a short label rendered next to every value in the
-row, so `msg/s` rather than a sentence. `verdict` is `measured` or `indistinguishable`, decided by
-the rule above; `overhead_percent` is recorded either way, and displayed only when the verdict is
-`measured`. `broker_bound` marks a run the broker paced rather than the consumer.
+`schema` is the version of this document. `unit` is a short label rendered next to every value in
+the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
+`overhead_percent` is recorded either way and displayed only when the verdict is `measured`.
+`broker_bound` marks a run the broker paced rather than the consumer.
 
-A document that fails to load, or that carries an unknown `schema`, leaves its broker in the "no
-results published yet" line, so a broken publish is visible rather than quietly absent.
+A document that does not load, or that declares a `schema` this page does not know, leaves its
+broker in the "no results published yet" line. A broken publish is visible instead of silently
+missing.

@@ -1,7 +1,7 @@
 # Metrics
 
-The `metrics` feature collects Prometheus metrics for consumed and published messages. It is built on
-the `prometheus` crate directly and exposes the data in the Prometheus exposition format.
+The `metrics` feature collects Prometheus metrics for consumed and published messages. It is built
+directly on the `prometheus` crate.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
@@ -9,7 +9,8 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 
 ## Wiring it up
 
-Create a `Metrics`, install its consume and publish layers, and keep the handle to export later:
+Create a `Metrics`, install its consume and publish layers, and keep the handle so you can export
+later:
 
 === "Macros"
 
@@ -23,8 +24,9 @@ Create a `Metrics`, install its consume and publish layers, and keep the handle 
     --8<-- "examples/manual/metrics_http.rs:wiring"
     ```
 
-`consume_layer` records every handled message; `publish_layer` records every published message. To
-collect into an existing registry instead of a fresh one, use `Metrics::with_registry(registry)`.
+`consume_layer` records every handled message; `publish_layer` records every publish attempt,
+including the ones that return an error.
+`Metrics::with_registry(registry)` collects into your own registry instead of the default one.
 
 ## Metrics emitted
 
@@ -34,28 +36,29 @@ collect into an existing registry instead of a fresh one, use `Metrics::with_reg
 | `ruststream_consume_duration_seconds` | histogram | `name` |
 | `ruststream_messages_published_total` | counter | `name`, `status` |
 
-`name` is the subscription or destination name; `status` is the outcome (`ack` or `nack` for
-consume; `ok` or `error` for publish).
+`name` is the subscription or destination name. `status` is the outcome: `ack` or `nack` for
+consume, `ok` or `error` for publish.
 
 ## Exporting
 
-`export` renders the current values in the Prometheus exposition format:
+`export` returns the current values in the Prometheus exposition format:
 
 <!-- inline-rust: one-line export() API shape; the complete server, including this call, is compiled in metrics_http.rs and pulled in below -->
 ```rust
 let body = metrics.export()?;
 ```
 
-Hosting is your responsibility, as with AsyncAPI: serve `export()` from a `/metrics` route in your
-own HTTP stack, or push it to a gateway. `metrics.registry()` returns the underlying
-`prometheus::Registry` if you want to register your own collectors alongside RustStream's or use an
-existing exporter.
+Serve the result of `export()` from a `/metrics` route in your own HTTP stack, or push it to a
+gateway.
+
+`metrics.registry()` returns the `prometheus::Registry` itself. You can register your own collectors
+in it alongside RustStream's, or pass it to an existing exporter.
 
 ## A complete server
 
 The [`metrics_http`](https://github.com/powersemmi/ruststream/blob/main/examples/metrics_http.rs)
-example serves `/metrics` with [axum](https://github.com/tokio-rs/axum) and publishes orders through
-a `/orders` route, so an HTTP client drives the counters. Run it with
+example serves `/metrics` with [axum](https://github.com/tokio-rs/axum) and publishes the orders
+that arrive on a `/orders` route, so an ordinary HTTP client increments the counters. Run it with
 `cargo run --example metrics_http --features macros,memory,metrics`, then:
 
 ```bash
@@ -75,7 +78,7 @@ curl http://127.0.0.1:8080/metrics
     --8<-- "examples/manual/metrics_http.rs"
     ```
 
-For services exporting through the `otel` feature instead, a ready-made Grafana dashboard over
-the full metrics inventory lives in
+If your service exports through the `otel` feature instead, a ready-made Grafana dashboard over the
+full metrics inventory lives in
 [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana); see the
 [OpenTelemetry guide](opentelemetry.md).
