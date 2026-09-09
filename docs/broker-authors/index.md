@@ -18,9 +18,9 @@ traits for the features your broker supports, and prove the result with the
 
 ### `Broker` and `ConnectedBroker`
 
-The broker is pure lifecycle, and the lifecycle is a ladder of consuming transitions: each state
-is a distinct type, so out-of-order calls do not compile. The broker carries no subscriber or
-publisher type, so a single application can mix broker kinds.
+The broker is pure lifecycle: each state is a distinct type, and a transition consumes `self` and
+returns the next state, so calls made out of order do not compile. The broker names neither a
+subscriber type nor a publisher type, so one application can mix brokers of different kinds.
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -37,39 +37,42 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 }
 ```
 
-`shutdown` must never block or panic; do all fallible teardown here and return a `Result`. The
-`Closed` witness has no publish or subscribe surface; carry teardown diagnostics (flush results,
-drop counts) in it as plain data, or use `()`.
+`shutdown` must never block or panic: do all teardown that can return an error here, and return a
+`Result`. `Closed` is the shutdown witness: carry teardown diagnostics (flush results, drop counts)
+in it as plain data, or use `()`.
 
-Construction is **synchronous and I/O-free**: `new(addrs)` only records configuration, all network
-work happens in `connect` (called once at startup by the runtime), and the connected form holds
-the live client directly - its own operations never check a "maybe connected" state. A broker may
-additionally keep a shared cell that `connect` fills (or a shareable in-process state, as the
-in-memory broker does) so publishers can be handed out while the app is still being assembled,
-before `connect` runs; the cell serves those early handles, not the connected form. The
-[conformance harness](conformance.md) proves the ladder end to end, and the
-[NATS example](example-nats.md) walks the whole ladder on a real client.
+Construction is **synchronous and I/O-free**: `new(addrs)` only records the configuration. All
+network work happens in `connect`, which the runtime calls once at startup. The connected form
+holds the live client directly, so its operations never check a "maybe connected" state.
 
-There is no publish or subscribe to call on a broker you already shut down, so owner-side misuse
-does not compile. Aliasing stays a runtime rule: handles that alias the connection (publishers
-handed out from the connected form, clones of a shareable broker) must surface an error when
-used after shutdown - never a silent success against a dead connection. The lifecycle check
-drives that path too.
+A broker may additionally keep a shared cell that `connect` fills, or shareable in-process state,
+as the in-memory broker does. Publishers can then be handed out while the application is still
+being assembled, before `connect` runs: the cell serves those early handles, not the connected
+form.
 
-The in-memory broker walks the whole ladder in a few lines, and every sketch below it on this page
-is cut from that same file, so a contract that moves takes the page's code with it:
+The [conformance harness](conformance.md) proves the whole sequence of transitions, and the
+[NATS example](example-nats.md) walks it on a real client.
+
+A broker you already shut down has nothing left to call, neither publish nor subscribe, so misuse
+by the owner does not compile. Sharing the connection is checked at run time: handles that share
+it (publishers handed out from the connected form, clones of a shareable broker) must return an
+error after shutdown and must never succeed silently against a dead connection. The `lifecycle`
+check covers that path too.
+
+The in-memory broker walks the whole lifecycle in a few lines, and every example of it on this
+page is cut from that same file, so a contract that moves takes the page's code with it:
 
 ```rust
 --8<-- "src/memory/mod.rs:ladder"
 ```
 
-`ClosedMemoryBroker` is the witness carrying teardown diagnostics the paragraph above describes:
-it reports how many subscriber registrations the shutdown dropped.
+`ClosedMemoryBroker` is the witness with the teardown diagnostics described above: it reports how
+many subscriber registrations the shutdown dropped.
 
 ### `Subscribe`
 
-Implement `Subscribe` on the connected form to support subscribing by name. This is what
-`#[subscriber("name")]` uses.
+Implement `Subscribe` on the connected form so a service can subscribe by the name of a topic, a
+subject or a queue. `#[subscriber("name")]` subscribes through it.
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -87,7 +90,7 @@ Opening a subscription is all it has to do:
 
 ### `Subscriber`
 
-A subscriber is a `Stream` of incoming messages. Back-pressure comes for free from the stream.
+A subscriber is a `Stream` of incoming messages. Back-pressure comes from the stream itself.
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -103,8 +106,8 @@ which keeps it cancel-safe.
 
 ### `IncomingMessage`
 
-A delivered message exposes its payload and headers, and is acked or nacked. Ack consumes `self`, so
-double-ack is a compile error.
+A delivered message exposes its payload and its headers, and is acknowledged with `ack` or rejected
+with `nack`. `ack` consumes `self`, so a double ack is a compile error.
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -129,27 +132,28 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-Delayed redelivery is two methods, and `supports_nack_after` is the one the runtime asks:
-overriding `nack_after` alone leaves it at `false`, and the override is never called. The
-`nack_after` default answers `AckError::Unsupported` rather than quietly settling as a plain
-`nack(true)`, because a transport that cannot hold a message back should say so instead of turning
-a back-off into a redelivery storm.
+Delayed redelivery is two methods, and the runtime asks `supports_nack_after`. Override
+`nack_after` alone and the flag stays `false`, so the override is never called. By default
+`nack_after` returns `AckError::Unsupported` instead of settling the delivery with a plain
+`nack(true)`: a transport that cannot hold a message back has to say so, or the pause before a
+retry turns into a storm of redeliveries.
 
-A broker that overrides none of the three still works with every runtime feature. Where there is no
-native delayed redelivery the runtime carries `retry_after` itself: it drops the delivery and
-re-publishes a copy to the same source after the delay, through the publisher the application wired
-with `BrokerScope::retry_via`, carrying an incremented retry-count header. Only with no such
-publisher does the delay degrade to an immediate requeue. Keyed lanes rotate keyless messages.
+A broker that overrides none of the three defaulted methods still works with every runtime feature.
+Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
+delivery and, after the delay, publishes a copy to the same source through the publisher the
+application wired with `BrokerScope::retry_via`, with an incremented retry-count header. Only with
+no such publisher does the delay degrade to an immediate requeue. Keyed worker lanes hand out
+keyless messages round-robin.
 
-What "overrides nothing" gets you is not something a broker can be pointed at to show - every
-broker in this workspace overrides these - so the core pins it with a test, and this is that test:
+There is no broker to point at for "overrides nothing": every broker in this workspace overrides
+these methods. So the core pins the behaviour with a test:
 
 ```rust
 --8<-- "src/message.rs:incoming_defaults"
 ```
 
-`nack_after` reports that the delay cannot be honoured rather than quietly settling as a plain
-`nack(true)`, which is what lets the runtime tell the two cases apart and run its own fallback.
+The `Unsupported` answer is what lets the runtime tell a transport with no delayed redelivery from
+one that honoured the delay, and run its own fallback.
 
 ### `Publisher`
 
@@ -164,30 +168,33 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
-`OutgoingMessage` borrows its name and payload, so publishing does not force an allocation.
+`OutgoingMessage` borrows both its name and its payload, so publishing does not force an
+allocation.
 
-This is the publish interface, not the one a service writes: applications publish through the
-builder (`publisher.message(&value).publish()`), which resolves the destination, the codec
-(where the value's wire needs one) and the headers and then makes exactly one call to
-this method. Implement `publish` and the whole builder follows; there is nothing else to
-provide.
+A service writes the builder, not this method: `publisher.message(&value).publish()` picks the
+destination, the codec and the headers, and makes exactly one call to `publish`. Implement
+`publish` and the whole builder works on top of it.
 
-A handle that carries an argument for a run of messages - a tenant, a partition hint, a delivery
-option your broker expresses as a header - returns it from `base_headers` rather than writing it
-into the message inside `publish`. The builder starts the outgoing map from that base and writes
-the call site's headers over it key by key, so the call site wins (see
+A publisher that holds one argument for a run of messages (a tenant, a partition hint, a delivery
+option your broker expresses as a header) returns it from `base_headers` rather than writing it
+into the message inside `publish`.
+
+The builder starts the outgoing headers from that base and writes the call site's headers over it
+key by key, so on a shared key the call site's value stays (see
 [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
-`Transaction` carries the same defaulted method, so a transaction opened from such a handle
-behaves identically. A publisher with nothing to add implements neither.
+
+`Transaction` carries the same defaulted method, so a transaction opened from such a publisher
+behaves the same way. A publisher with nothing to add overrides neither.
 
 ### `PublishPolicy`
 
-A broker publisher is a bundle of policy (an exchange, a queue timeout, a transactional id) plus
-the live connection. Split it along that seam: ship a freely constructible **policy** type with
-the builder options and no publish surface, and implement `PublishPolicy` to pair it with the
-connected form into the live publisher. Pairing is async and fallible for brokers that do real
-work when a publisher comes alive (initializing a transactional producer); for most it is a cheap
-constructor call.
+A broker publisher is a policy (an exchange, a queue timeout, a transactional id) and the live
+connection. Ship a separate **policy** type: it is constructible anywhere and holds the builder
+options.
+
+Implement `PublishPolicy` on it: the policy constructs the live publisher on the connected form,
+and `pair` is that constructor. It is async and can return an error, so a broker that has to
+initialize a transactional producer does it here.
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -197,22 +204,26 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 }
 ```
 
-The error is the type-erased `PairError`: wrap your broker's failure with `PairError::new`.
-Pairing runs once per publisher at startup, never on the hot path.
+The error is the type-erased `PairError`: wrap your broker's error with `PairError::new`. The
+policy instantiates the publisher once, at startup, so `pair` never reaches the hot path.
 
-Ship one policy/live pair per genuine publishing **mode**, and make mode selection a policy type
-transition rather than a runtime flag: a plain policy pairs into the plain publisher, and a
-`transactional_id(..)` builder step moves to a distinct transactional policy type whose live form
-implements `TransactionalPublisher` - so the plain publisher has no transactional surface at all.
-The in-memory broker's `MemoryPublish` / `MemoryRequest` are the minimal reference (no options, so
-they are unit markers); the core's typed combinators implement `PublishPolicy` functorially, so
-users compose codecs and transforms over your policy before it pairs.
+Ship one policy and live form per genuine publishing **mode**, and make the choice of mode a
+transition of the policy type rather than a runtime flag. The plain policy constructs the plain
+publisher, and a `transactional_id(..)` builder step moves it to a distinct transactional policy
+type whose live form implements `TransactionalPublisher`. The plain publisher then has no
+transactional surface at all.
+
+The minimal reference is the in-memory broker's `MemoryPublish` and `MemoryRequest`: they have no
+options, so they are empty structs.
+
+The core's typed combinators implement `PublishPolicy` functorially, so users compose codecs and
+transforms over your policy before it constructs the publisher.
 
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
-the connected form to name it. The runtime then builds the default reply publisher when a
-`publish("dest")` handler is included without an explicit `.out(Reply, ..)`: `b.include(def)`
-alone compiles. Brokers whose publishers always need explicit options do not implement it, and
-their users attach a policy at every registration.
+the connected form and name the policy there. The runtime then instantiates the reply publisher
+itself when a `publish("dest")` handler is mounted without an explicit `.out(Reply, ..)`, and
+`b.include(def)` compiles on its own. Brokers whose publishers always need explicit options do not
+implement it, and their users specify the policy at every handler registration.
 
 <!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -229,9 +240,9 @@ Both halves, on a broker whose policy carries no options at all:
 
 ## Subscription sources
 
-`Subscribe` covers the by-name case. When a subscription needs broker-specific options (a consumer
-group, a durable name, a delivery policy), expose a descriptor type that implements
-`SubscriptionSource`:
+`Subscribe` covers the case where a name is all a subscription needs. When it needs options of your
+own broker (a consumer group, a durable name, a delivery policy), ship a descriptor type that
+implements `SubscriptionSource`:
 
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
@@ -242,35 +253,39 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 }
 ```
 
-Give the descriptor an associated constructor (`OrdersStream::new(..)`) rather than a free function,
-so users can name it directly in the decorator: `#[subscriber(OrdersStream::new("orders", "workers"))]`.
-The macro reads the type out of the constructor call, and also accepts a builder chain on it
-(`#[subscriber(OrdersStream::new("orders").durable("workers"))]`) as long as each method returns
-`Self`. Because `type Subscriber` lives on the source, one broker can offer several subscription
-kinds (pub/sub versus streams) with different subscriber types - or, as the
-[NATS example](example-nats.md) does, serve them all from one descriptor that branches internally.
+Give the descriptor an associated constructor (`OrdersStream::new(..)`) rather than a free function:
+a user then names it directly in the attribute,
+`#[subscriber(OrdersStream::new("orders", "workers"))]`.
 
-Derive `Clone` on the descriptor: it is configuration, and the mount rebuilds it per registration
-so one definition can be mounted on two brokers.
+The macro reads the type out of the constructor call, and accepts a builder chain on it as well
+(`#[subscriber(OrdersStream::new("orders").durable("workers"))]`), as long as each method returns
+`Self`.
+
+`type Subscriber` is declared on the source, so one broker can offer several kinds of subscription
+(pub/sub and streams) with different subscriber types, or serve them all from one descriptor that
+branches inside, as the [NATS example](example-nats.md) does.
+
+Derive `Clone` on the descriptor: the mount rebuilds the configuration per registration, so one
+definition can be mounted on two brokers at once.
 
 ### Naming a kind by one string
 
-A kind identified by a name and nothing else also implements `FromName`, whose single
-constructor builds it from that name:
+A kind identified by a name and nothing else also implements `FromName`: its single constructor
+builds the value from that name.
 
 ```rust
 --8<-- "src/memory/mod.rs:from_name"
 ```
 
-`#[subscriber(OrdersStream)]` is then legal: the attribute fixes the kind, and the mount site
-supplies the value. A kind that genuinely needs more than a name to exist (a topic
-*and* a subscription name) does not implement it, and that form does not compile for it.
+`#[subscriber(OrdersStream)]` is then legal: the attribute names the kind, and the mount site
+supplies the value. A kind that needs more than one name (a topic *and* a subscription name) does
+not implement `FromName`, and that form does not compile for it.
 
 ### Settings in your own vocabulary
 
-Core cannot know that a subscription has a stream, a durable name or a consumer group, so it
-exposes one hook - `map_source`, a transform over the source the mount site is building - and your
-crate layers its own trait on top, bound to your source type:
+The core does not know that a subscription has a stream, a durable name or a consumer group, so it
+gives you one hook: `map_source`, a transform over the source the mount site is building. You put
+your own trait on top and bind it to your source type:
 
 <!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
@@ -298,14 +313,13 @@ where
 }
 ```
 
-The bound on the source type means the methods do not exist on a builder for another broker.
-Users import the trait to reach them, as with any extension trait. This is the same extension
-shape the `Out` slot vocabulary uses below.
+The bound on the source type means these methods do not exist on a builder for another broker. The
+`Out` slot vocabulary below uses the same extension shape.
 
 One core setting changes the source type rather than a state slot: `start_at(..)` wraps the
-descriptor in `StartAt<SubscribeOptions, Position>`, so on exactly the subscriptions that named a
-start position your methods are no longer in scope. Cover that with a second impl over the wrapped
-source. `StartAt::map_inner` reaches the descriptor underneath and hands the position back
+descriptor in `StartAt<SubscribeOptions, Position>`. On the subscriptions that named a start
+position your methods fall out of scope, so cover that case with a second impl over the wrapped
+source. `StartAt::map_inner` takes the descriptor out of the wrapper and hands the position back
 untouched, so each method stays one line:
 
 <!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
@@ -337,9 +351,9 @@ where
 
 ### Publisher settings in your own vocabulary
 
-The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
-`Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
-`MapPublisher` is the hook over the policy that position carries:
+The publish side is built the same way. The mount site names a policy with `.out(marker, policy)`:
+the `Reply` marker for what a `publish("dest")` handler returns, a slot's marker for an `Out` slot.
+`MapPublisher` is the hook over the policy in that position:
 
 <!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
 ```rust
@@ -361,7 +375,7 @@ impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
 }
 ```
 
-A service then reads:
+In a service it reads like this:
 
 <!-- inline-rust: the call shape against the broker policy sketched above -->
 ```rust
@@ -369,12 +383,13 @@ b.include(confirm).out(Reply, Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 ```
 
-The bound is on the policy, not on the chain, so one impl covers the reply position and every
-slot, on a router and on a broker scope alike. `map_publisher` replaces the policy with one of
-the same type, which is what a publisher's own settings produce; a different policy type is a
-different publish mode and belongs in the `.out(marker, policy)` call itself. Passing an
-already-configured value (`.out(Reply, Publish::default().stream("ORDERS"))`) keeps working - the
-hook is the ergonomic mirror, not a replacement.
+The bound is on the policy, not on the chain, so one impl covers the reply position, every slot, a
+router and a broker scope alike.
+
+`map_publisher` replaces the policy with one of the same type, and a different policy type means a
+different publish mode, which belongs in the `.out(marker, policy)` call itself. An
+already-configured value can be passed there directly:
+`.out(Reply, Publish::default().stream("ORDERS"))`.
 
 ## Capability traits
 
@@ -385,81 +400,92 @@ assemble batches on the client.
 
 | Trait | For brokers that support |
 |---|---|
-| `BatchSubscriber` | receiving messages in batches (offer it wherever you can; see below) |
-| `TransactionalPublisher` | begin / commit / abort around publishes on the handle |
-| `OwnedTransactions` / `Transaction` | transactions whose buffer lives in a value, any number open at once per handle |
-| `RequestReply` | native request-reply (NATS yes, Kafka no) |
+| `BatchSubscriber` | receiving messages in batches |
+| `TransactionalPublisher` | begin / commit / abort around publishes on the publisher handle |
+| `OwnedTransactions` / `Transaction` | any number of transactions open at once per handle, each with its own buffer |
+| `RequestReply` | native request-reply |
 | `Partitioned` | a partition key on outgoing messages |
 | `Seekable` / `Seeker` | repositioning a live subscription in a replayable log |
-| `Positioned` | deliveries that report their own log position |
+| `Positioned` | reporting a delivery's own position in the log |
 | `DescribeServer` | reporting a `ServerSpec` for AsyncAPI |
 
-`Seekable` mints its `Seeker` handle before the stream borrows the subscriber, so a running
-subscription can be repositioned from outside the dispatch loop. Positions are broker-owned
-(`KafkaPosition`-style constructors on your own type); a position captured from a delivered
-message via `Positioned::position` carries a pinned contract - seeking to it redelivers exactly
-that message - while constructed positions keep the semantics your position type documents.
-Document what one seek covers (a consumer instance, or a shared group cursor) and reset any ack
-bookkeeping the reposition invalidates. To let handler bodies seek, carry the delivery's
-position and the subscription's seeker as fields of your per-delivery context and publish
-`ContextField` keys for them - the in-memory broker's `MemoryContext` with its `Position` /
-`SeekHandle` keys is the model. The batch forms reach the seeker through the batch context
-below, which carries the handle without the position.
+`Seekable` hands out its `Seeker` handle before `stream` borrows the subscriber, so a running
+subscription can be repositioned from outside the dispatch loop.
+
+Positions are broker-owned: you declare the constructors, `KafkaPosition`-style, on your own type.
+A position captured from a delivered message through `Positioned::position` pins the contract:
+seeking to it redelivers exactly that message. Constructed positions keep the semantics your
+position type documents.
+
+Document what one seek covers (a consumer instance or a shared group cursor) and reset any ack
+bookkeeping the reposition invalidates.
+
+To let handler bodies seek, carry the delivery's position and the subscription's seeker as fields
+of your per-delivery context and publish `ContextField` keys for them. The in-memory broker's
+`MemoryContext`, with its `Position` and `SeekHandle` keys, is the model. The batch forms take the
+seeker from the batch context below, which carries no position.
 
 These traits are the vocabulary a handler body writes. A body bounds its slot with the capability
 it needs (`Out<impl TransactionalPublisher, Journal>`, or `where W: TransactionalPublisher` on the
-manual path) and never with a type of yours, and the include site checks the bound policy's live
-form against it once, at compile time. Under each of the four publisher capabilities the arena
-entry also offers that capability's typed form over the include site's codec and the marker's
-dictionary - the publish builder, a transaction scope, an owned transaction, a correlated request
-- so implementing the trait on your live publisher is all a service needs to reach them.
+manual path) and never with a type of yours, and the mount site checks the bound policy's live form
+against it once, at compile time.
+
+Under each of the four publisher capabilities the arena entry also offers that capability's typed
+form over the mount site's codec and the marker's dictionary: the publish builder, a transaction
+scope, an owned transaction, a correlated request. Implementing the trait on your live publisher is
+all a service needs to reach them.
 
 ### Batches: `BatchSubscriber`
 
-A handler taking `&[T]` consumes a batch, and its mount site names one number - the batch size -
-which the runtime passes straight to `BatchSubscriber::batches(size)`. The batch your subscriber
-yields is the batch the body sees: the runtime never splits or merges one, so a batch must never
-carry more than `size` messages, and it may carry fewer whenever that is all the transport had.
+A handler taking `&[T]` consumes a batch, and its mount site names one number, the batch size. The
+runtime passes it straight to `BatchSubscriber::batches(size)`. The batch your subscriber yields is
+the batch the body sees: the runtime never splits or merges one, so a batch never carries more than
+`size` messages, and it carries fewer whenever that is all the transport had.
 
 Translate `size` into whatever your client already speaks: `XREADGROUP COUNT`, a JetStream pull
-batch, a Kafka poll limit. Everything else about how a batch forms - a block timeout, a consumer
-group, a prefetch window - stays your own vocabulary, configured on your subscription source
-through your settings extension trait, so a service writes `b.include(handler.batch(nonzero!(6))
-.block(Duration::from_secs(5)))` with the core's word first and yours after it.
+batch, a Kafka poll limit. Everything else about how a batch forms (a block timeout, a consumer
+group, a prefetch window) stays your own vocabulary, configured on your subscription source through
+your settings extension trait. A service then writes
+`b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))`, the core's word first and
+yours after it.
 
 Put the capability on every subscriber a mount can reach, not only on the one your own descriptor
 opens. `#[subscriber("topic")]` goes through `Subscribe`, so a `&[T]` body on that form asks for
-`BatchSubscriber` on `Subscribe::Subscriber`; a crate that wired the capability onto its
-descriptor's subscriber alone leaves the string-literal form failing to compile. Where the two are
-the same type there is nothing to do, and where they differ both need it.
+`BatchSubscriber` on `Subscribe::Subscriber`.
 
-Where the transport delivers one message at a time, do not leave the capability out: assemble
-the batches on the client with the core's `BufferedSubscriber`, whose `batches` honours the size
-it is given. The deadline that closes a partial batch is your choice, and it need not be a
-constant: expose it on your subscription descriptor (`.max_wait(Duration::from_millis(25))`) and
-hand it to the wrapper as the subscription opens, so a service can tune it per subscription. A
-network transport wants exactly that: the 10 ms default is sized for an in-process bus, and once a
-round trip is in the way it closes most batches at a single delivery, so the broker crates that
-ship the deadline as a descriptor option settle between 10 and 50 ms. The size is not yours to
-choose. Everything else about the subscriber reaches through the wrapper unchanged:
+A crate that wired the capability onto its descriptor's subscriber alone leaves the string-literal
+form failing to compile. Where the two are the same type there is nothing to do, and where they
+differ both need it.
+
+Where the transport delivers one message at a time, implement the capability anyway and assemble
+the batches on the client with the core's `BufferedSubscriber`, whose `batches` honours the size it
+is given. The size is not yours to choose; the deadline that closes a partial batch is, and it need
+not be a constant.
+
+Expose that deadline on your subscription descriptor (`.max_wait(Duration::from_millis(25))`) and
+hand it to the wrapper as the subscription opens, so a service can tune it per subscription. The
+10 ms default is sized for an in-process bus: once a network round trip is in the way it closes
+most batches at a single delivery, so the broker crates that ship the deadline as a descriptor
+option settle between 10 and 50 ms.
+
+Everything else about the subscriber passes through the wrapper unchanged:
 
 ```rust
 --8<-- "tests/batch_subscriber.rs:buffered_capability"
 ```
 
-Nothing in the mount site says which of the two you did, which is the point: a service names the
-batch size and gets batches.
+Nothing in the mount site says which of the two you did: a service names the batch size and gets
+batches.
 
 Declining the capability is still a legitimate answer where batching would break a guarantee the
-transport carries. A ZeroMQ ROUTER is the case in practice: it answers each peer at that peer's
-own `reply-to`, while a batch reaches its reply wiring with one `PublishContext` for the whole
-batch, so batched replies would follow one peer's address and misroute the rest. Say so in your
-crate's docs; a `&[T]` body then simply does not compile on that transport, which is the honest
-outcome.
+transport carries. A ZeroMQ ROUTER is the case in practice: it answers each peer at that peer's own
+`reply-to`, while a whole batch reaches its reply wiring with one `PublishContext`, so the replies
+for the batch would all go to one peer's address. Say so in your crate's docs: a `&[T]` body then
+does not compile on that transport.
 
-The `conformance` batch suite checks the contract - it opens a subscription at a size smaller
-than the run and fails a broker whose batches come back larger. It is not part of
-`harness::run_suite`: capability suites are yours to call, one per capability you implement.
+The `conformance` batch suite checks the contract: it opens a subscription at a size smaller than
+the run and fails a broker whose batches come back larger. It is not part of `harness::run_suite`;
+capability suites are yours to call, one per capability you implement.
 
 ### The prelude your crate ships { #broker-prelude }
 
@@ -467,41 +493,44 @@ Your types are named at the mount site, not in the body, and that is what your c
 for. Ship a `prelude` module in three layers, in this order:
 
 1. `pub use ruststream::prelude::*;` so one glob serves the whole file;
-2. your own surface a service names: the broker, its subscription source, its error, the
-   `ContextField` keys a body reads;
+2. your own surface a service names: the broker, its subscription source, its `Config`, its error,
+   the `ContextField` keys a body reads;
 3. your publish policies under the uniform names every broker uses - `Publish`, and where you
    have them `TransactionalPublish` and `Request` (`pub use crate::KafkaTransactionalPublish as
    TransactionalPublish;`). Add the capability traits you implement on your live values as a
    manifest, so the glob that names the policies also puts their operations in scope.
 
-Those three names are policy names, so the core prelude exports nothing under them: a mount site
-reads the same whichever broker it is on, and swapping brokers swaps the glob. Never alias a
-policy to a core trait name (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
-`RequestReply`) or re-export something else under one: a body that globs both preludes has to keep
-resolving those to the core traits.
+The core prelude exports nothing under those three names, so a mount site reads the same whichever
+broker it is on, and swapping brokers swaps the glob. Never alias a policy to a core trait name
+(`Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`) or re-export something
+else under one: a body that globs both preludes has to keep resolving those to the core traits.
 
-The manifest is what your glob adds, so it is the consumer-side traits a body reaches through your
-broker - `Positioned`, `Seeker`, `Transaction` and the like. The four publisher capabilities are
-already in the core prelude, so re-exporting them changes nothing. Leave out a trait whose method
-would collide with a defaulted core method - `Partitioned::partition_key` against
-`IncomingMessage::partition_key` is the case in practice - and let a service that needs it import
-it explicitly. `BatchSubscriber` belongs in no manifest at all: the framework calls it, and no
-body ever writes it as a bound. `ruststream::memory::prelude` is the worked example.
+The manifest is what your glob adds: the consumer-side traits a body reaches through your broker,
+`Positioned`, `Seeker`, `Transaction` and the like. The four publisher capabilities are already in
+the core prelude, so re-exporting them changes nothing.
+
+Leave out a trait whose method would collide with a defaulted core method, in practice
+`Partitioned::partition_key` against `IncomingMessage::partition_key`, and let a service that needs
+it import it explicitly. `BatchSubscriber` belongs in no manifest at all: the framework calls it,
+and no body ever writes it as a bound.
+
+`ruststream::memory::prelude` is the worked example.
 
 ### Extending the `Out` slot vocabulary
 
 An `Out<impl X, Marker>` handler parameter accepts any `X` the live value behind the slot
 implements; on top of that the core delegates its own capability set (`Publisher`,
 `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`). When your live value offers more
-than that - or is not a publisher at all (a per-partition producer cache, a shard router) -
-declare your own capability trait and implement it for the live value.
+than that, or is not a publisher at all (a per-partition producer cache, a shard router), declare
+your own capability trait and implement it for the live value.
 
-What the body actually holds is the arena entry, `Slot<Marker, W, E, Pipe, Body>`, a transparent
-window onto that value. Autoderef carries a method call through it, but not a trait bound: a helper
-written as `fn issue<L: Lanes>(lanes: &L)` rejects the entry with `E0277`. Add one blanket impl
-next to your trait - `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`,
-delegating through the entry's `Deref` - and helpers and bodies generic over the capability take
-the entry as it is. The concrete type still never appears in application code:
+What the body holds is not that value but the arena entry, `Slot<Marker, W, E, Pipe, Body>`, a
+transparent window onto it. Autoderef carries a method call through the window, but not a trait
+bound: a helper written as `fn issue<L: Lanes>(lanes: &L)` rejects the entry with `E0277`.
+
+Add one blanket impl next to your trait, `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E,
+Pipe, Body>` delegating through the entry's `Deref`, and helpers and bodies generic over the
+capability take the entry as it is. The concrete type still never appears in application code:
 
 === "Macros"
 
@@ -518,46 +547,42 @@ the entry as it is. The concrete type still never appears in application code:
 Where the send happens is what shapes the trait, and there are two shapes.
 
 A **router-shaped** capability hands out a publisher and never sends one itself: the per-partition
-producer cache above picks the lane for a shard and returns it. What the handler publishes through
-that lane leaves by the unwrapped value, so it bypasses the harness's per-slot capture (like a
-settled owned transaction's buffer) and is asserted on the broker's publish log instead. That is
-the attribution boundary, and it is the price of handing out the inner publisher.
+producer cache above picks the publisher for a shard and returns it. A publish through that
+publisher passes outside the slot view, so the harness does not attribute it to the slot, no more
+than it does a settled owned transaction's buffer. Assert it on the broker's publish log instead.
+That is the attribution boundary and the price of handing out the inner publisher.
 
 A **step-shaped** capability sets one argument on a message and ends in a single publish: an
 ordering key, a priority, a QoS. Do not put the send in the trait. A publish that leaves through
 your own value is a publish the slot view stops seeing, and an argument like an ordering key is
-exactly what a test wants to assert on. Ride the entry's typed publish path instead
-(`out.message(&value).publish()`) and carry the argument as a header: a publisher holding it for a
-run of messages returns it from `Publisher::base_headers`, a call site setting it per message
-writes it with `.with_headers(..)`, and your `publish` reads it off the outgoing map and strips it
-before the wire. A value your publisher cannot read is a publish error, never a silent fallback to
-the default - the caller asked for an ordering it would not get.
+exactly what a test wants to assert on.
+
+Build the step on the entry's own typed publish path (`out.message(&value).publish()`) and carry
+the argument as a header. A publisher holding it for a run of messages returns it from
+`Publisher::base_headers`; a call site setting it per message writes it with `.with_headers(..)`;
+your `publish` reads it off the outgoing map and strips it before sending.
+
+A value your publisher cannot read is a publish error, never a silent fallback to the default: the
+caller asked for an ordering it would not get.
 
 ### Your crate's prelude
 
 Two files import different things, and the split is what keeps a service portable. A handler body
-imports `ruststream::prelude::*` and nothing of yours: it bounds an injected slot with the broker
-capability trait - `Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
-`Out<impl OwnedTransactions>`, `Out<impl RequestReply>` - so the body says what it needs of a
-publisher and never which broker provides it. A routes file imports your prelude, because mounting
-is where a broker is named.
+imports `ruststream::prelude::*` and nothing of yours: it bounds an injected slot with the core
+capability trait it needs (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+`Out<impl OwnedTransactions>`, `Out<impl RequestReply>`), so the body says what it needs of a
+publisher and never which broker provides it.
 
-That makes your prelude the one import a service on your broker writes, so its shape is part of the
-contract. Four layers, in this order:
+A routes file imports your prelude, because mounting is where a broker is named.
 
-- `pub use ruststream::prelude::*;` first, so everything a body already knows arrives unchanged;
-- the crate surface your own examples name: the broker, its subscription descriptor, its config;
-- your publish policies, aliased to the uniform mount-site names - `NatsPublish as Publish`,
-  `KafkaTransactionalPublish as TransactionalPublish`, `LapinRequest as Request` - so a routes file
-  reads the same whichever broker it mounts, and switching brokers is a change of import;
-- the capability manifest: the core capability traits your broker actually implements, so what a
-  service may bound a slot with is legible from that one import.
+That makes your prelude the one import of yours a service writes, so its shape is part of the
+contract. The policy aliases (`NatsPublish as Publish`, `KafkaTransactionalPublish as
+TransactionalPublish`, `LapinRequest as Request`) make a routes file read the same whichever broker
+it mounts, so switching brokers is a change of import.
 
-The core exports no trait under the policy names, so those aliases collide with nothing. The rule
-that keeps it that way runs in both directions, and your half is that your prelude must not shadow
-a core name with anything of yours. An explicit re-export beats a glob without a word, so a name
-you spell like a core trait takes that trait away from every service writing the glob, and the
-error surfaces in the service's file rather than in yours.
+Your half of the naming rule: an explicit re-export shadows a glob without a word, so a name you
+spell like a core trait takes that trait away from every service writing the glob, and the error
+surfaces in the service's file rather than in yours.
 
 Pin both halves with a probe behind your own glob: the bound a body writes still has to arrive as
 the core trait, and the mount-site name still has to be your policy.
@@ -580,9 +605,9 @@ fn _q() {
 
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
 typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
-key types so handlers can bind single fields as parameters with the
-[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs. No type-map
-and no heap on the delivery path.
+key types. A key binds a single field as a handler parameter through the
+[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs, and the
+delivery path carries no type-map and no heap allocation.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
 ```rust
@@ -606,60 +631,69 @@ impl ContextField for Partition {
 }
 ```
 
-The sketch reads a `Copy` scalar, which owns and borrows alike. A position that is not `Copy` - a
-Pulsar message id, a Kinesis shard plus its sequence string - is read by borrowing:
-`Field::Value<'a>` is generic over the source's lifetime, so the key hands back `&'a MessageId`
-and a body reading it with `ctx.context(..)` copies nothing. Only `ContextField::Value`, the value
-behind the `Ctx<K>` extractor, has to be owned and `'static`, because extractor values bind before
-the body runs; that key clones what the borrowing one returns. A key usually implements both
-traits, one shape each.
+The sketch reads a `Copy` scalar, where owning and borrowing are the same thing. A position that is
+not `Copy`, a Pulsar message id or a Kinesis shard plus its sequence string, is read by borrowing:
+`Field::Value<'a>` is generic over the source's lifetime, so the key hands back `&'a MessageId` and
+a body reading it with `ctx.context(..)` copies nothing.
 
-A broker with no per-delivery fields uses `()` and skips all of this.
+Only `ContextField::Value`, the value behind the `Ctx<K>` extractor, has to be owned and `'static`,
+because extractor values bind before the body runs; that key clones what the borrowing one returns.
+A key usually implements both traits, one shape each.
 
-Batch subscriptions get a context of their own, because a batch spans many deliveries: build a
-second struct out of what the whole *subscription* shares (a seek handle, a stream name, a
-consumer group), implement `BuildBatchContext` on it - the runtime builds one per batch from the
-batch's first delivery - and publish `Field` keys so a batch body reads it with `ctx.context(..)`.
-Per-delivery fields stay out of it: a position belongs to one delivery, so a batch reads it off
-the elements instead. Keeping the two structs apart is what enforces that at compile time,
-since a per-delivery context does not implement `BuildBatchContext` and a batch body therefore
-cannot name it. The in-memory broker's `MemoryBatchContext` - the subscription's seeker under
-the same `SeekHandle` key its per-delivery context publishes - is the model, and a broker with
-nothing subscription-scoped to offer implements nothing and leaves batches on the `()` default.
+A broker with no per-delivery fields uses `()`.
+
+Batch subscriptions get a context of their own, because a batch spans many deliveries. Build a
+second struct out of what the whole *subscription* shares (a seek handle, a stream name, a consumer
+group), implement `BuildBatchContext` on it, and publish `Field` keys so a batch body reads it with
+`ctx.context(..)`. The runtime builds one value per batch from the batch's first delivery.
+
+Per-delivery fields stay out of it: a position belongs to one delivery, so a batch reads it off the
+elements. Keeping the two structs apart is what makes that a compile-time rule, since a
+per-delivery context does not implement `BuildBatchContext` and a batch body therefore cannot name
+it.
+
+The in-memory broker's `MemoryBatchContext` is the model: the subscription's seeker sits under the
+same `SeekHandle` key its per-delivery context publishes. A broker with nothing subscription-scoped
+to offer implements nothing and leaves batches on the `()` default.
 
 ## Middleware on the async edges { #middleware-on-the-async-edges }
 
 Integrations that need async I/O around encode and decode (a schema registry, a wire-format
 envelope) do not belong in a `Codec`: the core codec is synchronous and handlers should stay on the
-default one. Put them on the async edges instead - transcode incoming payloads on the
-subscription's delivery path (before the codec sees them), and frame outgoing ones with a core
-`PublishLayer` added app-wide via `RustStream::publish_layer`. The publish layer is async and
-fallible, and `Outgoing::payload_mut` exists exactly for envelope wrapping.
+default one.
+
+Put them on the async edges instead. Transcode incoming payloads on the subscription's delivery
+path, before the codec sees them, and frame outgoing ones with a core `PublishLayer` added app-wide
+via `RustStream::publish_layer`. The publish layer is async and can return an error, and
+`Outgoing::payload_mut` exists exactly for envelope wrapping.
 
 ## Config and defaults
 
-Your crate owns its `Config`; the core carries no broker-specific config. If a config field has no
-sane default, do not implement `Default` for it; force the user to set it explicitly rather than
-shipping a default that might break later.
+Your crate owns its `Config`: the core carries no broker-specific config. If a field has no sane
+default, do not implement `Default`. The user then sets the value explicitly instead of inheriting
+a default that breaks later.
 
 ## Errors
 
-Use `thiserror` for a single crate-level error enum, with variants by source. Mark public error
-enums `#[non_exhaustive]`. Never use `anyhow` in a library crate.
+Use `thiserror` and one crate-level error enum, with variants by source. Mark public error enums
+`#[non_exhaustive]`. Never use `anyhow` in a library crate.
 
 ## Test support
 
 Ship an in-process transport implementing `TestableBroker` on its **connected form** under a
-`testing` feature (registered with `register_testable_broker!` for that connected type, since the
-harness connects every broker before recovering its transport) so users can unit-test handlers
-against your broker with the `TestApp` harness. The transport does **core routing only**: it dispatches published messages to matching
-subscribers, and it answers `ack` / `nack` the way the real transport answers - in memory where the
-transport acknowledges (`nack(requeue = true)` puts the delivery back), with
-`AckError::Unsupported` where it cannot acknowledge at all (ZeroMQ, MQTT `QoS 0`, Redis pub/sub).
-A stand-in that claims a settlement its transport never performs is what makes a handler's retry
-pass in a test and lose the message in production. Do not simulate broker-specific semantics
-(durable cursors, redelivery timers, offsets, dead-letter routing) in it; those are verified end to
-end against a real server.
+`testing` feature. Register it with `register_testable_broker!` for that connected type: the
+harness connects every broker before recovering its transport. Users can then unit-test handlers
+against your broker with the `TestApp` harness.
+
+The transport does **core routing only**: it dispatches published messages to matching subscribers,
+and it answers `ack` and `nack` the way the real transport answers. Where the real transport
+acknowledges, the stand-in answers in memory: `nack(requeue = true)` puts the delivery back. Where
+it cannot acknowledge at all (ZeroMQ, MQTT `QoS 0`, Redis pub/sub), the answer stays
+`AckError::Unsupported`. A stand-in that claims a settlement its transport never performs is what
+makes a handler's retry pass in a test and lose the message in production.
+
+Do not simulate broker-specific semantics (durable cursors, redelivery timers, offsets,
+dead-letter routing) in it; those are verified end to end against a real server.
 
 The reference is the in-memory broker's own implementation (on `ConnectedMemoryBroker`):
 
@@ -668,9 +702,10 @@ The reference is the in-memory broker's own implementation (on `ConnectedMemoryB
 ```
 
 The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
-`Coordinator::consumed` when a delivery is settled or dropped (so the harness can tell when the
-reaction has settled), and routes delayed redeliveries through `Coordinator::schedule_redelivery`.
-That one type then works with both `TestApp` and the conformance suite. See
+`Coordinator::consumed` when a delivery is settled or dropped, so the harness can tell when the
+reaction has settled. It routes delayed redeliveries through `Coordinator::schedule_redelivery`.
+
+That one type works with both `TestApp` and the conformance suite. See
 [Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
 prove the implementation with `run_suite` and the `lifecycle` ladder check.
 
@@ -681,8 +716,8 @@ and the real transport is a green test for behaviour production does not have. T
 matter are not exotic ones, and each rule below costs about one test.
 
 **Run the core's contract suites against the stand-in, not only against a server.** The suites are
-written against the traits and do not care which side of the wire answers them, so the stand-in can
-sit in the same harness a real broker does - at the price of a `#[tokio::test]`:
+written against the traits and do not care whether a real broker or the stand-in answers them. One
+`#[tokio::test]` is enough:
 
 ```rust
 --8<-- "tests/conformance_self.rs:run_suite"
@@ -690,40 +725,41 @@ sit in the same harness a real broker does - at the price of a `#[tokio::test]`:
 
 Run `lifecycle` first. It walks `new` -> `connect` -> subscribe -> publish -> ack -> `shutdown` and
 then asks what a stand-in almost never gets asked: does a publisher created before the shutdown
-fail afterwards? A real client answers "not connected"; a stand-in whose publish is a channel send
-has no reason to, and accepts the message instead.
+return an error afterwards? A real client answers "not connected". A stand-in whose publish is a
+channel send has no reason to, and accepts the message instead.
 
 ```rust
 --8<-- "tests/conformance_self.rs:lifecycle"
 ```
 
-Add every `capabilities::*` suite your capabilities justify on the same footing.
+Add the `capabilities::*` suites the same way, one for each capability you implement.
 
 **Offer the capability surface the real broker offers.** The `testing` feature is for tests, and a
 release build turns it off, which is what makes the two directions unequal. Falling short is the
-one that costs: a capability the real broker has and the stand-in lacks cannot be mounted in
-process at all, so the behaviour behind it goes untested. Going over is a smaller matter - a
-transaction or a request-reply that only the stand-in offers fails to compile in your own release
-build, which is annoying and caught early.
+expensive direction: a capability the real broker has and the stand-in lacks cannot be mounted in
+process at all, so the behaviour behind it goes untested. Going over is the cheap one: a
+transaction or a request-reply that only the stand-in offers does not compile in your own release
+build, which is annoying and caught at once.
 
-**Settle the way the transport settles.** Where the real `ack` reports `AckError::Unsupported` - a
-fire-and-forget transport, an at-most-once quality of service - the stand-in reports it too.
-Answering `Ok(())` to keep a suite quiet is how a handler returning `HandlerOutcome::retry()` passes
-in process and loses the message in production. The suites accept the honest answer.
+**Settle the way the transport settles.** The real `ack` returns `AckError::Unsupported` where the
+transport does not acknowledge: a fire-and-forget transport, an at-most-once quality of service.
+The stand-in returns the same. Answering `Ok(())` to keep a suite quiet is how a handler returning
+`HandlerOutcome::retry()` passes in process and loses the message in production. The suites accept
+the honest answer.
 
 **Reproduce what the client does; do not fake what the broker does.** The split is not about
-effort, it is about which side the behaviour lives on. Competing consumers, group distribution,
+effort, it is about which side the behaviour runs on. Competing consumers, group distribution,
 correlation and reply routing, and buffering until commit are client-side or routing-level, and an
 in-process copy of them is exact. Cluster atomicity, fencing, broker-held timeouts and
 exactly-once are broker-side, and an in-process copy of them is fiction.
 
-Competing consumers is the one to get right, because getting it wrong looks like success: handing
-every message to every subscriber of a queue is a fan-out, not a queue. Two workers sharing one
-then each run the whole stream, and a test that counts what was processed sees the work done and
-reports no error.
+Competing consumers is the one to get right, because getting it wrong looks like success. Handing
+every message of a queue to every subscriber of that queue is a fan-out, not a queue. Two workers
+sharing one queue then each run the whole stream, and a test that counts what was processed sees
+the work done and reports no error.
 
-**Give every gap a comment naming the assertion it makes unsound** - not that the feature is
-missing, but which test a reader may no longer trust, and what does cover it:
+**Give every gap a comment naming the assertion it makes unsound.** Do not write that the feature
+is missing; write which test a reader may no longer trust, and what covers it instead:
 
 <!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
 ```rust
@@ -733,8 +769,8 @@ missing, but which test a reader may no longer trust, and what does cover it:
 ```
 
 **Pin the gap with a test as well.** A comment goes stale the first time someone "fixes" the
-stand-in to route what it deliberately does not; a test asserting the handler is *not* reached
-fails that day and explains itself.
+stand-in to route what it deliberately does not route. A test asserting the handler is *not*
+reached fails that day and explains itself.
 
 **Mount the stand-in with the production wiring.** Your own subscription sources and publish
 policies have to work against it unchanged, so a service tests the routes file it ships. If a user
