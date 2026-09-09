@@ -142,19 +142,19 @@ impl<R: ReplyShape + ?Sized, Doc> WireDocs<R, Doc> for SerializedReply {
 /// [`NameTemplate`](crate::NameTemplate) has no impl on purpose: a reply is published by the
 /// runtime, which has nothing to bind the placeholders with.
 #[doc(hidden)]
-pub trait ReplyAddress<Form> {
-    /// The address, given the name the mount site supplied.
-    fn address(default: &str) -> &str;
+pub trait ResolveDestination<Form> {
+    /// The destination, given the name the mount site supplied.
+    fn resolve(default: &str) -> &str;
 }
 
-impl<R: OutgoingDestination<Form = FixedName>> ReplyAddress<FixedName> for R {
-    fn address(_default: &str) -> &str {
-        <R as OutgoingDestination>::ADDRESS
+impl<R: OutgoingDestination<Form = FixedName>> ResolveDestination<FixedName> for R {
+    fn resolve(_default: &str) -> &str {
+        <R as OutgoingDestination>::DESTINATION
     }
 }
 
-impl<R: OutgoingDestination<Form = CallerName>> ReplyAddress<CallerName> for R {
-    fn address(default: &str) -> &str {
+impl<R: OutgoingDestination<Form = CallerName>> ResolveDestination<CallerName> for R {
+    fn resolve(default: &str) -> &str {
         default
     }
 }
@@ -170,7 +170,7 @@ impl<R: OutgoingDestination<Form = CallerName>> ReplyAddress<CallerName> for R {
             no placeholders to bind on the reply path."
 )]
 pub trait ReplyDestination {
-    /// The address, given the name the mount site supplied.
+    /// The destination, given the name the mount site supplied.
     fn destination(default: &str) -> &str;
 }
 
@@ -180,10 +180,10 @@ pub trait ReplyDestination {
 impl<R> ReplyDestination for R
 where
     R: ReplyShape<Body: OutgoingDestination>,
-    R::Body: ReplyAddress<<R::Body as OutgoingDestination>::Form>,
+    R::Body: ResolveDestination<<R::Body as OutgoingDestination>::Form>,
 {
     fn destination(default: &str) -> &str {
-        <R::Body as ReplyAddress<<R::Body as OutgoingDestination>::Form>>::address(default)
+        <R::Body as ResolveDestination<<R::Body as OutgoingDestination>::Form>>::resolve(default)
     }
 }
 
@@ -203,7 +203,7 @@ pub fn declared_reply_destination<R>() -> &'static str
 where
     R: ReplyShape<Body: OutgoingDestination<Form = FixedName>>,
 {
-    <R::Body as OutgoingDestination>::ADDRESS
+    <R::Body as OutgoingDestination>::DESTINATION
 }
 
 /// Where a wired reply goes: the reply type's own declaration, or the mount-site name where the
@@ -225,7 +225,7 @@ where
     R: ReplyShape<Body: OutgoingDestination<Form = FixedName>>,
 {
     fn name(&self) -> &str {
-        <R::Body as OutgoingDestination>::ADDRESS
+        <R::Body as OutgoingDestination>::DESTINATION
     }
 }
 

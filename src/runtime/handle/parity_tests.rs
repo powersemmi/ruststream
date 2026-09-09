@@ -190,7 +190,7 @@ struct Receipt {
 impl OutgoingDestination for Receipt {
     type Form = FixedName;
 
-    const ADDRESS: &'static str = "receipts";
+    const DESTINATION: &'static str = "receipts";
 }
 
 struct IssueReceipt;

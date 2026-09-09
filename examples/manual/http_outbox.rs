@@ -45,7 +45,7 @@ struct OrderPlaced {
 // an AsyncAPI document (unused here, but part of the same declaration).
 impl OutgoingDestination for OrderPlaced {
     type Form = FixedName;
-    const ADDRESS: &'static str = "orders.placed";
+    const DESTINATION: &'static str = "orders.placed";
 }
 
 impl MessageHeaders for OrderPlaced {
@@ -153,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The attribute reads the description off the handler's doc comment; on the value path
         // `describe` states it.
         b.include(
-            subscriber(OrderPlaced::ADDRESS, Fulfil)
+            subscriber(OrderPlaced::DESTINATION, Fulfil)
                 .describe(
                     "The same service consumes what its HTTP endpoints produce; any other \
                      service subscribed to the broker would see the event too.",

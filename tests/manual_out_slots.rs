@@ -201,7 +201,7 @@ impl MessageWire for WireExport {
 
 impl OutgoingDestination for WireExport {
     type Form = FixedName;
-    const ADDRESS: &'static str = "slots.exports";
+    const DESTINATION: &'static str = "slots.exports";
 }
 
 impl MessageHeaders for WireExport {

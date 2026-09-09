@@ -79,7 +79,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #where_clause
         {
             type Form = #form;
-            const ADDRESS: &'static str = #address;
+            const DESTINATION: &'static str = #address;
             const PARAMETERS: &'static [&'static str] = #parameters;
         }
 
@@ -129,7 +129,7 @@ fn declared_entries(
     quote! {
         ::std::vec![
             ::ruststream::runtime::OutgoingMessageMetadata::new(
-                <#name #ty_generics as ::ruststream::OutgoingDestination>::ADDRESS,
+                <#name #ty_generics as ::ruststream::OutgoingDestination>::DESTINATION,
                 ::core::any::type_name::<#name #ty_generics>(),
             )
             .with_parameters(#parameters)

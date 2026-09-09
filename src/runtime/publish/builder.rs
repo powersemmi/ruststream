@@ -92,7 +92,7 @@ pub struct SuppliedName<'a>(Cow<'a, str>);
             publish appears once every placeholder is bound"
 )]
 pub trait ResolvedName {
-    /// The destination this publish goes to, given the type's declared address (used by the
+    /// The destination this publish goes to, given the type's declared name (used by the
     /// fixed form, ignored by the supplied one).
     fn resolve<'n>(&'n self, declared: &'n str) -> &'n str;
 }
@@ -769,9 +769,9 @@ where
             headers,
             dest,
         } = self;
-        // The declared address is the fixed form's name, borrowed straight from the declaration;
-        // the supplied form ignores it and lends its own.
-        let name = dest.resolve(T::ADDRESS);
+        // The fixed form's name is borrowed straight from the declaration; the supplied form
+        // ignores it and lends its own.
+        let name = dest.resolve(T::DESTINATION);
         wire_and_send(sink, codec, body.0, headers, name).await
     }
 }
@@ -821,7 +821,7 @@ where
             dest,
             ..
         } = self;
-        // Bytes declare no address of their own, so the destination is always the supplied one.
+        // Bytes declare no name of their own, so the destination is always the supplied one.
         let name = dest.resolve("");
         deliver(sink, name, body.0, headers).await
     }

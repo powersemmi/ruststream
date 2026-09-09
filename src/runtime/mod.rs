@@ -69,8 +69,8 @@ pub use handle::{
 };
 #[doc(hidden)]
 pub use handle::{
-    EntryMarkers, OutPos, ReplyAddress, ReplyDest, ReplyDestination, ReplyFormFor,
-    ReplyHeadersSchema, ReplyRoute, SelectSlot, UnbuiltDefinition, WireDocs,
+    EntryMarkers, OutPos, ReplyDest, ReplyDestination, ReplyFormFor, ReplyHeadersSchema,
+    ReplyRoute, ResolveDestination, SelectSlot, UnbuiltDefinition, WireDocs,
     declared_reply_destination, reply_destination,
 };
 #[doc(hidden)]

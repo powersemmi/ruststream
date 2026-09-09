@@ -77,7 +77,7 @@ impl Input for Order {
 // records the lane, which is what the derive's probe reports for a type carrying its own bytes.
 impl OutgoingDestination for Order {
     type Form = FixedName;
-    const ADDRESS: &'static str = "orders";
+    const DESTINATION: &'static str = "orders";
 }
 
 impl MessageHeaders for Order {
@@ -87,7 +87,7 @@ impl MessageHeaders for Order {
 impl<M: OutSlot> OutMessages<M> for Order {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::ADDRESS, std::any::type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, std::any::type_name::<Self>())
                 .with_serialized(true),
         ]
     }

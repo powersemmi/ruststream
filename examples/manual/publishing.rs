@@ -76,7 +76,7 @@ struct Receipt {
 impl OutgoingDestination for Receipt {
     type Form = FixedName;
 
-    const ADDRESS: &'static str = "receipts";
+    const DESTINATION: &'static str = "receipts";
 }
 
 impl MessageHeaders for Receipt {
@@ -277,7 +277,7 @@ struct OrderConfirmed {
 
 impl OutgoingDestination for OrderConfirmed {
     type Form = FixedName;
-    const ADDRESS: &'static str = "orders.confirmed";
+    const DESTINATION: &'static str = "orders.confirmed";
 }
 
 impl MessageHeaders for OrderConfirmed {
@@ -287,7 +287,7 @@ impl MessageHeaders for OrderConfirmed {
 impl<M: OutSlot> OutMessages<M> for OrderConfirmed {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![OutgoingMessageMetadata::new(
-            Self::ADDRESS,
+            Self::DESTINATION,
             std::any::type_name::<Self>(),
         )]
     }
@@ -300,7 +300,7 @@ struct OrderPlaced {
 
 impl OutgoingDestination for OrderPlaced {
     type Form = NameTemplate;
-    const ADDRESS: &'static str = "orders.{tenant}.placed";
+    const DESTINATION: &'static str = "orders.{tenant}.placed";
     const PARAMETERS: &'static [&'static str] = &["tenant"];
 }
 
@@ -311,7 +311,7 @@ impl MessageHeaders for OrderPlaced {
 impl<M: OutSlot> OutMessages<M> for OrderPlaced {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::ADDRESS, std::any::type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, std::any::type_name::<Self>())
                 .with_parameters(Self::PARAMETERS),
         ]
     }

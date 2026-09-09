@@ -38,7 +38,7 @@ struct Confirmation {
 impl OutgoingDestination for Confirmation {
     type Form = FixedName;
 
-    const ADDRESS: &'static str = "confirmations";
+    const DESTINATION: &'static str = "confirmations";
 }
 
 impl MessageHeaders for Confirmation {
