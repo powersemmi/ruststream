@@ -23,6 +23,7 @@ use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
+use crate::runtime::redelivery::open_subscription;
 
 use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta};
@@ -122,12 +123,11 @@ where
         let global = global.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         sink.push_raw(
-            Box::new(move |connected, state, delivery, shutdown, token| {
+            Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, delivery) =
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                            .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await

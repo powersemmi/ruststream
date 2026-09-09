@@ -10,7 +10,12 @@
 //! takes a source (a name string or a broker config value), the runtime resolves it once against
 //! the [`ConnectedBroker`] form produced by [`Broker::connect`](crate::Broker::connect).
 
-use std::{borrow::Cow, fmt, future::Future, marker::PhantomData};
+use std::{
+    borrow::Cow,
+    fmt,
+    future::{Future, ready},
+    marker::PhantomData,
+};
 
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 
@@ -64,6 +69,110 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
         self,
         connected: &C,
     ) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
+
+    /// Where a publish reaches this subscription again, for the runtime's deferred `retry_after`
+    /// fallback. `None` means the broker cannot say.
+    ///
+    /// A broker without native delayed redelivery gets the delay honoured by a copy the runtime
+    /// publishes after it: this is the name that copy goes to. Answer with the name a publisher
+    /// bound to the same broker must use, resolving it against `connected` when only the live
+    /// connection knows it (a Pub/Sub subscription has to be looked up to learn its topic).
+    /// Called once per subscription at startup, never on the delivery path.
+    ///
+    /// The default answers `None`, and a scope that wired a deferred-retry publisher with
+    /// [`retry_via`](crate::runtime::BrokerScope::retry_via) refuses to start over such a
+    /// subscription. A subscription's name is not an address: where a subscription and a publish
+    /// destination are separate resources, answering with it would publish the copy into nothing
+    /// and lose the message under load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConnectedBroker::Error`] when the broker has to be asked and the request fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ruststream::memory::{MemoryBroker, MemorySource};
+    /// use ruststream::{Broker, RedeliveryAddress, SubscriptionSource};
+    ///
+    /// let connected = MemoryBroker::new().connect().await?;
+    /// let source = MemorySource::new("orders");
+    ///
+    /// // The in-memory subject is both what a subscription reads and what a publish reaches.
+    /// assert_eq!(
+    ///     source.redelivery_address(&connected).await?,
+    ///     Some(RedeliveryAddress::new("orders")),
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn redelivery_address(
+        &self,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+        let _ = connected;
+        async { Ok(None) }
+    }
+}
+
+/// The name a deferred redelivery of one subscription is published to.
+///
+/// Reported by [`SubscriptionSource::redelivery_address`]. It is a publish destination, not a
+/// subscription name: the two coincide on a NATS subject or a Kafka topic and differ wherever a
+/// subscription is a resource of its own, so the runtime never substitutes one for the other.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::RedeliveryAddress;
+///
+/// let address = RedeliveryAddress::new("orders");
+/// assert_eq!(address.as_str(), "orders");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RedeliveryAddress(Cow<'static, str>);
+
+impl RedeliveryAddress {
+    /// The address a deferred copy is published under.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RedeliveryAddress;
+    ///
+    /// let address = RedeliveryAddress::new(String::from("orders"));
+    /// assert_eq!(address.to_string(), "orders");
+    /// ```
+    #[must_use]
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+        Self(name.into())
+    }
+
+    /// Borrows the address as a string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RedeliveryAddress;
+    ///
+    /// fn publishes_to(address: &RedeliveryAddress) -> &str {
+    ///     address.as_str()
+    /// }
+    ///
+    /// assert_eq!(publishes_to(&RedeliveryAddress::new("orders")), "orders");
+    /// ```
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RedeliveryAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// The default [`SubscriptionSource`]: subscribe by name string via the [`Subscribe`] capability.
@@ -193,6 +302,16 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         connected.subscribe(&self.0).await
     }
+
+    /// The broker answers for its own names: only it knows whether a publish to a name it
+    /// subscribes by comes back to that subscription (see
+    /// [`Subscribe::redelivery_address`]). The answer needs no I/O, so the future is ready.
+    fn redelivery_address(
+        &self,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+        ready(Ok(connected.redelivery_address(&self.0)))
+    }
 }
 
 /// A source decorator opening the subscription at a chosen position instead of the broker's
@@ -313,8 +432,9 @@ impl<S, P> fmt::Debug for StartAt<S, P> {
 impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,
-    // `Send` on the pieces keeps the returned future `Send`, as the trait's RPITIT promises.
-    S: SubscriptionSource<C> + Send,
+    // `Send` on the pieces keeps the returned future `Send`, as the trait's RPITIT promises;
+    // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
+    S: SubscriptionSource<C> + Send + Sync,
     S::Subscriber: Seekable,
     // A rejected reposition surfaces as this source's subscribe error, so the seeker must
     // report the connected broker's error type (broker crates use one error type for both).
@@ -334,6 +454,14 @@ where
         // from before it.
         subscriber.seeker().seek(self.position).await?;
         Ok(subscriber)
+    }
+
+    /// A start position changes where the subscription opens, not where a publish reaches it.
+    fn redelivery_address(
+        &self,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+        self.inner.redelivery_address(connected)
     }
 }
 

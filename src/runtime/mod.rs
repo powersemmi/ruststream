@@ -21,6 +21,7 @@ mod publish;
 mod publish_source;
 mod publisher_registry;
 mod publishing;
+mod redelivery;
 mod router;
 mod settings;
 mod slot;
