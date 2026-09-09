@@ -268,7 +268,7 @@ pub trait NatsSubscriber {
     fn durable(self, name: impl Into<String>) -> Self;
 }
 
-// 四个状态槽位依次是（工作者、失败策略、起始位置、批次大小）；`Codec` 是这次注册自己的解码覆盖，
+// 四个状态槽位依次是（工作者、失败策略、起始位置、批大小）；`Codec` 是这次注册自己的解码覆盖，
 // 在没人指定之前是 `()`。两者都原样传递下去。
 impl<Def, Workers, Failures, StartPosition, Batch, Codec> NatsSubscriber
     for SubscriberBuilder<Def, SubscribeOptions, (Workers, Failures, StartPosition, Batch), Codec>
