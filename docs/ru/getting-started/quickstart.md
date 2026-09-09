@@ -10,10 +10,10 @@ cargo generate --git https://github.com/powersemmi/ruststream templates/memory -
 cd my-service
 ```
 
-Для генерации нужен только `cargo generate`, CLI `ruststream` не требуется. `templates/memory` - это
-стартовый шаблон на in-memory брокере (внешний брокер не нужен); свой шаблон поставляет каждый крейт
-брокера (например, `--git https://github.com/powersemmi/ruststream-nats templates/nats`). Команда
-создаёт идиоматичный проект из нескольких файлов:
+Для генерации нужен только `cargo generate`. `templates/memory` - стартовый шаблон на in-memory
+брокере. Свой шаблон поставляет каждый крейт брокера (например,
+`--git https://github.com/powersemmi/ruststream-nats templates/nats`). `cargo generate` создаёт
+идиоматичный проект из нескольких файлов:
 
 ```
 my-service/
@@ -32,9 +32,8 @@ my-service/
 cargo run -- run                # или: ruststream run, если установлен CLI
 ```
 
-`cargo run -- run` поднимает рантайм tokio и держит сервис запущенным, пока вы не нажмёте
-++ctrl+c++ (команда CLI `ruststream run` - удобная обёртка над ней).
-Заготовка работает на in-memory брокере, так что внешние зависимости ей не нужны.
+`cargo run -- run` запускает рантайм tokio. Сервис работает, пока вы не нажмёте ++ctrl+c++.
+Внешний брокер для запуска не нужен.
 
 ## Генерация AsyncAPI-документа
 
@@ -42,7 +41,7 @@ cargo run -- run                # или: ruststream run, если устано�
 cargo run -- asyncapi gen
 ```
 
-Команда печатает AsyncAPI-документ в формате JSON; флаги вывода (`-o`, `--yaml`) и сам документ
+Команда печатает AsyncAPI-документ в формате JSON. Флаги вывода (`-o`, `--yaml`) и сам документ
 разобраны в [руководстве по AsyncAPI](../guides/asyncapi.md).
 
 ## Как выглядит точка входа
@@ -59,11 +58,10 @@ cargo run -- asyncapi gen
     --8<-- "examples/manual/tutorial/main.rs:main"
     ```
 
-Вы пишете функцию, которая собирает сервис, а макрос превращает её в `main`, разбирающий команды
-`run` и `asyncapi gen`.
+Вы пишете функцию, которая собирает сервис, а `#[ruststream::app]` превращает её в `main`.
 
 ## Что дальше
 
 - Разобраться в каждой части по [учебнику](tutorial.md).
 - Изучить формы обработчиков в разделе [Подписчики](../guides/subscribers.md).
-- Управлять всем из [CLI](../guides/cli.md).
+- Управлять сервисом из [CLI](../guides/cli.md).

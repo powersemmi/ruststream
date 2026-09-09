@@ -1,7 +1,7 @@
 # Метрики
 
-Фича `metrics` собирает метрики Prometheus по обработанным и опубликованным сообщениям. Она построена
-прямо на крейте `prometheus` и отдаёт данные в формате экспозиции Prometheus.
+Фича `metrics` собирает метрики Prometheus по обработанным и опубликованным сообщениям. Она
+построена напрямую на крейте `prometheus`.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
@@ -9,8 +9,8 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 
 ## Связывание
 
-Создайте `Metrics`, установите его слои для потребления и публикации и сохраните хендл, чтобы позже
-выгружать данные:
+Создайте `Metrics`, добавьте его слои потребления и публикации и сохраните дескриптор, чтобы позже
+выгружать метрики:
 
 === "Макросы"
 
@@ -25,8 +25,7 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
     ```
 
 `consume_layer` учитывает каждое обработанное сообщение, `publish_layer` - каждое опубликованное.
-Чтобы собирать метрики в уже существующий реестр, а не в новый, используйте
-`Metrics::with_registry(registry)`.
+`Metrics::with_registry(registry)` собирает метрики в ваш реестр вместо реестра по умолчанию.
 
 ## Какие метрики отдаются
 
@@ -36,29 +35,30 @@ ruststream = { version = "0.7", features = ["macros", "memory", "metrics"] }
 | `ruststream_consume_duration_seconds` | histogram | `name` |
 | `ruststream_messages_published_total` | counter | `name`, `status` |
 
-`name` - это имя подписки или адресата публикации, `status` - исход (`ack` или `nack` для
-потребления, `ok` или `error` для публикации).
+`name` - имя подписки или адресата публикации. `status` - исход: `ack` или `nack` при потреблении,
+`ok` или `error` при публикации.
 
 ## Выгрузка
 
-`export` отдаёт текущие значения в формате экспозиции Prometheus:
+`export` возвращает текущие значения в формате экспозиции Prometheus:
 
 <!-- inline-rust: one-line export() API shape; the complete server, including this call, is compiled in metrics_http.rs and pulled in below -->
 ```rust
 let body = metrics.export()?;
 ```
 
-Как и с AsyncAPI, размещение остаётся на вас: отдавайте `export()` на маршруте `/metrics` в своём
-HTTP-стеке или отправляйте результат в push-gateway. `metrics.registry()` возвращает лежащий в основе
-`prometheus::Registry` - на случай, если вы хотите зарегистрировать рядом с метриками RustStream свои
-коллекторы или использовать уже имеющийся экспортер.
+Отдавайте результат `export()` на маршруте `/metrics` в своём HTTP-стеке или отправляйте его в
+push-gateway.
+
+`metrics.registry()` возвращает сам `prometheus::Registry`. Вы можете добавить в него свои
+коллекторы рядом с метриками RustStream или передать его готовому экспортеру.
 
 ## Полноценный сервер
 
 Пример [`metrics_http`](https://github.com/powersemmi/ruststream/blob/main/examples/metrics_http.rs)
-отдаёт `/metrics` через [axum](https://github.com/tokio-rs/axum) и публикует заказы по маршруту
-`/orders`, так что счётчики крутит обычный HTTP-клиент. Запустите его командой
-`cargo run --example metrics_http --features macros,memory,metrics`, а затем:
+отдаёт `/metrics` через [axum](https://github.com/tokio-rs/axum) и публикует заказы, которые
+приходят на маршрут `/orders`, так что счётчики увеличивает обычный HTTP-клиент. Запустите его
+командой `cargo run --example metrics_http --features macros,memory,metrics`, а затем:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
@@ -77,6 +77,6 @@ curl http://127.0.0.1:8080/metrics
     --8<-- "examples/manual/metrics_http.rs"
     ```
 
-Если сервис выгружает метрики через фичу `otel`, для полного набора метрик есть готовый дашборд
-Grafana в [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana); см.
+Если сервис выгружает метрики через фичу `otel`, готовый дашборд Grafana по полному набору метрик
+лежит в [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana); см.
 [руководство по OpenTelemetry](opentelemetry.md).
