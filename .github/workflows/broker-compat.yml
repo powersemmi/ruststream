@@ -7,10 +7,12 @@ name: Broker compatibility
 # maintainer will look for it: an issue in that broker's repository, carrying the compiler's own
 # error text.
 #
-# The probe is compile-surface only. `--all-targets` compiles the broker's tests and examples
-# without running them, which is exactly what a core version bump breaks; behavioral drift is the
-# broker CI's job once the adoption lands. Runtime suites would also need each broker's docker
-# stand, and shared-runner flakiness would turn a compatibility signal into noise.
+# The probe is compile-surface only, and it covers every surface a core release can break: the
+# workspace and its tests and examples through `--all-targets`, the doctests `--all-targets` does
+# not reach, and the scaffolds, which live outside the workspace and are the first thing a new
+# service compiles. Behavioural drift is the broker CI's job once the adoption lands: runtime
+# suites would need each broker's docker stand, and shared-runner flakiness would turn a
+# compatibility signal into noise.
 
 on:
   release:
@@ -74,6 +76,13 @@ jobs:
           workspaces: broker
           key: ${{ matrix.broker }}
 
+      # Only the brokers shipping scaffolds need it, and the install is cached, so asking for it
+      # unconditionally is cheaper than branching on a directory that may appear in any repo.
+      - name: Install cargo-generate
+        uses: taiki-e/install-action@v2.87.7
+        with:
+          tool: cargo-generate
+
       # The same probe a broker author's adoption branch starts from: the version requirement is
       # replaced by a path to the released core, everything else in the manifest stays as the
       # broker declared it. A red check here therefore reproduces exactly what the maintainer
@@ -87,18 +96,62 @@ jobs:
         id: check
         continue-on-error: true
         working-directory: broker
+        env:
+          BROKER: ${{ matrix.broker }}
         run: |
           # Each check keeps its own pipeline, because a brace group feeding `tee` runs in a
           # subshell: a failure recorded inside it never reaches the status this step exits with.
+          # A function body does run in this shell, so the status a failed leg sets survives.
           set -o pipefail
           status=0
           log="$RUNNER_TEMP/check.log"
           : > "$log"
-          echo "\$ cargo check --workspace --all-targets --all-features" | tee -a "$log"
-          cargo check --workspace --all-targets --all-features 2>&1 | tee -a "$log" || status=1
-          echo | tee -a "$log"
-          echo "\$ cargo check --workspace --no-default-features" | tee -a "$log"
-          cargo check --workspace --no-default-features 2>&1 | tee -a "$log" || status=1
+          leg() {
+            echo "\$ $*" | tee -a "$log"
+            "$@" 2>&1 | tee -a "$log" || status=1
+            echo | tee -a "$log"
+          }
+
+          leg cargo check --workspace --all-targets --all-features
+          leg cargo check --workspace --no-default-features
+
+          # `--all-targets` leaves doctests out, and several brokers keep their only replying
+          # handler in a rustdoc example, so a release that changes what a handler must declare
+          # is invisible to the legs above. These doctests reach no server: the broker contract
+          # makes a constructor I/O-free, which is what lets the crates' own CI run them with no
+          # stand at all.
+          leg cargo test --doc --workspace --all-features
+
+          # A scaffold is what a new service starts from, and it lives outside the workspace, so
+          # no `--workspace` leg has ever compiled one. Render each and build it against the
+          # released core the way a user's first build resolves it: the core by path, this broker
+          # by path because its 0.7 line is not published yet, everything else from crates.io.
+          core="$GITHUB_WORKSPACE/core"
+          crate="$GITHUB_WORKSPACE/broker/crates/$BROKER"
+          dest="$RUNNER_TEMP/scaffolds"
+          for template in templates/*/; do
+            [ -d "$template" ] || continue
+            name="smoke-$(basename "$template")"
+            rm -rf "${dest:?}/$name"
+            mkdir -p "$dest"
+            leg cargo generate --path "$template" --name "$name" --destination "$dest" --vcs none
+            # The manifest is checked in as `Cargo.toml.liquid` so cargo never parses its
+            # placeholder name; a render that did not drop the suffix would leave the patch below
+            # writing a manifest nothing reads.
+            if [ ! -f "$dest/$name/Cargo.toml" ]; then
+              echo "$template rendered no Cargo.toml" | tee -a "$log"
+              status=1
+              continue
+            fi
+            {
+              echo ""
+              echo "[patch.crates-io]"
+              echo "ruststream = { path = \"$core\" }"
+              echo "$BROKER = { path = \"$crate\" }"
+            } >> "$dest/$name/Cargo.toml"
+            leg cargo check --manifest-path "$dest/$name/Cargo.toml"
+          done
+
           exit "$status"
 
       - name: Report the verdict to the broker repository
