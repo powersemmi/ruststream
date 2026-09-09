@@ -396,6 +396,12 @@ readme = "README.md"
 keywords = ["messaging", "async", "broker", "pubsub", "event-driven"]
 categories = ["asynchronous", "network-programming"]
 
+# The whole surface is behind additive features, and `default` is `json` alone, so a default build
+# on docs.rs publishes a reference with the runtime, codec, AsyncAPI, metrics, testing and
+# conformance modules missing - the ones the guides send readers to.
+[package.metadata.docs.rs]
+all-features = true
+
 # The types from dependencies that the public API is allowed to name, checked by
 # `cargo check-external-types` in CI. Every entry here is a version bump of that dependency
 # turned into a breaking change for every broker crate downstream, so the list is the record of
