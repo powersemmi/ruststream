@@ -441,6 +441,13 @@ implements the `Seekable` capability, owns the position type, and offers seek ke
 per-delivery context. On a broker without a replayable log, the mounts below are rejected at
 compile time rather than at run time.
 
+The in-memory broker keeps a log only when you ask for one, so a service that seeks on it names how
+much history to keep:
+
+```rust
+--8<-- "examples/seek.rs:retaining"
+```
+
 ### Opening at a chosen position
 
 A new subscription opens where the broker decides: at the tail for a plain consumer, at a stored
@@ -467,8 +474,8 @@ the `start_at(<position>)` clause on the attribute, or the `.start_at(..)` setti
     ```
 
 The position is a value of the broker's own position type, so you can name exactly what that broker
-is able to express. The in-memory log offers `MemoryPosition::start()` for the whole history,
-`MemoryPosition::end()` for everything from the next publish onwards, and
+is able to express. The in-memory log offers `MemoryPosition::start()` for the oldest message it
+still keeps, `MemoryPosition::end()` for everything from the next publish onwards, and
 `MemoryPosition::sequence(n)` for one log entry.
 
 The clause sets the position on every startup. Without it the subscription opens at the broker's

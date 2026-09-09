@@ -126,9 +126,9 @@ pub(crate) struct Resp {
 /// connection, not to the configuration the app was built from.
 #[cfg(feature = "memory")]
 #[allow(dead_code)]
-pub(crate) async fn connected(
-    broker: &ruststream::memory::MemoryBroker,
-) -> ruststream::memory::ConnectedMemoryBroker {
+pub(crate) async fn connected<Log: ruststream::memory::LogMode>(
+    broker: &ruststream::memory::MemoryBroker<Log>,
+) -> ruststream::memory::ConnectedMemoryBroker<Log> {
     ruststream::Broker::connect(broker.clone())
         .await
         .expect("memory connect is infallible")
@@ -136,14 +136,19 @@ pub(crate) async fn connected(
 
 /// A fresh memory broker with the two handles a suite drives it through: one to publish input,
 /// one to read the publish log. The broker itself is returned to be moved into the app.
+///
+/// Reading a publish log back means the broker has to keep one, so this is the retaining form;
+/// the window is wider than anything these suites publish.
 #[cfg(feature = "memory")]
 #[allow(dead_code)]
 pub(crate) async fn observed_memory() -> (
-    ruststream::memory::MemoryBroker,
+    ruststream::memory::MemoryBroker<ruststream::memory::Retaining>,
     ruststream::memory::MemoryPublisher,
-    ruststream::memory::ConnectedMemoryBroker,
+    ruststream::memory::ConnectedMemoryBroker<ruststream::memory::Retaining>,
 ) {
-    let broker = ruststream::memory::MemoryBroker::new();
+    let broker = ruststream::memory::MemoryBroker::retaining(
+        ruststream::memory::Retention::Messages(ruststream::nonzero!(64)),
+    );
     let ingress = broker.publisher();
     let observer = connected(&broker).await;
     (broker, ingress, observer)
@@ -152,8 +157,8 @@ pub(crate) async fn observed_memory() -> (
 /// Asserts that exactly one [`Event`] carrying `id` was published to `name`.
 #[cfg(all(feature = "memory", feature = "testing"))]
 #[allow(dead_code)]
-pub(crate) async fn expect_id(
-    observer: &ruststream::memory::ConnectedMemoryBroker,
+pub(crate) async fn expect_id<Log: ruststream::memory::LogMode>(
+    observer: &ruststream::memory::ConnectedMemoryBroker<Log>,
     name: &str,
     id: u64,
 ) {

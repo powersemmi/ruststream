@@ -14,7 +14,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use ruststream::Seeker;
-use ruststream::memory::{MemoryBatchContext, MemoryBroker, MemoryPosition, SeekHandle};
+use ruststream::memory::{
+    MemoryBatchContext, MemoryBroker, MemoryPosition, Retaining, Retention, SeekHandle,
+};
 use ruststream::prelude::*;
 use ruststream::testing::TestApp;
 
@@ -46,22 +48,24 @@ async fn digest(batch: &[Order], ctx: &mut Context<'_, MemoryBatchContext>) -> V
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_replying_batch_reads_the_brokers_batch_context() {
-    let app =
-        RustStream::new(AppInfo::new("digests", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    let app = RustStream::new(AppInfo::new("digests", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
+        |b| {
             b.include(digest.batch(nonzero!(8)));
-        });
+        },
+    );
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .publish("orders", &Order { id: 7 })
         .await
         .expect("publish");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .published::<Digest>("digests")
         .assert_called_once()
         .with(&Digest { id: 7 });
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("orders")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
@@ -100,16 +104,18 @@ async fn replay_digest(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_replying_batch_repositions_through_the_batch_context() {
-    let app =
-        RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    let app = RustStream::new(AppInfo::new("replay", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
+        |b| {
             b.include(replay_digest.batch(nonzero!(8)));
-        });
+        },
+    );
     let tb = TestApp::start(app).await.expect("harness start");
 
     // The first order lands at log position 0 and asks the consumer to resume at position 1,
     // the slot the next publish takes: the reposition is real, and it neither loses nor
     // duplicates anything.
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .publish_with_headers(
             "replay.orders",
             &Order { id: 1 },
@@ -117,7 +123,7 @@ async fn a_replying_batch_repositions_through_the_batch_context() {
         )
         .await
         .expect("publish");
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .publish_with_headers(
             "replay.orders",
             &Order { id: 2 },
@@ -129,12 +135,12 @@ async fn a_replying_batch_repositions_through_the_batch_context() {
 
     // A failed reposition would settle the batch as a retry, so the acks are what say the handle
     // the batch context carries was live.
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("replay.orders")
         .assert_called(2)
         .settled(HandlerOutcome::ack());
     let published = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .published::<Digest>("replay.digests");
     let ids: Vec<u64> = published.decoded().iter().map(|reply| reply.id).collect();
     assert_eq!(

@@ -21,8 +21,9 @@ use ruststream::{
     conformance::harness,
     memory::{
         ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
-        MemorySubscriber,
+        MemorySubscriber, Retaining, Retention,
     },
+    nonzero,
     testing::{Coordinator, TestableBroker},
 };
 
@@ -69,14 +70,15 @@ impl Settlement for Fails {
 /// Every stand-in behaves identically on the wire - a settled delivery is simply gone, and nothing
 /// is ever redelivered - so what the suite reads is only what each one claims.
 struct Standin<S> {
-    broker: MemoryBroker,
+    broker: MemoryBroker<Retaining>,
     settlement: PhantomData<S>,
 }
 
 impl<S> Standin<S> {
     fn new() -> Self {
         Self {
-            broker: MemoryBroker::new(),
+            // The routing suite reads the publish log back, which is the retaining form's job.
+            broker: MemoryBroker::retaining(Retention::Messages(nonzero!(64))),
             settlement: PhantomData,
         }
     }
@@ -96,7 +98,7 @@ impl<S: Settlement> Broker for Standin<S> {
 
 /// The connected form of a [`Standin`], which is what the suite drives.
 struct ConnectedStandin<S> {
-    inner: ConnectedMemoryBroker,
+    inner: ConnectedMemoryBroker<Retaining>,
     settlement: PhantomData<S>,
 }
 
@@ -142,13 +144,13 @@ impl<S: Settlement> Subscribe for ConnectedStandin<S> {
 
 /// The stand-in's subscriber: the memory subscriber's stream, one wrapper per delivery.
 struct StandinSubscriber<S> {
-    inner: MemorySubscriber,
+    inner: MemorySubscriber<Retaining>,
     settlement: PhantomData<S>,
 }
 
 impl<S: Settlement> Subscriber for StandinSubscriber<S> {
     type Message = StandinMessage<S>;
-    type Error = <MemorySubscriber as Subscriber>::Error;
+    type Error = <MemorySubscriber<Retaining> as Subscriber>::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         self.inner.stream().map(|delivery| {
@@ -162,7 +164,7 @@ impl<S: Settlement> Subscriber for StandinSubscriber<S> {
 
 /// One delivery from a stand-in, answering settlement as `S` does.
 struct StandinMessage<S> {
-    inner: MemoryMessage,
+    inner: MemoryMessage<Retaining>,
     settlement: PhantomData<S>,
 }
 

@@ -405,6 +405,12 @@ Broker 侧的语义和单条消息的 `nack(requeue = true)` 相同。能逐条�
 有自己的位置类型，并在投递上下文里给出定位键。在没有可重放日志的 Broker 上，下面的挂载在编译期
 就通不过，而不是留到运行时。
 
+内存 Broker 只在你要求时才建日志，因此在它之上定位的服务要说明保留多少历史：
+
+```rust
+--8<-- "examples/seek.rs:retaining"
+```
+
 ### 在选定的位置打开订阅
 
 一条新订阅在哪里打开由 Broker 决定：普通消费者从末尾开始，持久消费者从存下的游标开始。在那之前发
@@ -430,8 +436,8 @@ Broker 侧的语义和单条消息的 `nack(requeue = true)` 相同。能逐条�
     ```
 
 位置是 Broker 自己的位置类型的值，因此可以写出的正是这个 Broker 能表达的东西。内存日志提供
-`MemoryPosition::start()` 表示全部历史，`MemoryPosition::end()` 表示从下一次发布开始，
-`MemoryPosition::sequence(n)` 表示某一条日志记录。
+`MemoryPosition::start()` 表示仍然保留着的最旧一条消息，`MemoryPosition::end()` 表示从下一次发布
+开始，`MemoryPosition::sequence(n)` 表示某一条日志记录。
 
 该子句在每次启动时设定位置。没有它，订阅就在 Broker 的默认位置打开。有条件的默认值，也就是只在
 Broker 没有为该组存下游标时才生效的位置（Kafka 的 offset reset、JetStream 的 deliver policy），

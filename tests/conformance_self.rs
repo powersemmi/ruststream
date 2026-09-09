@@ -5,13 +5,20 @@
 
 use ruststream::{
     conformance::{capabilities, harness},
-    memory::{MemoryBroker, MemorySource},
+    memory::{MemoryBroker, MemorySource, Retaining, Retention},
+    nonzero,
 };
 
 // --8<-- [start:run_suite]
+/// The suites that read a broker's publish log back - the routing contract's log check and the
+/// seeking capability - need a broker that keeps one.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_conformance_suite() {
-    harness::run_suite(MemoryBroker::new).await;
+    harness::run_suite(replaying).await;
 }
 // --8<-- [end:run_suite]
 
@@ -95,7 +102,7 @@ async fn memory_broker_passes_owned_transactions_suite() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_broker_passes_seeking_suite() {
     capabilities::seeking(
-        MemoryBroker::new,
+        replaying,
         |name| MemorySource::new(name),
         |broker| broker.publisher(),
     )

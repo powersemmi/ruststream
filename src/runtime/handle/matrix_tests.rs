@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::codec::JsonCodec;
 use crate::memory::{
     ConnectedMemoryBroker, MemoryBatchContext, MemoryBroker, MemoryPosition, MemoryPublish,
-    MemoryPublisher, SeekHandle,
+    MemoryPublisher, Retention, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
@@ -543,7 +543,8 @@ fn a_batch_reply_attaches_a_transactional_publisher() {
 /// the reposition handle it carries is live there.
 #[tokio::test]
 async fn a_replying_batch_reads_the_brokers_batch_context() {
-    let broker = MemoryBroker::new();
+    // The broker's batch context carries a reposition handle, which only a retaining broker has.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
     let mut sub = broker.subscribe("orders");
     publish_payloads(&broker, "orders", &[br#"{"id":1}"#, br#"{"id":2}"#]).await;
     let batch = pull_batch(&mut sub).await;

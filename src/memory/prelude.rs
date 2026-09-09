@@ -40,8 +40,8 @@ pub use crate::prelude::*;
 // position. The publisher, requester and message types stay explicit imports - a service that
 // names them has left the broker-agnostic path.
 pub use super::{
-    MemoryBatchContext, MemoryBroker, MemoryContext, MemoryError, MemoryPosition, MemorySource,
-    Position, SeekHandle,
+    Discarding, MemoryBatchContext, MemoryBroker, MemoryContext, MemoryError, MemoryPosition,
+    MemorySource, Position, Retaining, Retention, SeekHandle,
 };
 
 // The policies under the names every broker's prelude uses, so a mount site reads the same

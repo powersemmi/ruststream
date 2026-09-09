@@ -85,7 +85,9 @@ impl Handle<Job, (), (), MemoryContext> for Work {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let broker = MemoryBroker::new();
+    // Replaying reads what the broker kept, so this one keeps the last 64 entries of every log.
+    // `MemoryBroker::new()` keeps nothing, and a mount that seeks does not compile on it.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64)));
     let ingress = broker.publisher();
 
     // Published before the app even exists; only the chosen start position below makes these

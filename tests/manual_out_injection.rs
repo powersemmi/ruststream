@@ -64,7 +64,8 @@ where
 async fn a_bound_token_injects_a_foreign_brokers_publisher() {
     let ingress_broker = MemoryBroker::new();
     let ingress = ingress_broker.publisher();
-    let other = MemoryBroker::new().bindable();
+    // The observer reads the target broker's publish log, so that one keeps what it published.
+    let other = MemoryBroker::retaining(Retention::Messages(nonzero!(64))).bindable();
     let observer = connected(other.broker()).await;
 
     // --8<-- [start:cross_broker]

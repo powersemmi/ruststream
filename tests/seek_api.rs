@@ -20,6 +20,12 @@ use ruststream::testing::TestApp;
 
 use common::{Event, Wire};
 
+/// Repositioning reads the broker's publish log, so every service here is built on a broker
+/// that keeps one. The window is wider than any run below, so nothing is evicted mid-test.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(32)))
+}
+
 /// The payload view the byte-level handler below takes: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
@@ -46,7 +52,7 @@ async fn work(job: &Event, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_seek_key_repositions_from_inside_the_handler() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
@@ -68,7 +74,7 @@ async fn a_seek_key_repositions_from_inside_the_handler() {
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("seek.jobs")
         .received();
     let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
@@ -88,7 +94,7 @@ async fn replayer(_event: &Event) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_start_position_replays_history_into_a_fresh_subscription() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let ingress = broker.publisher();
 
     // Published before the app exists: only the chosen start position makes them visible.
@@ -117,7 +123,7 @@ async fn a_start_position_replays_history_into_a_fresh_subscription() {
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("seek.history")
         .received();
     let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
@@ -163,7 +169,7 @@ async fn forward_skipping(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("combo", "0.1.0")).with_broker(broker, |b| {
@@ -187,12 +193,12 @@ async fn an_out_parameter_and_a_seek_key_combine_in_one_handler() {
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("seek.combo")
         .received();
     let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
     assert_eq!(ids, [0, 2]);
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .published::<Event>("seek.combo.out")
         .assert_called_once()
         .with(&Event { id: 2 });
@@ -219,7 +225,7 @@ async fn raw_work(frame: &Frame<'_>, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOut
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_handler_composes_with_a_seek_key() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(broker, |b| {
@@ -239,7 +245,7 @@ async fn a_raw_handler_composes_with_a_seek_key() {
     tb.settle().await.expect("settle");
 
     let received = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("seek.frames")
         .received_raw();
     let frames: Vec<&[u8]> = received.iter().map(AsRef::as_ref).collect();
@@ -273,7 +279,7 @@ async fn gate(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> Result<Event, Hand
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishing_handler_composes_with_a_seek_key() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let ingress = broker.publisher();
 
     let app = RustStream::new(AppInfo::new("gate", "0.1.0")).with_broker(broker, |b| {
@@ -295,12 +301,12 @@ async fn a_publishing_handler_composes_with_a_seek_key() {
     tb.settle().await.expect("settle");
 
     let received: Vec<Event> = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("seek.gate")
         .received();
     let ids: Vec<u64> = received.iter().map(|event| event.id).collect();
     assert_eq!(ids, [0, 2]);
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .published::<Event>("seek.gate.out")
         .assert_called_once()
         .with(&Event { id: 20 });
