@@ -194,3 +194,43 @@ pub(crate) fn open_mounted_subscriber(
     }
     Ok(Arc::new(Delivery::for_subscription(scope, None)))
 }
+
+#[cfg(all(test, feature = "memory"))]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryBroker;
+
+    /// A scope carrying `retry_publisher`, with the harness pieces a scope holds under the
+    /// `testing` feature.
+    fn scope(retry_publisher: Option<Arc<dyn ErasedPublisher>>) -> ScopeDelivery {
+        ScopeDelivery::new(
+            retry_publisher,
+            TaskTracker::new(),
+            #[cfg(feature = "testing")]
+            Arc::new(TestHooks::detached()),
+            #[cfg(feature = "testing")]
+            0,
+        )
+    }
+
+    /// A subscriber mounted without a source has nothing to ask, so a scope that defers retries
+    /// has no address for it. The startup error names the subscription and the way out, rather
+    /// than letting the subscription run and publish its deferred copies into nothing.
+    #[test]
+    fn a_sourceless_mount_under_a_retry_publisher_is_a_startup_error() {
+        let publisher: Arc<dyn ErasedPublisher> = Arc::new(MemoryBroker::new().publisher());
+        let refused = open_mounted_subscriber(&scope(Some(publisher)), "orders")
+            .expect_err("a scope that defers retries cannot address a sourceless mount");
+        let message = refused.to_string();
+        assert!(message.contains("orders"), "{message}");
+        assert!(message.contains("retry_via"), "{message}");
+    }
+
+    /// Without a retry publisher there is nothing to address, so the same mount starts.
+    #[test]
+    fn a_sourceless_mount_starts_when_the_scope_defers_nothing() {
+        let delivery = open_mounted_subscriber(&scope(None), "orders")
+            .expect("a scope with no retry publisher asks for no address");
+        assert!(delivery.retry.is_none());
+    }
+}
