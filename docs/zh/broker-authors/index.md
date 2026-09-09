@@ -50,6 +50,15 @@ Broker 还可以额外保留一个由 `connect` 填充的共享单元（或者�
 一条运行时规则：与连接互为别名的句柄（从已连接形态发出去的发布者、可共享 Broker 的克隆）在关闭之后
 使用时必须报错，绝不能在一条已死的连接上悄悄地返回成功。生命周期检查同样会走到这条路径。
 
+内存 Broker 用几行就走完了整道阶梯，本页下面的每一段草图也都是从同一个文件里裁出来的：契约一动，
+页面上的代码就跟着动：
+
+```rust
+--8<-- "src/memory/mod.rs:ladder"
+```
+
+`ClosedMemoryBroker` 就是上一段说的那种带拆卸诊断的见证：它报告这次关闭摘掉了多少个订阅者注册。
+
 ### `Subscribe`
 
 在已连接形态上实现 `Subscribe`，即可支持按名字订阅。`#[subscriber("name")]` 用的就是它。
@@ -60,6 +69,12 @@ pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
+```
+
+要做的只是开一条订阅：
+
+```rust
+--8<-- "src/memory/mod.rs:subscribe"
 ```
 
 ### `Subscriber`
@@ -91,7 +106,11 @@ pub trait IncomingMessage: Send + Sync {
     async fn ack(self) -> Result<(), AckError>;
     async fn nack(self, requeue: bool) -> Result<(), AckError>;
 
-    // Defaulted: a plain nack(true). Override when the transport has native
+    // Defaulted: false. The runtime reads this first and never calls
+    // nack_after without it, so override the pair together.
+    fn supports_nack_after(&self) -> bool;
+
+    // Defaulted: AckError::Unsupported. Override when the transport has native
     // delayed redelivery (JetStream NAK with delay); handlers reach it through
     // HandlerOutcome::retry_after.
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
@@ -102,8 +121,24 @@ pub trait IncomingMessage: Send + Sync {
 }
 ```
 
-这两个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能：`retry_after` 退回为立即
-重新入队，按键分道则会轮转那些没有键的消息。
+延迟重投由两个方法组成，运行时问的是 `supports_nack_after`：只覆盖 `nack_after`，这道闸门仍然是
+`false`，覆盖的实现一次也不会被调用。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是
+悄悄按一次普通的 `nack(true)` 结算：传输压不住这条消息，就得说出来，否则一次退避就变成一场重投风暴。
+
+这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重投的地方，
+`retry_after` 由运行时自己扛：它丢弃这条投递，并在延迟之后把一份副本发布回同一个来源 - 走应用通过
+`BrokerScope::retry_via` 接上的那个发布者 - 并把重试计数消息头加一。只有在没有这个发布者时，延迟才
+退化为立即重新入队。按键分道则会轮转那些没有键的消息。
+
+「什么都不覆盖」会得到什么，没有哪个 Broker 能拿来演示：本工作区里的 Broker 个个都覆盖了它们。所以
+核心用一个测试把这份行为钉住，就是下面这个：
+
+```rust
+--8<-- "src/message.rs:incoming_defaults"
+```
+
+`nack_after` 报告的是这个延迟没法兑现，而不是悄悄按一次普通的 `nack(true)` 结算：正因如此，运行时
+才分得清这两种情况，并启用自己那条兜底路径。
 
 ### `Publisher`
 
@@ -168,6 +203,12 @@ pub trait DefaultPublish: ConnectedBroker {
 }
 ```
 
+两半合在一起，来自一个策略完全不带任何选项的 Broker：
+
+```rust
+--8<-- "src/memory/mod.rs:publish_policy"
+```
+
 ## 订阅来源 { #subscription-sources }
 
 `Subscribe` 覆盖的是按名字订阅的情形。当一次订阅需要 Broker 专有的选项（一个消费者组、一个持久化名称、
@@ -196,13 +237,8 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 如果一种订阅方式除了名字之外没有别的标识信息，那它还会实现 `FromName`，其唯一的构造函数用该名字把
 它构造出来：
 
-<!-- inline-rust: one-impl sketch against a broker-crate descriptor that has no in-repo compiled home -->
 ```rust
-impl FromName for OrdersStream {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name)
-    }
-}
+--8<-- "src/memory/mod.rs:from_name"
 ```
 
 于是 `#[subscriber(OrdersStream)]` 就合法了：属性固定了订阅方式，值则由挂载点提供。如果一种方式确实
@@ -556,7 +592,10 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`（用
 `register_testable_broker!` 为该已连接类型注册，因为套件会先连接每一个 Broker，然后才取回它的
 传输），这样用户就能用 `TestApp` 测试套件对着你的 Broker 单元测试处理器。该传输**只做核心路由**：把
-发布出去的消息分发给匹配的订阅者，并把 ack/nack 当作实质上的空操作。切勿在其中模拟 Broker 专有的语义
+发布出去的消息分发给匹配的订阅者，并且对 `ack` / `nack` 的答复要和真实传输一致 - 传输能确认时就在
+内存里结算（`nack(requeue = true)` 把这条投递放回去），传输根本无法确认时（ZeroMQ、MQTT `QoS 0`、
+Redis pub/sub）就答 `AckError::Unsupported`。替身若声称一次自己传输做不到的结算，处理器里的重试就会
+在测试里通过，在生产中丢消息。切勿在其中模拟 Broker 专有的语义
 （持久游标、重新投递定时器、偏移量、死信路由）；那些要对着一台真实的服务器端到端地验证。
 
 参考实现就是内存 Broker 自己的那一份（在 `ConnectedMemoryBroker` 上）：
@@ -570,3 +609,58 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 `Coordinator::schedule_redelivery` 去路由。于是同一个类型既适用于 `TestApp`，也适用于 conformance
 校验套件。面向用户的那一侧参见[测试](../guides/testing.md)；用 `run_suite` 和 `lifecycle` 阶梯检查来证明
 你的实现，参见 [Conformance](conformance.md)。
+
+### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }
+
+一个服务的整套测试都跑在这个进程内传输上。因此它和真实传输之间的每一处差异，都会为真实传输并不存在
+的行为开出一条绿灯。这些差异并不冷僻，而下面每一条规则的代价大约就是一个测试。
+
+**核心的契约套件不能只跑真实服务器，也要跑进程内传输。**套件是照着 trait 写的，并不区分应答的是
+真实 Broker 还是进程内传输。一个 `#[tokio::test]` 就够：
+
+```rust
+--8<-- "tests/conformance_self.rs:run_suite"
+```
+
+先跑 `lifecycle`。它会走一遍 `new` -> `connect` -> 订阅 -> 发布 -> ack -> `shutdown`，然后问出一个
+几乎没人拿去问进程内传输的问题：关闭之前创建的发布者，关闭之后会不会报错？真实客户端答的是
+「未连接」。而发布只是往 channel 里塞一条的进程内传输没有理由报错，它会照单全收。
+
+```rust
+--8<-- "tests/conformance_self.rs:lifecycle"
+```
+
+你的能力集撑得起的每个 `capabilities::*` 套件，都照此加上。
+
+**能力面要和真实 Broker 对齐。**`testing` 这个 feature 是给测试用的，release 构建会把它关掉，因此
+两个方向的代价并不对等。少一项才是贵的：真实 Broker 有、进程内传输没有的能力，在进程内根本挂载
+不了，它背后的行为也就没人测。多一项则是小事：只有进程内传输提供的事务或 request-reply，在你自己的
+release 构建里就编译不过。恼人，但发现得早。
+
+**传输怎么结算，你就怎么结算。**真实的 `ack` 在两处返回 `AckError::Unsupported`：发完即忘的传输，
+以及至多一次的服务质量。进程内传输照样返回它。为了让套件闭嘴而回一个 `Ok(())`，会让一个返回
+`HandlerOutcome::retry()` 的处理器在进程内通过，却在真实 Broker 上丢消息。诚实的答案套件是收的。
+
+**客户端做的事要复刻，Broker 做的事不要假造。**这条界线无关工作量，只看这套机制运行在哪一侧。竞争
+消费、按组分发、关联与回复路由、提交前的缓冲，都由客户端或路由层完成，进程内复刻是精确的。集群
+原子性、fencing、Broker 侧持有的超时和 exactly-once 由 Broker 完成，进程内复刻就是虚构。
+
+竞争消费最该做对，因为做错了看着像成功。把每条消息都发给队列的每个订阅者，那已经不是队列。共用
+一条队列的两个 worker 于是各自跑完整个流，而一个统计处理量的测试只看到活干完了，一个错都不报。
+
+**每一处缺口都配一句注释，点名它让哪条断言站不住。**不要写「这个功能没有」，要写读者从此不该再信
+哪个测试，以及真正覆盖它的是什么：
+
+<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+```rust
+// No fencing: a second producer claiming the same transactional id is not rejected here, so a
+// test cannot assert the first one is fenced out. `capabilities::transactions` against a real
+// server is what covers that.
+```
+
+**再用一个测试把缺口钉住。**某人「修好」进程内传输、让它去路由那些它故意不路由的东西，注释就在那天
+失效。而一个断言处理器*没有*被调用的测试，会在那天挂掉，并且自己把话说清楚。
+
+**挂载进程内传输的方式，要和挂载真实 Broker 一样。**你自己的订阅来源和发布策略必须原封不动地对着它
+工作，这样服务测的才是它真正发布的那份路由文件。如果用户非得把 `OrdersStream` 换成别的东西才能把
+测试跑起来，挂载就没有被测到。

@@ -24,9 +24,11 @@ pub(crate) enum HandlerResult {
     /// Negatively acknowledge the message, asking the broker to redeliver it no sooner than
     /// `delay` from now.
     ///
-    /// The delay is a hint, honoured by brokers with native delayed redelivery (`JetStream`
-    /// `NAK` with delay); brokers without it fall back to an immediate requeue (see
-    /// [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after)).
+    /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
+    /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
+    /// without, the runtime drops the delivery and re-publishes a copy to its own source after
+    /// the delay. Only with no [`retry_via`](super::BrokerScope::retry_via) publisher wired does
+    /// the delay degrade to an immediate requeue.
     NackAfter {
         /// How long the broker should wait before redelivering.
         delay: Duration,
@@ -122,9 +124,14 @@ impl HandlerOutcome {
     /// Redeliver, but not before `delay` has passed - the not-ready-yet case (a dependency has
     /// not arrived, an upstream is rate-limited), where an immediate redelivery would just spin.
     ///
-    /// The delay is a hint, honoured by brokers with native delayed redelivery (`JetStream`
-    /// `NAK` with delay); brokers without it fall back to an immediate requeue (see
-    /// [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after)).
+    /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
+    /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
+    /// without, the runtime drops the delivery and re-publishes a copy to its own source after
+    /// the delay, through the publisher [`retry_via`](super::BrokerScope::retry_via) wired, with
+    /// the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER) incremented. That copy is
+    /// at-most-once over the delay window: it rides a detached task, so a process that exits
+    /// before the timer fires loses it. Only with no such publisher does the delay degrade to an
+    /// immediate requeue.
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
             outcome: HandlerResult::retry_after(delay),

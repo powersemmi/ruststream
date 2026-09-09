@@ -775,7 +775,11 @@ fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
 }
 
 /// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
-async fn settle_outcome<M: IncomingMessage>(
+///
+/// The single place a settlement reaches the broker, single-message and batch paths alike: a
+/// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
+/// the delay fallback below is exactly the part that is easy to leave out.
+pub(crate) async fn settle_outcome<M: IncomingMessage>(
     msg: M,
     outcome: HandlerResult,
     name: &str,
@@ -804,6 +808,17 @@ async fn settle_outcome<M: IncomingMessage>(
 /// schedules a deferred re-publish of the captured copy to its source subject with the
 /// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
 /// back to an immediate requeue and warns.
+///
+/// A transport with no settlement at all ([`AckError::Unsupported`] from `nack`, as on MQTT at
+/// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the deferred re-publish: there is no original to
+/// drop and no redelivery of the broker's own to fall back on, so the deferred copy is the only
+/// form the retry can take.
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from settling the original when the transport does settle but this
+/// settle failed. The delivery then stays with the broker, which redelivers it on its own timers,
+/// and a deferred copy on top of that would duplicate the message; the caller logs the error.
 ///
 /// # Cancel safety
 ///
@@ -842,8 +857,14 @@ where
     let subject = name.to_owned();
 
     // Drop the original so the broker does not also redeliver it; the deferred copy carries the
-    // retry forward.
-    msg.nack(false).await?;
+    // retry forward. A transport with no settlement at all has nothing to drop and no redelivery
+    // of its own, so there the deferred copy is the only way the message survives: aborting on
+    // that error would lose it. Any other settle failure leaves the delivery with the broker,
+    // which will redeliver it on its own timers, so a deferred copy on top would duplicate it.
+    match msg.nack(false).await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(err) => return Err(err),
+    }
 
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
