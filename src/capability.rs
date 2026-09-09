@@ -539,14 +539,16 @@ impl ServerSpec {
     #[must_use]
     pub fn host_from_url(url: &str) -> String {
         let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
-        // The last '@' is the boundary, because a password may itself contain one.
-        let after_userinfo = after_scheme
+        // The authority ends at the first '/', '?' or '#', so an '@' past that point belongs to a
+        // path or a query and separates nothing: cutting on '@' first reads `nats://host/a@b` as a
+        // host of `b`.
+        let authority = after_scheme
+            .split_once(['/', '?', '#'])
+            .map_or(after_scheme, |(authority, _)| authority);
+        // Inside the authority the last '@' is the boundary, because a password may contain one.
+        authority
             .rsplit_once('@')
-            .map_or(after_scheme, |(_, rest)| rest);
-        after_userinfo
-            .split(['/', '?'])
-            .next()
-            .unwrap_or(after_userinfo)
+            .map_or(authority, |(_, host)| host)
             .to_owned()
     }
 

@@ -26,10 +26,17 @@ fn the_host_survives_a_scheme_userinfo_a_path_and_a_query() {
         ("redis://:secret@cache:6379", "cache:6379"),
         // No scheme at all: a bare address is already the coordinate.
         ("broker:5672", "broker:5672"),
-        // A password may contain '@', so the boundary is the last one, not the first.
+        // A password may contain '@', so inside the authority the boundary is the last one.
         ("amqp://user:p@ss@broker:5672", "broker:5672"),
         // A host without a port stays a host.
         ("mqtt://user:pass@broker", "broker"),
+        // The authority ends before the path, the query and the fragment, so an '@' past it
+        // separates nothing. Cutting on '@' before cutting the path reports a host of "b".
+        ("nats://broker:4222/a@b", "broker:4222"),
+        ("nats://broker:4222/?token=a@b", "broker:4222"),
+        ("nats://broker:4222#a@b", "broker:4222"),
+        // A token carries no colon and no user name, and is userinfo all the same.
+        ("nats://s3cret-token@broker:4222", "broker:4222"),
     ];
     for (url, expected) in cases {
         assert_eq!(ServerSpec::host_from_url(url), expected, "url {url:?}");
