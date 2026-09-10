@@ -1,12 +1,18 @@
 use futures::StreamExt;
 
-use super::super::{MemoryBroker, MemorySource};
+use super::super::{MemoryBroker, MemorySource, Retention};
 use super::*;
 #[cfg(feature = "testing")]
 use crate::Subscribe;
 #[cfg(feature = "testing")]
 use crate::testing::{TestableBroker, coordinator::Coordinator};
 use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource, nonzero};
+
+/// A broker whose subscriptions can be repositioned. The window is wider than anything these
+/// tests publish, so what they assert is the seek machinery, never an eviction.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+}
 
 #[tokio::test]
 async fn batches_drain_buffered_deliveries() {
@@ -214,7 +220,7 @@ async fn an_owned_transaction_dropped_unsettled_discards_its_buffer() {
 
 #[test]
 fn the_capability_debug_forms_name_their_subject_without_leaking_state() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     assert!(format!("{:?}", broker.requester()).contains("MemoryRequester"));
 
     let seeker = broker.subscribe("seek.debug").seeker();
@@ -286,6 +292,49 @@ async fn request_resolves_on_reply() {
     assert!(!inbox_leaked);
 }
 
+/// A request inbox is used once and never subscribed again, so what a retaining broker recorded
+/// under it goes with the registration. Otherwise every exchange would leave one name, and one
+/// reply, in the log for the life of the process.
+#[tokio::test]
+async fn a_resolved_request_leaves_no_log_entry_for_its_inbox() {
+    let broker = replaying();
+    let mut service = broker.subscribe("svc.echo");
+    let publisher = broker.publisher();
+    let requester = broker.requester();
+
+    let respond = async {
+        let mut stream = std::pin::pin!(service.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        let reply_to = msg.headers().reply_to().unwrap().to_owned();
+        publisher
+            .publish(OutgoingMessage::new(&reply_to, b"pong"))
+            .await
+            .unwrap();
+        msg.ack().await.unwrap();
+    };
+    let request = requester.request(
+        OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+        Duration::from_secs(1),
+    );
+    let (reply, ()) = futures::join!(request, respond);
+    assert_eq!(reply.unwrap().payload(), b"pong");
+
+    let (inboxes, kept_the_subject) = {
+        let log = broker.state.log.lock().unwrap();
+        let inboxes: Vec<String> = log
+            .recorded_names()
+            .into_iter()
+            .filter(|name| name.starts_with("_inbox."))
+            .map(str::to_owned)
+            .collect();
+        (inboxes, log.name("svc.echo").is_some())
+    };
+
+    assert!(inboxes.is_empty(), "{inboxes:?}");
+    // The request subject itself is a real name, and stays.
+    assert!(kept_the_subject);
+}
+
 // Paused time needs the current-thread runtime; the test spawns nothing, so the timeout
 // auto-advances instead of sleeping for real.
 #[tokio::test(start_paused = true)]
@@ -310,7 +359,7 @@ async fn request_times_out_without_responder() {
 
 #[tokio::test]
 async fn seek_back_redelivers_from_the_captured_position() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.back");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -341,9 +390,42 @@ async fn seek_back_redelivers_from_the_captured_position() {
     assert!(futures::poll!(stream.next()).is_pending());
 }
 
+/// A captured position the retention bound has dropped cannot be honoured: the seek says so
+/// instead of quietly starting somewhere else, which would look like a replay that lost its
+/// first messages.
+#[tokio::test]
+async fn seeking_to_an_evicted_position_reports_it() {
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(2)));
+    let mut sub = broker.subscribe("seek.evicted");
+    let seeker = sub.seeker();
+    let publisher = broker.publisher();
+    for payload in [b"a", b"b", b"c", b"d"] {
+        publisher
+            .publish(OutgoingMessage::new("seek.evicted", payload))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        seeker.seek(MemoryPosition::sequence(0)).await,
+        Err(MemoryError::PositionEvicted {
+            requested: 0,
+            oldest: 2,
+        }),
+    );
+
+    // The start position means the oldest message still retained, so it always replays.
+    seeker.seek(MemoryPosition::start()).await.unwrap();
+    let mut stream = std::pin::pin!(sub.stream());
+    let replayed = stream.next().await.unwrap().unwrap();
+    assert_eq!(replayed.payload(), b"c");
+    assert_eq!(replayed.position(), MemoryPosition::sequence(2));
+    replayed.ack().await.unwrap();
+}
+
 #[tokio::test]
 async fn constructed_position_seeks_forward_skipping_queued() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.fwd");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -369,7 +451,7 @@ async fn constructed_position_seeks_forward_skipping_queued() {
 
 #[tokio::test]
 async fn stale_requeue_racing_a_seek_is_dropped() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.stale");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -405,7 +487,7 @@ async fn stale_requeue_racing_a_seek_is_dropped() {
 
 #[tokio::test]
 async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.end");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -433,7 +515,7 @@ async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
 
 #[tokio::test]
 async fn start_at_replays_the_log_into_a_fresh_subscription() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.connect().await.unwrap();
     let publisher = connected.publisher();
     for payload in [b"a", b"b"] {
@@ -460,7 +542,7 @@ async fn start_at_replays_the_log_into_a_fresh_subscription() {
 
 #[tokio::test]
 async fn start_at_end_skips_history_and_sees_the_next_publish() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.connect().await.unwrap();
     let publisher = connected.publisher();
     publisher
@@ -486,7 +568,7 @@ async fn start_at_end_skips_history_and_sees_the_next_publish() {
 
 #[tokio::test]
 async fn seeker_errors_after_shutdown() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let sub = broker.subscribe("seek.down");
     let seeker = sub.seeker();
     let connected = broker.connect().await.unwrap();
@@ -500,7 +582,7 @@ async fn seeker_errors_after_shutdown() {
 
 #[tokio::test]
 async fn batches_replay_after_a_seek() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.batch");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -532,7 +614,7 @@ async fn batches_replay_after_a_seek() {
 
 #[tokio::test]
 async fn position_is_stable_across_a_requeue() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.requeue");
     let publisher = broker.publisher();
     publisher
@@ -555,7 +637,7 @@ async fn position_is_stable_across_a_requeue() {
 // parks a real task (the oneshot fires on its first Pending poll) before seeking.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn seek_wakes_a_parked_stream() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.wake");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -598,7 +680,7 @@ async fn seek_wakes_a_parked_stream() {
 
 #[tokio::test]
 async fn batches_drop_stale_requeues_after_a_seek() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut sub = broker.subscribe("seek.batch.stale");
     let seeker = sub.seeker();
     let publisher = broker.publisher();
@@ -643,7 +725,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn seek_keeps_the_coordinator_in_flight_count_balanced() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.connect().await.unwrap();
     let coordinator = Coordinator::new(64);
     connected.install_coordinator(coordinator.clone());
@@ -681,7 +763,7 @@ async fn seek_keeps_the_coordinator_in_flight_count_balanced() {
 
 #[tokio::test]
 async fn seek_scope_is_one_subscriber_instance() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let mut seeking = broker.subscribe("seek.scope");
     let mut bystander = broker.subscribe("seek.scope");
     let seeker = seeking.seeker();

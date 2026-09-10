@@ -296,16 +296,11 @@ fn definition_wiring(
         let plain = quote! {
             ::ruststream::runtime::HandleValue<#axis, #r_tokens, #o, #ctx_ty, #name, #doc_state>
         };
+        // One destination type for both clause forms: the expansion resolves the destination, so
+        // the definition carries a name rather than the obligation to work one out.
         let dest_ty = match reply {
             ReplyPlan::None => return quote!(::ruststream::runtime::Sealed<#plain>),
-            ReplyPlan::Publish {
-                dest: PublishArg::Declared,
-                ..
-            } => quote!(::ruststream::runtime::DeclaredDest),
-            ReplyPlan::Publish {
-                dest: PublishArg::Default(_),
-                ..
-            } => quote!(::ruststream::runtime::NamedDest),
+            ReplyPlan::Publish { .. } => quote!(::ruststream::runtime::ResolvedDest),
         };
         quote! {
             ::ruststream::runtime::Sealed<
@@ -315,14 +310,10 @@ fn definition_wiring(
     };
     let def_expr = match reply {
         ReplyPlan::None => quote!(::ruststream::runtime::probed_def(self, #docs_expr)),
-        ReplyPlan::Publish {
-            dest: PublishArg::Declared,
-            ..
-        } => quote!(::ruststream::runtime::probed_declared_reply_def(self, #docs_expr)),
-        ReplyPlan::Publish {
-            dest: PublishArg::Default(topic),
-            ..
-        } => quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #topic)),
+        ReplyPlan::Publish { dest, ty, .. } => {
+            let resolved = ReplyPlan::channel(dest, ty);
+            quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #resolved))
+        }
     };
 
     // The declaration: the settings-builder wrapper `subscriber(..)` also produces. Without

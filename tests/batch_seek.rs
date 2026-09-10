@@ -12,10 +12,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use ruststream::memory::{MemoryBatchContext, MemoryBroker, MemoryPosition, SeekHandle};
+use ruststream::memory::{
+    MemoryBatchContext, MemoryBroker, MemoryPosition, Retaining, Retention, SeekHandle,
+};
 use ruststream::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, Seeker};
+use ruststream::{OutgoingMessage, Publisher, Seeker, nonzero};
 
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
 /// reposition the subscription there once the batch is settled.
@@ -56,7 +58,7 @@ async fn replay(
 ///
 /// This seeds the log BEFORE the subscription exists, which is the point of the test, so it goes
 /// through the broker's own publisher rather than the harness's injection.
-async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
+async fn publish_entry(broker: &MemoryBroker<Retaining>, id: u64, resume_at: Option<u64>) {
     let payload = serde_json::to_vec(&Entry { id }).expect("serializable");
     let msg = OutgoingMessage::new("replay.log", payload.as_slice())
         .with_typed_headers(&Cursor { resume_at })
@@ -66,7 +68,8 @@ async fn publish_entry(broker: &MemoryBroker, id: u64, resume_at: Option<u64>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_reads_its_seek_target_from_element_headers() {
-    let broker = MemoryBroker::new();
+    // A batch replays over the publish log, so the broker keeps one.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(32)));
 
     // The whole run is in the log before the subscription opens, so the opening replay hands
     // the body one full batch: the entries land at log positions 0, 1 and 2, and the first
@@ -84,7 +87,7 @@ async fn a_batch_reads_its_seek_target_from_element_headers() {
     tb.settle().await.expect("the replay settles");
 
     let batches: Vec<Vec<u64>> = tb
-        .broker::<MemoryBroker>()
+        .broker::<MemoryBroker<Retaining>>()
         .subscriber("replay.log")
         .batches::<Entry>()
         .iter()

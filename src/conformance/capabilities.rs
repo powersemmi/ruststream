@@ -650,10 +650,11 @@ where
 /// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
-/// use ruststream::memory::{MemoryBroker, MemorySource};
+/// use ruststream::memory::{MemoryBroker, MemorySource, Retention};
+/// use ruststream::nonzero;
 ///
 /// capabilities::seeking(
-///     MemoryBroker::new,
+///     || MemoryBroker::retaining(Retention::Messages(nonzero!(64))),
 ///     |name| MemorySource::new(name),
 ///     |broker| broker.publisher(),
 /// )

@@ -1,4 +1,4 @@
-//! In-process broker that keeps every message in memory.
+//! In-process broker: the bus, and what it keeps of what went over it.
 //!
 //! [`MemoryBroker`] implements [`Broker`] with broadcast semantics: each subscriber receives a
 //! copy of every message published to its name after the subscription was opened. There is no
@@ -16,10 +16,16 @@
 //! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
 //! [`MemorySeeker`] over the per-name publish log.
 //!
+//! How much a broker keeps is its own declaration. [`MemoryBroker::new`] keeps nothing: memory
+//! does not grow with the message count, and repositioning a subscription does not compile.
+//! [`MemoryBroker::retaining`] keeps the newest messages of every name within a [`Retention`]
+//! bound, and its subscriptions replay over that log.
+//!
 //! A service mounting on this broker globs [`prelude`], which carries the core prelude plus this
 //! broker's surface and its publish policies under the uniform names a mount site writes.
 
 mod capability;
+mod log;
 pub mod prelude;
 
 use capability::SeekControl;
@@ -27,6 +33,8 @@ pub use capability::{
     MemoryBatchContext, MemoryContext, MemoryPosition, MemoryRequester, MemorySeeker,
     MemoryTransaction, PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
+use log::LogState;
+pub use log::{Discarding, LogMode, Retaining, Retention};
 
 use std::{
     borrow::Cow,
@@ -34,7 +42,11 @@ use std::{
     convert::Infallible,
     fmt,
     future::{Future, ready},
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicU64},
+    marker::PhantomData,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     task::Poll,
     time::Duration,
 };
@@ -43,8 +55,8 @@ use std::{
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, HeaderMap,
-    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec,
-    Subscribe, Subscriber, SubscriptionSource,
+    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
+    RedeliveryAddress, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -95,12 +107,14 @@ impl Default for Bus {
     }
 }
 
-#[derive(Default)]
 struct MemoryState {
     subscribers: Mutex<Bus>,
-    // Keyed by the shared delivery name, so the per-publish log append reuses the fanout's
-    // `Arc<str>` instead of allocating a fresh key (lookups by `&str` work through `Borrow`).
-    published: Mutex<HashMap<Arc<str>, Vec<RawMessage>>>,
+    /// What the broker keeps of what it published, keyed by the shared delivery name so an
+    /// append reuses the fanout's `Arc<str>` instead of allocating a fresh key.
+    log: Mutex<LogState>,
+    /// Whether the log is worth locking. A discarding broker never touches the log mutex on the
+    /// publish path; the flag turns on at most once, when a harness run installs its recording.
+    recording: AtomicBool,
     notify: Notify,
     inbox_seq: AtomicU64,
     /// The harness's quiescence-and-recording coordinator, installed by a
@@ -110,6 +124,28 @@ struct MemoryState {
 }
 
 impl MemoryState {
+    /// The state of a broker that keeps no log.
+    fn discarding() -> Self {
+        Self::with_log(LogState::Discarding, false)
+    }
+
+    /// The state of a broker retaining under `retention`.
+    fn retaining(retention: Retention) -> Self {
+        Self::with_log(LogState::recording(retention), true)
+    }
+
+    fn with_log(log: LogState, recording: bool) -> Self {
+        Self {
+            subscribers: Mutex::new(Bus::default()),
+            log: Mutex::new(log),
+            recording: AtomicBool::new(recording),
+            notify: Notify::new(),
+            inbox_seq: AtomicU64::new(0),
+            #[cfg(feature = "testing")]
+            coordinator: OnceLock::new(),
+        }
+    }
+
     /// Registers a subscriber sender on the live bus.
     ///
     /// # Errors
@@ -141,14 +177,23 @@ impl MemoryState {
         {
             subscribers.remove(name);
         }
+        // What was recorded under the name goes with the registration. A request inbox is used
+        // once and never subscribed again, so its reply would otherwise sit in the log, under a
+        // name nothing can reach, for the life of the process.
+        if self.recording.load(Ordering::Acquire) {
+            self.log
+                .lock()
+                .expect("memory broker mutex poisoned")
+                .forget(name);
+        }
     }
 
     /// Stamps `outbound` with its log position and fans it out to the live bus.
     ///
-    /// Both locks are held across the log append and the sends (subscribers first, then
-    /// published, the order `apply_pending_seek` uses too): a concurrent seek must never
-    /// observe a message queued at a subscriber but absent from the log, or the reverse -
-    /// either would lose or duplicate the message across a replay.
+    /// Both locks are held across the log append and the sends (subscribers first, then the
+    /// log, the order `apply_pending_seek` uses too): a concurrent seek must never observe a
+    /// message queued at a subscriber but absent from the log, or the reverse - either would
+    /// lose or duplicate the message across a replay.
     ///
     /// # Errors
     ///
@@ -175,16 +220,21 @@ impl MemoryState {
             let Bus::Live(subscribers) = &*bus else {
                 return Err(MemoryError::ShutDown);
             };
-            let mut log = self.published.lock().expect("memory broker mutex poisoned");
-            let entries = log.entry(Arc::clone(&name)).or_default();
+            // A discarding broker takes neither the log lock nor a position: nothing can ask
+            // for a replay, so the publish is the fanout alone.
+            let mut log = self
+                .recording
+                .load(Ordering::Acquire)
+                .then(|| self.log.lock().expect("memory broker mutex poisoned"));
+            let seq = log
+                .as_deref_mut()
+                .map_or(0, |log| log.append(&name, &payload, &headers));
             let delivery = MemoryDelivery {
                 name: Arc::clone(&name),
-                payload: payload.clone(),
-                headers: Arc::clone(&headers),
-                seq: entries.len(),
+                payload,
+                headers,
+                seq,
             };
-            // The log owns its copy.
-            entries.push(RawMessage::new(&*name, payload).with_headers((*headers).clone()));
             self.send_to(subscribers, &delivery);
         }
         self.notify.notify_waiters();
@@ -212,10 +262,25 @@ impl MemoryState {
         }
     }
 
-    /// Installs the harness coordinator for a [`TestApp`](crate::testing::TestApp) run. Idempotent.
+    /// Installs the harness coordinator for a [`TestApp`](crate::testing::TestApp) run, and
+    /// starts recording if the broker keeps no log of its own. Idempotent.
+    ///
+    /// A discarding broker retains nothing in production, and its own code cannot read a log
+    /// back (seeking does not compile without a retaining broker), so recording for the length
+    /// of a run gives the published-message assertions something to read without letting a test
+    /// observe what production would not. A retaining broker keeps the bound it declared, so its
+    /// assertions see exactly what it retains.
     #[cfg(feature = "testing")]
     fn install_coordinator(&self, coordinator: Coordinator) {
-        let _ = self.coordinator.set(coordinator);
+        if self.coordinator.set(coordinator).is_ok()
+            && self
+                .log
+                .lock()
+                .expect("memory broker mutex poisoned")
+                .record_for_harness()
+        {
+            self.recording.store(true, Ordering::Release);
+        }
     }
 
     /// A clone of the installed coordinator, threaded into each subscriber and delivery so a
@@ -227,28 +292,114 @@ impl MemoryState {
 }
 
 /// An in-memory reference broker. Cheap to clone.
-#[derive(Clone, Default)]
-pub struct MemoryBroker {
+///
+/// The type parameter is the broker's log mode, and it decides what a subscription can do.
+/// [`new`](Self::new) builds the default, [`Discarding`] form: nothing is kept, memory does not
+/// grow with the message count, and there is no [`Seekable`](crate::Seekable) implementation to
+/// reposition a subscription with. [`retaining`](Self::retaining) builds the [`Retaining`] form,
+/// which keeps the newest messages of every name within its [`Retention`] bound and replays them
+/// on demand.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::memory::{MemoryBroker, Retention};
+/// use ruststream::nonzero;
+///
+/// // A service that only routes messages keeps none of them.
+/// let bus = MemoryBroker::new();
+/// // A service that replays keeps the last 128 messages of every name.
+/// let replayable = MemoryBroker::retaining(Retention::Messages(nonzero!(128)));
+/// # let _ = (bus, replayable);
+/// ```
+pub struct MemoryBroker<Log = Discarding> {
     state: Arc<MemoryState>,
+    mode: PhantomData<Log>,
 }
 
-impl MemoryBroker {
-    /// Creates a new empty broker. Equivalent to [`MemoryBroker::default`].
+impl<Log> Clone for MemoryBroker<Log> {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            mode: PhantomData,
+        }
+    }
+}
+
+impl Default for MemoryBroker<Discarding> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemoryBroker<Discarding> {
+    /// Creates a new empty broker that keeps no publish log. Equivalent to
+    /// [`MemoryBroker::default`].
+    ///
+    /// Nothing a subscriber has consumed stays in memory, so a long-running service on this
+    /// broker holds only what its subscribers have yet to read. Replay is not available: the
+    /// [`Seekable`](crate::Seekable) capability is implemented for a
+    /// [`retaining`](Self::retaining) broker's subscriptions alone.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: Arc::new(MemoryState::discarding()),
+            mode: PhantomData,
+        }
     }
+}
 
+impl MemoryBroker<Retaining> {
+    /// Creates a broker keeping the newest messages of every name within `retention`.
+    ///
+    /// Its subscriptions are [`Seekable`](crate::Seekable): a seeker replays the retained
+    /// messages from any position that has not been evicted. The bound holds per name, so the
+    /// broker's footprint is the bound times the number of names it publishes under.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ruststream::memory::{MemoryBroker, MemoryPosition, Retention};
+    /// use ruststream::{Broker, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber};
+    /// use ruststream::{IncomingMessage, nonzero};
+    /// use futures::StreamExt;
+    ///
+    /// let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    /// let mut subscriber = broker.subscribe("audit");
+    /// let seeker = subscriber.seeker();
+    /// broker
+    ///     .publisher()
+    ///     .publish(OutgoingMessage::new("audit", b"entry"))
+    ///     .await?;
+    ///
+    /// seeker.seek(MemoryPosition::start()).await?;
+    /// let mut stream = std::pin::pin!(subscriber.stream());
+    /// let replayed = stream.next().await.expect("replayed")?;
+    /// assert_eq!(replayed.payload(), b"entry");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn retaining(retention: Retention) -> Self {
+        Self {
+            state: Arc::new(MemoryState::retaining(retention)),
+            mode: PhantomData,
+        }
+    }
+}
+
+impl<Log: LogMode> MemoryBroker<Log> {
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
-    /// published after this call; messages published earlier are not delivered by default,
-    /// though the [`Seekable`](crate::Seekable) capability can replay them from the publish
-    /// log.
+    /// published after this call; messages published earlier are not delivered, though a
+    /// retaining broker's [`Seekable`](crate::Seekable) capability can replay them from its
+    /// publish log.
     ///
     /// On a shut-down broker the registration is refused and the subscriber simply never
     /// receives anything, matching this constructor's infallible signature; the
     /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead.
     #[must_use]
-    pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber {
+    pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber<Log> {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.into();
         let _ = self.state.register(name.clone(), tx.clone());
@@ -258,6 +409,7 @@ impl MemoryBroker {
             requeue: tx,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
+            mode: PhantomData,
         }
     }
 
@@ -281,16 +433,16 @@ impl MemoryBroker {
     }
 }
 
-impl fmt::Debug for MemoryBroker {
+impl<Log> fmt::Debug for MemoryBroker<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryBroker").finish_non_exhaustive()
     }
 }
 
 // --8<-- [start:ladder]
-impl Broker for MemoryBroker {
+impl<Log: LogMode> Broker for MemoryBroker<Log> {
     type Error = MemoryError;
-    type Connected = ConnectedMemoryBroker;
+    type Connected = ConnectedMemoryBroker<Log>;
 
     /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
     /// the shared state down) is revived with a fresh, empty registration map, so the connected
@@ -306,7 +458,10 @@ impl Broker for MemoryBroker {
                 *bus = Bus::Live(HashMap::new());
             }
         }
-        ready(Ok(ConnectedMemoryBroker { state: self.state }))
+        ready(Ok(ConnectedMemoryBroker {
+            state: self.state,
+            mode: PhantomData,
+        }))
     }
 }
 
@@ -314,20 +469,30 @@ impl Broker for MemoryBroker {
 ///
 /// Cheap to clone: the in-memory bus is shared state by nature, so the connected form is a
 /// shareable handle on it, exactly like the unconnected broker. Subscriptions (the
-/// [`Subscribe`] capability, [`MemorySource`]) resolve against this form.
-#[derive(Clone)]
-pub struct ConnectedMemoryBroker {
+/// [`Subscribe`] capability, [`MemorySource`]) resolve against this form, and carry over the
+/// broker's log mode: only a [`Retaining`] one opens repositionable subscriptions.
+pub struct ConnectedMemoryBroker<Log = Discarding> {
     state: Arc<MemoryState>,
+    mode: PhantomData<Log>,
 }
 
-impl fmt::Debug for ConnectedMemoryBroker {
+impl<Log> Clone for ConnectedMemoryBroker<Log> {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            mode: PhantomData,
+        }
+    }
+}
+
+impl<Log> fmt::Debug for ConnectedMemoryBroker<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConnectedMemoryBroker")
             .finish_non_exhaustive()
     }
 }
 
-impl ConnectedMemoryBroker {
+impl<Log: LogMode> ConnectedMemoryBroker<Log> {
     /// Returns a publisher bound to this broker.
     #[must_use]
     pub fn publisher(&self) -> MemoryPublisher {
@@ -347,7 +512,7 @@ impl ConnectedMemoryBroker {
     }
 }
 
-impl ConnectedBroker for ConnectedMemoryBroker {
+impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
     type Error = MemoryError;
     type Closed = ClosedMemoryBroker;
 
@@ -400,18 +565,18 @@ impl ConnectedBroker for ConnectedMemoryBroker {
 pub struct MemoryPublish;
 
 // --8<-- [start:publish_policy]
-impl PublishPolicy<ConnectedMemoryBroker> for MemoryPublish {
+impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
     type Live = MemoryPublisher;
 
     fn pair(
         self,
-        connected: &ConnectedMemoryBroker,
+        connected: &ConnectedMemoryBroker<Log>,
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.publisher()))
     }
 }
 
-impl DefaultPublish for ConnectedMemoryBroker {
+impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
     type Policy = MemoryPublish;
 }
 
@@ -436,12 +601,12 @@ impl DefaultPublish for ConnectedMemoryBroker {
 #[must_use]
 pub struct MemoryRequest;
 
-impl PublishPolicy<ConnectedMemoryBroker> for MemoryRequest {
+impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryRequest {
     type Live = MemoryRequester;
 
     fn pair(
         self,
-        connected: &ConnectedMemoryBroker,
+        connected: &ConnectedMemoryBroker<Log>,
     ) -> impl Future<Output = Result<Self::Live, PairError>> {
         ready(Ok(connected.requester()))
     }
@@ -463,7 +628,7 @@ impl ClosedMemoryBroker {
     }
 }
 
-impl DescribeServer for MemoryBroker {
+impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
     /// The in-memory broker has no network address, so it describes itself as an in-process server
     /// over the `"memory"` protocol. Registered with
     /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled), the label is its
@@ -478,7 +643,7 @@ impl DescribeServer for MemoryBroker {
 // The harness drives the connected form: TestApp connects every registered broker before it
 // recovers the in-process transport, and run_suite scenarios receive connected brokers.
 #[cfg(feature = "testing")]
-impl crate::testing::TestableBroker for ConnectedMemoryBroker {
+impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.state.install_coordinator(coordinator);
     }
@@ -495,24 +660,31 @@ impl crate::testing::TestableBroker for ConnectedMemoryBroker {
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
+    /// What the broker holds under `name`: everything published there on a discarding broker
+    /// (which records for the length of a harness run), and the retained window on a retaining
+    /// one, so an assertion never claims more than the broker keeps.
     fn published(&self, name: &str) -> Vec<RawMessage> {
         self.state
-            .published
+            .log
             .lock()
             .expect("memory broker mutex poisoned")
-            .get(name)
-            .cloned()
+            .name(name)
+            .map(|log| log.messages(name))
             .unwrap_or_default()
     }
 }
 
+// One registration per log mode: the harness recovers a broker by its concrete type, and the
+// two modes are two types.
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(ConnectedMemoryBroker);
+crate::register_testable_broker!(ConnectedMemoryBroker<Discarding>);
+#[cfg(feature = "testing")]
+crate::register_testable_broker!(ConnectedMemoryBroker<Retaining>);
 // --8<-- [end:testable]
 
 // --8<-- [start:subscribe]
-impl Subscribe for ConnectedMemoryBroker {
-    type Subscriber = MemorySubscriber;
+impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
+    type Subscriber = MemorySubscriber<Log>;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -526,7 +698,14 @@ impl Subscribe for ConnectedMemoryBroker {
             requeue: tx,
             state: Arc::clone(&self.state),
             seek: Arc::new(SeekControl::default()),
+            mode: PhantomData,
         }))
+    }
+
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        // One subject is both ends of the bus here, so a publish under the name a subscription
+        // reads reaches that subscription.
+        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 
@@ -562,8 +741,9 @@ impl FromName for MemorySource {
 
 // --8<-- [end:from_name]
 
-impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
-    type Subscriber = MemorySubscriber;
+// --8<-- [start:source]
+impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
+    type Subscriber = MemorySubscriber<Log>;
 
     fn name(&self) -> &str {
         &self.name
@@ -571,20 +751,29 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
 
     async fn subscribe(
         self,
-        connected: &ConnectedMemoryBroker,
+        connected: &ConnectedMemoryBroker<Log>,
     ) -> Result<Self::Subscriber, MemoryError> {
         Subscribe::subscribe(connected, &self.name).await
     }
+
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker<Log>,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, MemoryError>> + Send {
+        // One subject is both ends of the bus, and no lookup is needed to say so.
+        ready(Ok(Some(RedeliveryAddress::new(self.name.clone()))))
+    }
 }
+// --8<-- [end:source]
 
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
 /// Also consumable in batches through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
-/// which caps each batch at the size it is asked for. Repositionable over the publish log through
-/// the [`Seekable`](crate::Seekable) capability: mint a [`MemorySeeker`] with
-/// [`seeker`](crate::Seekable::seeker) before opening the stream.
-pub struct MemorySubscriber {
+/// which caps each batch at the size it is asked for. A subscription of a [`Retaining`] broker is
+/// repositionable over its publish log through the [`Seekable`](crate::Seekable) capability: mint
+/// a [`MemorySeeker`] with [`seeker`](crate::Seekable::seeker) before opening the stream.
+pub struct MemorySubscriber<Log = Discarding> {
     name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     requeue: Sender,
@@ -593,9 +782,20 @@ pub struct MemorySubscriber {
     /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
     /// the stale-delivery watermark, and the waker that rouses a parked stream.
     seek: Arc<SeekControl>,
+    mode: PhantomData<Log>,
 }
 
-impl MemorySubscriber {
+impl<Log: LogMode> MemorySubscriber<Log> {
+    /// This subscription's seek handle, shared by every delivery it yields.
+    ///
+    /// `None` on a discarding broker, where nothing can be replayed; the branch is a constant
+    /// per log mode, so the discarding stream carries no seek machinery at all.
+    pub(super) fn shared_seeker(&self) -> Option<Arc<MemorySeeker>> {
+        log::retains::<Log>().then(|| Arc::new(self.new_seeker()))
+    }
+}
+
+impl<Log> MemorySubscriber<Log> {
     /// A clone of the broker's harness coordinator, threaded into each yielded message so a
     /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
     ///
@@ -608,7 +808,7 @@ impl MemorySubscriber {
     }
 }
 
-impl fmt::Debug for MemorySubscriber {
+impl<Log> fmt::Debug for MemorySubscriber<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySubscriber")
             .field("name", &self.name)
@@ -616,15 +816,15 @@ impl fmt::Debug for MemorySubscriber {
     }
 }
 
-impl Subscriber for MemorySubscriber {
-    type Message = MemoryMessage;
+impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
+    type Message = MemoryMessage<Log>;
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
-        let seeker = Arc::new(crate::Seekable::seeker(self));
+        let seeker = self.shared_seeker();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {
@@ -637,7 +837,7 @@ impl Subscriber for MemorySubscriber {
                     Poll::Ready(Some(delivery)) => {
                         // A stale pre-seek copy (a requeue that raced the seek): drop it, the
                         // replay already covers everything from the watermark on.
-                        if delivery.seq < self.seek.watermark() {
+                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() {
                             #[cfg(feature = "testing")]
                             if let Some(coordinator) = &coordinator {
                                 coordinator.consumed();
@@ -647,9 +847,10 @@ impl Subscriber for MemorySubscriber {
                         return Poll::Ready(Some(Ok(MemoryMessage {
                             delivery: Some(delivery),
                             requeue: requeue.clone(),
-                            seek: Some(Arc::clone(&seeker)),
+                            seek: seeker.clone(),
                             #[cfg(feature = "testing")]
                             coordinator: coordinator.clone(),
+                            mode: PhantomData,
                         })));
                     }
                     Poll::Ready(None) => return Poll::Ready(None),
@@ -710,6 +911,16 @@ pub enum MemoryError {
     /// sibling clone's [`Broker::connect`].
     #[error("the memory broker is shut down")]
     ShutDown,
+    /// A seek named a message the broker no longer keeps: the retention bound evicted it. The
+    /// oldest position still replayable is reported, so a caller that wants what is left seeks
+    /// to [`MemoryPosition::start`] instead.
+    #[error("position {requested} is no longer retained; the log starts at {oldest}")]
+    PositionEvicted {
+        /// The position the seek asked for.
+        requested: usize,
+        /// The oldest position the name still retains.
+        oldest: usize,
+    },
 }
 
 impl Publisher for MemoryPublisher {
@@ -739,22 +950,23 @@ impl Publisher for MemoryPublisher {
 /// Consumers call [`IncomingMessage::ack`] to confirm processing or
 /// [`IncomingMessage::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
 /// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
-pub struct MemoryMessage {
+pub struct MemoryMessage<Log = Discarding> {
     delivery: Option<MemoryDelivery>,
     requeue: Sender,
     /// The subscription's pre-minted seeker, shared per delivery so the seek context can build
-    /// off the message. `None` for a request-reply inbox message, which no dispatch loop and no
-    /// seek context ever sees.
+    /// off the message. `None` on a discarding broker, and for a request-reply inbox message,
+    /// which no dispatch loop and no seek context ever sees.
     seek: Option<Arc<MemorySeeker>>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
     /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
     /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).
     #[cfg(feature = "testing")]
     coordinator: Option<Coordinator>,
+    mode: PhantomData<Log>,
 }
 
 #[cfg(feature = "testing")]
-impl Drop for MemoryMessage {
+impl<Log> Drop for MemoryMessage<Log> {
     /// Counts this delivery consumed exactly once: on ack, nack, `into_raw`, or an unsettled drop (a
     /// fail-fast panic). A requeue (`nack(true)` / `nack_after`) re-enqueues a fresh delivery first,
     /// so the in-flight count stays balanced across redelivery.
@@ -765,7 +977,7 @@ impl Drop for MemoryMessage {
     }
 }
 
-impl fmt::Debug for MemoryMessage {
+impl<Log> fmt::Debug for MemoryMessage<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryMessage")
             .field("name", &self.delivery.as_ref().map(|d| &*d.name))
@@ -773,7 +985,7 @@ impl fmt::Debug for MemoryMessage {
     }
 }
 
-impl MemoryMessage {
+impl<Log> MemoryMessage<Log> {
     /// Returns the name the message was published to.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -796,7 +1008,7 @@ impl MemoryMessage {
     }
 }
 
-impl IncomingMessage for MemoryMessage {
+impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     fn payload(&self) -> &[u8] {
         self.delivery
             .as_ref()

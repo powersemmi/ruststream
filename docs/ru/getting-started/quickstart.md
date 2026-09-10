@@ -11,9 +11,11 @@ cd my-service
 ```
 
 Для генерации нужен только `cargo generate`. `templates/memory` - стартовый шаблон на in-memory
-брокере. Свой шаблон поставляет каждый крейт брокера (например,
-`--git https://github.com/powersemmi/ruststream-nats templates/nats`). `cargo generate` создаёт
-идиоматичный проект из нескольких файлов:
+брокере. Крейт брокера, у которого шаблон есть, разворачивается так же: указывают его репозиторий
+и путь к шаблону (например,
+`--git https://github.com/powersemmi/ruststream-nats templates/nats`); какие шаблоны есть у
+брокера, сказано в его собственной документации. `cargo generate` создаёт идиоматичный проект из
+нескольких файлов:
 
 ```
 my-service/

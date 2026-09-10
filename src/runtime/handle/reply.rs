@@ -21,7 +21,8 @@ use super::axis::{
 use super::docs::DocState;
 use super::eager::construct;
 use super::value::{
-    DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, Sealed, SerializedReply,
+    DeclaredDest, EncodedReply, HandleValue, NamedDest, ReplyValue, ResolvedDest, Sealed,
+    SerializedReply,
 };
 use super::verdict::{Batched, OneByOne};
 // The self-serialized vocabulary lives with the publish builder (the general wire seam serves
@@ -258,6 +259,14 @@ where
 pub trait ReplyDest<R>: Send + Sync {
     /// The subject the reply publishes to.
     fn name(&self) -> &str;
+}
+
+// No obligation on `R`: the destination was resolved where the reply type was named, so a type
+// that declares none is reported at the handler rather than at the chain that mounts it.
+impl<R> ReplyDest<R> for ResolvedDest {
+    fn name(&self) -> &str {
+        self.0
+    }
 }
 
 impl<R: ReplyDestination> ReplyDest<R> for NamedDest {

@@ -145,8 +145,8 @@
 
 - 原生支持延迟重新投递的 Broker 直接拿到这个延迟。内存 Broker 就是这样，它用定时器重新投递；
   NATS JetStream 上的 Broker 可以带延迟发 `NAK`。
-- 不原生支持的 Broker 得到的是**延后重新发布**：运行时等 `delay` 过去，把消息重新发布到它原来的
-  来源，再丢弃原件。新副本里框架的重试计数消息头
+- 不原生支持的 Broker 得到的是**延后重新发布**：运行时等 `delay` 过去，把消息的副本重新发布回它
+  来的那个订阅，再丢弃原件。新副本里框架的重试计数消息头
   （[`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)）
   加了一，处理器可以按它给重新投递次数封顶。
 
@@ -154,6 +154,11 @@
   [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via) 启用它，
   该发布者必须指向同一个 Broker。没有发布者时，运行时丢弃延迟，消息立即重新入队。在延迟的这段
   时间里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
+
+  副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
+  串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate，
+  订阅答不上来的作用域设了 `retry_via` 之后就起不来，并报出是哪条订阅、该怎么改。那里由 Broker
+  自己的订阅描述符回答：`#[subscriber("name")]` 只在名字本身就是发布地址的地方答得出来。
 
   完全不能结算的传输（MQTT 的 QoS 0、ZeroMQ 和 Redis pub/sub）走同一条路径：没有原件可丢，重新
   投递就只剩这份延后的副本。另一种情形是 Broker 拒绝了结算：这条消息仍归 Broker，由它自己重新
@@ -405,6 +410,12 @@ Broker 侧的语义和单条消息的 `nack(requeue = true)` 相同。能逐条�
 有自己的位置类型，并在投递上下文里给出定位键。在没有可重放日志的 Broker 上，下面的挂载在编译期
 就通不过，而不是留到运行时。
 
+内存 Broker 只在你要求时才建日志，因此在它之上定位的服务要说明保留多少历史：
+
+```rust
+--8<-- "examples/seek.rs:retaining"
+```
+
 ### 在选定的位置打开订阅
 
 一条新订阅在哪里打开由 Broker 决定：普通消费者从末尾开始，持久消费者从存下的游标开始。在那之前发
@@ -430,8 +441,8 @@ Broker 侧的语义和单条消息的 `nack(requeue = true)` 相同。能逐条�
     ```
 
 位置是 Broker 自己的位置类型的值，因此可以写出的正是这个 Broker 能表达的东西。内存日志提供
-`MemoryPosition::start()` 表示全部历史，`MemoryPosition::end()` 表示从下一次发布开始，
-`MemoryPosition::sequence(n)` 表示某一条日志记录。
+`MemoryPosition::start()` 表示仍然保留着的最旧一条消息，`MemoryPosition::end()` 表示从下一次发布
+开始，`MemoryPosition::sequence(n)` 表示某一条日志记录。
 
 该子句在每次启动时设定位置。没有它，订阅就在 Broker 的默认位置打开。有条件的默认值，也就是只在
 Broker 没有为该组存下游标时才生效的位置（Kafka 的 offset reset、JetStream 的 deliver policy），

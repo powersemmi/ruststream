@@ -24,7 +24,10 @@ use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::raw_of;
-use super::publisher_registry::{ErasedPublisher, ErasedSink};
+#[cfg(test)]
+use super::publisher_registry::ErasedPublisher;
+use super::publisher_registry::ErasedSink;
+use super::redelivery::{DeferredRetry, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
 
@@ -118,14 +121,16 @@ impl Default for Workers {
     }
 }
 
-/// Per-scope publish context threaded into every delivery's [`Context`]: the broker-agnostic
-/// `retry_after` fallback publisher and the app-wide tracker for post-settle continuations. An
-/// `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
+/// Per-subscription publish context threaded into every delivery's [`Context`]: the
+/// broker-agnostic `retry_after` fallback and the app-wide tracker for post-settle continuations.
+/// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
-    /// Publisher used by the broker-agnostic `retry_after` fallback to re-publish a message to its
-    /// own source subject after the delay. `None` when the scope did not opt in, in which case a
-    /// `NackAfter` on a non-native broker degrades to an immediate requeue (with a warning).
-    pub(crate) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+    /// The deferred `retry_after` fallback for this subscription: the scope's publisher paired
+    /// with the address its source reported at startup. `None` when the scope wired no publisher,
+    /// in which case a `NackAfter` on a non-native broker degrades to an immediate requeue (with
+    /// a warning). A publisher without an address never reaches here: the subscription refuses to
+    /// start instead.
+    pub(crate) retry: Option<DeferredRetry>,
     /// Per-scope task tracker for post-settle `and_after` continuations. The
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
@@ -140,16 +145,25 @@ pub(crate) struct Delivery {
 }
 
 impl Delivery {
-    /// A delivery context with no test instrumentation (production, and tests that do not drive the
-    /// harness). With the `testing` feature, `collect_scope` uses [`instrumented`](Self::instrumented)
-    /// instead, so this is reachable only in the non-testing build or from unit tests.
-    #[cfg(any(not(feature = "testing"), test))]
-    pub(crate) fn detached(
-        retry_publisher: Option<Arc<dyn ErasedPublisher>>,
-        tasks: TaskTracker,
-    ) -> Self {
+    /// The context one subscription dispatches under: its own deferred-retry fallback over what
+    /// the whole scope shares.
+    pub(crate) fn for_subscription(scope: &ScopeDelivery, retry: Option<DeferredRetry>) -> Self {
         Self {
-            retry_publisher,
+            retry,
+            tasks: scope.tasks().clone(),
+            #[cfg(feature = "testing")]
+            hooks: Arc::clone(scope.hooks()),
+            #[cfg(feature = "testing")]
+            scope_id: scope.scope_id(),
+        }
+    }
+
+    /// A delivery context outside any scope, for tests that drive the dispatch functions
+    /// directly.
+    #[cfg(test)]
+    pub(crate) fn detached(retry: Option<DeferredRetry>, tasks: TaskTracker) -> Self {
+        Self {
+            retry,
             tasks,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
@@ -158,20 +172,20 @@ impl Delivery {
         }
     }
 
-    /// A delivery context carrying the harness hooks and this broker's scope id.
-    #[cfg(feature = "testing")]
-    pub(crate) fn instrumented(
-        retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+    /// A delivery context deferring retries to `publisher` at `address`. For tests.
+    #[cfg(test)]
+    pub(crate) fn deferring_to(
+        publisher: Arc<dyn ErasedPublisher>,
+        address: &str,
         tasks: TaskTracker,
-        hooks: Arc<TestHooks>,
-        scope_id: usize,
     ) -> Self {
-        Self {
-            retry_publisher,
+        Self::detached(
+            Some(DeferredRetry {
+                publisher,
+                address: Arc::from(address),
+            }),
             tasks,
-            hooks,
-            scope_id,
-        }
+        )
     }
 
     /// An empty delivery context: no retry publisher, a fresh continuation tracker. For tests.
@@ -191,7 +205,10 @@ impl Delivery {
 impl fmt::Debug for Delivery {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
-            .field("retry_publisher", &self.retry_publisher.is_some())
+            .field(
+                "retry_address",
+                &self.retry.as_ref().map(|retry| &retry.address),
+            )
             .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
@@ -805,9 +822,11 @@ pub(crate) async fn settle_outcome<M: IncomingMessage>(
 ///
 /// When the broker reports native support (`supports_nack_after`), this defers to
 /// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
-/// schedules a deferred re-publish of the captured copy to its source subject with the
-/// [`RETRY_COUNT_HEADER`] incremented. With no `retry_publisher` configured on the scope, it falls
-/// back to an immediate requeue and warns.
+/// schedules a deferred re-publish of the captured copy to the subscription's redelivery address
+/// with the [`RETRY_COUNT_HEADER`] incremented. That address is what the subscription's source
+/// reported at startup, not the subscription's name: the two differ wherever a subscription is a
+/// resource of its own. With no retry publisher configured on the scope, this falls back to an
+/// immediate requeue and warns.
 ///
 /// A transport with no settlement at all ([`AckError::Unsupported`] from `nack`, as on MQTT at
 /// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the deferred re-publish: there is no original to
@@ -839,7 +858,7 @@ where
         return msg.nack_after(delay).await;
     }
 
-    let Some(publisher) = delivery.retry_publisher.clone() else {
+    let Some(retry) = delivery.retry.as_ref() else {
         warn!(
             target: "ruststream::dispatch",
             subscription = %name,
@@ -848,13 +867,15 @@ where
         );
         return msg.nack(true).await;
     };
+    let publisher = Arc::clone(&retry.publisher);
+    let address = Arc::clone(&retry.address);
+    let subscription = name.to_owned();
 
     // nack_after consumes self, so capture everything needed for the re-publish first.
     let payload = Bytes::copy_from_slice(msg.payload());
     let mut headers = msg.headers().clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
-    let subject = name.to_owned();
 
     // Drop the original so the broker does not also redeliver it; the deferred copy carries the
     // retry forward. A transport with no settlement at all has nothing to drop and no redelivery
@@ -866,19 +887,33 @@ where
         Err(err) => return Err(err),
     }
 
-    tokio::spawn(async move {
-        tokio::time::sleep(delay).await;
+    let republish = async move {
         let deferred = raw_of(ErasedSink(publisher.as_ref()), &payload)
             .with_headers(headers)
-            .to(subject.as_str());
+            .to(address.as_ref());
         if let Err(err) = deferred.publish().await {
             warn!(
                 target: "ruststream::dispatch",
-                subscription = %subject,
+                subscription = %subscription,
+                address = %address,
                 error = %err,
                 "deferred retry_after re-publish failed; message lost",
             );
         }
+    };
+
+    // Under the harness the copy is scheduled through the coordinator, the way a broker schedules
+    // its native delayed redelivery: `TestApp::advance` then fires it and counts it before it
+    // drives the reaction, so a test sees the copy rather than a race.
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = delivery.hooks.coordinator() {
+        coordinator.schedule_redelivery_future(delay, republish);
+        return Ok(());
+    }
+
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        republish.await;
     });
     Ok(())
 }

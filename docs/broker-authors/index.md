@@ -74,19 +74,29 @@ many subscriber registrations the shutdown dropped.
 Implement `Subscribe` on the connected form so a service can subscribe by the name of a topic, a
 subject or a queue. `#[subscriber("name")]` subscribes through it.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // Defaulted: None. Answer with the name itself where a publish to a subscribe name
+    // reaches the subscription opened under it, which is what a subject, a topic, a
+    // stream or a queue name usually is.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
 }
 ```
 
-Opening a subscription is all it has to do:
+Opening a subscription and saying where a publish reaches it is all it has to do:
 
 ```rust
 --8<-- "src/memory/mod.rs:subscribe"
 ```
+
+The second answer is the address the runtime publishes a deferred retry to, so it decides whether
+`#[subscriber("orders")]` works with `BrokerScope::retry_via` on your broker. Keep the default
+where a subscribe name is not a publish destination: a Google Pub/Sub subscription is subscribed to
+by its own name and published to through its topic, and the descriptor answers there instead.
 
 ### `Subscriber`
 
@@ -140,10 +150,11 @@ retry turns into a storm of redeliveries.
 
 A broker that overrides none of the three defaulted methods still works with every runtime feature.
 Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
-delivery and, after the delay, publishes a copy to the same source through the publisher the
-application wired with `BrokerScope::retry_via`, with an incremented retry-count header. Only with
-no such publisher does the delay degrade to an immediate requeue. Keyed worker lanes hand out
-keyless messages round-robin.
+delivery and, after the delay, publishes a copy through the publisher the application wired with
+`BrokerScope::retry_via`, with an incremented retry-count header. That copy goes to the address
+[your subscription reports](#where-a-deferred-retry-is-published). Only with no such publisher does
+the delay degrade to an immediate requeue. Keyed worker lanes hand out keyless messages
+round-robin.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:
@@ -244,12 +255,16 @@ Both halves, on a broker whose policy carries no options at all:
 own broker (a consumer group, a durable name, a delivery policy), ship a descriptor type that
 implements `SubscriptionSource`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
+
+    // Defaulted: Ok(None). Answer where a publish reaches this subscription again,
+    // asking the broker when only the live connection knows.
+    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
 }
 ```
 
@@ -267,6 +282,28 @@ branches inside, as the [NATS example](example-nats.md) does.
 
 Derive `Clone` on the descriptor: the mount rebuilds the configuration per registration, so one
 definition can be mounted on two brokers at once.
+
+### Where a deferred retry is published
+
+Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
+message once the delay is over. Your descriptor says where that copy goes.
+
+```rust
+--8<-- "src/memory/mod.rs:source"
+```
+
+Answer with the name a publisher bound to your broker uses to reach this subscription again: the
+subject on NATS, the topic on Kafka, the stream key on Redis. On Google Pub/Sub it is neither - a
+subscription and a topic are separate resources there, so the answer is the topic the subscription
+is bound to, and the descriptor asks the API for it. The runtime asks once at startup, so a request
+here costs nothing per message.
+
+Keep the default where publishing cannot reach your subscription at all. An application that wires
+a retry publisher over such a subscription then does not start, naming the subscription and its
+source, instead of publishing every delayed message to an address nobody reads.
+
+`harness::lifecycle` checks the answer you give: a publish to the reported address must arrive at
+the subscription that reported it.
 
 ### Naming a kind by one string
 
@@ -424,6 +461,12 @@ To let handler bodies seek, carry the delivery's position and the subscription's
 of your per-delivery context and publish `ContextField` keys for them. The in-memory broker's
 `MemoryContext`, with its `Position` and `SeekHandle` keys, is the model. The batch forms take the
 seeker from the batch context below, which carries no position.
+
+A `DescribeServer` description reports the host and port clients connect to. Credentials never
+appear in it: the document is generated to be published. A broker configured from a URL therefore
+builds its description with `ServerSpec::from_url`, which drops the user name and password, and not
+by trimming the scheme off the URL and passing the rest on. A broker that configures several
+addresses joins them from `ServerSpec::host_from_url`.
 
 These traits are the vocabulary a handler body writes. A body bounds its slot with the capability
 it needs (`Out<impl TransactionalPublisher, Journal>`, or `where W: TransactionalPublisher` on the

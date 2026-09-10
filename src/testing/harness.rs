@@ -585,7 +585,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Advances the (paused) clock by `by`, fires every `nack_after` / `retry_after` redelivery now
     /// due, and drives the resulting reaction to a standstill. Use it to test delayed redeliveries:
     /// `publish` records the immediate `NackAfter` settlement and returns; `advance` then delivers
-    /// the message again.
+    /// the message again. A broker's native delayed redelivery and the runtime's deferred
+    /// re-publish both arrive this way.
     ///
     /// Requires a paused clock (`#[tokio::test(start_paused = true)]` or `tokio::time::pause`); on a
     /// live clock `tokio::time::advance` panics.

@@ -11,13 +11,16 @@
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 
+use std::future::Future;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
-use crate::{BatchSubscriber, ConnectedBroker, Seekable, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, ConnectedBroker, RedeliveryAddress, Seekable, Subscriber, SubscriptionSource,
+};
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 
@@ -69,10 +72,14 @@ impl<S> Buffered<S> {
     }
 }
 
+// A decorator wraps a source the mount site already has; it is never the answer to "which source
+// does this broker take", so it stays out of the list a failed obligation suggests.
+#[diagnostic::do_not_recommend]
 impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
-    S: SubscriptionSource<C> + Send,
+    // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
+    S: SubscriptionSource<C> + Send + Sync,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
@@ -86,6 +93,15 @@ where
             inner: self.source.subscribe(connected).await?,
             max_wait: self.max_wait,
         })
+    }
+
+    /// Batching happens on the client, so a deferred redelivery goes where the wrapped source
+    /// says it does.
+    fn redelivery_address(
+        &self,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+        self.source.redelivery_address(connected)
     }
 }
 
@@ -264,18 +280,19 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::memory::{MemoryBroker, MemorySubscriber};
-    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher};
+    use crate::memory::{LogMode, MemoryBroker, MemorySubscriber, Retention};
+    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher, nonzero};
 
     /// The batch size the checks below open their stream at, spelled once.
     fn batch(size: usize) -> NonZeroUsize {
         NonZeroUsize::new(size).expect("test sizes are nonzero")
     }
 
-    async fn buffered(
-        broker: &MemoryBroker,
+    // Generic over the broker's log mode: most checks here need no history, the seek one does.
+    async fn buffered<Log: LogMode>(
+        broker: &MemoryBroker<Log>,
         max_wait: Duration,
-    ) -> BufferedSubscriber<MemorySubscriber> {
+    ) -> BufferedSubscriber<MemorySubscriber<Log>> {
         let connected = broker
             .clone()
             .connect()
@@ -428,7 +445,7 @@ mod tests {
         use crate::memory::MemoryPosition;
         use crate::{Seekable, Seeker};
 
-        let broker = MemoryBroker::new();
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
         let publisher = broker.publisher();
         for i in 0..2u8 {
             publisher

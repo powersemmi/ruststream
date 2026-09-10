@@ -21,6 +21,7 @@ mod publish;
 mod publish_source;
 mod publisher_registry;
 mod publishing;
+mod redelivery;
 mod router;
 mod settings;
 mod slot;
@@ -59,8 +60,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DecodeOutcome, DocState,
     Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDeclaredReplyDef,
-    ProbedDocs, ProbedReplyDef, ReplyValue, Sealed, Solo, SoloAxis, SoloPair, VerdictFamily,
-    probed_declared_reply_def, probed_def, probed_reply_def,
+    ProbedDocs, ProbedReplyDef, ReplyValue, ResolvedDest, Sealed, Solo, SoloAxis, SoloPair,
+    VerdictFamily, probed_declared_reply_def, probed_def, probed_reply_def,
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,

@@ -18,7 +18,9 @@ use std::time::Duration;
 
 use common::{Event, Order, Wire};
 use futures::future::join_all;
-use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublish, MemorySource};
+use ruststream::memory::{
+    MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, Retaining, Retention,
+};
 use ruststream::runtime::{
     AppInfo, DefaultSlot, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router,
     RustStream, SubscriberSettings,
@@ -30,6 +32,12 @@ use tokio::sync::Barrier;
 /// The payload view the raw batch body below takes, one element per delivery in the batch.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
+
+/// A broker for the tests that open a subscription at a log position: `start_at(..)` replays
+/// what the broker kept, so it has to keep something.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(32)))
+}
 
 /// The shortest source form: the by-name source with its value left to the mount site.
 #[subscriber]
@@ -182,7 +190,7 @@ async fn replay(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_builder_supplies_the_start_position() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let publisher = broker.publisher();
     // Published before the service exists: only a subscription opened at the start sees it, so
     // it goes through a handle taken off the broker rather than through the harness.
@@ -199,7 +207,7 @@ async fn the_builder_supplies_the_start_position() {
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed delivery settles");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("replay")
         .assert_called_once()
         .with(&Order { id: 42 })
@@ -217,7 +225,7 @@ async fn paginate(orders: &[Order]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_builder_supplies_the_batch_size() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let publisher = broker.publisher();
     // The whole run is in the log before the subscription opens, so the opening replay has three
     // entries to hand over and the size is what shapes them into batches. The harness injects
@@ -242,7 +250,7 @@ async fn the_builder_supplies_the_batch_size() {
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
 
-    let subscriber = tb.broker::<MemoryBroker>();
+    let subscriber = tb.broker::<MemoryBroker<Retaining>>();
     let subscriber = subscriber.subscriber("paginate");
     assert_eq!(
         subscriber.received::<Order>(),
@@ -268,7 +276,7 @@ async fn confirm_batches(orders: &[Order]) -> Vec<Event> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_batch_size_reaches_a_replying_batch() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
@@ -290,7 +298,7 @@ async fn the_batch_size_reaches_a_replying_batch() {
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
 
-    let handle = tb.broker::<MemoryBroker>();
+    let handle = tb.broker::<MemoryBroker<Retaining>>();
     handle
         .subscriber("batch-cap-reply")
         .assert_batch_sizes(&[2, 1])
@@ -324,7 +332,7 @@ async fn fan_out_batches(orders: &[Order], Out(out): Out<impl Publisher>) -> Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_batch_size_reaches_a_slot_carrying_batch() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
@@ -348,7 +356,7 @@ async fn the_batch_size_reaches_a_slot_carrying_batch() {
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
 
-    let handle = tb.broker::<MemoryBroker>();
+    let handle = tb.broker::<MemoryBroker<Retaining>>();
     handle
         .subscriber("batch-cap-slots")
         .assert_batch_sizes(&[2, 1])
@@ -371,7 +379,7 @@ async fn replay_batches(orders: &[Order]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_buffer_composes_with_a_start_position() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
@@ -392,7 +400,7 @@ async fn the_buffer_composes_with_a_start_position() {
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batches settle");
 
-    let handle = tb.broker::<MemoryBroker>();
+    let handle = tb.broker::<MemoryBroker<Retaining>>();
     let subscriber = handle.subscriber("buffered-replay");
     // Everything published before the subscription opened is replayed, through the buffer.
     assert_eq!(

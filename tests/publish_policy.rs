@@ -31,7 +31,8 @@ impl<K: ContextKind> PublishTransform<K> for Envelope {
 
 #[tokio::test]
 async fn a_bare_policy_pairs_into_a_live_publisher() {
-    let connected = MemoryBroker::new()
+    // What the publisher sent is read back off the log, so the broker keeps one.
+    let connected = MemoryBroker::retaining(Retention::Messages(nonzero!(8)))
         .connect()
         .await
         .expect("memory connect is infallible");
@@ -82,7 +83,8 @@ async fn respond(order: &Order) -> Receipt {
 /// live leaf publishes with what the mount site named.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reply_wiring_keeps_its_transform_through_the_pairing() {
-    let broker = MemoryBroker::new();
+    // The reply is read back off the log, so the broker keeps one.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
     let publisher = broker.publisher();
     let live = connected(&broker).await;
 

@@ -14,7 +14,7 @@ use crate::BytesMut;
 use crate::codec::JsonCodec;
 use crate::memory::{
     MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
-    MemoryPublisher, MemorySource, Position, SeekHandle,
+    MemoryPublisher, MemorySource, Position, Retaining, Retention, SeekHandle,
 };
 use crate::nonzero;
 use crate::runtime::{
@@ -27,6 +27,15 @@ use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
     Seeker,
 };
+
+/// The parity matrix includes the seek axis (a start position, the context keys), so the whole
+/// file mounts on a retaining broker; every other spelling reads the same on either mode.
+type Bus = MemoryBroker<Retaining>;
+
+/// The broker behind [`Bus`], with a window wider than anything these tests publish.
+fn bus() -> Bus {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(32)))
+}
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -512,8 +521,8 @@ where
     }
 }
 /// Every plain input spelling mounts through the one constructor on a router.
-fn eager_axes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new()
+fn eager_axes() -> impl RouterDef<Bus> {
+    Router::<Bus>::new()
         .include(subscriber("orders", Audit).workers(nonzero!(4)).build())
         .include(subscriber(MemorySource::new("orders"), Audit).build())
         .include(subscriber("frames", Inspect).build())
@@ -551,10 +560,10 @@ fn every_eager_spelling_mounts() {
 /// and a defaulted policy, the serialized wire (from a decoded and a self-deserializing input,
 /// with an explicit and the broker's default publisher - selected by the reply type alone),
 /// the batch form, and typed reply headers.
-fn reply_axes() -> impl RouterDef<MemoryBroker> {
+fn reply_axes() -> impl RouterDef<Bus> {
     use crate::codec::JsonCodec;
 
-    Router::<MemoryBroker>::new()
+    Router::<Bus>::new()
         .include(
             subscriber("orders", Confirm)
                 .reply()
@@ -668,11 +677,11 @@ fn every_reply_spelling_mounts() {
 /// so the value steps and the declarative settings mount the same registration whichever side of
 /// them names it. Both spellings of each pair are built here; a step reachable on one side only
 /// would fail this module's build.
-fn order_free_reply_axes() -> impl RouterDef<MemoryBroker> {
+fn order_free_reply_axes() -> impl RouterDef<Bus> {
     use crate::codec::JsonCodec;
     use crate::runtime::{FailurePolicies, SubscriberSettings};
 
-    Router::<MemoryBroker>::new()
+    Router::<Bus>::new()
         // a batch setting, before and after the reply declaration
         .include(
             subscriber("orders", ConfirmBatches)
@@ -776,7 +785,7 @@ fn the_source_steps_reach_through_the_reply_declaration() {
     use crate::runtime::SubscriberSettings;
     use crate::{Name, Unnamed};
 
-    let _ = Router::<MemoryBroker>::new()
+    let _ = Router::<Bus>::new()
         .include(
             subscriber(Unnamed::<Name>::new(), Confirm)
                 .reply()
@@ -894,8 +903,8 @@ where
 
 /// The slot arena mounts on both families, bound at the include site - the generic and the
 /// concrete-typed spelling alike.
-fn slot_axes() -> impl RouterDef<MemoryBroker> {
-    Router::<MemoryBroker>::new()
+fn slot_axes() -> impl RouterDef<Bus> {
+    Router::<Bus>::new()
         .include(subscriber("orders", Mirror).build())
         .out(Analytics, MemoryPublish)
         .build()
@@ -1023,17 +1032,14 @@ async fn seek_reaches_the_body_through_the_context() {
     use crate::Publisher;
     use crate::runtime::{AppInfo, RustStream};
 
-    let app = RustStream::new(AppInfo::new("handle-seek", "0.0.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(subscriber("orders", Replayer).build());
-            b.after_startup(MemoryPublish, async move |publisher| {
-                publisher
-                    .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
-                    .await
-            });
-        },
-    );
+    let app = RustStream::new(AppInfo::new("handle-seek", "0.0.0")).with_broker(bus(), |b| {
+        b.include(subscriber("orders", Replayer).build());
+        b.after_startup(MemoryPublish, async move |publisher| {
+            publisher
+                .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
+                .await
+        });
+    });
     let running = app.start().await.expect("the app starts");
     running.shutdown().await.expect("the app stops cleanly");
 }
@@ -1048,79 +1054,76 @@ async fn a_subscriber_dispatches_end_to_end() {
     use crate::Publisher;
     use crate::runtime::{AppInfo, RustStream};
 
-    let app = RustStream::new(AppInfo::new("handle-parity", "0.0.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(subscriber("orders", Audit).build());
-            b.include(subscriber("orders", SettleBatch).batch(nonzero!(4)).build());
-            b.include(subscriber("frames", Inspect).build());
-            b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
-            b.include(subscriber("orders", Echo).reply().to("echoes").build())
-                .out(Reply, MemoryPublish);
-            b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
-            b.include(
-                subscriber("orders", ConfirmBatchesInContext)
-                    .reply()
-                    .to("confirmations")
-                    .batch(nonzero!(4))
-                    .build(),
-            );
-            b.include(
-                subscriber("orders", BatchGatewayInContext)
-                    .reply()
-                    .to("confirmations")
-                    .batch(nonzero!(4))
-                    .build(),
-            )
+    let app = RustStream::new(AppInfo::new("handle-parity", "0.0.0")).with_broker(bus(), |b| {
+        b.include(subscriber("orders", Audit).build());
+        b.include(subscriber("orders", SettleBatch).batch(nonzero!(4)).build());
+        b.include(subscriber("frames", Inspect).build());
+        b.include(subscriber("frames", Frames).batch(nonzero!(4)).build());
+        b.include(subscriber("orders", Echo).reply().to("echoes").build())
+            .out(Reply, MemoryPublish);
+        b.include(subscriber("frames", RawEcho).reply().to("echoes").build());
+        b.include(
+            subscriber("orders", ConfirmBatchesInContext)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(4))
+                .build(),
+        );
+        b.include(
+            subscriber("orders", BatchGatewayInContext)
+                .reply()
+                .to("confirmations")
+                .batch(nonzero!(4))
+                .build(),
+        )
+        .out(Analytics, MemoryPublish)
+        .build();
+        b.include(
+            subscriber("orders", Confirm)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .codec(JsonCodec);
+        b.include(subscriber("orders", RawMirror).build())
             .out(Analytics, MemoryPublish)
             .build();
-            b.include(
-                subscriber("orders", Confirm)
-                    .reply()
-                    .to("confirmations")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .codec(JsonCodec);
-            b.include(subscriber("orders", RawMirror).build())
-                .out(Analytics, MemoryPublish)
-                .build();
-            b.include(subscriber("orders", Mirror).build())
-                .out(Analytics, MemoryPublish)
-                .transform(Trace)
-                .build();
-            b.include(subscriber("orders", PairMirror).build())
-                .out(Analytics, MemoryPublish)
-                .transform(Trace)
-                .out(Ledger, MemoryPublish)
-                .build();
-            b.include(
-                subscriber("orders", RawGateway)
-                    .reply()
-                    .to("echoes")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .out(Analytics, MemoryPublish)
-            .build();
-            b.include(
-                subscriber("orders", Gateway)
-                    .reply()
-                    .to("confirmations")
-                    .build(),
-            )
-            .out(Reply, MemoryPublish)
-            .transform(StampReply)
+        b.include(subscriber("orders", Mirror).build())
             .out(Analytics, MemoryPublish)
             .transform(Trace)
             .build();
-            b.after_startup(MemoryPublish, async move |publisher| {
-                publisher
-                    .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
-                    .await
-            });
-        },
-    );
+        b.include(subscriber("orders", PairMirror).build())
+            .out(Analytics, MemoryPublish)
+            .transform(Trace)
+            .out(Ledger, MemoryPublish)
+            .build();
+        b.include(
+            subscriber("orders", RawGateway)
+                .reply()
+                .to("echoes")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .out(Analytics, MemoryPublish)
+        .build();
+        b.include(
+            subscriber("orders", Gateway)
+                .reply()
+                .to("confirmations")
+                .build(),
+        )
+        .out(Reply, MemoryPublish)
+        .transform(StampReply)
+        .out(Analytics, MemoryPublish)
+        .transform(Trace)
+        .build();
+        b.after_startup(MemoryPublish, async move |publisher| {
+            publisher
+                .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
+                .await
+        });
+    });
     let running = app.start().await.expect("the app starts");
     running.shutdown().await.expect("the app stops cleanly");
 }

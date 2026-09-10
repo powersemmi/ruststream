@@ -14,7 +14,7 @@ help: the trait `ruststream::runtime::NamingOffered<By>` is implemented for `Nam
    | impl<By> NamingOffered<By> for Names {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `Names` to implement `ruststream::runtime::FitsOffer<Reads, Reads, Receipt>`
-   = note: required for `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ())` to implement `ruststream::runtime::AdmitsAt<ReplyTo, ruststream::runtime::ReplyLast, ruststream::runtime::PublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, DeclaredDest>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ())` to implement `ruststream::runtime::AdmitsAt<ReplyTo, ruststream::runtime::ReplyLast, ruststream::runtime::PublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>>`
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
   --> src/runtime/app/include/guard.rs
    |

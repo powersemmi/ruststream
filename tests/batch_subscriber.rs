@@ -137,17 +137,17 @@ async fn buffered_adapter_batches_plain_subscribers_via_router() {
 /// already has, wrapped in the core's client-side buffer, and `BatchSubscriber` delegated to it.
 /// The deadline that closes a partial batch is the broker's own choice; the batch size is not -
 /// it arrives per subscription, as the argument of `batches`.
-struct TrickleSubscriber(BufferedSubscriber<MemorySubscriber>);
+struct TrickleSubscriber(BufferedSubscriber<MemorySubscriber<Retaining>>);
 
 impl TrickleSubscriber {
-    fn new(inner: MemorySubscriber) -> Self {
+    fn new(inner: MemorySubscriber<Retaining>) -> Self {
         Self(BufferedSubscriber::new(inner).max_wait(Duration::from_millis(5)))
     }
 }
 
 impl Subscriber for TrickleSubscriber {
-    type Message = <MemorySubscriber as Subscriber>::Message;
-    type Error = <MemorySubscriber as Subscriber>::Error;
+    type Message = <MemorySubscriber<Retaining> as Subscriber>::Message;
+    type Error = <MemorySubscriber<Retaining> as Subscriber>::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         self.0.stream()
@@ -155,7 +155,7 @@ impl Subscriber for TrickleSubscriber {
 }
 
 impl BatchSubscriber for TrickleSubscriber {
-    type Batch = Vec<<MemorySubscriber as Subscriber>::Message>;
+    type Batch = Vec<<MemorySubscriber<Retaining> as Subscriber>::Message>;
 
     fn batches(
         &mut self,
@@ -169,7 +169,7 @@ impl BatchSubscriber for TrickleSubscriber {
 /// wrapper unchanged - here the seeker, which is what lets a batch subscription open at a
 /// position even where the batches are assembled on the client.
 impl Seekable for TrickleSubscriber {
-    type Seeker = <MemorySubscriber as Seekable>::Seeker;
+    type Seeker = <MemorySubscriber<Retaining> as Seekable>::Seeker;
 
     fn seeker(&self) -> Self::Seeker {
         self.0.seeker()
@@ -182,7 +182,7 @@ struct Trickle {
     name: &'static str,
 }
 
-impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
+impl SubscriptionSource<ConnectedMemoryBroker<Retaining>> for Trickle {
     type Subscriber = TrickleSubscriber;
 
     fn name(&self) -> &str {
@@ -191,7 +191,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
 
     async fn subscribe(
         self,
-        connected: &ConnectedMemoryBroker,
+        connected: &ConnectedMemoryBroker<Retaining>,
     ) -> Result<TrickleSubscriber, MemoryError> {
         Ok(TrickleSubscriber::new(
             Subscribe::subscribe(connected, self.name).await?,
@@ -214,7 +214,8 @@ async fn sip(orders: &[Order]) -> HandlerOutcome {
 /// batch carry more than the one delivery an injection settles.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_delegating_broker_honours_the_batch_size() {
-    let broker = MemoryBroker::new();
+    // The mount opens at a log position, so the broker keeps one.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(32)));
     let publisher = broker.publisher();
     for id in 0..3u32 {
         publisher
@@ -231,7 +232,7 @@ async fn a_delegating_broker_honours_the_batch_size() {
     let tb = TestApp::start(app).await.expect("harness start");
     tb.settle().await.expect("the replayed batches settle");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("trickle")
         .assert_batch_sizes(&[2, 1])
         .settled(HandlerOutcome::ack());

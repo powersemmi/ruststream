@@ -191,11 +191,17 @@ async fn every_destination_form_resolves_through_one_builder() {
     assert_eq!(framed.headers().get_str("source"), Some("jobs.in"));
 }
 
+/// The broker these checks publish through: they read every message back off its publish log,
+/// so it keeps one, wide enough for anything they send.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+}
+
 /// A bare publisher reaches the same builder through [`PublishExt`], encoding with the crate
 /// default codec unless the call names one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bare_publisher_publishes_through_the_builder() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
     let publisher = connected.publisher();
 
@@ -228,7 +234,7 @@ async fn a_bare_publisher_publishes_through_the_builder() {
 /// A bare publisher and both transaction surfaces carry the same builder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publisher_and_its_transactions_carry_the_builder() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
     let publisher = connected.publisher();
 
@@ -345,7 +351,7 @@ fn a_publish_builder_hides_its_wiring() {
 /// still travels with it: the map stands for no declaration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_contract_less_message_still_carries_a_header_map() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
 
     let mut headers = HeaderMap::new();
@@ -420,7 +426,7 @@ fn tenant_base() -> HeaderMap {
 /// the position still writes into an empty map, so nothing about an existing publish moves.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
 
     let mut headers = HeaderMap::new();
@@ -455,7 +461,7 @@ async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
 /// by key: the keys it names are overwritten, the ones it leaves alone survive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_call_site_wins_over_the_handles_base_key_by_key() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
     let publisher = Tenanted(connected.publisher(), tenant_base());
 
@@ -497,7 +503,7 @@ async fn the_call_site_wins_over_the_handles_base_key_by_key() {
 /// win on the keys they name, the base carries the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_header_contract_serializes_over_the_handles_base() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
     let mut base = tenant_base();
     base.insert("task_id", "0");
@@ -527,7 +533,7 @@ async fn a_header_contract_serializes_over_the_handles_base() {
 /// under whatever the call site names.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_transaction_carries_its_own_base_under_the_call_site() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
     let publisher = Tenanted(connected.publisher(), tenant_base());
 

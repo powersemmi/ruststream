@@ -9,6 +9,7 @@
 use std::{
     fmt,
     future::{Future, ready},
+    marker::PhantomData,
     num::NonZeroUsize,
     sync::{
         Arc, Mutex,
@@ -25,8 +26,8 @@ use tokio::{sync::mpsc, time::timeout};
 use tracing::warn;
 
 use super::{
-    Bus, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound, MemoryPublisher, MemoryState,
-    MemorySubscriber,
+    Bus, Discarding, LogMode, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound,
+    MemoryPublisher, MemoryState, MemorySubscriber, Retaining, log,
 };
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
@@ -145,7 +146,9 @@ impl Publisher for MemoryRequester {
 }
 
 impl RequestReply for MemoryRequester {
-    type Reply = MemoryMessage;
+    /// A reply arrives on a single-use inbox rather than a subscription, so it carries no
+    /// position and no seeker whichever broker the requester came from.
+    type Reply = MemoryMessage<Discarding>;
 
     async fn request(
         &self,
@@ -182,6 +185,7 @@ impl RequestReply for MemoryRequester {
                 // counted (see `fanout`), so it carries no coordinator.
                 #[cfg(feature = "testing")]
                 coordinator: None,
+                mode: PhantomData,
             }),
             // `tx` is held on this stack frame, so the channel cannot report closed.
             Ok(None) => unreachable!("request inbox closed while its sender is held"),
@@ -196,8 +200,8 @@ impl RequestReply for MemoryRequester {
 /// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up to
 /// the size the registration asked for. Partial batches ship immediately, so no deadline timer is
 /// needed - the in-memory transport has nothing to wait for.
-impl BatchSubscriber for MemorySubscriber {
-    type Batch = Vec<MemoryMessage>;
+impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
+    type Batch = Vec<MemoryMessage<Log>>;
 
     fn batches(
         &mut self,
@@ -207,7 +211,7 @@ impl BatchSubscriber for MemorySubscriber {
         let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
-        let seeker = Arc::new(Seekable::seeker(self));
+        let seeker = self.shared_seeker();
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         futures::stream::poll_fn(move |cx| {
@@ -218,7 +222,9 @@ impl BatchSubscriber for MemorySubscriber {
                 match ready!(self.rx.poll_recv(cx)) {
                     // A stale pre-seek copy (a requeue that raced the seek): drop it, the
                     // replay already covers everything from the watermark on.
-                    Some(delivery) if delivery.seq < self.seek.watermark() => {
+                    Some(delivery)
+                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() =>
+                    {
                         #[cfg(feature = "testing")]
                         if let Some(coordinator) = &coordinator {
                             coordinator.consumed();
@@ -231,14 +237,16 @@ impl BatchSubscriber for MemorySubscriber {
             let mut batch = vec![MemoryMessage {
                 delivery: Some(first),
                 requeue: requeue.clone(),
-                seek: Some(Arc::clone(&seeker)),
+                seek: seeker.clone(),
                 #[cfg(feature = "testing")]
                 coordinator: coordinator.clone(),
+                mode: PhantomData,
             }];
             while batch.len() < limit {
                 match self.rx.poll_recv(cx) {
                     // The same stale-copy filter as above, off the batch.
-                    Poll::Ready(Some(delivery)) if delivery.seq < self.seek.watermark() =>
+                    Poll::Ready(Some(delivery))
+                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() =>
                     {
                         #[cfg(feature = "testing")]
                         if let Some(coordinator) = &coordinator {
@@ -248,9 +256,10 @@ impl BatchSubscriber for MemorySubscriber {
                     Poll::Ready(Some(delivery)) => batch.push(MemoryMessage {
                         delivery: Some(delivery),
                         requeue: requeue.clone(),
-                        seek: Some(Arc::clone(&seeker)),
+                        seek: seeker.clone(),
                         #[cfg(feature = "testing")]
                         coordinator: coordinator.clone(),
+                        mode: PhantomData,
                     }),
                     // Drained (pending) or closed: ship what we have; a closed channel ends
                     // the stream on the next poll.
@@ -420,7 +429,7 @@ impl OwnedTransactions for MemoryPublisher {
 /// The partition key is carried in the [`PARTITION_KEY_HEADER`] header; producers that want
 /// per-key ordering set it at publish time. Messages without the header return `None` (any
 /// partition will do).
-impl Partitioned for MemoryMessage {
+impl<Log: LogMode> Partitioned for MemoryMessage<Log> {
     fn partition_key(&self) -> Option<&[u8]> {
         self.headers().get(PARTITION_KEY_HEADER)
     }
@@ -452,40 +461,53 @@ impl SeekControl {
     }
 }
 
-/// A position in one name's publish log on the in-memory broker.
+/// A position in one name's publish log on a retaining in-memory broker.
 ///
-/// Construct it with [`start`](Self::start) / [`sequence`](Self::sequence), or capture the
-/// position of a delivered [`MemoryMessage`] with [`Positioned::position`]. The log is per-name
-/// and append-only, so a position is a stable zero-based sequence number: seeking to a captured
-/// position redelivers exactly that message, and seeking at or past the end of the log skips
-/// everything published so far and resumes with the next publish.
+/// Construct it with [`start`](Self::start), [`sequence`](Self::sequence) or [`end`](Self::end),
+/// or capture the position of a delivered [`MemoryMessage`] with [`Positioned::position`].
+/// Sequence numbers are absolute and stable: the `n`-th message published to a name keeps
+/// position `n` while the broker retains it, whatever the retention bound has evicted before it,
+/// and seeking to a captured position redelivers exactly that message.
+///
+/// The two constructed positions follow the broker's own vocabulary: [`start`](Self::start) is
+/// the oldest message still retained, [`end`](Self::end) is the tip, past everything published so
+/// far. A sequence the retention bound has already evicted is refused with
+/// [`MemoryError::PositionEvicted`]; one past the tip resumes with the next publish.
 ///
 /// # Examples
 ///
 /// ```
 /// use ruststream::memory::MemoryPosition;
 ///
-/// assert_eq!(MemoryPosition::start(), MemoryPosition::sequence(0));
+/// assert_eq!(MemoryPosition::sequence(7), MemoryPosition::Sequence(7));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[must_use]
-pub struct MemoryPosition(usize);
+pub enum MemoryPosition {
+    /// The oldest message the name still retains.
+    Start,
+    /// The zero-based `n`-th message published to the name.
+    Sequence(usize),
+    /// The tip of the log: everything published so far is behind it.
+    End,
+}
 
 impl MemoryPosition {
-    /// The start of the log: seeking here replays every message published to the name.
+    /// The oldest retained message: seeking here replays everything the broker still holds for
+    /// the name.
     pub const fn start() -> Self {
-        Self(0)
+        Self::Start
     }
 
     /// The position of the zero-based `n`-th message published to the name.
     pub const fn sequence(n: usize) -> Self {
-        Self(n)
+        Self::Sequence(n)
     }
 
     /// The end of the log: seeking here skips everything published so far and resumes with
     /// the next publish (the memory analog of a "latest" position).
     pub const fn end() -> Self {
-        Self(usize::MAX)
+        Self::End
     }
 }
 
@@ -502,16 +524,17 @@ impl MemoryPosition {
 /// # #[cfg(feature = "macros")]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
-/// use ruststream::memory::{MemoryBroker, MemoryPosition};
+/// use ruststream::memory::{MemoryBroker, MemoryPosition, Retention};
 /// use ruststream::runtime::PublishExt;
 /// use ruststream::{IncomingMessage, Outgoing, Seekable, Seeker, Serialized, Subscriber};
+/// use ruststream::nonzero;
 ///
 /// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
 /// // runs on it.
 /// #[derive(Outgoing, Serialized)]
 /// struct Entry(Vec<u8>);
 ///
-/// let broker = MemoryBroker::new();
+/// let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
 /// let mut subscriber = broker.subscribe("audit");
 /// let seeker = subscriber.seeker();
 /// let publisher = broker.publisher();
@@ -548,17 +571,26 @@ impl fmt::Debug for MemorySeeker {
     }
 }
 
-/// Seeking is native here: the broker keeps an append-only publish log per name, so a
-/// subscription can re-enqueue any suffix of it.
-impl Seekable for MemorySubscriber {
-    type Seeker = MemorySeeker;
-
-    fn seeker(&self) -> MemorySeeker {
+impl<Log: LogMode> MemorySubscriber<Log> {
+    /// Mints a handle on this subscription's seek control. Public only through [`Seekable`],
+    /// which a discarding broker's subscription does not implement.
+    pub(super) fn new_seeker(&self) -> MemorySeeker {
         MemorySeeker {
             state: Arc::clone(&self.state),
             name: Arc::from(self.name.as_str()),
             control: Arc::clone(&self.seek),
         }
+    }
+}
+
+/// Seeking is native on a retaining broker: it keeps a bounded publish log per name, so a
+/// subscription can re-enqueue any retained suffix of it. A discarding broker keeps no log, and
+/// its subscriptions carry no seek surface at all.
+impl Seekable for MemorySubscriber<Retaining> {
+    type Seeker = MemorySeeker;
+
+    fn seeker(&self) -> MemorySeeker {
+        self.new_seeker()
     }
 }
 
@@ -575,11 +607,12 @@ impl Seeker for MemorySeeker {
     ///
     /// # Errors
     ///
-    /// Returns [`MemoryError::ShutDown`] through a handle aliasing a shut-down bus.
+    /// Returns [`MemoryError::ShutDown`] through a handle aliasing a shut-down bus, and
+    /// [`MemoryError::PositionEvicted`] for a sequence the retention bound has already dropped.
     fn seek(&self, to: MemoryPosition) -> impl Future<Output = Result<(), MemoryError>> {
         // The liveness check and the handoff happen under the bus lock (then the log lock,
         // fanout's order): a seek that returns Ok happened strictly before any shutdown, and
-        // the end-clamp is consistent with the log length at that instant.
+        // the resolved position is consistent with the log at that instant.
         let bus = self
             .state
             .subscribers
@@ -588,23 +621,33 @@ impl Seeker for MemorySeeker {
         if !matches!(&*bus, Bus::Live(_)) {
             return ready(Err(MemoryError::ShutDown));
         }
-        let end = self
-            .state
-            .published
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .get(&*self.name)
-            .map_or(0, Vec::len);
-        let clamped = to.0.min(end);
+        let log = self.state.log.lock().expect("memory broker mutex poisoned");
+        let (oldest, tip) = log
+            .name(&self.name)
+            .map_or((0, 0), |name| (name.first_seq(), name.next_seq()));
+        drop(log);
+        let target = match to {
+            MemoryPosition::Start => oldest,
+            MemoryPosition::End => tip,
+            // Past the tip is a position the name has not reached yet: the subscription waits
+            // there rather than failing, and the next publish opens it.
+            MemoryPosition::Sequence(n) if n >= oldest => n.min(tip),
+            MemoryPosition::Sequence(n) => {
+                return ready(Err(MemoryError::PositionEvicted {
+                    requested: n,
+                    oldest,
+                }));
+            }
+        };
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
         // the pending target: a poll that takes the target must see its watermark.
-        self.control.watermark.store(clamped, Ordering::Release);
+        self.control.watermark.store(target, Ordering::Release);
         let replaced = self
             .control
             .pending
             .lock()
             .expect("memory broker mutex poisoned")
-            .replace(clamped);
+            .replace(target);
         drop(bus);
         // Under the harness, hold the reaction open from the moment the reposition is recorded
         // until the stream applies it: the replay it will enqueue is not counted yet, and a
@@ -624,15 +667,20 @@ impl Seeker for MemorySeeker {
     }
 }
 
-impl MemorySubscriber {
+impl<Log: LogMode> MemorySubscriber<Log> {
     /// Applies a reposition requested through a [`MemorySeeker`], if one is pending.
     ///
     /// Runs at the top of the subscriber's own poll (the stream and batch paths both call it),
     /// which is what makes `&mut` access to the receiver possible: everything queued before
-    /// the seek is drained, then the log suffix from the (end-clamped) target on is
-    /// re-enqueued. Holding both bus locks makes the swap atomic against `fanout`, which
-    /// stamps and sends under the same locks in the same order.
+    /// the seek is drained, then the retained log from the resolved target on is re-enqueued.
+    /// Holding both bus locks makes the swap atomic against `fanout`, which stamps and sends
+    /// under the same locks in the same order.
     pub(super) fn apply_pending_seek(&mut self) {
+        // A discarding subscription hands out no seeker, so nothing can ever be pending: the
+        // constant drops the whole body, locks included, from its poll.
+        if !log::retains::<Log>() {
+            return;
+        }
         // Take the target in its own statement so the pending guard is released before the
         // bus lock is acquired; `Seeker::seek` nests the locks in the other direction.
         let pending = self
@@ -659,16 +707,8 @@ impl MemorySubscriber {
         if !matches!(&*bus, Bus::Live(_)) {
             return;
         }
-        let log = self
-            .state
-            .published
-            .lock()
-            .expect("memory broker mutex poisoned");
-
-        let entries = log
-            .get(self.name.as_str())
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+        let log = self.state.log.lock().expect("memory broker mutex poisoned");
+        let retained = log.name(self.name.as_str());
 
         // The replay is counted in flight BEFORE the drain releases the queued deliveries:
         // decrementing first would let the in-flight count touch zero mid-swap, and a
@@ -676,7 +716,7 @@ impl MemorySubscriber {
         // before the replayed deliveries were processed.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = &coordinator {
-            for _ in target..entries.len() {
+            for _ in retained.into_iter().flat_map(|log| log.replay_from(target)) {
                 coordinator.enqueued();
             }
         }
@@ -689,15 +729,19 @@ impl MemorySubscriber {
             }
         }
 
-        for (seq, raw) in entries.iter().enumerate().skip(target) {
-            let delivery = MemoryDelivery {
-                name: Arc::from(self.name.as_str()),
-                payload: raw.payload_bytes(),
-                headers: Arc::new(raw.headers().clone()),
-                seq,
-            };
-            // The send cannot fail: this subscriber holds both ends of its own channel.
-            let _ = self.requeue.send(delivery);
+        if let Some(retained) = retained {
+            // One shared name for the whole replay, not one allocation per redelivered message.
+            let subject: Arc<str> = Arc::from(self.name.as_str());
+            for (seq, entry) in retained.replay_from(target) {
+                let delivery = MemoryDelivery {
+                    name: Arc::clone(&subject),
+                    payload: entry.payload(),
+                    headers: entry.headers(),
+                    seq,
+                };
+                // The send cannot fail: this subscriber holds both ends of its own channel.
+                let _ = self.requeue.send(delivery);
+            }
         }
         drop(log);
         drop(bus);
@@ -720,13 +764,15 @@ impl Drop for SeekToken {
     }
 }
 
-/// The position is the delivery's stable index in its name's publish log, assigned at fanout
-/// and preserved across requeues, so a redelivered message reports the same position.
-impl Positioned for MemoryMessage {
+/// The position is the delivery's absolute sequence number in its name's publish log, assigned
+/// at fanout and preserved across requeues, so a redelivered message reports the same position.
+/// Only a retaining broker's deliveries have one: without a log there is nothing to be a
+/// position in.
+impl Positioned for MemoryMessage<Retaining> {
     type Position = MemoryPosition;
 
     fn position(&self) -> MemoryPosition {
-        MemoryPosition(self.delivery.as_ref().map_or(0, |d| d.seq))
+        MemoryPosition::Sequence(self.delivery.as_ref().map_or(0, |d| d.seq))
     }
 }
 
@@ -773,12 +819,12 @@ pub struct MemoryContext {
     seeker: MemorySeeker,
 }
 
-impl crate::BuildContext<MemoryMessage> for MemoryContext {
+impl crate::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
     /// dispatch loop (and therefore no per-delivery context) ever builds off one.
-    fn build(msg: &MemoryMessage) -> Self {
+    fn build(msg: &MemoryMessage<Retaining>) -> Self {
         Self {
             position: Positioned::position(msg),
             // A clone of the subscription's pre-minted handle: three reference-count bumps,
@@ -844,12 +890,12 @@ pub struct MemoryBatchContext {
     seeker: MemorySeeker,
 }
 
-impl crate::BuildBatchContext<MemoryMessage> for MemoryBatchContext {
+impl crate::BuildBatchContext<MemoryMessage<Retaining>> for MemoryBatchContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
     /// dispatch loop (and therefore no batch context) ever builds off one.
-    fn build(first: &MemoryMessage) -> Self {
+    fn build(first: &MemoryMessage<Retaining>) -> Self {
         Self {
             // A clone of the subscription's pre-minted handle: reference-count bumps only,
             // nothing allocated per batch.

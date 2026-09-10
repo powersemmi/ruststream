@@ -93,11 +93,16 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///
     /// When a handler returns [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after)
     /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
-    /// redelivery, the runtime re-publishes the message to its own source subject after the delay,
-    /// through `publisher`, with the
-    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a publisher
-    /// bound to the same broker (`b.broker().publisher()`); a publish to the source subject then
-    /// reaches this scope's own subscriptions.
+    /// redelivery, the runtime re-publishes the message after the delay through `publisher`, with
+    /// the [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a
+    /// publisher bound to the same broker (`b.broker().publisher()`).
+    ///
+    /// Where that copy goes is the subscription's own answer, read once at startup from
+    /// [`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address).
+    /// A subscription name and a publish destination are one string on a subject or a topic, and
+    /// separate resources on Google Pub/Sub. So a scope wired here whose subscriptions cannot
+    /// report an address fails to start, naming the subscription and its source, instead of
+    /// publishing copies into nothing once a handler asks for a delay.
     ///
     /// Brokers with native delayed redelivery do not need this: the runtime uses their
     /// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a

@@ -81,8 +81,8 @@ pub use reply::{
 };
 pub use reply::{ReplyShape, Serialized};
 pub use value::{
-    DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, Sealed,
-    SerializedReply, subscriber,
+    DeclaredDest, EncodedReply, HandleValue, IsDocumented, NamedDest, ReplyValue, ResolvedDest,
+    Sealed, SerializedReply, subscriber,
 };
 #[doc(hidden)]
 pub use value::{
