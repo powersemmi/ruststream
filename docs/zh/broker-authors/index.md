@@ -66,19 +66,27 @@ Broker 还可以额外持有一个由 `connect` 填充的共享单元，或者�
 在已连接形态上实现 `Subscribe`，服务就能按主题、subject 或队列的名字订阅。`#[subscriber("name")]` 用
 的就是它。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // 默认 None。按订阅名发布就能到达用这个名字打开的订阅时，把名字本身返回：
+    // subject、topic、流和队列名通常就是这样。
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
 }
 ```
 
-要做的只有建立一条订阅：
+要做的只有建立一条订阅，再说出发布按哪个地址能重新到达它：
 
 ```rust
 --8<-- "src/memory/mod.rs:subscribe"
 ```
+
+第二个答案就是运行时发布延后重试用的地址，它决定了 `#[subscriber("orders")]` 在你的 Broker 上能不
+能和 `BrokerScope::retry_via` 一起用。订阅名不是发布地址的地方，保留默认值：Google Pub/Sub 的订阅
+按自己的名字订阅，发布走它背后的 topic，那里由描述符来回答。
 
 ### `Subscriber`
 
@@ -129,9 +137,10 @@ pub trait IncomingMessage: Send + Sync {
 一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
 这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
-方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后把一份副本发布回同一个来源，用的是应
-用通过 `BrokerScope::retry_via` 接上的那个发布者，同时把重试计数消息头加一。只有在没有这个发布者的时
-候，延迟才退化成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
+方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后发布一份副本，用的是应用通过
+`BrokerScope::retry_via` 接上的那个发布者，同时把重试计数消息头加一。这份副本发往
+[你的订阅给出的地址](#where-a-deferred-retry-is-published)。只有在没有这个发布者的时候，延迟才退化
+成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：
@@ -221,12 +230,16 @@ pub trait DefaultPublish: ConnectedBroker {
 `Subscribe` 覆盖的是一个名字就够用的情形。订阅需要你的 Broker 专有的选项（消费者组、持久化名称、投递
 策略）时，定义一个实现 `SubscriptionSource` 的描述符类型：
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
+
+    // 默认 Ok(None)。回答发布按哪个地址能重新到达这条订阅；只有活连接知道时，
+    // 就去问 Broker。
+    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
 }
 ```
 
@@ -241,6 +254,25 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 
 给描述符派生 `Clone`：它是配置，挂载点为每次注册重新构造它，所以同一个定义可以同时挂到两个
 Broker 上。
+
+### 延后重试发往哪里 { #where-a-deferred-retry-is-published }
+
+没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往哪
+里，由你的描述符说出来。
+
+```rust
+--8<-- "src/memory/mod.rs:source"
+```
+
+返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
+topic，Redis 上是流的键。在 Google Pub/Sub 上两者都不是：订阅和 topic 在那里是两种资源，答案是订
+阅所绑定的那个 topic，描述符要向 API 问出来。运行时只在启动时问一次，所以这里的一次请求不摊到每条
+消息上。
+
+发布根本到不了你的订阅时，保留默认值。这样，把重试发布者接到这种订阅上的应用就起不来，并报出是哪条
+订阅、来自哪个来源，而不是把每条延后的消息发到没人读的地址上。
+
+`harness::lifecycle` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条订阅。
 
 ### 用一个字符串命名一种订阅方式
 
@@ -390,6 +422,11 @@ ack 记账。
 要让处理器主体能够定位，就把投递位置和订阅的 seeker 放进投递上下文的字段，并为它们发布
 `ContextField` 键。范本是内存 Broker 的 `MemoryContext` 及其 `Position` 和 `SeekHandle` 键。批量的
 那些写法从下面的批量上下文拿到 seeker，那里没有位置。
+
+`DescribeServer` 给出的服务器描述，报告客户端所连接的主机和端口。凭据绝不出现在其中，因为这份文档
+就是为了发布而生成的。因此，用 URL 配置的 Broker 通过 `ServerSpec::from_url` 构建描述，它会去掉
+URL 里的用户名和密码，而不是只去掉协议前缀。配置了多个地址的 Broker，用 `ServerSpec::host_from_url`
+把它们拼起来。
 
 这些 trait 就是处理器主体所写的词汇。主体用它需要的那项能力约束自己的槽位
 （`Out<impl TransactionalPublisher, Journal>`，手动路径上是 `where W: TransactionalPublisher`），

@@ -259,7 +259,8 @@ async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
 
 #[tokio::test(start_paused = true)]
 async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
-    let delivery = Delivery::detached(Some(Arc::new(RejectingPublisher)), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(RejectingPublisher), "orders", TaskTracker::new());
     let settled = Arc::new(AtomicU8::new(0));
     settle_nack_after(
         plain(&[], &settled),
@@ -289,11 +290,11 @@ fn the_default_worker_policy_is_sequential() {
 #[test]
 fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
     let empty = format!("{:?}", Delivery::empty());
-    assert!(empty.contains("retry_publisher: false"), "{empty}");
+    assert!(empty.contains("retry_address: None"), "{empty}");
     assert!(empty.contains("pending_continuations: 0"), "{empty}");
 
-    let wired = Delivery::detached(Some(Arc::new(RejectingPublisher)), TaskTracker::new());
-    assert!(format!("{wired:?}").contains("retry_publisher: true"));
+    let wired = Delivery::deferring_to(Arc::new(RejectingPublisher), "orders", TaskTracker::new());
+    assert!(format!("{wired:?}").contains("retry_address: Some(\"orders\")"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -303,16 +304,20 @@ async fn a_panicking_worker_is_reported_when_joined() {
     log_worker_exit(joined);
 }
 
+/// The deferred copy goes to the address the subscription's source reported, which is not the
+/// subscription's own name wherever the two are separate resources (a Pub/Sub subscription and
+/// its topic). Publishing under the subscription name would reach nothing there.
 #[tokio::test(start_paused = true)]
-async fn fallback_defers_republish_to_source_with_incremented_retry_count() {
+async fn fallback_defers_republish_to_the_reported_address_with_incremented_retry_count() {
     let broker = MemoryBroker::new();
     // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
-    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+    settle_nack_after(msg, "orders-workers", Duration::from_secs(30), &delivery)
         .await
         .unwrap();
 
@@ -339,7 +344,8 @@ async fn fallback_defers_republish_to_source_with_incremented_retry_count() {
 async fn fallback_defers_republish_when_the_transport_cannot_settle() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Unsupported);
@@ -366,7 +372,8 @@ async fn fallback_defers_republish_when_the_transport_cannot_settle() {
 async fn a_rejected_settle_aborts_the_fallback() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Rejected);
@@ -389,7 +396,8 @@ async fn a_rejected_settle_aborts_the_fallback() {
 async fn fallback_increments_an_existing_retry_count() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery = Delivery::detached(Some(Arc::new(broker.publisher())), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
@@ -431,7 +439,8 @@ async fn native_support_defers_to_the_broker_nack_after() {
     // A separate broker backs the retry publisher; if the fallback fired, the republish would
     // land here and never on `sub`.
     let other = MemoryBroker::new();
-    let delivery = Delivery::detached(Some(Arc::new(other.publisher())), TaskTracker::new());
+    let delivery =
+        Delivery::deferring_to(Arc::new(other.publisher()), "orders", TaskTracker::new());
 
     let msg = {
         let mut stream = std::pin::pin!(sub.stream());

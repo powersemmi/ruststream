@@ -10,9 +10,10 @@ cargo generate --git https://github.com/powersemmi/ruststream templates/memory -
 cd my-service
 ```
 
-生成骨架只需要 `cargo generate`。`templates/memory` 是基于内存 Broker 的起步模板。每个 Broker crate
-都自带模板（例如 `--git https://github.com/powersemmi/ruststream-nats templates/nats`）。
-`cargo generate` 会生成一个符合 Rust 习惯的多文件项目：
+生成骨架只需要 `cargo generate`。`templates/memory` 是基于内存 Broker 的起步模板。自带模板的 Broker
+crate 用同样的方式生成，指明该 crate 的仓库和模板路径（例如
+`--git https://github.com/powersemmi/ruststream-nats templates/nats`）；某个 Broker 有哪些模板，
+以它自己的文档为准。`cargo generate` 会生成一个符合 Rust 习惯的多文件项目：
 
 ```
 my-service/

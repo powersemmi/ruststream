@@ -11,11 +11,11 @@ use crate::{Broker, DescribeServer, ServerSpec};
 
 use tokio_util::task::TaskTracker;
 
-use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
 use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
+use crate::runtime::redelivery::ScopeDelivery;
 use crate::runtime::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
@@ -650,29 +650,25 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         self.after_startup.extend(startup_hooks);
         // The scope id is the index this broker will occupy once pushed below; the harness uses it
         // to scope recorded deliveries per broker.
-        #[cfg(feature = "testing")]
-        let delivery = Arc::new(Delivery::instrumented(
+        let scope_delivery = Arc::new(ScopeDelivery::new(
             retry_publisher,
             self.continuations.clone(),
+            #[cfg(feature = "testing")]
             self.test_hooks.clone(),
+            #[cfg(feature = "testing")]
             self.brokers.len(),
-        ));
-        #[cfg(not(feature = "testing"))]
-        let delivery = Arc::new(Delivery::detached(
-            retry_publisher,
-            self.continuations.clone(),
         ));
         let (starters, handlers) = sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
-            let delivery = delivery.clone();
+            let scope_delivery = scope_delivery.clone();
             self.starters.push(Box::new(move |state, shutdown, token| {
                 let connected = slot
                     .lock()
                     .expect("connected slot mutex poisoned")
                     .clone()
                     .expect("brokers connect before subscriptions open");
-                bound(connected, state, delivery, shutdown, token)
+                bound(connected, state, scope_delivery, shutdown, token)
             }));
             self.handlers.push(meta);
         }

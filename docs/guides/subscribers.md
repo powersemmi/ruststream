@@ -154,8 +154,8 @@ The runtime honours the delay as follows:
 - A broker with native delayed redelivery receives the delay directly. The in-memory broker
   redelivers on a timer; a NATS JetStream broker could send a `NAK` with a delay.
 - A broker without native support gets a **deferred re-publish**: after `delay` the runtime
-  publishes the message back to where it came from, and drops the original. In the new copy the
-  framework retry-count header
+  publishes a copy of the message back to the subscription it came from, and drops the original. In
+  the new copy the framework retry-count header
   ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html))
   is incremented by one, and a handler can read it to cap redeliveries.
 
@@ -164,6 +164,13 @@ The runtime honours the delay as follows:
   the publisher must target the same broker. Without a publisher the delay is dropped and the
   message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
   window: if the process exits before the timer fires, the copy is lost.
+
+  The copy goes to the address the subscription reports, which is not always its name. A NATS
+  subject and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its
+  own name and published to through its topic. Your broker crate answers for its own subscriptions,
+  and a scope whose subscriptions cannot answer does not start once `retry_via` is set, naming the
+  subscription and the fix. There the broker's own subscription descriptor is what answers:
+  `#[subscriber("name")]` answers only where a name is a publish destination.
 
   A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) takes the same
   path: there is nothing to drop, so the deferred copy is the whole retry. The other case is a

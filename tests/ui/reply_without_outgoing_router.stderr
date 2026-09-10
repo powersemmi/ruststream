@@ -1,11 +1,11 @@
 error[E0277]: `Receipt` does not declare where it is published
-  --> tests/ui/reply_name_template.rs:21:36
+  --> tests/ui/reply_without_outgoing_router.rs:21:36
    |
 21 | async fn confirm(order: &Order) -> Receipt {
    |                                    ^^^^^^^ unsatisfied trait bound
    |
 help: the trait `ruststream::runtime::ReplyDestination` is not implemented for `Receipt`
-  --> tests/ui/reply_name_template.rs:16:1
+  --> tests/ui/reply_without_outgoing_router.rs:16:1
    |
 16 | struct Receipt {
    | ^^^^^^^^^^^^^^

@@ -9,24 +9,25 @@ use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
 use crate::runtime::batch::BatchHandler;
 use crate::runtime::dispatch::{
-    Delivery, Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
+    Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
 };
 use crate::runtime::failure::{DispatchFailure, ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
+use crate::runtime::redelivery::{ScopeDelivery, open_mounted_subscriber, open_subscription};
 
 use super::SourceMessage;
 
 /// A deferred registration: given the broker's connected form (produced by
-/// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the per-scope publish
-/// [`Delivery`] context, and the shutdown token, it opens the subscription and spawns the dispatch
-/// task. The source and handler are captured and type-erased.
+/// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the scope's publish
+/// context, and the shutdown token, it opens the subscription and spawns the dispatch task. The
+/// source and handler are captured and type-erased.
 pub(crate) type BoundStarter<B, State> = Box<
     dyn FnOnce(
             Arc<Connected<B>>,
             Arc<State>,
-            Arc<Delivery>,
+            Arc<ScopeDelivery>,
             ErrorShutdown,
             CancellationToken,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
@@ -77,8 +78,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |_connected, state, delivery, shutdown, token| {
+            move |_connected, state, scope, shutdown, token| {
                 Box::pin(async move {
+                    // No source to ask where a deferred retry goes, so a scope that defers
+                    // retries refuses this mount rather than guessing an address.
+                    let delivery = open_mounted_subscriber(&scope, &name)?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch(
                         subscriber, handler, token, name, state, delivery, failure,
@@ -111,12 +115,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, delivery) =
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                            .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     // Turbofish: the adapter handlers are generic over the batch context, so
                     // the pushed definition's own context names it.
@@ -149,12 +152,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, delivery) =
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                            .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch_workers(
                         subscriber, handler, token, name, state, delivery, failure, workers,
@@ -196,12 +198,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, delivery, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let subscriber = source
-                        .subscribe(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let (subscriber, delivery) =
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                            .await?;
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;
                     let failure = DispatchFailure::new(policies, shutdown);

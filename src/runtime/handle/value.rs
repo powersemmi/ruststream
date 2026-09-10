@@ -159,7 +159,7 @@ pub fn probed_def<A, R, O, C, H>(
 /// macro spells the concrete form itself.
 #[doc(hidden)]
 pub type ProbedReplyDef<A, R, O, C, H> =
-    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, NamedDest>>;
+    Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, ResolvedDest>>;
 
 /// The sealed reply definition [`probed_declared_reply_def`] builds, for a `publish` clause
 /// naming nothing.
@@ -167,11 +167,11 @@ pub type ProbedReplyDef<A, R, O, C, H> =
 pub type ProbedDeclaredReplyDef<A, R, O, C, H> =
     Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, DeclaredDest>>;
 
-/// Builds a `#[subscriber]` expansion's sealed reply definition: the plain definition wrapped
-/// at the clause-named destination, which applies to a reply type declaring none of its own.
+/// Builds a `#[subscriber]` expansion's sealed reply definition. `dest` is the destination the
+/// expansion already resolved between the reply type's declaration and the clause's name.
 /// Machinery behind the macro expansion; not part of the public API.
-// The explicit `&'static str` parameter keeps a wrongly-typed destination expression a plain
-// type error at the expansion site, as the attribute always reported it.
+// Taking the destination already resolved is what keeps the reply type's own obligation at the
+// handler: the definition carries a name, so nothing downstream of it asks for one.
 #[doc(hidden)]
 #[must_use]
 pub fn probed_reply_def<A, R, O, C, H>(
@@ -182,7 +182,7 @@ pub fn probed_reply_def<A, R, O, C, H>(
     let Sealed(value) = probed_def(body, docs);
     Sealed(ReplyValue {
         value,
-        dest: NamedDest(Cow::Borrowed(dest)),
+        dest: ResolvedDest(dest),
     })
 }
 
@@ -201,6 +201,15 @@ pub fn probed_declared_reply_def<A, R, O, C, H>(
         dest: DeclaredDest,
     })
 }
+/// A destination already resolved between the reply type's declaration and the mount-site name.
+///
+/// The `#[subscriber]` expansion resolves it, so the reply type's obligation to declare where it
+/// is published is reported at the handler that returns it rather than at the mount chain that
+/// carries it. The manual path resolves at [`to`](SubscriberBuilder::to) instead, where the name
+/// is supplied.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedDest(pub(super) &'static str);
+
 /// The reply destination still unnamed: it resolves from the reply type's own
 /// `#[outgoing(name = "..")]` declaration, and a type declaring none takes a mandatory
 /// [`to`](SubscriberBuilder::to).
