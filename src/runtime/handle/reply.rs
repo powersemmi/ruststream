@@ -198,12 +198,17 @@ where
 pub trait DeclaresReply {
     /// The reply type, as [`ReplyShape`] sees it.
     type Reply;
+
+    /// The broker's typed per-delivery context the handler reads, which is what a transform on
+    /// this reply sees through its [`PublishContext`](crate::runtime::PublishContext).
+    type Context;
 }
 
 impl<A, R, O, C, H, Doc, Dest> DeclaresReply
     for Sealed<ReplyValue<HandleValue<A, R, O, C, H, Doc>, Dest>>
 {
     type Reply = R;
+    type Context = C;
 }
 
 /// A reply whose destination a mount chain may name per delivery.

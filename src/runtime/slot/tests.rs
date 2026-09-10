@@ -13,12 +13,14 @@ use crate::{FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeade
 struct A;
 impl OutSlot for A {
     const NAME: &'static str = "A";
+    type Destination = Reads;
 }
 
 #[derive(Debug)]
 struct B;
 impl OutSlot for B {
     const NAME: &'static str = "B";
+    type Destination = Reads;
 }
 
 #[test]
@@ -39,6 +41,7 @@ struct Events;
 
 impl OutSlot for Events {
     const NAME: &'static str = "Events";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![OutgoingMessageMetadata::new("events.progress", "Progress")]

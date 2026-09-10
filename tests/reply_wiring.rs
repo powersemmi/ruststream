@@ -15,7 +15,7 @@ use std::future::{Future, ready};
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, for_batch};
+use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{HeaderMap, OutgoingMessage, PairError, PublishPolicy};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,8 @@ struct Receipt {
 struct Stamp;
 
 impl<K: ContextKind> PublishTransform<K> for Stamp {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamped", b"1".to_vec());
     }

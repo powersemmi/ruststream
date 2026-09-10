@@ -14,7 +14,7 @@ use std::convert::Infallible;
 use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{ContainsMessage, SlotPos};
+use ruststream::runtime::{ContainsMessage, Reads, SlotPos};
 use ruststream::schemars::{JsonSchema, schema_for};
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
@@ -122,6 +122,7 @@ struct Events;
 
 impl OutSlot for Events {
     const NAME: &'static str = "Events";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         let mut entries = <ChunkDone as OutMessages<Self>>::outgoing();

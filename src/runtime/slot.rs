@@ -20,20 +20,23 @@
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use crate::runtime::handle::{DeclaresReply, RedirectableReply};
+use crate::runtime::handle::{DeclaresReply, ReplyShape};
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyRedirect, AddReplyTransform, CallCodec, CodecSlotOpen,
-    LowerOutRedirect, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, NoOutRedirect,
-    OutRedirected, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
-    RedirectSlotOpen, TransactionalReply, UnnamedCodec,
+    AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, DestinationUse, FitsOffer,
+    ForReply, ForSlot, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, Names, NarrowToUse,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
+    RawReplyWiring, Reads, ReplyWiring, TransactionalReply, UnnamedCodec,
 };
-use crate::runtime::router::{DefaultReply, ReplyAttachment, SoloReplyMount};
+use crate::runtime::router::{
+    BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
+    RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    CallerName, ConnectedBroker, HeaderMap, OutgoingDestination, OutgoingMessage,
-    OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
+    OutgoingMessage, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -47,12 +50,14 @@ use crate::{
 ///
 /// ```
 /// use ruststream::prelude::*;
+/// use ruststream::runtime::Reads;
 ///
 /// #[derive(Clone, Copy, Debug)]
 /// struct Encoded;
 ///
 /// impl OutSlot for Encoded {
 ///     const NAME: &'static str = "Encoded";
+///     type Destination = Reads;
 /// }
 ///
 /// assert_eq!(<Encoded as OutSlot>::NAME, "Encoded");
@@ -60,6 +65,17 @@ use crate::{
 pub trait OutSlot: 'static {
     /// The human-readable slot name, used by diagnostics and test assertions.
     const NAME: &'static str;
+
+    /// The most a transform on this slot may do to a message's destination.
+    ///
+    /// [`Names`] only where every type the slot publishes leaves its destination open, because a
+    /// type that fixes its own channel is published there and the generated document says so.
+    /// `#[derive(OutSlot)]` folds this out of the `#[publishes(..)]` list through
+    /// [`ListOffer`]; a marker with no list has nothing to fold and writes [`Reads`], which is
+    /// what the implicit [`DefaultSlot`] does - it admits every message, so it can promise
+    /// nothing. Stable Rust has no default for an associated type, so every marker writes the
+    /// line.
+    type Destination: DestinationUse;
 
     /// The slot's publish dictionary as `AsyncAPI` metadata, one entry per
     /// `#[publishes(..)]` type. The derive fills this in; the default (a marker without a
@@ -87,8 +103,11 @@ pub trait OutSlot: 'static {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct DefaultSlot;
 
+// The implicit slot admits every declared message, so it can promise nothing about their
+// destinations and lets no transform name one.
 impl OutSlot for DefaultSlot {
     const NAME: &'static str = "default";
+    type Destination = Reads;
 }
 
 /// The marker of a handler's reply position: `.out(Reply, policy)` names the publish policy the
@@ -158,6 +177,7 @@ pub struct NoReply;
 ///
 /// impl OutSlot for Events {
 ///     const NAME: &'static str = "Events";
+///     type Destination = Reads;
 /// }
 ///
 /// // What `#[derive(OutSlot)]` + `#[publishes(Progress)]` generates:
@@ -177,107 +197,115 @@ pub trait PublishedThrough<Slot> {}
 // The implicit slot has no declaration site to list types on, so it admits every message.
 impl<T> PublishedThrough<DefaultSlot> for T {}
 
-/// A message type that leaves its destination to the call site.
+/// What one destination form lets a transform do: [`Names`] where nothing is declared, [`Reads`]
+/// where something is.
 ///
-/// The message-level half of [`OpenDestinations`]: a type deriving `Outgoing` without
-/// `#[outgoing(name = "..")]` is published where `.to(..)` says, so a redirect naming the
-/// destination per message replaces a choice the call site was making anyway. A type that names
-/// its own channel is published there, and the document says so.
+/// A type deriving `Outgoing` without `#[outgoing(name = "..")]` is published where `.to(..)`
+/// says, so a transform that names the destination replaces a choice the call site was making
+/// anyway. A type that fixes its own channel is published there and the document says so, and
+/// nothing may move it.
 #[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` declares where it is published",
-    note = "a redirected slot names every message's destination itself, so nothing it publishes \
-            may fix its own: drop `#[outgoing(name = \"..\")]` from this type and name the \
-            fallback at the call site with `.to(..)`, or publish it through a slot with no \
-            `.redirect(..)`"
-)]
-pub trait OpenDestination {}
+pub trait DestinationOffer {
+    /// The most a transform may do to a message declared this way.
+    type Offer: DestinationUse;
+}
 
-// Stated as a bound on the form rather than as an equality, so what fails reads as a trait bound
-// rather than as a projection mismatch on machinery the reader never wrote. The message type
-// rides along as the form's parameter, so the failing bound still names the culprit.
-#[diagnostic::do_not_recommend]
-impl<T: OutgoingDestination<Form: OpenForm<T>>> OpenDestination for T {}
+impl DestinationOffer for CallerName {
+    type Offer = Names;
+}
 
-/// A destination form a redirect may replace, on the message type that declared it: the one form
-/// that names nothing.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "`{T}` declares where it is published",
-    note = "a redirected slot names every message's destination itself, so nothing it publishes \
-            may fix its own: drop `#[outgoing(name = \"..\")]` from `{T}` and name the fallback \
-            at the call site with `.to(..)`, or publish it through a slot with no `.redirect(..)`"
-)]
-pub trait OpenForm<T> {}
+impl DestinationOffer for FixedName {
+    type Offer = Reads;
+}
 
-impl<T> OpenForm<T> for CallerName {}
+impl DestinationOffer for NameTemplate {
+    type Offer = Reads;
+}
 
-/// A slot marker's `#[publishes(..)]` dictionary as a type-level list: `(First, (Second, ()))`.
+/// The offer of a whole `#[publishes(..)]` dictionary: [`Names`] only while every member leaves
+/// its destination open, because one member that fixes its channel settles the whole slot.
 ///
-/// [`OutSlot::outgoing`] reports the same list as data, for the generated document; this is the
-/// same list as types, so a mount-site step can ask something of every member at compile time.
-/// `#[derive(OutSlot)]` writes it, and a hand-written marker writes it to reach the steps that
-/// read it - today, `.redirect(..)` through [`OpenDestinations`].
+/// The dual of [`Either`](crate::runtime::publish::Either), which combines what a transform stack
+/// does. Machinery behind [`OutSlot::Destination`].
+#[doc(hidden)]
+pub trait Both<Rhs> {
+    /// The combined offer.
+    type Out;
+}
+
+impl Both<Self> for Names {
+    type Out = Self;
+}
+
+impl Both<Reads> for Names {
+    type Out = Reads;
+}
+
+impl<Rhs> Both<Rhs> for Reads {
+    type Out = Self;
+}
+
+/// A slot marker's `#[publishes(..)]` dictionary as a type-level list, `(First, (Second, ()))`,
+/// folded into what the slot offers a transform.
+///
+/// [`OutSlot::outgoing`] reports the same list as data, for the generated document; this folds it
+/// as types, so `#[derive(OutSlot)]` computes [`OutSlot::Destination`] from the list rather than
+/// the author reasoning it out. A hand-written marker either projects the fold the same way or
+/// writes the offer directly.
 ///
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "macros")]
+/// # mod demo {
 /// use ruststream::prelude::*;
-/// use ruststream::runtime::SlotDictionary;
+/// use ruststream::runtime::ListOffer;
+/// use serde::Serialize;
 ///
-/// struct Progress;
+/// #[derive(Outgoing, Serialize)]
+/// struct Progress {
+///     percent: u8,
+/// }
 ///
-/// struct ChunkDone;
+/// #[derive(Outgoing, Serialize)]
+/// #[outgoing(name = "chunks.done")]
+/// struct ChunkDone {
+///     key: String,
+/// }
 ///
 /// struct Events;
 ///
+/// // What `#[derive(OutSlot)] #[publishes(ChunkDone, Progress)]` writes. `ChunkDone` fixes its
+/// // channel, so the fold comes out `Reads` and the slot lets no transform name a destination.
 /// impl OutSlot for Events {
 ///     const NAME: &'static str = "Events";
+///     type Destination = <(ChunkDone, (Progress, ())) as ListOffer>::Offer;
 /// }
 ///
-/// // What `#[derive(OutSlot)]` + `#[publishes(ChunkDone, Progress)]` generates, next to one
-/// // `PublishedThrough` impl per listed type.
-/// impl SlotDictionary for Events {
-///     type Publishes = (ChunkDone, (Progress, ()));
-/// }
+/// fn offers_reads<T: OutSlot<Destination = Reads>>() {}
+/// # fn check() { offers_reads::<Events>(); }
+/// # }
 /// ```
-pub trait SlotDictionary {
-    /// The listed types, nested right: `()` closes the list.
-    type Publishes;
+pub trait ListOffer {
+    /// What every member of the list allows, taken together.
+    type Offer: DestinationUse;
 }
 
-/// A dictionary list whose every member leaves its destination to the call site.
-#[doc(hidden)]
-pub trait OpenDictionary {}
+impl ListOffer for () {
+    type Offer = Names;
+}
 
-impl OpenDictionary for () {}
-
-// The recursion is the machinery of the check: the member that fails is what the error names.
-#[diagnostic::do_not_recommend]
-impl<Head: OpenDestination, Tail: OpenDictionary> OpenDictionary for (Head, Tail) {}
-
-/// A slot marker whose whole `#[publishes(..)]` dictionary leaves the destination open.
-///
-/// What a mount chain's `.redirect(..)` step asks of the slot it rides. The dictionary declares
-/// everything that may leave the slot, so checking it once at the mount settles every publish the
-/// handler will make - and a handler body needs no bound of its own for it.
-///
-/// A marker earns this through its [`SlotDictionary`], never by claiming it. One without a
-/// dictionary - the implicit [`DefaultSlot`] among them - admits every message, so it can promise
-/// nothing here and cannot be redirected.
-#[diagnostic::on_unimplemented(
-    message = "the `{Self}` slot cannot be redirected",
-    label = "`.redirect(..)` needs to know what leaves this slot",
-    note = "a redirected slot names every message's destination, so the marker has to declare \
-            what leaves it and none of that may fix its own channel: give the marker a \
-            dictionary (`#[derive(OutSlot)] #[publishes(..)]`, or a `SlotDictionary` impl by \
-            hand) of types that take their destination from the call site"
-)]
-pub trait OpenDestinations {}
-
-// One blanket impl, so a marker earns this by its dictionary rather than by claiming it.
-#[diagnostic::do_not_recommend]
-impl<M: SlotDictionary<Publishes: OpenDictionary>> OpenDestinations for M {}
+impl<Head, Tail> ListOffer for (Head, Tail)
+where
+    Head: OutgoingDestination<Form: DestinationOffer>,
+    Tail: ListOffer,
+    <<Head as OutgoingDestination>::Form as DestinationOffer>::Offer:
+        Both<Tail::Offer, Out: DestinationUse>,
+{
+    type Offer = <<<Head as OutgoingDestination>::Form as DestinationOffer>::Offer as Both<
+        Tail::Offer,
+    >>::Out;
+}
 
 /// The live publisher an [`Out`](super::Out) slot injects: the attachment's paired publisher,
 /// wrapped with the slot identity.
@@ -527,43 +555,35 @@ impl<M> MissingSlot<M> {
 /// service code.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OutAttachment<
-    M,
-    Policy,
-    Layers = PublishTransformIdentity,
-    Enc = UnnamedCodec,
-    Rd = NoOutRedirect,
-> {
+pub struct OutAttachment<M, Policy, Layers = PublishTransformIdentity, Enc = UnnamedCodec> {
     policy: Policy,
     layers: Layers,
     enc: Enc,
-    redirect: Rd,
-    // The marker the `.out(marker, policy)` call bound, carried so the steps after it can state
-    // what the slot's own declaration has to be: the `.redirect(..)` step asks it for a
-    // dictionary in which nothing names its own channel.
+    // The marker the `.out(marker, policy)` call bound, carried so the steps after it can ask what
+    // the slot's own declaration offers: the `.transform(..)` step asks it whether the slot lets a
+    // transform name the destination.
     _marker: PhantomData<fn() -> M>,
 }
 
 impl<M, Policy> OutAttachment<M, Policy> {
-    /// The attachment a bare `.out(marker, policy)` produces: the policy, no transforms, no
-    /// redirect, the surface's own codec.
+    /// The attachment a bare `.out(marker, policy)` produces: the policy, no transforms, the
+    /// surface's own codec.
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
             policy,
             layers: PublishTransformIdentity,
             enc: UnnamedCodec::new(),
-            redirect: NoOutRedirect,
             _marker: PhantomData,
         }
     }
 }
 
-impl<M, Policy, Layers, Enc, Rd> OutAttachment<M, Policy, Layers, Enc, Rd> {
+impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
     /// Composes one more transform on top of the stack: the `.transform(..)` step.
     pub(crate) fn add_transform<N>(
         self,
         transform: N,
-    ) -> OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc, Rd> {
+    ) -> OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc> {
         OutAttachment {
             policy: self.policy,
             layers: PublishTransformStack {
@@ -571,35 +591,16 @@ impl<M, Policy, Layers, Enc, Rd> OutAttachment<M, Policy, Layers, Enc, Rd> {
                 outer: transform,
             },
             enc: self.enc,
-            redirect: self.redirect,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Fills the slot's redirect position: the `.redirect(..)` step.
-    pub(crate) fn add_redirect<N>(
-        self,
-        redirect: N,
-    ) -> OutAttachment<M, Policy, Layers, Enc, OutRedirected<N>> {
-        OutAttachment {
-            policy: self.policy,
-            layers: self.layers,
-            enc: self.enc,
-            redirect: OutRedirected(redirect),
             _marker: PhantomData,
         }
     }
 
     /// Fills the slot's codec position: the `.codec(..)` step.
-    pub(crate) fn name_codec<C>(
-        self,
-        codec: C,
-    ) -> OutAttachment<M, Policy, Layers, CallCodec<C>, Rd> {
+    pub(crate) fn name_codec<C>(self, codec: C) -> OutAttachment<M, Policy, Layers, CallCodec<C>> {
         OutAttachment {
             policy: self.policy,
             layers: self.layers,
             enc: CallCodec(codec),
-            redirect: self.redirect,
             _marker: PhantomData,
         }
     }
@@ -611,33 +612,39 @@ impl<M, Policy, Layers, Enc, Rd> OutAttachment<M, Policy, Layers, Enc, Rd> {
             policy: f(self.policy),
             layers: self.layers,
             enc: self.enc,
-            redirect: self.redirect,
             _marker: PhantomData,
         }
     }
 
     /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
-    /// pairs, the encode codec (this slot's own when it named one, the surface's otherwise), and
-    /// the pipeline the entry publishes through (this slot's transforms lowered onto the app's,
-    /// under its redirect where the chain named one).
+    /// pairs (narrowed to plain sending where this slot's transforms name the destination), the
+    /// encode codec (this slot's own when it named one, the surface's otherwise), and the pipeline
+    /// the entry publishes through.
     pub(crate) fn wire<Surface, Pipeline>(
         self,
         surface: Surface,
         pipeline: Pipeline,
-    ) -> (Rd::Policy, Enc::Codec, Rd::Pipeline)
+    ) -> (SlotPolicy<Layers, Policy>, Enc::Codec, Layers::Out)
     where
         M: OutSlot,
         Enc: SlotCodec<Surface>,
-        Layers: LowerOutTransforms<Pipeline>,
-        Rd: LowerOutRedirect<Policy, Layers::Out>,
+        Layers: LowerOutTransforms<Pipeline> + PublishTransform<ForSlot>,
+        <Layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<Policy>,
     {
         let codec = self.enc.resolve(surface);
-        let (policy, pipeline) =
-            self.redirect
-                .lower(M::NAME, self.policy, self.layers.lower(M::NAME, pipeline));
-        (policy, codec, pipeline)
+        let policy =
+            <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::narrow(
+                self.policy,
+            );
+        (policy, codec, self.layers.lower(M::NAME, pipeline))
     }
 }
+
+/// The policy one slot pairs: its own, narrowed where the stack names the destination. Machinery;
+/// the commit spells it so the bound reads.
+#[doc(hidden)]
+pub type SlotPolicy<Layers, Policy> =
+    <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::Out;
 
 /// Resolves one slot's encode codec: the codec the chain named for that slot, or the registration
 /// surface's own when it named none. The slot counterpart of a reply wiring's
@@ -783,23 +790,6 @@ pub trait TransformAt<N, Index> {
     fn transform_at(self, transform: N) -> Self::Out;
 }
 
-/// Fills the redirect position of the slot bound at `Index`: the `.redirect(..)` step of a mount
-/// chain, applied to a slot. Machinery; never named directly.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "this slot is already redirected",
-    label = "`.redirect(..)` names the slot's destinations, and they are named",
-    note = "a slot names each message's destination once: drop one of the `.redirect(..)` calls, \
-            or fold the two decisions into the single transform the step takes"
-)]
-pub trait RedirectAt<N, Index> {
-    /// The attachment tuple with that slot's redirect named.
-    type Out;
-
-    /// Names it.
-    fn redirect_at(self, redirect: N) -> Self::Out;
-}
-
 /// Fills the codec position of the slot bound at `Index`: the `.codec(..)` step applied to a
 /// slot. Machinery; never named directly.
 #[doc(hidden)]
@@ -874,77 +864,114 @@ impl<N, Rep, Slots> TransformLast<N, NoOutBound> for (Rep, Slots) {
     }
 }
 
-/// A position a chain's `.redirect(..)` step can ride, and what riding it demands.
+/// Whether the position a chain named last admits the transform the `.transform(..)` step is
+/// about to compose, given what its stack has already declared.
 ///
-/// The reply position demands the two things a redirect cannot work without: a handler answering
-/// one delivery at a time (a batch's replies answer no single one), and a reply type that leaves
-/// its destination open. A slot position demands nothing here - what a redirected slot admits is
-/// settled per message, where the message type is known.
+/// This is where the six facts about naming a destination live. The position states what it
+/// offers - a reply type that leaves its destination open offers [`Names`], one that fixes it
+/// offers [`Reads`], a batch's replies offer [`Reads`] because they answer many deliveries, a slot
+/// offers what its `#[publishes(..)]` dictionary adds up to - and [`Admits`] settles it against
+/// what the transform declares and what the stack has taken. Machinery; never named directly.
 #[doc(hidden)]
-pub trait RedirectPosition<Mount, Def> {}
+pub trait AdmitsAt<N, Last, Mount, Def> {}
 
-impl<Mount, Def> RedirectPosition<Mount, Def> for ReplyLast
+// The reply position: the mount token turns the definition's reply type into an offer, and the
+// wiring's own stack says whether the right has been taken already.
+impl<N, Policy, Enc, PL, BL, Tx, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+    for (WithSource<ReplyWiring<Policy, Enc, PL, BL, Tx>>, Slots)
 where
-    Mount: SoloReplyMount,
-    Def: DeclaresReply<Reply: RedirectableReply>,
+    Mount: MountOffer<Def>,
+    Def: DeclaresReply,
+    PL: PublishTransform<ForReply<Def::Context>>,
+    N: PublishTransform<ForReply<Def::Context>>,
+    <N as PublishTransform<ForReply<Def::Context>>>::Destination: FitsOffer<
+            Mount::Offer,
+            <PL as PublishTransform<ForReply<Def::Context>>>::Destination,
+            Def::Reply,
+        >,
 {
 }
 
-impl<Mount, Def, const POS: usize> RedirectPosition<Mount, Def> for SlotPos<POS> {}
+// The byte-for-byte reply carries no transform stack at all, so `AddReplyTransform` is what has to
+// fail there; this arm keeps this check from failing first and hiding it.
+impl<N, Policy, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+    for (WithSource<RawReplyWiring<Policy>>, Slots)
+{
+}
 
-// The "nothing named yet" arm: `Step: NamedStep` is the bound that should fail there, so this one
-// must not fail first.
-impl<Mount, Def> RedirectPosition<Mount, Def> for NoOutBound {}
+// One slot position, asked of the slot tuple through the positional machinery.
+impl<N, const POS: usize, Rep, Slots, Mount, Def> AdmitsAt<N, SlotPos<POS>, Mount, Def>
+    for (Rep, Slots)
+where
+    Slots: AdmitsSlotAt<N, SlotPos<POS>>,
+{
+}
 
-/// Names the destination of whatever a mount chain named last, per delivery: the reply's after
-/// `.out(Reply, ..)`, one slot's after `.out(marker, ..)`. Machinery; never named directly.
+// See `TransformLast`'s own arm: `Step: NamedStep` is the bound that should fail with nothing
+// named, so this one must not fail first.
+impl<N, Rep, Slots, Mount, Def> AdmitsAt<N, NoOutBound, Mount, Def> for (Rep, Slots) {}
+
+/// Whether the slot bound at `Index` admits the transform the `.transform(..)` step is about to
+/// compose. The positional half of [`AdmitsAt`]; machinery, never named directly.
 #[doc(hidden)]
-pub trait RedirectLast<N, Last> {
-    /// See [`TransformLast::Step`].
-    type Step;
+pub trait AdmitsSlotAt<N, Index> {}
 
-    /// The attachment after the step.
-    type Out;
-
-    /// Names it.
-    fn redirect_last(self, redirect: N) -> Self::Out;
+/// What one mount token offers a reply transform, read off the definition's reply type.
+///
+/// A one-by-one reply offers what its type's destination form offers; a batch's replies offer
+/// [`Reads`] whatever their type says, because a batch answers many deliveries and carries none of
+/// their headers, so there is nothing a transform could name a destination from. Machinery.
+#[doc(hidden)]
+pub trait MountOffer<Def> {
+    /// The most a transform on this mount's reply may do to the destination.
+    type Offer;
 }
 
-impl<N, W, Slots> RedirectLast<N, ReplyLast> for (WithSource<W>, Slots)
+/// What one reply type offers, folded out of its payload's destination declaration. Machinery
+/// behind [`MountOffer`].
+#[doc(hidden)]
+pub trait ReplyOffer {
+    /// The most a transform on this reply may do to the destination.
+    type Offer;
+}
+
+// The nested projection is the machinery of the resolution, not the user's mistake.
+#[diagnostic::do_not_recommend]
+impl<R> ReplyOffer for R
 where
-    W: AddReplyRedirect<N, Slot: RedirectSlotOpen>,
+    R: ReplyShape<Body: OutgoingDestination<Form: DestinationOffer>>,
 {
-    type Step = ReplyLast;
-    type Out = (WithSource<W::Out>, Slots);
-
-    fn redirect_last(self, redirect: N) -> Self::Out {
-        let (reply, slots) = self;
-        (reply.map(|wiring| wiring.add_redirect(redirect)), slots)
-    }
+    type Offer = <<R::Body as OutgoingDestination>::Form as DestinationOffer>::Offer;
 }
 
-impl<N, const POS: usize, Rep, Slots> RedirectLast<N, SlotPos<POS>> for (Rep, Slots)
-where
-    Slots: RedirectAt<N, SlotPos<POS>>,
-{
-    type Step = SlotPos<POS>;
-    type Out = (Rep, Slots::Out);
-
-    fn redirect_last(self, redirect: N) -> Self::Out {
-        let (reply, slots) = self;
-        (reply, slots.redirect_at(redirect))
-    }
+/// Implements [`MountOffer`] for the mounts whose reply answers one delivery: the offer is the
+/// reply type's own.
+macro_rules! impl_solo_mount_offer {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Def: DeclaresReply<Reply: ReplyOffer>> MountOffer<Def> for $mount {
+            type Offer = <Def::Reply as ReplyOffer>::Offer;
+        }
+    )+};
 }
 
-// See `TransformLast`'s own arm.
-impl<N, Rep, Slots> RedirectLast<N, NoOutBound> for (Rep, Slots) {
-    type Step = NoOutBound;
-    type Out = Self;
+impl_solo_mount_offer!(PublishMount, PublishInjectMount);
 
-    fn redirect_last(self, _redirect: N) -> Self {
-        self
-    }
+/// Implements [`MountOffer`] for the mounts that offer nothing: a batch answers many deliveries,
+/// and a byte-for-byte reply has no transform stack to offer anything to.
+macro_rules! impl_reads_only_mount_offer {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Def> MountOffer<Def> for $mount {
+            type Offer = Reads;
+        }
+    )+};
 }
+
+impl_reads_only_mount_offer!(
+    BatchPublishMount,
+    BatchPublishInjectMount,
+    RawReplyMount,
+    RawReplyInjectMount,
+);
 
 /// Names the codec of whatever a mount chain named last: the reply's encode codec after
 /// `.out(Reply, ..)`, one slot's after `.out(marker, ..)`. Machinery; never named directly.
@@ -1309,12 +1336,12 @@ impl_bind_slot! {
 /// last `.out(..)` bound (`@ <position>`) grows its stack, the surrounding elements pass through.
 macro_rules! impl_step_at {
     ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
-        impl<N, M, Policy, Layers, Enc, Rd $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
-            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc, Rd>>, $($after,)*)
+        impl<N, M, Policy, Layers, Enc $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
         {
             type Out = (
                 $($before,)*
-                WithSource<OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc, Rd>>,
+                WithSource<OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc>>,
                 $($after,)*
             );
 
@@ -1325,37 +1352,30 @@ macro_rules! impl_step_at {
             }
         }
 
-        impl<N, M: OpenDestinations, Policy, Layers, Enc $(, $before)* $(, $after)*>
-            RedirectAt<N, SlotPos<$pos>>
-            for (
-                $($before,)*
-                WithSource<OutAttachment<M, Policy, Layers, Enc, NoOutRedirect>>,
-                $($after,)*
-            )
+        impl<N, M, Policy, Layers, Enc $(, $before)* $(, $after)*> AdmitsSlotAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
+        where
+            M: OutSlot,
+            Layers: PublishTransform<ForSlot>,
+            N: PublishTransform<ForSlot>,
+            <N as PublishTransform<ForSlot>>::Destination: FitsOffer<
+                    M::Destination,
+                    <Layers as PublishTransform<ForSlot>>::Destination,
+                    M,
+                >,
         {
-            type Out = (
-                $($before,)*
-                WithSource<OutAttachment<M, Policy, Layers, Enc, OutRedirected<N>>>,
-                $($after,)*
-            );
-
-            fn redirect_at(self, redirect: N) -> Self::Out {
-                #[allow(non_snake_case)]
-                let ($($before,)* bound, $($after,)*) = self;
-                ($($before,)* bound.map(|slot| slot.add_redirect(redirect)), $($after,)*)
-            }
         }
 
-        impl<Cd, M, Policy, Layers, Rd $(, $before)* $(, $after)*> CodecAt<Cd, SlotPos<$pos>>
+        impl<Cd, M, Policy, Layers $(, $before)* $(, $after)*> CodecAt<Cd, SlotPos<$pos>>
             for (
                 $($before,)*
-                WithSource<OutAttachment<M, Policy, Layers, UnnamedCodec, Rd>>,
+                WithSource<OutAttachment<M, Policy, Layers, UnnamedCodec>>,
                 $($after,)*
             )
         {
             type Out = (
                 $($before,)*
-                WithSource<OutAttachment<M, Policy, Layers, CallCodec<Cd>, Rd>>,
+                WithSource<OutAttachment<M, Policy, Layers, CallCodec<Cd>>>,
                 $($after,)*
             );
 
@@ -1366,8 +1386,8 @@ macro_rules! impl_step_at {
             }
         }
 
-        impl<M, Policy, Layers, Enc, Rd $(, $before)* $(, $after)*> MapPolicyAt<SlotPos<$pos>>
-            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc, Rd>>, $($after,)*)
+        impl<M, Policy, Layers, Enc $(, $before)* $(, $after)*> MapPolicyAt<SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
         {
             type Policy = Policy;
 

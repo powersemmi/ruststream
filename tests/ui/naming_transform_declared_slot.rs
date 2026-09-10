@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishTransform, RustStream};
+use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Names, Out, Outgoing as OutgoingMessage, PublishTransform, RustStream};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,8 @@ struct Audit;
 struct ByTenant;
 
 impl<K: ContextKind> PublishTransform<K> for ByTenant {
+    type Destination = Names;
+
     fn apply(&self, out: &mut OutgoingMessage<'_>, _cx: &K::View<'_>) {
         out.set_name("audit.north");
     }
@@ -39,7 +41,7 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(mirror)
             .out(Audit, MemoryPublish)
-            .redirect(ByTenant)
+            .transform(ByTenant)
             .build();
     });
 }

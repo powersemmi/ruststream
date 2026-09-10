@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Out, Outgoing, PublishTransform, RustStream, for_batch};
+use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Out, Outgoing, PublishTransform, Reads, RustStream, for_batch};
 use ruststream::{OutSlot, Publisher, subscriber};
 use serde::Deserialize;
 
@@ -14,6 +14,8 @@ struct Audit;
 struct Stamp;
 
 impl<K: ContextKind> PublishTransform<K> for Stamp {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamp", b"1".to_vec());
     }

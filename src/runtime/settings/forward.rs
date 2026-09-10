@@ -264,6 +264,7 @@ impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, Sta
 // it reads every other structural piece.
 impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def, Src, State, DC> {
     type Reply = Def::Reply;
+    type Context = Def::Context;
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source

@@ -25,7 +25,7 @@ use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    ContextKind, HealthState, IntoSource, Outgoing, PublishError, PublishTransform,
+    ContextKind, HealthState, IntoSource, Outgoing, PublishError, PublishTransform, Reads,
     RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
@@ -582,6 +582,8 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
 struct Envelope;
 
 impl<K: ContextKind> PublishTransform<K> for Envelope {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }

@@ -16,7 +16,7 @@ use std::future::{Future, ready};
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
     BoundSegment, ContextKind, MissingSegment, PublishAt, PublishError, PublishLayer, PublishNext,
-    PublishPipeline, PublishTransform, TemplateAddress,
+    PublishPipeline, PublishTransform, Reads, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
@@ -179,6 +179,7 @@ struct Primary;
 
 impl OutSlot for Primary {
     const NAME: &'static str = "Primary";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         <Event as OutMessages<Self>>::outgoing()
@@ -191,6 +192,7 @@ struct Shadow;
 
 impl OutSlot for Shadow {
     const NAME: &'static str = "Shadow";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         <Event as OutMessages<Self>>::outgoing()
@@ -375,6 +377,7 @@ struct Orders;
 
 impl OutSlot for Orders {
     const NAME: &'static str = "Orders";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         let mut declared = <OrderConfirmed as OutMessages<Self>>::outgoing();
@@ -431,6 +434,8 @@ where
 struct EnvelopeTransform;
 
 impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
@@ -444,6 +449,8 @@ impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
 struct OutboxEnvelope;
 
 impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }

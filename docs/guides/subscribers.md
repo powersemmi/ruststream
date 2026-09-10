@@ -590,9 +590,9 @@ The policy you name at the `include` site constructs the publisher, and both wir
 policy the same way: `b.include(relay).out(Reply, Publish)`. With no `.out(..)` call, the broker's
 default publish policy constructs it.
 
-The chains diverge after that: an encoded reply takes `.codec(..)`, `.transform(..)`,
-`.redirect(..)` and `.transactional()`, while a `Serialized` reply's bytes are published untouched,
-so those steps do not exist on that path. A failed reply publish nacks the delivery with requeue,
+The chains diverge after that: an encoded reply takes `.codec(..)`, `.transform(..)` and
+`.transactional()`, while a `Serialized` reply's bytes are published untouched, so those steps do
+not exist on that path. A failed reply publish nacks the delivery with requeue,
 exactly as on the encoded path:
 
 === "Macros"

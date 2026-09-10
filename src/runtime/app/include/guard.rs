@@ -15,8 +15,8 @@ use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
 use crate::runtime::router::{MapPublisher, Router, RouterCommit, RouterDef, RouterWith};
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, RedirectLast,
-    RedirectPosition, ReplyStep, TransactionalLast, TransformLast,
+    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, ReplyStep,
+    TransactionalLast, TransformLast,
 };
 
 use crate::runtime::app::scope::BrokerScope;
@@ -202,38 +202,11 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
         SteppedChain<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>:
             ScopeCommit<B, Layers, C, State, Pipeline>,
     {
         self.map_chain(|chain| chain.transform(transform))
-    }
-
-    /// See [`RouterWith::redirect`].
-    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn redirect<N>(
-        self,
-        redirect: N,
-    ) -> Stepped<
-        's,
-        B,
-        Layers,
-        C,
-        State,
-        Pipeline,
-        Mount,
-        R,
-        Def,
-        <Attach as RedirectLast<N, Last>>::Out,
-        Last,
-    >
-    where
-        Attach: RedirectLast<N, Last, Step: NamedStep>,
-        Last: RedirectPosition<Mount, Def>,
-        SteppedChain<Mount, R, Def, <Attach as RedirectLast<N, Last>>::Out, Last>:
-            ScopeCommit<B, Layers, C, State, Pipeline>,
-    {
-        self.map_chain(|chain| chain.redirect(redirect))
     }
 
     /// See [`RouterWith::batch_transform`].
@@ -488,34 +461,9 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
     {
         self.map_chain(|chain| chain.transform(transform))
-    }
-
-    /// See [`RouterWith::redirect`].
-    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn redirect<N>(
-        self,
-        redirect: N,
-    ) -> SteppedSlots<
-        's,
-        B,
-        Layers,
-        C,
-        State,
-        Pipeline,
-        Mount,
-        R,
-        Def,
-        <Attach as RedirectLast<N, Last>>::Out,
-        Last,
-    >
-    where
-        Attach: RedirectLast<N, Last, Step: NamedStep>,
-        Last: RedirectPosition<Mount, Def>,
-    {
-        self.map_chain(|chain| chain.redirect(redirect))
     }
 
     /// See [`RouterWith::batch_transform`].

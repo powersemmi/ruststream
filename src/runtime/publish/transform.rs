@@ -127,6 +127,89 @@ impl<'a> SlotContext<'a> {
     }
 }
 
+/// What a transform does to the message's destination: the second half of what it declares,
+/// beside the view it reads.
+///
+/// A position offers one of these as the most a transform mounted there may do, and a transform
+/// projects one as what it needs. They meet at the mount site: [`Names`] on a transform requires
+/// [`Names`] on the position, and [`Reads`] fits anywhere.
+#[doc(hidden)]
+pub trait DestinationUse {}
+
+/// The transform reads the destination and leaves it alone. What almost every transform declares,
+/// and what every position offers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Reads;
+
+impl DestinationUse for Reads {}
+
+/// The transform names the destination. A position offers this only where the destination is not
+/// already declared, so a declaration and the wire cannot disagree.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Names;
+
+impl DestinationUse for Names {}
+
+/// Whether what a transform declares fits the position it is being mounted on. Implemented on the
+/// transform's own [`PublishTransform::Destination`], so what fails is a bound naming the reason
+/// rather than a mismatch on the projection that produced it.
+///
+/// [`Reads`] fits any position at any time. [`Names`] fits a position that offers the right
+/// ([`NamingOffered`]) and has not given it away ([`NamingUntaken`]), and those are two bounds so
+/// a refusal says which of the two it was. `By` is what declares the position's offer - the reply
+/// type, or the slot's marker - carried so the error names it.
+#[doc(hidden)]
+pub trait FitsOffer<Offer, Taken, By> {}
+
+// A reading transform asks for nothing, so it fits every offer whatever came before.
+impl<Offer, Taken, By> FitsOffer<Offer, Taken, By> for Reads {}
+
+// A naming one asks for both halves, as bounds rather than as parameter matches.
+impl<Offer: NamingOffered<By>, Taken: NamingUntaken, By> FitsOffer<Offer, Taken, By> for Names {}
+
+/// A position that offers a transform the right to name the destination, as declared by `By`.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`{By}` does not let a transform name the destination",
+    label = "the transform on this step declares `Destination = Names`",
+    note = "the destination is already declared and the generated document reports it: a reply \
+            type carrying `#[outgoing(name = \"..\")]` is published there, a batch's replies \
+            answer many deliveries and carry none of their headers, and a slot marker offers the \
+            right only when every type in its `#[publishes(..)]` dictionary leaves its destination \
+            open - one with no dictionary, `DefaultSlot` among them, never offers it"
+)]
+pub trait NamingOffered<By> {}
+
+impl<By> NamingOffered<By> for Names {}
+
+/// A position whose naming right no transform has taken yet.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this position has already given the naming right away",
+    label = "an earlier transform on this position declares `Destination = Names`",
+    note = "one destination, one transform that names it: fold the two decisions into a single \
+            transform, or drop one of them"
+)]
+pub trait NamingUntaken {}
+
+impl NamingUntaken for Reads {}
+
+/// The destination use of a whole transform stack: [`Names`] as soon as one element names.
+/// Machinery behind the `.transform(..)` step's own check.
+#[doc(hidden)]
+pub trait Either<Rhs> {
+    /// The combined use.
+    type Out;
+}
+
+impl<Rhs: DestinationUse> Either<Rhs> for Reads {
+    type Out = Rhs;
+}
+
+impl<Rhs: DestinationUse> Either<Rhs> for Names {
+    type Out = Self;
+}
+
 /// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent, with read
 /// access to whatever its position hands it.
 ///
@@ -146,11 +229,13 @@ impl<'a> SlotContext<'a> {
 /// belongs. A transform that reads nothing is generic over the kind and mounts anywhere:
 ///
 /// ```
-/// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform};
+/// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
 ///
 /// struct Envelope;
 ///
 /// impl<K: ContextKind> PublishTransform<K> for Envelope {
+///     type Destination = Reads;
+///
 ///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
 ///         out.headers_mut().insert("x-envelope", b"1".to_vec());
 ///     }
@@ -161,25 +246,31 @@ impl<'a> SlotContext<'a> {
 /// at the mount site:
 ///
 /// ```
-/// use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform};
+/// use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform, Reads};
 ///
 /// struct StampSource;
 ///
 /// impl<C> PublishTransform<ForReply<C>> for StampSource {
+///     type Destination = Reads;
+///
 ///     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
 ///         out.headers_mut().insert("x-source", cx.name().as_bytes().to_vec());
 ///     }
 /// }
 /// ```
 ///
-/// # Where the destination comes from
+/// # What a transform may do to the destination
 ///
-/// A transform named with `.transform(..)` runs over a message whose destination is already
-/// resolved, from the message type's declaration, the mount site or the call site. A transform
-/// that decides that destination itself is the same trait named on a different step:
-/// `.redirect(..)` runs it first and exists only where the destination is left open, so a
-/// declaration and the wire cannot disagree. [`Outgoing::set_name`] is callable from either step -
-/// what the two steps differ in is which one the mount site has declared to own the destination.
+/// [`Destination`](Self::Destination) is the other half of the declaration, beside the view: a
+/// transform that leaves the destination alone declares [`Reads`], one that names it declares
+/// [`Names`]. Stable Rust has no default for an associated type, so every impl writes the line -
+/// including the two above, which declare `Reads`.
+///
+/// A position offers the right to name only where nothing has declared the destination already:
+/// a reply type that leaves it open, a slot whose whole `#[publishes(..)]` dictionary leaves it
+/// open. Where it is not on offer, mounting a naming transform is a compile error at the mount
+/// site, which is what keeps a declaration and the wire in step. [`Outgoing::set_name`] stays a
+/// plain method; what is checked is the declaration, not the call.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a publish transform for `{K}`",
     note = "a transform states its position by the kind it implements: `PublishTransform<K>` for \
@@ -188,70 +279,11 @@ impl<'a> SlotContext<'a> {
             slot publish is issued by the handler body, so it has no delivery to hand on"
 )]
 pub trait PublishTransform<K: ContextKind>: Send + Sync {
+    /// What this transform does to the destination: [`Reads`] or [`Names`].
+    type Destination: DestinationUse;
+
     /// Transforms `out` in place before it is sent, reading the position's view through `cx`.
     fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>);
-}
-
-/// The empty redirect position of a reply wiring: the reply goes where its declaration says.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoRedirect;
-
-/// The redirect position of a reply wiring, filled by a chain's `.redirect(..)` step: the
-/// [`PublishTransform`] that step named, held until the wiring pairs.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Redirected<T>(pub(super) T);
-
-/// A redirect position still empty: what a `.redirect(..)` step fills.
-///
-/// Stated about the position ([`AddReplyRedirect::Slot`](super::AddReplyRedirect::Slot)) rather
-/// than about the wiring, so a second `.redirect(..)` reports the redirect the first one already
-/// named.
-#[doc(hidden)]
-#[diagnostic::on_unimplemented(
-    message = "this reply is already redirected",
-    label = "`.redirect(..)` names the reply's destination, and it is named",
-    note = "a reply has one destination: drop one of the `.redirect(..)` calls, or fold the two \
-            decisions into the single transform the step takes"
-)]
-pub trait RedirectSlotOpen {}
-
-impl RedirectSlotOpen for NoRedirect {}
-
-/// Lowers a reply wiring's redirect position onto its [`PublishTransform`] stack, producing the
-/// stack the live publisher runs. Machinery; never named in user code.
-///
-/// The empty position lowers to the stack unchanged, so a reply with no redirect pays nothing. A
-/// named one becomes the stack's first element: the redirect decides where the reply goes, then
-/// the ordinary transforms rewrite its headers and payload, whatever order the chain named them
-/// in.
-#[doc(hidden)]
-pub trait LowerRedirect<PL> {
-    /// The composed transform stack.
-    type Out;
-
-    /// Composes it.
-    fn lower(self, layers: PL) -> Self::Out;
-}
-
-impl<PL> LowerRedirect<PL> for NoRedirect {
-    type Out = PL;
-
-    fn lower(self, layers: PL) -> PL {
-        layers
-    }
-}
-
-impl<T, PL> LowerRedirect<PL> for Redirected<T> {
-    type Out = PublishTransformStack<T, PL>;
-
-    fn lower(self, layers: PL) -> Self::Out {
-        PublishTransformStack {
-            inner: self.0,
-            outer: layers,
-        }
-    }
 }
 
 /// The no-op [`PublishTransform`]: the default for a reply wiring with no static transforms.
@@ -259,6 +291,8 @@ impl<T, PL> LowerRedirect<PL> for Redirected<T> {
 pub struct PublishTransformIdentity;
 
 impl<K: ContextKind> PublishTransform<K> for PublishTransformIdentity {
+    type Destination = Reads;
+
     fn apply(&self, _out: &mut Outgoing<'_>, _cx: &K::View<'_>) {}
 }
 
@@ -271,9 +305,13 @@ pub struct PublishTransformStack<Inner, Outer> {
     pub(crate) outer: Outer,
 }
 
-impl<K: ContextKind, Inner: PublishTransform<K>, Outer: PublishTransform<K>> PublishTransform<K>
-    for PublishTransformStack<Inner, Outer>
+impl<K: ContextKind, Inner, Outer> PublishTransform<K> for PublishTransformStack<Inner, Outer>
+where
+    Inner: PublishTransform<K, Destination: Either<Outer::Destination, Out: DestinationUse>>,
+    Outer: PublishTransform<K>,
 {
+    type Destination = <Inner::Destination as Either<Outer::Destination>>::Out;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>) {
         self.inner.apply(out, cx);
         self.outer.apply(out, cx);
@@ -352,7 +390,7 @@ impl<C, L: PublishTransform<ForReply<C>>> BatchPublishTransform<C> for ForBatch<
 /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::{for_batch, ContextKind, Outgoing, PublishTransform};
+/// use ruststream::runtime::{for_batch, ContextKind, Outgoing, PublishTransform, Reads};
 /// # use ruststream::subscriber;
 /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
 /// # struct Order { id: u64 }
@@ -365,6 +403,8 @@ impl<C, L: PublishTransform<ForReply<C>>> BatchPublishTransform<C> for ForBatch<
 ///
 /// struct Stamp;
 /// impl<K: ContextKind> PublishTransform<K> for Stamp {
+///     type Destination = Reads;
+///
 ///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
 ///         out.headers_mut().insert("x-stamp", b"1".to_vec());
 ///     }

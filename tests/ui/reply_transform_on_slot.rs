@@ -1,8 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{
-    AppInfo, ForReply, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishContext,
-    PublishTransform, RustStream,
-};
+use ruststream::runtime::{AppInfo, ForReply, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reads, RustStream};
 use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +22,8 @@ struct Audit;
 struct StampSource;
 
 impl<C> PublishTransform<ForReply<C>> for StampSource {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut OutgoingMessage<'_>, cx: &PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source", cx.name().as_bytes().to_vec());

@@ -464,38 +464,34 @@ pub fn derive_out_slot(item: TokenStream) -> TokenStream {
             impl ::ruststream::runtime::PublishedThrough<#name> for #ty {}
         }
     });
-    let dictionary_list = slot_dictionary_list(name, &dictionary);
+    let destination = slot_destination(&dictionary);
 
     quote! {
         impl ::ruststream::runtime::OutSlot for #name {
             const NAME: &'static str = #name_str;
 
+            type Destination = #destination;
+
             #outgoing
         }
 
         #(#memberships)*
-
-        #dictionary_list
     }
     .into()
 }
 
-/// The marker's `#[publishes(..)]` list as types, nested right and closed with `()`. Mount-site
-/// steps that have to ask something of every listed type read it here; `.redirect(..)` is the one
-/// that does today. A marker with no list declares nothing, so there is no list to write.
-fn slot_dictionary_list(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
+/// What the marker offers a transform, folded out of its `#[publishes(..)]` list: the list as
+/// types, nested right and closed with `()`, projected through `ListOffer`. A marker with no list
+/// promises nothing, because it admits every declared message, so it offers `Reads`.
+fn slot_destination(dictionary: &[Type]) -> TokenStream2 {
     if dictionary.is_empty() {
-        return quote!();
+        return quote!(::ruststream::runtime::Reads);
     }
     let list = dictionary
         .iter()
         .rev()
         .fold(quote!(()), |tail, ty| quote!((#ty, #tail)));
-    quote! {
-        impl ::ruststream::runtime::SlotDictionary for #name {
-            type Publishes = #list;
-        }
-    }
+    quote!(<#list as ::ruststream::runtime::ListOffer>::Offer)
 }
 
 /// The marker's `outgoing()` override, reporting its `#[publishes(..)]` list as the document's

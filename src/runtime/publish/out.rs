@@ -20,8 +20,9 @@ use bytes::BytesMut;
 use thiserror::Error;
 
 use super::{
-    ForSlot, Outgoing, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishStack,
-    PublishTransform, PublishTransformIdentity, PublishTransformStack, SlotContext,
+    ForSlot, Names, Outgoing, PublishIdentity, PublishLayer, PublishNext, PublishPipeline,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
+    SlotContext,
 };
 use crate::runtime::lifecycle::BoxError;
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Publisher};
@@ -82,150 +83,68 @@ impl<Pipeline, Inner, Outer> LowerOutTransforms<Pipeline> for PublishTransformSt
     }
 }
 
-/// The empty redirect position of one slot's attachment: messages go where their declaration
-/// says.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoOutRedirect;
-
-/// The redirect position of one slot's attachment, filled by a chain's `.redirect(..)` step: the
-/// [`PublishTransform`] that step named, held until the slot is wired.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OutRedirected<T>(pub(crate) T);
-
-/// Lowers a slot's redirect position onto the two places it changes: the policy the runtime
-/// pairs, and the pipeline every message leaving the slot travels. Machinery; never named in user
-/// code.
+/// Narrows a slot's publish policy to what the transforms it carries leave intact. Machinery;
+/// driven by the projected [`PublishTransform::Destination`] of the slot's whole stack.
 ///
-/// The empty position hands both back unchanged, so a slot with no redirect pays nothing. A named
-/// one puts the redirect at the head of the pipeline - it names the destination, then the slot's
-/// own transforms rewrite headers and payload, then the app-wide middleware runs, then the send -
-/// and narrows the policy to [`RedirectedSendPolicy`], because the capabilities beside a plain
-/// publish reach the broker without the pipeline and would leave the redirect behind.
+/// A stack that only reads hands the policy back unchanged, so a slot with ordinary transforms
+/// keeps every capability its broker offers. One that names the destination narrows the policy to
+/// [`SendOnlyPolicy`]: a broker transaction, a caller-owned transaction and a request / reply round
+/// trip all reach the broker without the slot's publish path, so their messages would go where that
+/// transform never looked.
 #[doc(hidden)]
-pub trait LowerOutRedirect<Policy, Pipeline> {
+pub trait NarrowToUse<Policy> {
     /// The policy the runtime pairs for this slot.
-    type Policy;
+    type Out;
 
-    /// The pipeline the slot entry publishes through.
-    type Pipeline;
-
-    /// Lowers both, against the marker whose name the redirect reads.
-    fn lower(
-        self,
-        slot: &'static str,
-        policy: Policy,
-        pipeline: Pipeline,
-    ) -> (Self::Policy, Self::Pipeline);
+    /// Narrows it.
+    fn narrow(policy: Policy) -> Self::Out;
 }
 
-impl<Policy, Pipeline> LowerOutRedirect<Policy, Pipeline> for NoOutRedirect {
-    type Policy = Policy;
-    type Pipeline = Pipeline;
+impl<Policy> NarrowToUse<Policy> for Reads {
+    type Out = Policy;
 
-    fn lower(self, _slot: &'static str, policy: Policy, pipeline: Pipeline) -> (Policy, Pipeline) {
-        (policy, pipeline)
+    fn narrow(policy: Policy) -> Policy {
+        policy
     }
 }
 
-impl<Policy, Pipeline, T> LowerOutRedirect<Policy, Pipeline> for OutRedirected<T> {
-    type Policy = RedirectedSendPolicy<Policy>;
-    type Pipeline = RedirectStack<T, Pipeline>;
+impl<Policy> NarrowToUse<Policy> for Names {
+    type Out = SendOnlyPolicy<Policy>;
 
-    fn lower(
-        self,
-        slot: &'static str,
-        policy: Policy,
-        pipeline: Pipeline,
-    ) -> (Self::Policy, Self::Pipeline) {
-        (
-            RedirectedSendPolicy(policy),
-            RedirectStack {
-                slot,
-                redirect: self.0,
-                tail: pipeline,
-            },
-        )
+    fn narrow(policy: Policy) -> Self::Out {
+        SendOnlyPolicy(policy)
     }
 }
 
-/// The transform a slot's `.redirect(..)` step named, in front of the rest of its publish path.
-///
-/// A pipeline shape of its own rather than one more [`PublishStack`], so the redirect is visible in
-/// the slot's type and runs before the slot's attributed leaf - what a test harness records and
-/// what the broker receives are then the same message. Built when a mount chain's `.redirect(..)`
-/// step lowers; you never name it.
+/// A slot's publish policy narrowed to plain sending: what a naming transform on the slot leaves
+/// it with. Pure declaration, like the policy underneath.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RedirectStack<Rd, Tail> {
-    slot: &'static str,
-    redirect: Rd,
-    tail: Tail,
-}
-
-impl<Rd: PublishTransform<ForSlot>, Tail: PublishPipeline> PublishPipeline
-    for RedirectStack<Rd, Tail>
-{
-    async fn run<'a, P: Publisher>(
-        &'a self,
-        out: &'a mut Outgoing<'a>,
-        send: &'a P,
-    ) -> Result<(), BoxError> {
-        self.redirect.apply(out, &SlotContext::new(self.slot));
-        self.tail.run(out, send).await
-    }
-}
-
-impl<Rd: PublishTransform<ForSlot>, Tail: PublishPipeline> OutPipeline for RedirectStack<Rd, Tail> {
-    type Error<E: StdError + Send + Sync + 'static> = PipelinePublishError;
-
-    fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> PipelinePublishError {
-        PipelinePublishError(Box::new(err))
-    }
-
-    async fn send<P: Publisher>(
-        &self,
-        leaf: &P,
-        msg: OutgoingMessage<'_>,
-    ) -> Result<(), PipelinePublishError> {
-        // See `PublishStack`: the pipeline mutates the message, so it takes ownership of its
-        // parts here.
-        let mut out = Outgoing::new(msg.name(), BytesMut::from(msg.payload()));
-        *out.headers_mut() = msg.headers().clone();
-        self.run(&mut out, leaf).await.map_err(PipelinePublishError)
-    }
-}
-
-/// A slot's publish policy narrowed to plain sending: what a `.redirect(..)` step leaves the slot
-/// with. Pure declaration, like the policy underneath.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RedirectedSendPolicy<Policy>(Policy);
+pub struct SendOnlyPolicy<Policy>(Policy);
 
 impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
-    for RedirectedSendPolicy<Policy>
+    for SendOnlyPolicy<Policy>
 {
-    type Live = RedirectedSend<Policy::Live>;
+    type Live = NamedDestinationSend<Policy::Live>;
 
     async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
-        Ok(RedirectedSend(self.0.pair(connected).await?))
+        Ok(NamedDestinationSend(self.0.pair(connected).await?))
     }
 }
 
-/// The live value of a redirected slot: the broker's publisher with everything but plain sending
-/// taken away.
+/// The live value of a slot whose transform names the destination: the broker's publisher with
+/// everything but plain sending taken away.
 ///
-/// A redirect names the destination on the slot's publish path, and only a plain publish travels
-/// it. A broker transaction, a caller-owned transaction and a request / reply round trip all reach
-/// the broker directly, so their messages would go where the redirect never looked. Rather than
-/// let that happen quietly, a redirected slot offers none of them: a handler whose `Out` parameter
-/// asks for one fails to mount, naming the capability its slot does not have.
+/// The transform names the destination on the slot's publish path, and only a plain publish
+/// travels it. A broker transaction, a caller-owned transaction and a request / reply round trip
+/// all reach the broker directly, so their messages would go where that transform never looked.
+/// Rather than let that happen quietly, such a slot offers none of them: a handler whose `Out`
+/// parameter asks for one fails to mount, naming the capability its slot does not have.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RedirectedSend<P>(P);
+pub struct NamedDestinationSend<P>(P);
 
-impl<P: Publisher> Publisher for RedirectedSend<P> {
+impl<P: Publisher> Publisher for NamedDestinationSend<P> {
     type Error = P::Error;
 
     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {

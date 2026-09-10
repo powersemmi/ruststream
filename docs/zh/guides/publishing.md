@@ -361,15 +361,20 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
   进每一个会发布的处理器），最后添加的中间件在最外层运行。默认情况没有中间件，就是直接发送。中间件
   的组合要到运行时才决定时，可以把它包进 `PublishDynStack`（`DynStack` 在发布侧的对应物）再添加。
 
-### 变换拿到什么 { #what-a-transform-is-handed }
+### 变换声明什么 { #what-a-transform-declares }
 
-变换实现 `apply(&mut Outgoing<'_>, &K::View<'_>)`，其中 `K` 是这个位置的上下文种类。两个位置的差
-别正在于此，而种类由挂载点在编译期选定：
+变换声明两件事：它读什么，以及它可以对目的地做什么。
+
+它读的是这个位置的上下文种类，也就是 `apply(&mut Outgoing<'_>, &K::View<'_>)` 里的 `K`，由挂载点
+在编译期选定：
 
 | 位置 | 种类 | 变换读到什么 |
 |---|---|---|
 | 回复，在 `.out(Reply, ..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
 | `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
+
+它可以做什么由 `type Destination` 声明：不动目的地的变换写 `Reads`，要写入目的地的写 `Names`。
+stable Rust 没有关联类型的默认值，因此每个实现都要写这一行，而几乎每一个写的都是 `Reads`。
 
 什么都不读的变换，写一个覆盖所有种类的实现，两个位置都能挂：
 
@@ -396,41 +401,39 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 是 Broker 的批次上下文。要读入站消息的变换，应当留在按消息的那条路上：在那里，一条回复和它的投递是
 同一件事。
 
-### 按消息指定目的地 { #naming-a-destination-per-message }
+### 变换如何写入目的地 { #naming-a-destination-from-a-transform }
 
 消息发往何处是声明出来的：在消息类型上用 `#[outgoing(name = "..")]`，在挂载点用
 `publish("dest")`，或者在槽位的调用点用 `.to(..)`。有些回复没有目的地可声明。AMQP 请求把作答用的
 队列放在 `reply-to` 消息头里，ZeroMQ 的 `ROUTER` 则把每条回复发给提问的那一方。
 
-`.redirect(..)` 就是把目的地交给变换的那个步骤。它接受的正是 `.transform(..)` 接受的
-`PublishTransform`，种类与它所在的位置一致，而那个变换写入名字：
+声明了 `Destination = Names` 的变换自己写入名字：
 
 ```rust
---8<-- "examples/publishing.rs:redirect"
+--8<-- "examples/publishing.rs:naming_transform"
 ```
 
-在链上用 `.redirect(..)` 指定它：
+把它加到链上，和其他变换没有区别：
 
 ```rust
---8<-- "examples/publishing.rs:redirect_mount"
+--8<-- "examples/publishing.rs:naming_transform_mount"
 ```
 
-编译器检查的是步骤，不是变换。`.redirect(..)` 适用于把目的地留空的回复类型。写了
-`#[outgoing(name = "receipts")]` 的类型上，它是一个点名该回复类型的编译错误。因此，文档报告了
-channel 的那种回复，根本无从重定向。挂载点的 `publish("answers")` 仍然是这条回复已声明的目的地：
-生成的文档报告这个名字，重定向没有改名字时，回复也发往这里。
+只有目的地尚未声明的位置才给出这项权利，否则这次 `.transform(..)` 调用无法通过编译。写了
+`#[outgoing(name = "receipts")]` 的回复类型就发往那里，生成的文档也这么报告，因此这样的位置不给
+权利，而错误会点名该回复类型。批的回复同样不给：一个批作答许多条投递，不带其中任何一条的消息头，
+没有地方可以读出目的地。权利只给一次，因此同一个位置上的第二个写入目的地的变换无法通过编译。
 
-批的回复无法重定向：它们以整个批的名义发布，而一个批作答许多条投递，不带其中任何一条的消息头。一个
-位置只接受一次重定向，因此在它上面写第二个 `.redirect(..)` 无法通过编译。
+挂载点的 `publish("answers")` 仍然是这条回复已声明的目的地：生成的文档报告这个名字，变换没有改
+名字时，回复也发往这里。
 
-`Out` 槽位接受同一个步骤，用的正是它那里 `.transform(..)` 接受的 `ForSlot` 变换。
+只有当标记的 `#[publishes(..)]` 列表里每个类型都把目的地留空时，槽位才给出这项权利。函数体每次
+发布仍然要写 `.to(..)`，写入目的地的变换再改写这个名字。没有列表的标记接受任何已声明的消息，什么
+也保证不了，因此从不给出这项权利，单个匿名 `Out<impl Publisher>` 的隐式 `DefaultSlot` 也在其内。
+被收回的是写入目的地的权利，不是变换本身：这样的槽位照样接受普通变换。
 
-被重定向的槽位，其 `#[publishes(..)]` 列表里的每个类型都必须把目的地留空。函数体每次发布仍然要写
-`.to(..)`，重定向再改写这个名字。没有列表的标记接受任何已声明的消息，因此根本无法重定向，单个匿名
-`Out<impl Publisher>` 的隐式 `DefaultSlot` 也在其内。
-
-这样的槽位只提供普通发送：事务和一次 request / reply 往返都绕过槽位的发布路径直达 Broker，因此
-索要其中任何一项的处理器无法通过编译。
+已经把权利交出去的槽位只提供普通发送：事务和一次 request / reply 往返都绕过槽位的发布路径直达
+Broker，因此索要其中任何一项的处理器无法通过编译。
 
 `PublishLayer` 实现 around/next 形式的签名，因此它可以中断这条链、重试发送，或者只做观察：
 
@@ -457,8 +460,8 @@ channel 的那种回复，根本无从重定向。挂载点的 `publish("answers
 
 挂载点上的变换作用在指定它的那个位置上：`.out(Reply, Publish).transform(StampSource)` 扩充回复的
 栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 扩充这个槽位的栈。两个位置都用到时，注册就
-把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。一个位置按固定顺序运行它的步骤，
-无论链上把它们写成什么次序：先是重定向，然后是这个位置的变换，然后是应用级的中间件，最后是发送。
+把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。一个位置按链上写下的顺序运行它的
+变换，然后是应用级的中间件，最后是发送。
 
 有两种发布不经过这条管线，都由处理器函数体自己驱动：在槽位上开启的事务（`begin()`、`transaction()`）
 发往 Broker 的事务，而一次 request / reply 往返（`request(..)`）等待回复，不以一次发送收尾。

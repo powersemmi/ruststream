@@ -16,7 +16,7 @@
 //! # impl OutgoingDestination for Event { type Form = CallerName; }
 //! # impl MessageHeaders for Event { type Contract = NoHeaders; }
 //! # struct Primary;
-//! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; }
+//! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; type Destination = Reads; }
 //! # impl PublishedThrough<Primary> for Event {}
 //!
 //! struct Mirror;
@@ -531,10 +531,10 @@ where
 /// # impl OutgoingDestination for Event { type Form = CallerName; }
 /// # impl MessageHeaders for Event { type Contract = NoHeaders; }
 /// # struct Audit;
-/// # impl OutSlot for Audit { const NAME: &'static str = "Audit"; }
+/// # impl OutSlot for Audit { const NAME: &'static str = "Audit"; type Destination = Reads; }
 /// # impl PublishedThrough<Audit> for Event {}
 /// # struct Journal;
-/// # impl OutSlot for Journal { const NAME: &'static str = "Journal"; }
+/// # impl OutSlot for Journal { const NAME: &'static str = "Journal"; type Destination = Reads; }
 ///
 /// struct Route;
 ///

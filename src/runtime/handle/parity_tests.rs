@@ -19,9 +19,9 @@ use crate::memory::{
 use crate::nonzero;
 use crate::runtime::{
     Context, ContextKind, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire,
-    OutEntry, Outgoing, Outs, PublishTransform, Reply, ReplyShape, Router, RouterDef, Serialized,
-    SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings, Verdict,
-    for_batch, subscriber,
+    OutEntry, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router, RouterDef,
+    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
+    Verdict, for_batch, subscriber,
 };
 use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
@@ -319,6 +319,7 @@ struct Analytics;
 
 impl crate::runtime::OutSlot for Analytics {
     const NAME: &'static str = "Analytics";
+    type Destination = Reads;
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -412,6 +413,7 @@ struct Ledger;
 
 impl crate::runtime::OutSlot for Ledger {
     const NAME: &'static str = "Ledger";
+    type Destination = Reads;
 }
 
 impl crate::runtime::PublishedThrough<Ledger> for Event {}
@@ -456,6 +458,8 @@ where
 struct Trace;
 
 impl<K: ContextKind> PublishTransform<K> for Trace {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-trace", b"1".to_vec());
     }
@@ -648,6 +652,8 @@ fn reply_axes() -> impl RouterDef<MemoryBroker> {
 struct StampReply;
 
 impl<K: ContextKind> PublishTransform<K> for StampReply {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamped", "1");
     }

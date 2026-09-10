@@ -16,7 +16,7 @@ use common::Order;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
     ContextKind, ForReply, ForSlot, Outgoing, PublishContext, PublishLayer, PublishNext,
-    PublishPipeline, PublishTransform, SlotContext,
+    PublishPipeline, PublishTransform, Reads, SlotContext,
 };
 use ruststream::testing::TestApp;
 
@@ -39,6 +39,8 @@ impl PublishLayer for AppStamp {
 struct Envelope;
 
 impl<K: ContextKind> PublishTransform<K> for Envelope {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
@@ -49,6 +51,8 @@ impl<K: ContextKind> PublishTransform<K> for Envelope {
 struct StampSlot;
 
 impl PublishTransform<ForSlot> for StampSlot {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
         out.headers_mut()
             .insert("x-slot", cx.slot().as_bytes().to_vec());
@@ -59,6 +63,8 @@ impl PublishTransform<ForSlot> for StampSlot {
 struct StampSource;
 
 impl<C> PublishTransform<ForReply<C>> for StampSource {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         out.headers_mut()
             .insert("x-source", cx.name().as_bytes().to_vec());

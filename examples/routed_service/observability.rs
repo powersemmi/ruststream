@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use ruststream::runtime::{
     BlanketLayer, Context, ContextKind, Handler, HandlerOutcome, Layer, Outgoing, PublishTransform,
+    Reads,
 };
 
 /// The layer value added with `RustStream::layer`.
@@ -63,6 +64,8 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 pub(crate) struct StampSource;
 
 impl<K: ContextKind> PublishTransform<K> for StampSource {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());

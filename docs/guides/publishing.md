@@ -406,15 +406,21 @@ Two levels run before a message leaves the process, and they compose:
   outermost. The default (no middleware) is a direct send. You can wrap a middleware set decided at
   run time in a `PublishDynStack` (the publish counterpart of `DynStack`) and add that instead.
 
-### What a transform is handed
+### What a transform declares
 
-A transform implements `apply(&mut Outgoing<'_>, &K::View<'_>)`, where `K` is the position's
-context kind. The kind is what the two positions differ in, and it is chosen at the mount site:
+A transform declares two things: what it reads and what it may do to the destination.
+
+What it reads is the position's context kind, the `K` in
+`apply(&mut Outgoing<'_>, &K::View<'_>)`, chosen at the mount site:
 
 | position | kind | what the transform reads |
 |---|---|---|
 | reply, after `.out(Reply, ..)` | `ForReply<C>` | `PublishContext<'_, C>`: the delivery being answered |
 | `Out` slot, after `.out(marker, policy)` | `ForSlot` | `SlotContext<'_>`: the slot's own name |
+
+What it may do is `type Destination`: `Reads` for a transform that leaves the destination alone,
+`Names` for one that sets it. Stable Rust has no default for an associated type, so every impl
+writes the line, and almost every one writes `Reads`.
 
 A transform that reads nothing writes one impl for every kind and mounts on either position:
 
@@ -444,47 +450,45 @@ batch's, not a delivery's: a batch spans many deliveries, so `name()` is the sub
 `headers()` is empty, and `context(..)` reads the broker's batch context. A transform that reads
 the incoming message belongs on the per-message path, where a reply and its delivery are one.
 
-### Naming a destination per message
+### Naming a destination from a transform
 
 Where a message goes is declared: on the message type with `#[outgoing(name = "..")]`, at the mount
 site with `publish("dest")`, or at a slot's call site with `.to(..)`. Some answers have no
 destination to declare. An AMQP request carries the queue to answer on in its `reply-to` header,
 and a ZeroMQ `ROUTER` addresses each answer to the peer that asked.
 
-`.redirect(..)` is the step that gives a transform the destination. It takes the same
-`PublishTransform` as `.transform(..)`, of the same kind as the position it rides, and that
-transform sets the name:
+A transform declaring `Destination = Names` sets the name itself:
 
 ```rust
---8<-- "examples/publishing.rs:redirect"
+--8<-- "examples/publishing.rs:naming_transform"
 ```
 
-Name it on the chain with `.redirect(..)`:
+It goes on the chain like any other transform:
 
 ```rust
---8<-- "examples/publishing.rs:redirect_mount"
+--8<-- "examples/publishing.rs:naming_transform_mount"
 ```
 
-The step is what the compiler holds you to, not the transform. `.redirect(..)` applies to a reply
-type that leaves its destination open; on a type carrying `#[outgoing(name = "receipts")]` it is a
-compile error naming the reply type. A reply whose channel the document reports therefore has no
-way to be redirected. The mount site's `publish("answers")` stays the reply's declared destination.
-It is the name the generated document reports, and where a reply goes when the redirect leaves the
-name alone.
+A position offers that right only where nothing has declared the destination already, and the
+`.transform(..)` call fails when it does not. A reply type carrying
+`#[outgoing(name = "receipts")]` is published there and the generated document reports it, so it
+offers nothing and the error names the reply type. A batch's replies offer nothing either: they
+answer many deliveries and carry none of their headers, so there is nothing to read a destination
+from. And a position offers the right once, so a second naming transform on it does not compile.
 
-A batch's replies cannot be redirected: they are published against the batch, which answers many
-deliveries and carries none of their headers. A position takes one redirect, so a second
-`.redirect(..)` on it does not compile.
+The mount site's `publish("answers")` stays the reply's declared destination. It is the name the
+generated document reports, and where a reply goes when the transform leaves the name alone.
 
-An `Out` slot takes the same step, with the `ForSlot` transform that `.transform(..)` takes there.
+A slot offers the right only when every type in its marker's `#[publishes(..)]` dictionary leaves
+its destination open. The body still writes `.to(..)` on every publish, and the naming transform
+writes over that name. A marker with no dictionary admits every declared message and can promise
+nothing, so it never offers the right - the implicit `DefaultSlot` of a single unnamed
+`Out<impl Publisher>` included. Withheld is the naming right, not transforms: such a slot takes an
+ordinary transform like any other.
 
-Every type in a redirected slot's `#[publishes(..)]` list has to leave its destination open. The
-body still writes `.to(..)` on every publish, and the redirect writes over that name. A marker with
-no list admits every declared message and cannot be redirected at all, the implicit `DefaultSlot`
-of a single unnamed `Out<impl Publisher>` included.
-
-Such a slot offers plain sending only: a transaction or a request / reply round trip reaches the
-broker without the slot's publish path, so a handler that asks for either does not compile.
+A slot that has given the right away offers plain sending only: a transaction or a request / reply
+round trip reaches the broker without the slot's publish path, so a handler that asks for either
+does not compile.
 
 A `PublishLayer` implements an around/next signature, so it can stop the chain, retry the send, or
 just observe:
@@ -514,8 +518,7 @@ The mount site's transforms act on the position they were named on:
 `.out(Reply, Publish).transform(StampSource)` grows the reply's stack,
 `.out(Audit, Publish).transform(OutboxEnvelope)` grows that slot's. A registration with both sides
 writes both calls, and `.transform(..)` applies to the position named before it. A position runs
-its steps in a fixed order, whatever order the chain names them in: the redirect first, then the
-position's transforms, then the app-wide middleware, then the send.
+its transforms in the order the chain writes them, then the app-wide middleware, then the send.
 
 Two publishes stay outside the pipeline, and the body drives both itself: a transaction opened on a
 slot (`begin()`, `transaction()`) sends into the broker's transaction, and a request / reply round

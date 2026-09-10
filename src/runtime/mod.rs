@@ -97,21 +97,20 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // service code.
 #[doc(hidden)]
 pub use publish::{
-    AddBatchReplyTransform, AddReplyRedirect, AddReplyTransform, Admits, AnyDeclared,
-    CodecSlotOpen, Direct, EncodeOutcome, InTransaction, LowerOutRedirect, LowerOutTransforms,
-    LowerRedirect, MapReplyPolicy, NameReplyCodec, NoOutRedirect, NoRedirect, OutRedirected,
-    PayloadError, PublishingDirectly, RawReplyWiring, RedirectSlotOpen, RedirectStack, Redirected,
-    RedirectedSend, RedirectedSendPolicy, ReplyPublisher, ReplyWiring, SlotTransforms,
-    Transactional, TransactionalReply, TypedPublisher, WirePayload,
+    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, DestinationUse,
+    Direct, Either, EncodeOutcome, FitsOffer, InTransaction, LowerOutTransforms, MapReplyPolicy,
+    NameReplyCodec, NamedDestinationSend, NamingOffered, NamingUntaken, NarrowToUse, PayloadError,
+    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
+    SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ContextKind, EncodedWire, ForBatch, ForReply, ForSlot, HeaderSource, HeadersUnset,
-    MapHeaders, MessageBody, MessageWire, MissingSegment, OutPipeline, Outgoing,
+    MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline, Outgoing,
     PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext, PublishDynLayer,
     PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity,
     PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, ResolvedName, SatisfiesContract,
+    PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName, SatisfiesContract,
     SerializePayloadError, SerializedWire, SlotContext, SuppliedName, TemplateAddress,
     TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec,
     for_batch,
@@ -123,7 +122,10 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use router::{DefaultReply, ReplyAttachment, RouterCommit, RouterMount, SoloReplyMount};
+pub use router::{
+    BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
+    RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterCommit, RouterMount,
+};
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
     RouterPublishingOut, RouterSink, RouterWith, forms,
@@ -136,14 +138,14 @@ pub use settings::{
 pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
 #[doc(hidden)]
 pub use slot::{
-    BatchTransformLast, BindAt, BindSlot, CodecAt, CodecLast, InitSlots, IntoSlotSource,
-    MapPolicyAt, MapPolicyLast, MissingSlot, NamedStep, NoOutBound, NoReply, OpenDestination,
-    OpenDictionary, OpenForm, OutAttachment, RedirectAt, RedirectLast, RedirectPosition, ReplyLast,
-    ReplyOpen, ReplyStep, SlotCodec, SlotPos, TransactionalLast, TransformAt, TransformLast,
+    AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,
+    DestinationOffer, InitSlots, IntoSlotSource, MapPolicyAt, MapPolicyLast, MissingSlot,
+    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, ReplyLast, ReplyOffer, ReplyOpen,
+    ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast, TransformAt, TransformLast,
     WithSource,
 };
 pub use slot::{
-    BindSlots, ContainsMessage, DefaultSlot, HasSlots, OpenDestinations, OutMessages, OutSlot,
-    PublishedThrough, Reply, SlotDictionary, SlotPublisher, Unrestricted,
+    BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
+    PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
 pub use typed::{Typed, typed};

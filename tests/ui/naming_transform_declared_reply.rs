@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForReply, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply, RustStream};
+use ruststream::runtime::{AppInfo, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply, RustStream};
 use ruststream::{Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,8 @@ struct Receipt {
 struct ReplyTo;
 
 impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+    type Destination = Names;
+
     fn apply(&self, out: &mut OutgoingMessage<'_>, cx: &PublishContext<'_, C>) {
         out.set_name(cx.name().to_owned());
     }
@@ -31,6 +33,6 @@ async fn confirm(order: &Order) -> Receipt {
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm).out(Reply, MemoryPublish).redirect(ReplyTo);
+        b.include(confirm).out(Reply, MemoryPublish).transform(ReplyTo);
     });
 }

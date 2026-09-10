@@ -11,12 +11,14 @@ struct Audit;
 
 impl OutSlot for Audit {
     const NAME: &'static str = "Audit";
+    type Destination = Reads;
 }
 
 struct Journal;
 
 impl OutSlot for Journal {
     const NAME: &'static str = "Journal";
+    type Destination = Reads;
 }
 
 // The body's arena entry is bound to the `Audit` marker, but the include site attaches its

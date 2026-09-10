@@ -10,6 +10,7 @@
 use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
+use ruststream::runtime::Reads;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,7 @@ struct Analytics;
 
 impl OutSlot for Analytics {
     const NAME: &'static str = "Analytics";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Analytics> for Event {}

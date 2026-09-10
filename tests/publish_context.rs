@@ -18,7 +18,8 @@ use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
     ContextKind, ForReply, Outgoing, PublishContext, PublishDynLayer, PublishDynNext,
-    PublishDynStack, PublishLayer, PublishNext, PublishPipeline, PublishTransform, for_batch,
+    PublishDynStack, PublishLayer, PublishNext, PublishPipeline, PublishTransform, Reads,
+    for_batch,
 };
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
@@ -54,6 +55,8 @@ impl Field<TraceCtx> for Correlation {
 struct PropagateCorrelation;
 
 impl PublishTransform<ForReply<TraceCtx>> for PropagateCorrelation {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
@@ -113,6 +116,8 @@ async fn delivery_context_propagates_to_the_reply() {
 struct MarkBatched;
 
 impl<K: ContextKind> PublishTransform<K> for MarkBatched {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-batched", b"1".to_vec());
     }

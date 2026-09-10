@@ -1,4 +1,4 @@
-//! Redirected publishing: the `.redirect(..)` step hands a transform the destination, and the
+//! Redirected publishing: the `.transform(..)` step hands a transform the destination, and the
 //! declaration stands wherever the step is not named.
 #![cfg(all(
     feature = "memory",
@@ -12,7 +12,9 @@ mod common;
 use common::{Order, Receipt};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{ContextKind, ForReply, Outgoing, PublishContext, PublishTransform};
+use ruststream::runtime::{
+    ContextKind, ForReply, Names, Outgoing, PublishContext, PublishTransform, Reads,
+};
 use ruststream::testing::TestApp;
 
 /// The one header the reply-to pattern reads, as a delivery carries it.
@@ -23,11 +25,13 @@ fn reply_to(name: &'static str) -> HeaderMap {
 }
 
 /// The reply-to pattern the two motivating brokers implement: the answer goes where the request
-/// asked to be answered, and to the declared fallback when it asked for nothing. It is an ordinary
-/// transform; what makes it the destination's owner is the step it is named on.
+/// asked to be answered, and to the declared fallback when it asked for nothing. It declares
+/// `Names`, so it mounts only where the position offers the right to set the destination.
 struct ReplyTo;
 
 impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+    type Destination = Names;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
@@ -41,6 +45,8 @@ impl<C> PublishTransform<ForReply<C>> for ReplyTo {
 struct Stamp;
 
 impl<K: ContextKind> PublishTransform<K> for Stamp {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         let destination = out.name().as_bytes().to_vec();
         out.headers_mut().insert("x-destination", destination);
@@ -52,13 +58,13 @@ async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
 
-/// The redirect names the reply's destination from the delivery it answers.
+/// The transform names the reply's destination from the delivery it answers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_redirect_sends_the_reply_where_the_request_asked() {
+async fn a_naming_transform_sends_the_reply_where_the_request_asked() {
     let app = RustStream::new(AppInfo::new("redirect-reply", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm).out(Reply, Publish).redirect(ReplyTo);
+            b.include(confirm).out(Reply, Publish).transform(ReplyTo);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -76,14 +82,14 @@ async fn a_redirect_sends_the_reply_where_the_request_asked() {
         .with(&Receipt { id: 4 });
 }
 
-/// A delivery the redirect leaves alone falls back to the destination the mount site declared -
+/// A delivery the transform leaves alone falls back to the destination the mount site declared -
 /// the one the generated document reports.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_redirect_that_names_nothing_leaves_the_declared_destination() {
+async fn a_naming_transform_that_sets_nothing_leaves_the_declared_destination() {
     let app = RustStream::new(AppInfo::new("redirect-fallback", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(confirm).out(Reply, Publish).redirect(ReplyTo);
+            b.include(confirm).out(Reply, Publish).transform(ReplyTo);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -100,17 +106,17 @@ async fn a_redirect_that_names_nothing_leaves_the_declared_destination() {
         .with(&Receipt { id: 5 });
 }
 
-/// The redirect decides the destination first, whatever order the chain names the steps in: the
-/// transform beside it reads the destination the redirect settled.
+/// The chain runs in the order the caller wrote it: a transform after the naming one reads the
+/// destination that one settled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_redirect_settles_the_destination_before_the_transforms_run() {
+async fn the_chain_runs_in_the_order_the_caller_wrote() {
     let app = RustStream::new(AppInfo::new("redirect-order", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(confirm)
                 .out(Reply, Publish)
-                .transform(Stamp)
-                .redirect(ReplyTo);
+                .transform(ReplyTo)
+                .transform(Stamp);
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -131,7 +137,7 @@ async fn the_redirect_settles_the_destination_before_the_transforms_run() {
 /// Without the step, the reply goes where the mount site declared, and the transform stack runs
 /// over that destination rather than deciding it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn without_the_step_the_declared_destination_stands() {
+async fn without_one_the_declared_destination_stands() {
     let app = RustStream::new(AppInfo::new("redirect-none", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
@@ -157,6 +163,8 @@ async fn without_the_step_the_declared_destination_stands() {
 struct ByTenant;
 
 impl<K: ContextKind> PublishTransform<K> for ByTenant {
+    type Destination = Names;
+
     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         if let Some(tenant) = out.headers().get("x-tenant")
             && let Ok(tenant) = std::str::from_utf8(tenant)
@@ -186,16 +194,16 @@ async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Handle
     HandlerOutcome::ack()
 }
 
-/// A redirected slot publishes where its redirect says, and the slot's own capture records the
-/// same message the broker received.
+/// A slot whose transform names destinations publishes where it says, and the slot's own capture
+/// records the same message the broker received.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_redirected_slot_publishes_where_the_redirect_says() {
+async fn a_slot_publishes_where_its_naming_transform_says() {
     let app = RustStream::new(AppInfo::new("redirect-slot", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(mirror)
                 .out(Audit, Publish)
-                .redirect(ByTenant)
+                .transform(ByTenant)
                 .build();
         },
     );
@@ -211,15 +219,15 @@ async fn a_redirected_slot_publishes_where_the_redirect_says() {
         .published::<Order>("redirect.audit.north")
         .assert_called_once()
         .with(&Order { id: 9 });
-    // The slot's own capture and the broker's log tell the same story: the redirect runs above
+    // The slot's own capture and the broker's log tell the same story: the transform runs above
     // the attributed leaf, so the harness never reports a destination the broker did not see.
     let audited = tb.out::<Audit>().assert_called_once();
     assert_eq!(audited.messages()[0].name(), "redirect.audit.north");
 }
 
-/// The same slot without the step: the call site's own `.to(..)` stands.
+/// The same slot without such a transform: the call site's own `.to(..)` stands.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_slot_without_a_redirect_keeps_the_call_site_destination() {
+async fn a_slot_without_one_keeps_the_call_site_destination() {
     let app = RustStream::new(AppInfo::new("redirect-slot-none", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
@@ -241,7 +249,7 @@ async fn a_slot_without_a_redirect_keeps_the_call_site_destination() {
 }
 
 /// The reply position of a handler that also carries a slot: the chain reads the reply type
-/// through the definition, so the step is there and the redirect runs.
+/// through the definition, so the offer is known and the naming transform mounts.
 #[subscriber("redirect.mixed", publish("redirect.mixed.receipts"))]
 async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Receipt {
     let _ = audit.message(order).to("redirect.audit").publish().await;
@@ -249,13 +257,13 @@ async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_redirect_rides_the_reply_of_a_slot_carrying_handler() {
+async fn a_naming_transform_rides_the_reply_of_a_slot_carrying_handler() {
     let app = RustStream::new(AppInfo::new("redirect-mixed", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(confirm_and_audit)
                 .out(Reply, Publish)
-                .redirect(ReplyTo)
+                .transform(ReplyTo)
                 .out(Audit, Publish)
                 .build();
         },
@@ -273,4 +281,45 @@ async fn a_redirect_rides_the_reply_of_a_slot_carrying_handler() {
         .published::<Receipt>("redirect.inbox.12")
         .assert_called_once()
         .with(&Receipt { id: 12 });
+}
+
+/// A marker with no dictionary offers no naming right, and that withholds the right rather than
+/// transforms as such: the implicit `DefaultSlot` still takes an ordinary transform.
+#[subscriber("redirect.plain")]
+async fn plain(order: &Order, Out(out): Out<impl Publisher, DefaultSlot>) -> HandlerOutcome {
+    if out
+        .message(order)
+        .to("redirect.plain.out")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_marker_without_a_dictionary_still_takes_an_ordinary_transform() {
+    let app = RustStream::new(AppInfo::new("redirect-default-slot", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(plain)
+                .out(DefaultSlot, Publish)
+                .transform(Stamp)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 13 })
+        .to("redirect.plain")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("redirect.plain.out")
+        .assert_called_once()
+        .with_header("x-destination", b"redirect.plain.out");
 }
