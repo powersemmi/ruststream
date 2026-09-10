@@ -7,10 +7,32 @@ error[E0277]: `Unnamed<Name>` does not open a subscription on `ConnectedMemoryBr
    = help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is not implemented for `Unnamed<Name>`
    = note: a subscriber left unnamed carries `Unnamed<..>` until the mount site names it: `b.include(handle.name("orders"))`
    = note: otherwise the source belongs to a different broker than the one being mounted on
-help: the trait `SubscriptionSource<ConnectedMemoryBroker>` is implemented for `MemorySource`
+help: the following other types implement trait `SubscriptionSource<C>`
   --> src/memory/mod.rs
    |
-   | impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |   impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
+   |
+  ::: src/buffered.rs
+   |
+   | / impl<C, S> SubscriptionSource<C> for Buffered<S>
+   | | where
+   | |     C: ConnectedBroker,
+   | |     S: SubscriptionSource<C> + Send,
+   | |     S::Subscriber: Send,
+   | |________________________^ `Buffered<S>` implements `SubscriptionSource<C>`
+   |
+  ::: src/subscription.rs
+   |
+   |   impl<C: Subscribe> SubscriptionSource<C> for Name {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
+...
+   | / impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
+   | | where
+   | |     C: ConnectedBroker,
+...  |
+   | |     <S::Subscriber as Seekable>::Seeker: Seeker<Position = P, Error = C::Error>,
+   | |     P: Send,
+   | |____________^ `StartAt<S, P>` implements `SubscriptionSource<C>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
    = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Unnamed<Name>, (Open, Open, Open, Open)>>`
