@@ -43,8 +43,8 @@ use std::{
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, HeaderMap,
-    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage, ServerSpec,
-    Subscribe, Subscriber, SubscriptionSource,
+    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
+    RedeliveryAddress, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -528,6 +528,12 @@ impl Subscribe for ConnectedMemoryBroker {
             seek: Arc::new(SeekControl::default()),
         }))
     }
+
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        // One subject is both ends of the bus here, so a publish under the name a subscription
+        // reads reaches that subscription.
+        Some(RedeliveryAddress::new(name.to_owned()))
+    }
 }
 
 // --8<-- [end:subscribe]
@@ -562,6 +568,7 @@ impl FromName for MemorySource {
 
 // --8<-- [end:from_name]
 
+// --8<-- [start:source]
 impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     type Subscriber = MemorySubscriber;
 
@@ -575,7 +582,16 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MemorySource {
     ) -> Result<Self::Subscriber, MemoryError> {
         Subscribe::subscribe(connected, &self.name).await
     }
+
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, MemoryError>> + Send {
+        // One subject is both ends of the bus, and no lookup is needed to say so.
+        ready(Ok(Some(RedeliveryAddress::new(self.name.clone()))))
+    }
 }
+// --8<-- [end:source]
 
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.

@@ -461,9 +461,9 @@ impl<'a, C, S> Context<'a, C, S> {
         runnable
     }
 
-    /// Returns the scope's delivery context: the task tracker post-settle
-    /// [`HandlerResult::and_after`] continuations are spawned onto, and the publisher the
-    /// `retry_after` fallback re-publishes through.
+    /// Returns the subscription's delivery context: the task tracker post-settle
+    /// [`HandlerResult::and_after`] continuations are spawned onto, and the publisher and address
+    /// the `retry_after` fallback re-publishes through.
     ///
     /// Borrowed for the scope's lifetime rather than the context's, so the batch path can settle
     /// through it after handing `&mut self` to the handler - and so no borrow of the context is

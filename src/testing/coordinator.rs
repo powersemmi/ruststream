@@ -323,6 +323,33 @@ impl Coordinator {
             tokio::time::sleep(delay).await;
             redeliver();
         });
+        self.push_timer(deadline, handle);
+    }
+
+    /// The awaitable form of [`schedule_redelivery`](Self::schedule_redelivery), for a redelivery
+    /// that has to await something itself: the runtime's deferred `retry_after` fallback
+    /// re-publishes the message, and the publish is what re-enqueues it. Awaiting the whole
+    /// future inside the timer is what makes the copy counted by the time
+    /// [`TestApp::advance`](super::TestApp) drives the reaction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal timers mutex was poisoned by an earlier panic while it was held.
+    pub(crate) fn schedule_redelivery_future<Fut>(&self, delay: Duration, redeliver: Fut)
+    where
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let deadline = tokio::time::Instant::now() + delay;
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            redeliver.await;
+        });
+        self.push_timer(deadline, handle);
+    }
+
+    /// Records one scheduled redelivery so [`fire_due_timers`](Self::fire_due_timers) can await it
+    /// once its deadline passes.
+    fn push_timer(&self, deadline: tokio::time::Instant, handle: tokio::task::JoinHandle<()>) {
         self.inner
             .timers
             .lock()

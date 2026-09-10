@@ -102,6 +102,12 @@ where
 /// created before the shutdown must error afterwards, never silently succeed against a dead
 /// connection.
 ///
+/// A source that reports a
+/// [`redelivery_address`](SubscriptionSource::redelivery_address) is held to it: a publish to
+/// that address must reach the subscription that reported it, because that is what the runtime's
+/// deferred `retry_after` fallback does with a delayed message. Reporting none is a legal answer
+/// and skips the step.
+///
 /// The three factories keep the check broker-agnostic:
 /// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
 ///   cannot satisfy it, which is exactly the contract: construct cheaply, connect in
@@ -156,7 +162,9 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .await
         .expect("broker must connect after synchronous construction");
 
-    let mut subscriber = make_source(&subject)
+    let source = make_source(&subject);
+    let mut subscriber = source
+        .clone()
         .subscribe(&connected)
         .await
         .expect("subscription source must open against the connected form");
@@ -179,6 +187,34 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+
+    // What a reported redelivery address promises: publish there and this subscription gets the
+    // message. The runtime's deferred `retry_after` fallback publishes exactly like this, so an
+    // address that reaches nothing would lose every delayed message.
+    let address = source
+        .redelivery_address(&connected)
+        .await
+        .expect("reporting a redelivery address must not fail against a live connection");
+    if let Some(address) = address {
+        publisher
+            .publish(OutgoingMessage::new(
+                address.as_str(),
+                b"redelivered".as_slice(),
+            ))
+            .await
+            .expect("publish to the reported redelivery address failed");
+        let msg = expect_next(&mut stream, "redelivery_address").await;
+        assert_eq!(
+            msg.payload(),
+            b"redelivered",
+            "a publish to the reported redelivery address must reach the subscription that \
+             reported it",
+        );
+        match msg.ack().await {
+            Ok(()) | Err(AckError::Unsupported) => {}
+            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+        }
     }
 
     let _closed = connected

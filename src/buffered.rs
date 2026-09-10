@@ -11,13 +11,16 @@
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 
+use std::future::Future;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
-use crate::{BatchSubscriber, ConnectedBroker, Seekable, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, ConnectedBroker, RedeliveryAddress, Seekable, Subscriber, SubscriptionSource,
+};
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 
@@ -72,7 +75,8 @@ impl<S> Buffered<S> {
 impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
-    S: SubscriptionSource<C> + Send,
+    // `Sync` on the wrapped source is what lets the redelivery address be asked for by reference.
+    S: SubscriptionSource<C> + Send + Sync,
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
@@ -86,6 +90,15 @@ where
             inner: self.source.subscribe(connected).await?,
             max_wait: self.max_wait,
         })
+    }
+
+    /// Batching happens on the client, so a deferred redelivery goes where the wrapped source
+    /// says it does.
+    fn redelivery_address(
+        &self,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+        self.source.redelivery_address(connected)
     }
 }
 

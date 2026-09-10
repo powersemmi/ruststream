@@ -75,19 +75,30 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 Реализуйте `Subscribe` на подключённой форме, чтобы подписаться можно было по имени темы, субъекта
 или очереди. Через него подписывается `#[subscriber("name")]`.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // По умолчанию None. Верните само имя там, где публикация по имени подписки
+    // доходит до открытой под ним подписки: так обычно устроены субъект, топик,
+    // стрим и имя очереди.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
 }
 ```
 
-Всё, что требуется, - открыть подписку:
+Всё, что требуется, - открыть подписку и сказать, по какому адресу до неё доходит публикация:
 
 ```rust
 --8<-- "src/memory/mod.rs:subscribe"
 ```
+
+Второй ответ - это адрес, по которому рантайм публикует отложенный повтор, и поэтому он решает,
+работает ли `#[subscriber("orders")]` вместе с `BrokerScope::retry_via` на вашем брокере. Оставьте
+значение по умолчанию там, где имя подписки не служит адресом публикации: на подписку Google
+Pub/Sub подписываются по её собственному имени, а публикуют через её топик, и отвечает там
+дескриптор.
 
 ### `Subscriber`
 
@@ -141,10 +152,11 @@ pub trait IncomingMessage: Send + Sync {
 
 Брокер, который не переопределил ни один из трёх методов с реализацией по умолчанию, всё равно
 работает со всеми возможностями рантайма. Там, где нативной отложенной доставки нет, `retry_after`
-выполняет сам рантайм: он отбрасывает доставку и через задержку публикует копию в тот же источник -
-издателем, которого приложение подключило через `BrokerScope::retry_via`, - с увеличенным заголовком
-счётчика повторов. Только без такого издателя задержка сводится к немедленному возврату в очередь.
-Пул воркеров по ключу раздаёт сообщения без ключа по кругу.
+выполняет сам рантайм: он отбрасывает доставку и через задержку публикует копию издателем, которого
+приложение подключило через `BrokerScope::retry_via`, с увеличенным заголовком счётчика повторов.
+Копия уходит по адресу, [который называет ваша подписка](#where-a-deferred-retry-is-published).
+Только без такого издателя задержка сводится к немедленному возврату в очередь. Пул воркеров по
+ключу раздаёт сообщения без ключа по кругу.
 
 Показать «не переопределено ничего» не на ком: в этом рабочем пространстве эти методы переопределяет
 каждый брокер. Поэтому поведение закреплено тестом в ядре:
@@ -246,12 +258,16 @@ pub trait DefaultPublish: ConnectedBroker {
 (группа консьюмеров, durable-имя, политика доставки), заведите тип-дескриптор, который реализует
 `SubscriptionSource`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
+
+    // По умолчанию Ok(None). Ответьте, по какому адресу публикация снова доходит до
+    // этой подписки, и спросите брокер, если это знает только живое соединение.
+    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
 }
 ```
 
@@ -269,6 +285,28 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 
 Выведите на дескрипторе `Clone`: монтирование пересобирает конфигурацию на каждую регистрацию,
 поэтому одно определение можно смонтировать сразу на два брокера.
+
+### Куда публикуется отложенный повтор {#where-a-deferred-retry-is-published}
+
+Без нативной отложенной доставки рантайм выполняет `retry_after` сам: по истечении задержки он
+публикует копию сообщения. Куда уйдёт эта копия, говорит ваш дескриптор.
+
+```rust
+--8<-- "src/memory/mod.rs:source"
+```
+
+Отвечайте тем именем, по которому издатель вашего брокера снова достаёт до этой подписки: субъект в
+NATS, топик в Kafka, ключ стрима в Redis. В Google Pub/Sub это не одно из них - подписка и топик там
+разные ресурсы, поэтому ответ - топик, к которому привязана подписка, и дескриптор спрашивает его у
+API. Рантайм спрашивает один раз на старте, поэтому запрос здесь ничего не стоит на сообщение.
+
+Оставьте значение по умолчанию там, где публикацией до вашей подписки не достучаться. Приложение,
+которое подключило издателя повторов к такой подписке, тогда не запускается и называет подписку и её
+источник, вместо того чтобы публиковать каждое отложенное сообщение по адресу, который никто не
+читает.
+
+`harness::lifecycle` проверяет данный вами ответ: публикация по названному адресу обязана прийти в
+ту подписку, которая его назвала.
 
 ### Как назвать вид одной строкой
 
