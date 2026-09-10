@@ -313,6 +313,9 @@ impl<S, P> fmt::Debug for StartAt<S, P> {
     }
 }
 
+// Same as the buffering decorator: it wraps a source the mount site already has, so it is never
+// the answer to "which source does this broker take" and stays out of the suggested list.
+#[diagnostic::do_not_recommend]
 impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,

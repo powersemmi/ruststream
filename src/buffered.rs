@@ -69,6 +69,9 @@ impl<S> Buffered<S> {
     }
 }
 
+// A decorator wraps a source the mount site already has; it is never the answer to "which source
+// does this broker take", so it stays out of the list a failed obligation suggests.
+#[diagnostic::do_not_recommend]
 impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
