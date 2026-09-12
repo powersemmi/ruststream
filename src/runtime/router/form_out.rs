@@ -90,13 +90,13 @@ slot_form! {
 // name the definition's `BindSlots` outputs so the bounds read flat instead of through
 // `<Def::Bound as ..>` projections.
 
-/// The pipeline one slot's `.transform(..)` steps lower onto, before its redirect (if any) takes
-/// the head of it.
+/// The pipeline one slot's `.transform(..)` steps lower onto, before its naming transform (if any)
+/// takes the head of it.
 type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
 
 /// The bound-source tuple element of one slot: the policy the runtime pairs (narrowed where the
-/// chain named a redirect), the codec the slot encodes with (its own when the chain named one,
-/// else the surface's) and the pipeline it publishes through.
+/// chain mounted a naming transform), the codec the slot encodes with (its own when the chain
+/// named one, else the surface's) and the pipeline it publishes through.
 macro_rules! slot_source {
     ($attach:ident, $layers:ident, $enc:ident, $surface:ty, $pipe:ty) => {
         (

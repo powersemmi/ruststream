@@ -74,8 +74,8 @@
 //! entry's transparent `Deref`. Everything is monomorphized: the arena is built once at startup,
 //! and a delivery only ever passes a reference to it.
 //!
-//! A mount site that hands the slot's destination to a transform with `.redirect(..)` leaves the
-//! first row of that table and nothing else: the rows below it reach the broker without the slot's
+//! A mount site that hands the slot's destination to a transform (a `.transform(..)` step whose
+//! transform declares `Destination = Names`) leaves the first row of that table and nothing else: the rows below it reach the broker without the slot's
 //! publish path, so their messages would go where that transform never looked, and a body asking
 //! for one of them fails to mount.
 
