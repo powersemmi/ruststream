@@ -347,15 +347,12 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前，有三类变换运行，而且它们可以组合：
+消息离开进程之前，有两个层次运行，而且它们可以组合：
 
-- **回复接线上的静态 `PublishTransform`**，在 `.out(Reply, ..)` 之后用 `.transform(..)` 添加。这是
-  零成本、按目的地生效的变换：一层信封、一个固定的 content type，或者把这次投递的链路追踪 /
-  关联 id 写进回复。它们最先运行，离值最近。
-- **某一个 `Out` 槽位上的静态 `OutTransform`**，在 `.out(marker, policy)` 之后用 `.transform(..)`
-  添加。它在顺序里的位置相同，作用于从该槽位出去的消息：一层 outbox 信封、一个固定的 content
-  type 和一个租户标记。它不接受 `PublishContext`。槽位上的发布由处理器函数体自己发出，因此那次
-  投递也由函数体自己读取、自己写进消息。
+- **某一个位置上的静态 `PublishTransform`**，在点名该位置的那个 `.out(..)` 之后用
+  `.transform(..)` 添加：回复用 `.out(Reply, ..)`，`Out` 槽位用 `.out(marker, policy)`。这是
+  零成本、按目的地生效的变换：一层信封、一个固定的 content type、把这次投递的链路追踪 / 关联 id
+  写进回复，或者给槽位加一层 outbox 信封和一个租户标记。它们离值最近，在应用级管线之前运行。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信
   包装），作用于每一条发布出去的消息。它包在发送外面，因此能观察到发送的结果。整条链会组合成一个
   具体类型，于是它成为应用类型的一部分：构建器通常返回 `impl App`，从不把它写出来，而具体的
@@ -364,12 +361,36 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
   进每一个会发布的处理器），最后添加的中间件在最外层运行。默认情况没有中间件，就是直接发送。中间件
   的组合要到运行时才决定时，可以把它包进 `PublishDynStack`（`DynStack` 在发布侧的对应物）再添加。
 
-静态的 `PublishTransform` 实现 `apply(&mut Outgoing<'_>, &PublishContext<'_, C>)`。`PublishContext`
-只读地给出产生这条回复的那次投递：它的 channel、入站消息头和 Broker 的单条投递类型化上下文。该
-上下文按 `Field` 键读取。因此变换可以把入站消息里的值转移到回复上：
+### 变换声明什么 { #what-a-transform-declares }
+
+变换声明两件事：它读什么，以及它可以对目的地做什么。
+
+它读的是这个位置的上下文种类，也就是 `apply(&mut Outgoing<'_>, &K::View<'_>)` 里的 `K`，由挂载点
+在编译期选定：
+
+| 位置 | 种类 | 变换读到什么 |
+|---|---|---|
+| 回复，在 `.out(Reply, ..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
+| `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
+
+它可以做什么由 `type Destination` 声明：不动目的地的变换写 `Reads`，要写入目的地的写 `Names`。
+stable Rust 没有关联类型的默认值，因此每个实现都要写这一行，而几乎每一个写的都是 `Reads`。
+
+什么都不读的变换，写一个覆盖所有种类的实现，两个位置都能挂：
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
+```
+
+`ForReply` 交出产生这条回复的那次投递：它的 channel、入站消息头和 Broker 的单条投递类型化上下文。
+该上下文按 `Field` 键读取。因此变换可以把入站消息里的值转移到回复上；而写出这个种类，就等于声明它
+只属于回复。此后把它挂到槽位上，是挂载点处的一个编译错误。
+
+`ForSlot` 只交出槽位的名字：槽位上的发布由处理器函数体自己发出，函数体早已从自己的 `Context` 里
+读走想要的东西并写进消息，到这一步已经没有投递可交。
+
+```rust
+--8<-- "examples/publishing.rs:slot_transform"
 ```
 
 批量处理器的回复不经过按消息生效的 `.transform(..)` 栈。用 `.batch_transform(..)` 给它们添加变换，
@@ -380,11 +401,39 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 是 Broker 的批次上下文。要读入站消息的变换，应当留在按消息的那条路上：在那里，一条回复和它的投递是
 同一件事。
 
-`OutTransform` 实现 `apply(&mut Outgoing<'_>)`，只作用在一个槽位上：
+### 变换如何写入目的地 { #naming-a-destination-from-a-transform }
+
+消息发往何处是声明出来的：在消息类型上用 `#[outgoing(name = "..")]`，在挂载点用
+`publish("dest")`，或者在槽位的调用点用 `.to(..)`。有些回复没有目的地可声明。AMQP 请求把作答用的
+队列放在 `reply-to` 消息头里，ZeroMQ 的 `ROUTER` 则把每条回复发给提问的那一方。
+
+声明了 `Destination = Names` 的变换自己写入名字：
 
 ```rust
---8<-- "examples/publishing.rs:slot_transform"
+--8<-- "examples/publishing.rs:naming_transform"
 ```
+
+把它加到链上，和其他变换没有区别：
+
+```rust
+--8<-- "examples/publishing.rs:naming_transform_mount"
+```
+
+只有目的地尚未声明的位置才给出这项权利，否则这次 `.transform(..)` 调用无法通过编译。写了
+`#[outgoing(name = "receipts")]` 的回复类型就发往那里，生成的文档也这么报告，因此这样的位置不给
+权利，而错误会点名该回复类型。批的回复同样不给：一个批作答许多条投递，不带其中任何一条的消息头，
+没有地方可以读出目的地。权利只给一次，因此同一个位置上的第二个写入目的地的变换无法通过编译。
+
+挂载点的 `publish("answers")` 仍然是这条回复已声明的目的地：生成的文档报告这个名字，变换没有改
+名字时，回复也发往这里。
+
+只有当标记的 `#[publishes(..)]` 列表里每个类型都把目的地留空时，槽位才给出这项权利。函数体每次
+发布仍然要写 `.to(..)`，写入目的地的变换再改写这个名字。没有列表的标记接受任何已声明的消息，什么
+也保证不了，因此从不给出这项权利，单个匿名 `Out<impl Publisher>` 的隐式 `DefaultSlot` 也在其内。
+被收回的是写入目的地的权利，不是变换本身：这样的槽位照样接受普通变换。
+
+已经把权利交出去的槽位只提供普通发送：事务和一次 request / reply 往返都绕过槽位的发布路径直达
+Broker，因此索要其中任何一项的处理器无法通过编译。
 
 `PublishLayer` 实现 around/next 形式的签名，因此它可以中断这条链、重试发送，或者只做观察：
 
@@ -411,8 +460,8 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 挂载点上的变换作用在指定它的那个位置上：`.out(Reply, Publish).transform(StampSource)` 扩充回复的
 栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 扩充这个槽位的栈。两个位置都用到时，注册就
-把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。两个位置的顺序一样：先是挂载点
-的变换（离编码后的值最近），然后是应用级的中间件，最后是发送。
+把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。一个位置按链上写下的顺序运行它的
+变换，然后是应用级的中间件，最后是发送。
 
 有两种发布不经过这条管线，都由处理器函数体自己驱动：在槽位上开启的事务（`begin()`、`transaction()`）
 发往 Broker 的事务，而一次 request / reply 往返（`request(..)`）等待回复，不以一次发送收尾。

@@ -606,8 +606,8 @@ default publish policy constructs it.
 
 The chains diverge after that: an encoded reply takes `.codec(..)`, `.transform(..)` and
 `.transactional()`, while a `Serialized` reply's bytes are published untouched, so those steps do
-not exist on that path. A failed reply publish nacks the delivery with requeue, exactly as on the
-encoded path:
+not exist on that path. A failed reply publish nacks the delivery with requeue,
+exactly as on the encoded path:
 
 === "Macros"
 

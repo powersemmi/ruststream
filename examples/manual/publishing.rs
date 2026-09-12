@@ -15,8 +15,8 @@ use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    BoundSegment, MissingSegment, OutTransform, PublishAt, PublishContext, PublishError,
-    PublishLayer, PublishNext, PublishPipeline, PublishTransform, TemplateAddress,
+    BoundSegment, ContextKind, MissingSegment, PublishAt, PublishError, PublishLayer, PublishNext,
+    PublishPipeline, PublishTransform, Reads, TemplateAddress,
 };
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
@@ -179,6 +179,7 @@ struct Primary;
 
 impl OutSlot for Primary {
     const NAME: &'static str = "Primary";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         <Event as OutMessages<Self>>::outgoing()
@@ -191,6 +192,7 @@ struct Shadow;
 
 impl OutSlot for Shadow {
     const NAME: &'static str = "Shadow";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         <Event as OutMessages<Self>>::outgoing()
@@ -375,6 +377,7 @@ struct Orders;
 
 impl OutSlot for Orders {
     const NAME: &'static str = "Orders";
+    type Destination = Reads;
 
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         let mut declared = <OrderConfirmed as OutMessages<Self>>::outgoing();
@@ -426,24 +429,29 @@ where
 // --8<-- [end:declared]
 
 // --8<-- [start:static_transform]
-/// A static, per-publisher transform: stamps an envelope header on every outgoing message.
+/// A static, per-publisher transform: stamps an envelope header on every outgoing message. It
+/// reads no context, so one impl serves every position - a reply and an `Out` slot alike.
 struct EnvelopeTransform;
 
-impl<C> PublishTransform<C> for EnvelopeTransform {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
 // --8<-- [end:static_transform]
 
 // --8<-- [start:slot_transform]
-/// A static, per-slot transform: it stamps what leaves one `Out` slot. There is no
-/// `PublishContext` here - the body issues a slot publish itself, so the delivery is the body's
-/// own to read and put on the message.
+/// A static, per-slot transform: it stamps what leaves one `Out` slot. A slot position hands its
+/// transforms a `SlotContext`, which names the slot and nothing else: the body issues a slot
+/// publish itself, so the delivery is the body's own to read and put on the message.
 struct OutboxEnvelope;
 
-impl OutTransform for OutboxEnvelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

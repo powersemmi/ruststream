@@ -344,6 +344,17 @@ fn definition_wiring(
     if outs.is_empty() {
         return declared;
     }
+    // With slots the include-site value is the unit struct, so the reply type and context the
+    // mount chain's `.transform(..)` step reads are stated here rather than read off the sealed
+    // definition.
+    let declares_reply = (!reply.is_none()).then(|| {
+        quote! {
+            impl ::ruststream::runtime::DeclaresReply for #name {
+                type Reply = #r_tokens;
+                type Context = #ctx_ty;
+            }
+        }
+    });
     let binding_impls = slot_binding_impls(
         name,
         outs,
@@ -353,6 +364,8 @@ fn definition_wiring(
     );
     quote! {
         #declared
+
+        #declares_reply
 
         #binding_impls
     }

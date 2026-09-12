@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::PublishedThrough;
+use ruststream::runtime::Reads;
 use ruststream::testing::TestApp;
 use ruststream::{
     CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, OutgoingMessage,
@@ -59,6 +60,7 @@ struct Journal;
 
 impl OutSlot for Journal {
     const NAME: &'static str = "Journal";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Journal> for Settled {}
@@ -167,6 +169,7 @@ struct Ledger;
 
 impl OutSlot for Ledger {
     const NAME: &'static str = "Ledger";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Ledger> for Settled {}
@@ -255,6 +258,7 @@ struct Answers;
 
 impl OutSlot for Answers {
     const NAME: &'static str = "Answers";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Answers> for Answer {}
@@ -293,6 +297,7 @@ struct Quotes;
 
 impl OutSlot for Quotes {
     const NAME: &'static str = "Quotes";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Quotes> for Quoted {}

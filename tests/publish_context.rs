@@ -17,8 +17,9 @@ use common::{Req, Resp};
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    Outgoing, PublishContext, PublishDynLayer, PublishDynNext, PublishDynStack, PublishLayer,
-    PublishNext, PublishPipeline, PublishTransform, for_batch,
+    ContextKind, ForReply, Outgoing, PublishContext, PublishDynLayer, PublishDynNext,
+    PublishDynStack, PublishLayer, PublishNext, PublishPipeline, PublishTransform, Reads,
+    for_batch,
 };
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
@@ -53,7 +54,9 @@ impl Field<TraceCtx> for Correlation {
 /// reply, read off the typed context through [`PublishContext`].
 struct PropagateCorrelation;
 
-impl PublishTransform<TraceCtx> for PropagateCorrelation {
+impl PublishTransform<ForReply<TraceCtx>> for PropagateCorrelation {
+    type Destination = Reads;
+
     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
@@ -112,8 +115,10 @@ async fn delivery_context_propagates_to_the_reply() {
 /// A batch-only transform: marks every batched reply, never a single-message one.
 struct MarkBatched;
 
-impl<C> PublishTransform<C> for MarkBatched {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {
+impl<K: ContextKind> PublishTransform<K> for MarkBatched {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-batched", b"1".to_vec());
     }
 }

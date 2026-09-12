@@ -11,6 +11,7 @@ struct Journal;
 
 impl OutSlot for Journal {
     const NAME: &'static str = "Journal";
+    type Destination = Reads;
 }
 
 // The body bounds the entry's wired value with the transactional capability, but the include

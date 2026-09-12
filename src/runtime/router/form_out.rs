@@ -27,11 +27,14 @@ use crate::runtime::inject::InjectDef;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
-use crate::runtime::publish::{LowerOutTransforms, RawReplyWiring};
+use crate::runtime::publish::{
+    ForSlot, LowerOutTransforms, NarrowToUse, PublishTransform, RawReplyWiring,
+};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{
-    BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, SlotCodec, WithSource,
+    BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
+    SlotPolicy, WithSource,
 };
 
 use super::builder::Router;
@@ -87,32 +90,38 @@ slot_form! {
 // name the definition's `BindSlots` outputs so the bounds read flat instead of through
 // `<Def::Bound as ..>` projections.
 
-/// The bound-source tuple element of one slot: the policy the runtime pairs, the codec the slot
-/// encodes with (its own when the chain named one, else the surface's) and the pipeline it
-/// publishes through (its transforms lowered onto the chain's own).
+/// The pipeline one slot's `.transform(..)` steps lower onto, before its redirect (if any) takes
+/// the head of it.
+type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
+
+/// The bound-source tuple element of one slot: the policy the runtime pairs (narrowed where the
+/// chain named a redirect), the codec the slot encodes with (its own when the chain named one,
+/// else the surface's) and the pipeline it publishes through.
 macro_rules! slot_source {
     ($attach:ident, $layers:ident, $enc:ident, $surface:ty, $pipe:ty) => {
         (
-            $attach,
+            SlotPolicy<$layers, $attach>,
             <$enc as SlotCodec<$surface>>::Codec,
-            <$layers as LowerOutTransforms<$pipe>>::Out,
+            SlotPipeline<$layers, $pipe>,
         )
     };
 }
 
 macro_rules! impl_inject_out_commit {
-    ($(($($attach:ident / $layers:ident / $enc:ident),+))+) => {$(
+    ($(($($marker:ident / $attach:ident / $layers:ident / $enc:ident),+))+) => {$(
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Bound, Extra,
-             $($attach, $layers, $enc),+>
+             $($marker, $attach, $layers, $enc),+>
             RouterCommit<InjectMount, Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>
-            for (NoReply, ($(WithSource<OutAttachment<$attach, $layers, $enc>>,)+))
+            for (NoReply, ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+))
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe>,
+                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
+                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -159,20 +168,22 @@ macro_rules! impl_inject_out_commit {
         }
 
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Bound, Extra,
-             $($attach, $layers, $enc),+>
+             $($marker, $attach, $layers, $enc),+>
             RouterCommit<
                 BatchInjectMount,
                 Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
                 Def,
             >
-            for (NoReply, ($(WithSource<OutAttachment<$attach, $layers, $enc>>,)+))
+            for (NoReply, ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+))
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe>,
+                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
+                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -222,15 +233,15 @@ macro_rules! impl_inject_out_commit {
 }
 
 impl_inject_out_commit! {
-    (A0 / L0 / E0)
-    (A0 / L0 / E0, A1 / L1 / E1)
-    (A0 / L0 / E0, A1 / L1 / E1, A2 / L2 / E2)
+    (M0 / A0 / L0 / E0)
+    (M0 / A0 / L0 / E0, M1 / A1 / L1 / E1)
+    (M0 / A0 / L0 / E0, M1 / A1 / L1 / E1, M2 / A2 / L2 / E2)
 }
 
 macro_rules! impl_publishing_out_commit {
-    ($(($($attach:ident / $layers:ident / $enc:ident),+))+) => {$(
+    ($(($($marker:ident / $attach:ident / $layers:ident / $enc:ident),+))+) => {$(
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Policy, Bound, Extra,
-             $($attach, $layers, $enc),+>
+             $($marker, $attach, $layers, $enc),+>
             RouterCommit<
                 PublishInjectMount,
                 Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
@@ -238,15 +249,17 @@ macro_rules! impl_publishing_out_commit {
             >
             for (
                 WithSource<Policy>,
-                ($(WithSource<OutAttachment<$attach, $layers, $enc>>,)+),
+                ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+),
             )
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe>,
+                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
+                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -296,7 +309,7 @@ macro_rules! impl_publishing_out_commit {
         }
 
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Policy, Bound, Extra,
-             $($attach, $layers, $enc),+>
+             $($marker, $attach, $layers, $enc),+>
             RouterCommit<
                 RawReplyInjectMount,
                 Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
@@ -304,15 +317,17 @@ macro_rules! impl_publishing_out_commit {
             >
             for (
                 WithSource<Policy>,
-                ($(WithSource<OutAttachment<$attach, $layers, $enc>>,)+),
+                ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+),
             )
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe>,
+                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
+                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -362,7 +377,7 @@ macro_rules! impl_publishing_out_commit {
         }
 
         impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, Policy, Bound, Extra,
-             $($attach, $layers, $enc),+>
+             $($marker, $attach, $layers, $enc),+>
             RouterCommit<
                 BatchPublishInjectMount,
                 Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>,
@@ -370,15 +385,17 @@ macro_rules! impl_publishing_out_commit {
             >
             for (
                 WithSource<Policy>,
-                ($(WithSource<OutAttachment<$attach, $layers, $enc>>,)+),
+                ($(WithSource<OutAttachment<$marker, $attach, $layers, $enc>>,)+),
             )
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
             RoutePipe: Clone,
             $(
+                $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe>,
+                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
+                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -436,9 +453,9 @@ macro_rules! impl_publishing_out_commit {
 }
 
 impl_publishing_out_commit! {
-    (A0 / L0 / E0)
-    (A0 / L0 / E0, A1 / L1 / E1)
-    (A0 / L0 / E0, A1 / L1 / E1, A2 / L2 / E2)
+    (M0 / A0 / L0 / E0)
+    (M0 / A0 / L0 / E0, M1 / A1 / L1 / E1)
+    (M0 / A0 / L0 / E0, M1 / A1 / L1 / E1, M2 / A2 / L2 / E2)
 }
 
 // The defaulted reply sides, committed as if `.out(Reply, ..)` had been chained with the

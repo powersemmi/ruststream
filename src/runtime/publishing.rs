@@ -25,7 +25,7 @@ use super::handler::{Handler, HandlerOutcome};
 use super::input::{DecodeWith, InputKind};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
-    PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
+    ForReply, PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
 };
 
 /// The reply-wiring axis: how a handler's reply value leaves the service.
@@ -73,7 +73,7 @@ pub(crate) trait EncodeReply: Send + Sync {
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<Cx>,
+        Transforms: PublishTransform<ForReply<Cx>>,
         Cx: Sync,
         PP: PublishPipeline;
 }
@@ -89,7 +89,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<Cx>,
+        Transforms: PublishTransform<ForReply<Cx>>,
         Cx: Sync,
         PP: PublishPipeline,
     {
@@ -112,7 +112,7 @@ where
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<Cx>,
+        Transforms: PublishTransform<ForReply<Cx>>,
         Cx: Sync,
         PP: PublishPipeline,
     {
@@ -133,7 +133,7 @@ where
     Pipeline: PublishPipeline,
     Leaf: Publisher,
     ReplyCodec: Codec,
-    Transforms: PublishTransform<DeliveryCx>,
+    Transforms: PublishTransform<ForReply<DeliveryCx>>,
 {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 

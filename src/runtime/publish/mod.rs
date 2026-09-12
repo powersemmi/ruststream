@@ -117,8 +117,8 @@ pub use builder::{
 pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
 pub use out::{
-    LowerOutTransforms, OutPipeline, OutTransform, OutTransformIdentity, OutTransformStack,
-    PipelinePublishError,
+    LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
+    SendOnlyPolicy, SlotTransforms,
 };
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,
@@ -131,8 +131,10 @@ pub use transaction::{
     Admits, AnyDeclared, TransactionPublishError, TransactionScope, TypedTransaction,
 };
 pub use transform::{
-    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ForBatch,
-    PublishContext, PublishTransform, PublishTransformIdentity, PublishTransformStack, for_batch,
+    BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ContextKind,
+    DestinationUse, Either, FitsOffer, ForBatch, ForReply, ForSlot, Names, NamingOffered,
+    NamingUntaken, PublishContext, PublishTransform, PublishTransformIdentity,
+    PublishTransformStack, Reads, SlotContext, for_batch,
 };
 pub use wiring::{
     AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, Direct, InTransaction,

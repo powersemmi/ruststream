@@ -15,8 +15,8 @@ use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
 use crate::runtime::router::{MapPublisher, Router, RouterCommit, RouterDef, RouterWith};
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, ReplyStep, TransactionalLast,
-    TransformLast,
+    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, ReplyStep,
+    TransactionalLast, TransformLast,
 };
 
 use crate::runtime::app::scope::BrokerScope;
@@ -202,7 +202,7 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
         SteppedChain<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>:
             ScopeCommit<B, Layers, C, State, Pipeline>,
     {
@@ -461,7 +461,7 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
     {
         self.map_chain(|chain| chain.transform(transform))
     }

@@ -18,10 +18,10 @@ use crate::memory::{
 };
 use crate::nonzero;
 use crate::runtime::{
-    Context, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire, OutEntry,
-    OutTransform, Outgoing, Outs, PublishContext, PublishTransform, Reply, ReplyShape, Router,
-    RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
-    SubscriberSettings, Verdict, for_batch, subscriber,
+    Context, ContextKind, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire,
+    OutEntry, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router, RouterDef,
+    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
+    Verdict, for_batch, subscriber,
 };
 use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
@@ -328,6 +328,7 @@ struct Analytics;
 
 impl crate::runtime::OutSlot for Analytics {
     const NAME: &'static str = "Analytics";
+    type Destination = Reads;
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -421,6 +422,7 @@ struct Ledger;
 
 impl crate::runtime::OutSlot for Ledger {
     const NAME: &'static str = "Ledger";
+    type Destination = Reads;
 }
 
 impl crate::runtime::PublishedThrough<Ledger> for Event {}
@@ -460,11 +462,14 @@ where
     }
 }
 
-/// The slot transform the mounts below compose: it stamps what leaves the slot it rides.
+/// The slot transform the mounts below compose: it stamps what leaves the slot it rides. It reads
+/// no context, so one impl serves every position.
 struct Trace;
 
-impl OutTransform for Trace {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for Trace {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-trace", b"1".to_vec());
     }
 }
@@ -655,8 +660,10 @@ fn reply_axes() -> impl RouterDef<Bus> {
 #[derive(Clone, Copy)]
 struct StampReply;
 
-impl<Cx> PublishTransform<Cx> for StampReply {
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &PublishContext<'_, Cx>) {
+impl<K: ContextKind> PublishTransform<K> for StampReply {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamped", "1");
     }
 }

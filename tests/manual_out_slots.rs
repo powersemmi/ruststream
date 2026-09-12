@@ -13,7 +13,7 @@ use std::convert::Infallible;
 use ruststream::PairError;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::{OutTransform, Outgoing};
+use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -85,12 +85,14 @@ struct Encoded;
 
 impl OutSlot for Encoded {
     const NAME: &'static str = "Encoded";
+    type Destination = Reads;
 }
 
 struct Audit;
 
 impl OutSlot for Audit {
     const NAME: &'static str = "Audit";
+    type Destination = Reads;
 }
 
 // The `#[publishes(Wire)]` dictionary of both markers, by hand: the frame and its receipt are
@@ -212,6 +214,7 @@ struct Exports;
 
 impl OutSlot for Exports {
     const NAME: &'static str = "Exports";
+    type Destination = Reads;
 }
 
 impl PublishedThrough<Exports> for WireExport {}
@@ -332,6 +335,7 @@ struct Lanes;
 
 impl OutSlot for Lanes {
     const NAME: &'static str = "Lanes";
+    type Destination = Reads;
 }
 
 impl<L> Handle<Event, (), Outs<(L,)>> for RouteShard
@@ -391,8 +395,10 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
 /// The slot transform the mount below composes on top of the entry's publish path.
 struct Envelope;
 
-impl OutTransform for Envelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for Envelope {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

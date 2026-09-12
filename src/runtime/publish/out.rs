@@ -3,10 +3,12 @@
 //!
 //! A slot publish is issued by the handler body itself, so it never passes the dispatch that
 //! carries a reply. The pieces here are what puts the same wiring on it anyway: the mount site's
-//! `.out(marker, policy).transform(..)` steps compose into an [`OutTransformStack`], the stack
-//! lowers into the app's own [`PublishPipeline`] as its outermost layer
-//! ([`LowerOutTransforms`]), and the entry sends through the composed pipeline
-//! ([`OutPipeline`]). A slot that names no transform in an app that adds no
+//! `.out(marker, policy).transform(..)` steps compose into the same
+//! [`PublishTransformStack`](super::PublishTransformStack) a reply uses, the stack is paired with
+//! the slot it was named on ([`SlotTransforms`]) and lowers into the app's own
+//! [`PublishPipeline`] as its outermost layer ([`LowerOutTransforms`]), and the entry sends
+//! through the composed pipeline ([`OutPipeline`]). A slot that names no transform in an app that
+//! adds no
 //! [`publish_layer`](crate::runtime::RustStream::publish_layer) keeps
 //! [`PublishIdentity`] there, which sends the message straight to the leaf - the same call the
 //! entry made before any of this existed.
@@ -17,110 +19,39 @@ use std::future::Future;
 use bytes::BytesMut;
 use thiserror::Error;
 
-use super::{Outgoing, PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishStack};
+use super::{
+    ForSlot, Names, Outgoing, PublishIdentity, PublishLayer, PublishNext, PublishPipeline,
+    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
+    SlotContext,
+};
 use crate::runtime::lifecycle::BoxError;
-use crate::{OutgoingMessage, Publisher};
+use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Publisher};
 
-/// A static transform on every message leaving one [`Out`](crate::runtime::Out) slot: it mutates
-/// the encoded [`Outgoing`] before the app-wide publish pipeline and the broker send.
-///
-/// The slot counterpart of [`PublishTransform`](super::PublishTransform), composed onto a slot by
-/// the `.out(marker, policy).transform(..)` step of a mount site's chain. Use it for what belongs
-/// to the destination rather than to the message: an outbox envelope, a fixed content-type header,
-/// a tenant tag.
-///
-/// It takes no [`PublishContext`](super::PublishContext), because a slot publish has none to read:
-/// the handler body issues it, so the delivery that prompted it is the body's own to read from its
-/// [`Context`](crate::runtime::Context) and put on the message. A transform wanted on both a reply
-/// and a slot implements both traits; the two bodies are the same line.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use ruststream::runtime::{HandlerOutcome, Out, Outgoing, OutTransform};
-/// # use ruststream::{OutSlot, Outgoing as OutgoingDerive, subscriber};
-/// # #[derive(serde::Deserialize, schemars::JsonSchema)]
-/// # struct Order { id: u64 }
-/// # #[derive(OutgoingDerive, serde::Serialize, schemars::JsonSchema)]
-/// # #[outgoing(name = "audit.orders")]
-/// # struct Audited { id: u64 }
-/// # #[derive(OutSlot)]
-/// # #[publishes(Audited)]
-/// # struct Audit;
-/// # #[subscriber("orders")]
-/// # async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
-/// #     if audit.message(&Audited { id: order.id }).publish().await.is_err() {
-/// #         return HandlerOutcome::retry();
-/// #     }
-/// #     HandlerOutcome::ack()
-/// # }
-///
-/// struct Envelope;
-///
-/// impl OutTransform for Envelope {
-///     fn apply(&self, out: &mut Outgoing<'_>) {
-///         out.headers_mut().insert("x-outbox", b"1".to_vec());
-///     }
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(mirror).out(Audit, Publish).transform(Envelope).build();
-///     })
-/// }
-/// # }
-/// ```
-pub trait OutTransform: Send + Sync {
-    /// Transforms `out` in place before the app-wide pipeline runs and the message is sent.
-    fn apply(&self, out: &mut Outgoing<'_>);
+/// One slot's [`PublishTransform`] stack, paired with the slot it was named on so the transforms
+/// have their [`SlotContext`] to read. Machinery; a mount site's `.transform(..)` steps build the
+/// stack and the wiring pairs it with the marker.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct SlotTransforms<Stack> {
+    slot: &'static str,
+    stack: Stack,
 }
 
-/// The empty [`OutTransform`] stack: what a slot carries until a `.transform(..)` step composes
-/// one onto it.
-///
-/// It never reaches a publish: a slot whose stack is still empty lowers into the app's pipeline
-/// unchanged (see [`LowerOutTransforms`]), so nothing runs and nothing is paid.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OutTransformIdentity;
-
-impl OutTransform for OutTransformIdentity {
-    fn apply(&self, _out: &mut Outgoing<'_>) {}
-}
-
-/// Composes two [`OutTransform`]s: `inner` runs first, then `outer`. Built by a chain's
-/// `.transform(..)` step; you rarely name it directly.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OutTransformStack<Inner, Outer> {
-    // The slot attachment builds the stack when a transform is layered on.
-    pub(crate) inner: Inner,
-    pub(crate) outer: Outer,
-}
-
-impl<Inner: OutTransform, Outer: OutTransform> OutTransform for OutTransformStack<Inner, Outer> {
-    fn apply(&self, out: &mut Outgoing<'_>) {
-        self.inner.apply(out);
-        self.outer.apply(out);
-    }
-}
-
-// The stack is its own publish layer, which is how it reaches the app-wide pipeline without a
+// The pair is its own publish layer, which is how it reaches the app-wide pipeline without a
 // wrapper: it runs the whole stack, then hands the message to the rest of the chain.
-impl<Inner: OutTransform, Outer: OutTransform> PublishLayer for OutTransformStack<Inner, Outer> {
+impl<Stack: PublishTransform<ForSlot>> PublishLayer for SlotTransforms<Stack> {
     fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
-        self.apply(out);
+        self.stack.apply(out, &SlotContext::new(self.slot));
         next.run(out)
     }
 }
 
-/// Lowers a slot's [`OutTransform`] stack onto the app's publish pipeline, producing the pipeline
-/// the slot entry publishes through. Machinery; never named in user code.
+/// Lowers a slot's [`PublishTransform`] stack onto the app's publish pipeline, producing the
+/// pipeline the slot entry publishes through. Machinery; never named in user code.
 ///
 /// The empty stack lowers to the app's pipeline unchanged, so a slot that names no transform in an
 /// app that adds no middleware keeps [`PublishIdentity`] and publishes with nothing in the way. A
@@ -132,23 +63,96 @@ pub trait LowerOutTransforms<Pipeline> {
     /// The slot's composed publish pipeline.
     type Out;
 
-    /// Composes it.
-    fn lower(self, pipeline: Pipeline) -> Self::Out;
+    /// Composes it, against the marker whose name the transforms read.
+    fn lower(self, slot: &'static str, pipeline: Pipeline) -> Self::Out;
 }
 
-impl<Pipeline> LowerOutTransforms<Pipeline> for OutTransformIdentity {
+impl<Pipeline> LowerOutTransforms<Pipeline> for PublishTransformIdentity {
     type Out = Pipeline;
 
-    fn lower(self, pipeline: Pipeline) -> Pipeline {
+    fn lower(self, _slot: &'static str, pipeline: Pipeline) -> Pipeline {
         pipeline
     }
 }
 
-impl<Pipeline, Inner, Outer> LowerOutTransforms<Pipeline> for OutTransformStack<Inner, Outer> {
-    type Out = PublishStack<Self, Pipeline>;
+impl<Pipeline, Inner, Outer> LowerOutTransforms<Pipeline> for PublishTransformStack<Inner, Outer> {
+    type Out = PublishStack<SlotTransforms<Self>, Pipeline>;
 
-    fn lower(self, pipeline: Pipeline) -> Self::Out {
-        PublishStack::new(self, pipeline)
+    fn lower(self, slot: &'static str, pipeline: Pipeline) -> Self::Out {
+        PublishStack::new(SlotTransforms { slot, stack: self }, pipeline)
+    }
+}
+
+/// Narrows a slot's publish policy to what the transforms it carries leave intact. Machinery;
+/// driven by the projected [`PublishTransform::Destination`] of the slot's whole stack.
+///
+/// A stack that only reads hands the policy back unchanged, so a slot with ordinary transforms
+/// keeps every capability its broker offers. One that names the destination narrows the policy to
+/// [`SendOnlyPolicy`]: a broker transaction, a caller-owned transaction and a request / reply round
+/// trip all reach the broker without the slot's publish path, so their messages would go where that
+/// transform never looked.
+#[doc(hidden)]
+pub trait NarrowToUse<Policy> {
+    /// The policy the runtime pairs for this slot.
+    type Out;
+
+    /// Narrows it.
+    fn narrow(policy: Policy) -> Self::Out;
+}
+
+impl<Policy> NarrowToUse<Policy> for Reads {
+    type Out = Policy;
+
+    fn narrow(policy: Policy) -> Policy {
+        policy
+    }
+}
+
+impl<Policy> NarrowToUse<Policy> for Names {
+    type Out = SendOnlyPolicy<Policy>;
+
+    fn narrow(policy: Policy) -> Self::Out {
+        SendOnlyPolicy(policy)
+    }
+}
+
+/// A slot's publish policy narrowed to plain sending: what a naming transform on the slot leaves
+/// it with. Pure declaration, like the policy underneath.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SendOnlyPolicy<Policy>(Policy);
+
+impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
+    for SendOnlyPolicy<Policy>
+{
+    type Live = NamedDestinationSend<Policy::Live>;
+
+    async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
+        Ok(NamedDestinationSend(self.0.pair(connected).await?))
+    }
+}
+
+/// The live value of a slot whose transform names the destination: the broker's publisher with
+/// everything but plain sending taken away.
+///
+/// The transform names the destination on the slot's publish path, and only a plain publish
+/// travels it. A broker transaction, a caller-owned transaction and a request / reply round trip
+/// all reach the broker directly, so their messages would go where that transform never looked.
+/// Rather than let that happen quietly, such a slot offers none of them: a handler whose `Out`
+/// parameter asks for one fails to mount, naming the capability its slot does not have.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NamedDestinationSend<P>(P);
+
+impl<P: Publisher> Publisher for NamedDestinationSend<P> {
+    type Error = P::Error;
+
+    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+        self.0.publish(msg).await
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        self.0.base_headers()
     }
 }
 

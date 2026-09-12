@@ -1,0 +1,25 @@
+error[E0277]: this position has already given the naming right away
+  --> tests/ui/naming_transform_twice.rs:47:24
+   |
+47 |             .transform(Inbox);
+   |              --------- ^^^^^ an earlier transform on this position declares `Destination = Names`
+   |              |
+   |              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream::runtime::NamingUntaken` is not implemented for `Names`
+   = note: one destination, one transform that names it: fold the two decisions into a single transform, or drop one of them
+help: the trait `ruststream::runtime::NamingUntaken` is implemented for `Reads`
+  --> src/runtime/publish/transform.rs
+   |
+   | impl NamingUntaken for Reads {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `Names` to implement `ruststream::runtime::FitsOffer<Names, Names, Receipt>`
+   = note: required for `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish, UnnamedCodec, PublishTransformStack<PublishTransformIdentity, ReplyTo>>>, ())` to implement `ruststream::runtime::AdmitsAt<Inbox, ruststream::runtime::ReplyLast, ruststream::runtime::PublishMount, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn transform<N>(
+   |            --------- required by a bound in this associated function
+...
+   |         Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
+   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`

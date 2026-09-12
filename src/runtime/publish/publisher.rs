@@ -6,8 +6,8 @@ use bytes::BytesMut;
 use serde::Serialize;
 
 use super::{
-    BatchPublishTransform, BatchTransformIdentity, Outgoing, PublishContext, PublishPipeline,
-    PublishTransform, PublishTransformIdentity,
+    BatchPublishTransform, BatchTransformIdentity, ForReply, Outgoing, PublishContext,
+    PublishPipeline, PublishTransform, PublishTransformIdentity,
 };
 use crate::Publisher;
 use crate::codec::Codec;
@@ -87,7 +87,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
-        PL: PublishTransform<Cx>,
+        PL: PublishTransform<ForReply<Cx>>,
         BL: Sync,
         Cx: Sync,
         PP: PublishPipeline,
@@ -113,7 +113,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
-        PL: PublishTransform<Cx>,
+        PL: PublishTransform<ForReply<Cx>>,
         BL: Sync,
         Cx: Sync,
         PP: PublishPipeline,

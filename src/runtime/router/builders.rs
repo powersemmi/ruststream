@@ -22,8 +22,8 @@ use std::marker::PhantomData;
 #[cfg(doc)]
 use crate::runtime::slot::Reply;
 use crate::runtime::slot::{
-    BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound, ReplyStep,
-    TransactionalLast, TransformLast,
+    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound,
+    ReplyStep, TransactionalLast, TransformLast,
 };
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
@@ -114,21 +114,28 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         RouterWith::new(self.def, self.attach.codec_last(codec), self.router)
     }
 
-    /// Composes a static transform onto everything that leaves the position named last: a
-    /// [`PublishTransform`](crate::runtime::PublishTransform) on the reply, an
-    /// [`OutTransform`](crate::runtime::OutTransform) on a slot.
+    /// Composes a static [`PublishTransform`](crate::runtime::PublishTransform) onto everything
+    /// that leaves the position named last, of that position's own
+    /// [`ContextKind`](crate::runtime::ContextKind): a reply hands the transform the delivery it
+    /// answers, a slot hands it the slot's name.
     ///
-    /// The step repeats and the first one added runs first (closest to the encoded value), so a
-    /// chain can name one per position:
+    /// The step repeats and they run in the order the chain writes them, so a chain names as many
+    /// as it likes per position:
     /// `.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`.
     /// Before any `.out(..)` the step has no position to ride, and the call fails naming the fix.
+    ///
+    /// A transform declaring
+    /// [`Destination = Names`](crate::runtime::PublishTransform::Destination) needs the position to
+    /// offer that right, and the call fails here when it does not: the reply type already declares
+    /// its channel, the replies are a batch's, the right has been taken by an earlier transform, or
+    /// the slot's `#[publishes(..)]` dictionary contains a type that fixes its own channel.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn transform<N>(
         self,
         transform: N,
     ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
     where
-        Attach: TransformLast<N, Last, Step: NamedStep>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
     {
         RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
     }

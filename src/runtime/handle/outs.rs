@@ -16,7 +16,7 @@
 //! # impl OutgoingDestination for Event { type Form = CallerName; }
 //! # impl MessageHeaders for Event { type Contract = NoHeaders; }
 //! # struct Primary;
-//! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; }
+//! # impl OutSlot for Primary { const NAME: &'static str = "Primary"; type Destination = Reads; }
 //! # impl PublishedThrough<Primary> for Event {}
 //!
 //! struct Mirror;
@@ -73,6 +73,11 @@
 //! [`Slot`], `Outs<(Slot<Lanes, LaneRouter, JsonCodec>,)>`) and calls it directly through the
 //! entry's transparent `Deref`. Everything is monomorphized: the arena is built once at startup,
 //! and a delivery only ever passes a reference to it.
+//!
+//! A mount site that hands the slot's destination to a transform with `.redirect(..)` leaves the
+//! first row of that table and nothing else: the rows below it reach the broker without the slot's
+//! publish path, so their messages would go where that transform never looked, and a body asking
+//! for one of them fails to mount.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -526,10 +531,10 @@ where
 /// # impl OutgoingDestination for Event { type Form = CallerName; }
 /// # impl MessageHeaders for Event { type Contract = NoHeaders; }
 /// # struct Audit;
-/// # impl OutSlot for Audit { const NAME: &'static str = "Audit"; }
+/// # impl OutSlot for Audit { const NAME: &'static str = "Audit"; type Destination = Reads; }
 /// # impl PublishedThrough<Audit> for Event {}
 /// # struct Journal;
-/// # impl OutSlot for Journal { const NAME: &'static str = "Journal"; }
+/// # impl OutSlot for Journal { const NAME: &'static str = "Journal"; type Destination = Reads; }
 ///
 /// struct Route;
 ///

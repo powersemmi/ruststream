@@ -33,7 +33,8 @@ use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{
-    Deserialized, Handle, Input, Message, Outs, Reply, Router, Slot, SoloDeserialized, subscriber,
+    Deserialized, Handle, Input, Message, Outs, Reads, Reply, Router, Slot, SoloDeserialized,
+    subscriber,
 };
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
@@ -98,6 +99,7 @@ struct Analytics;
 
 impl OutSlot for Analytics {
     const NAME: &'static str = "Analytics";
+    type Destination = Reads;
 }
 
 /// The arena entry the memory broker's plain policy pairs into, spelled once.

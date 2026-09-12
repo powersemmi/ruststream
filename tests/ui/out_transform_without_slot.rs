@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Out, OutTransform, Outgoing, RustStream};
+use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Out, Outgoing, PublishTransform, Reads, RustStream};
 use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
 
 #[derive(Deserialized)]
@@ -10,8 +10,10 @@ struct Encoded;
 
 struct Envelope;
 
-impl OutTransform for Envelope {
-    fn apply(&self, out: &mut Outgoing<'_>) {
+impl<K: ContextKind> PublishTransform<K> for Envelope {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

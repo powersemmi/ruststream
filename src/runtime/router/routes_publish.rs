@@ -27,7 +27,9 @@ use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::{PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher};
+use crate::runtime::publish::{
+    ForReply, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
+};
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
 use crate::runtime::redelivery::open_subscription;
 
@@ -139,7 +141,7 @@ where
         + 'static,
     Leaf: Publisher + 'static,
     ReplyCodec: Codec + Send + Sync + 'static,
-    Transforms: PublishTransform<Def::Context> + Send + Sync + 'static,
+    Transforms: PublishTransform<ForReply<Def::Context>> + Send + Sync + 'static,
 {
     fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
     where

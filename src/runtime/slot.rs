@@ -20,18 +20,23 @@
 use std::marker::PhantomData;
 use std::time::Duration;
 
+use crate::runtime::handle::{DeclaresReply, ReplyShape};
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::publish::{
-    AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, LowerOutTransforms,
-    MapReplyPolicy, NameReplyCodec, OutTransformIdentity, OutTransformStack, PublishingDirectly,
-    TransactionalReply, UnnamedCodec,
+    AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, DestinationUse, FitsOffer,
+    ForReply, ForSlot, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, Names, NarrowToUse,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
+    RawReplyWiring, Reads, ReplyWiring, TransactionalReply, UnnamedCodec,
 };
-use crate::runtime::router::{DefaultReply, ReplyAttachment};
+use crate::runtime::router::{
+    BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
+    RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    ConnectedBroker, HeaderMap, OutgoingMessage, OwnedTransactions, Publisher, RequestReply,
-    TransactionalPublisher,
+    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
+    OutgoingMessage, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -45,12 +50,14 @@ use crate::{
 ///
 /// ```
 /// use ruststream::prelude::*;
+/// use ruststream::runtime::Reads;
 ///
 /// #[derive(Clone, Copy, Debug)]
 /// struct Encoded;
 ///
 /// impl OutSlot for Encoded {
 ///     const NAME: &'static str = "Encoded";
+///     type Destination = Reads;
 /// }
 ///
 /// assert_eq!(<Encoded as OutSlot>::NAME, "Encoded");
@@ -58,6 +65,17 @@ use crate::{
 pub trait OutSlot: 'static {
     /// The human-readable slot name, used by diagnostics and test assertions.
     const NAME: &'static str;
+
+    /// The most a transform on this slot may do to a message's destination.
+    ///
+    /// [`Names`] only where every type the slot publishes leaves its destination open, because a
+    /// type that fixes its own channel is published there and the generated document says so.
+    /// `#[derive(OutSlot)]` folds this out of the `#[publishes(..)]` list through
+    /// [`ListOffer`]; a marker with no list has nothing to fold and writes [`Reads`], which is
+    /// what the implicit [`DefaultSlot`] does - it admits every message, so it can promise
+    /// nothing. Stable Rust has no default for an associated type, so every marker writes the
+    /// line.
+    type Destination: DestinationUse;
 
     /// The slot's publish dictionary as `AsyncAPI` metadata, one entry per
     /// `#[publishes(..)]` type. The derive fills this in; the default (a marker without a
@@ -85,8 +103,11 @@ pub trait OutSlot: 'static {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct DefaultSlot;
 
+// The implicit slot admits every declared message, so it can promise nothing about their
+// destinations and lets no transform name one.
 impl OutSlot for DefaultSlot {
     const NAME: &'static str = "default";
+    type Destination = Reads;
 }
 
 /// The marker of a handler's reply position: `.out(Reply, policy)` names the publish policy the
@@ -156,6 +177,7 @@ pub struct NoReply;
 ///
 /// impl OutSlot for Events {
 ///     const NAME: &'static str = "Events";
+///     type Destination = Reads;
 /// }
 ///
 /// // What `#[derive(OutSlot)]` + `#[publishes(Progress)]` generates:
@@ -174,6 +196,116 @@ pub trait PublishedThrough<Slot> {}
 
 // The implicit slot has no declaration site to list types on, so it admits every message.
 impl<T> PublishedThrough<DefaultSlot> for T {}
+
+/// What one destination form lets a transform do: [`Names`] where nothing is declared, [`Reads`]
+/// where something is.
+///
+/// A type deriving `Outgoing` without `#[outgoing(name = "..")]` is published where `.to(..)`
+/// says, so a transform that names the destination replaces a choice the call site was making
+/// anyway. A type that fixes its own channel is published there and the document says so, and
+/// nothing may move it.
+#[doc(hidden)]
+pub trait DestinationOffer {
+    /// The most a transform may do to a message declared this way.
+    type Offer: DestinationUse;
+}
+
+impl DestinationOffer for CallerName {
+    type Offer = Names;
+}
+
+impl DestinationOffer for FixedName {
+    type Offer = Reads;
+}
+
+impl DestinationOffer for NameTemplate {
+    type Offer = Reads;
+}
+
+/// The offer of a whole `#[publishes(..)]` dictionary: [`Names`] only while every member leaves
+/// its destination open, because one member that fixes its channel settles the whole slot.
+///
+/// The dual of [`Either`](crate::runtime::publish::Either), which combines what a transform stack
+/// does. Machinery behind [`OutSlot::Destination`].
+#[doc(hidden)]
+pub trait Both<Rhs> {
+    /// The combined offer.
+    type Out;
+}
+
+impl Both<Self> for Names {
+    type Out = Self;
+}
+
+impl Both<Reads> for Names {
+    type Out = Reads;
+}
+
+impl<Rhs> Both<Rhs> for Reads {
+    type Out = Self;
+}
+
+/// A slot marker's `#[publishes(..)]` dictionary as a type-level list, `(First, (Second, ()))`,
+/// folded into what the slot offers a transform.
+///
+/// [`OutSlot::outgoing`] reports the same list as data, for the generated document; this folds it
+/// as types, so `#[derive(OutSlot)]` computes [`OutSlot::Destination`] from the list rather than
+/// the author reasoning it out. A hand-written marker either projects the fold the same way or
+/// writes the offer directly.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use ruststream::runtime::ListOffer;
+/// use serde::Serialize;
+///
+/// #[derive(Outgoing, Serialize)]
+/// struct Progress {
+///     percent: u8,
+/// }
+///
+/// #[derive(Outgoing, Serialize)]
+/// #[outgoing(name = "chunks.done")]
+/// struct ChunkDone {
+///     key: String,
+/// }
+///
+/// struct Events;
+///
+/// // What `#[derive(OutSlot)] #[publishes(ChunkDone, Progress)]` writes. `ChunkDone` fixes its
+/// // channel, so the fold comes out `Reads` and the slot lets no transform name a destination.
+/// impl OutSlot for Events {
+///     const NAME: &'static str = "Events";
+///     type Destination = <(ChunkDone, (Progress, ())) as ListOffer>::Offer;
+/// }
+///
+/// fn offers_reads<T: OutSlot<Destination = Reads>>() {}
+/// # fn check() { offers_reads::<Events>(); }
+/// # }
+/// ```
+pub trait ListOffer {
+    /// What every member of the list allows, taken together.
+    type Offer: DestinationUse;
+}
+
+impl ListOffer for () {
+    type Offer = Names;
+}
+
+impl<Head, Tail> ListOffer for (Head, Tail)
+where
+    Head: OutgoingDestination<Form: DestinationOffer>,
+    Tail: ListOffer,
+    <<Head as OutgoingDestination>::Form as DestinationOffer>::Offer:
+        Both<Tail::Offer, Out: DestinationUse>,
+{
+    type Offer = <<<Head as OutgoingDestination>::Form as DestinationOffer>::Offer as Both<
+        Tail::Offer,
+    >>::Out;
+}
 
 /// The live publisher an [`Out`](super::Out) slot injects: the attachment's paired publisher,
 /// wrapped with the slot identity.
@@ -414,7 +546,8 @@ impl<M> MissingSlot<M> {
 }
 
 /// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
-/// [`OutTransform`] stack the `.transform(..)` steps after it compose.
+/// [`PublishTransform`](crate::runtime::PublishTransform) stack the `.transform(..)` steps after it
+/// compose.
 ///
 /// The stack is pure declaration, like the policy: it lowers onto the app's publish pipeline at
 /// the mount ([`LowerOutTransforms`]), and the composed pipeline is what the slot entry publishes
@@ -422,46 +555,53 @@ impl<M> MissingSlot<M> {
 /// service code.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OutAttachment<Policy, Layers = OutTransformIdentity, Enc = UnnamedCodec> {
+pub struct OutAttachment<M, Policy, Layers = PublishTransformIdentity, Enc = UnnamedCodec> {
     policy: Policy,
     layers: Layers,
     enc: Enc,
+    // The marker the `.out(marker, policy)` call bound, carried so the steps after it can ask what
+    // the slot's own declaration offers: the `.transform(..)` step asks it whether the slot lets a
+    // transform name the destination.
+    _marker: PhantomData<fn() -> M>,
 }
 
-impl<Policy> OutAttachment<Policy> {
+impl<M, Policy> OutAttachment<M, Policy> {
     /// The attachment a bare `.out(marker, policy)` produces: the policy, no transforms, the
     /// surface's own codec.
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
             policy,
-            layers: OutTransformIdentity,
+            layers: PublishTransformIdentity,
             enc: UnnamedCodec::new(),
+            _marker: PhantomData,
         }
     }
 }
 
-impl<Policy, Layers, Enc> OutAttachment<Policy, Layers, Enc> {
+impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
     /// Composes one more transform on top of the stack: the `.transform(..)` step.
     pub(crate) fn add_transform<N>(
         self,
         transform: N,
-    ) -> OutAttachment<Policy, OutTransformStack<Layers, N>, Enc> {
+    ) -> OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc> {
         OutAttachment {
             policy: self.policy,
-            layers: OutTransformStack {
+            layers: PublishTransformStack {
                 inner: self.layers,
                 outer: transform,
             },
             enc: self.enc,
+            _marker: PhantomData,
         }
     }
 
     /// Fills the slot's codec position: the `.codec(..)` step.
-    pub(crate) fn name_codec<C>(self, codec: C) -> OutAttachment<Policy, Layers, CallCodec<C>> {
+    pub(crate) fn name_codec<C>(self, codec: C) -> OutAttachment<M, Policy, Layers, CallCodec<C>> {
         OutAttachment {
             policy: self.policy,
             layers: self.layers,
             enc: CallCodec(codec),
+            _marker: PhantomData,
         }
     }
 
@@ -472,28 +612,39 @@ impl<Policy, Layers, Enc> OutAttachment<Policy, Layers, Enc> {
             policy: f(self.policy),
             layers: self.layers,
             enc: self.enc,
+            _marker: PhantomData,
         }
     }
 
     /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
-    /// pairs, the encode codec (this slot's own when it named one, the surface's otherwise), and
-    /// the pipeline the entry publishes through (this slot's transforms lowered onto the app's).
+    /// pairs (narrowed to plain sending where this slot's transforms name the destination), the
+    /// encode codec (this slot's own when it named one, the surface's otherwise), and the pipeline
+    /// the entry publishes through.
     pub(crate) fn wire<Surface, Pipeline>(
         self,
         surface: Surface,
         pipeline: Pipeline,
-    ) -> (Policy, Enc::Codec, Layers::Out)
+    ) -> (SlotPolicy<Layers, Policy>, Enc::Codec, Layers::Out)
     where
+        M: OutSlot,
         Enc: SlotCodec<Surface>,
-        Layers: LowerOutTransforms<Pipeline>,
+        Layers: LowerOutTransforms<Pipeline> + PublishTransform<ForSlot>,
+        <Layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<Policy>,
     {
-        (
-            self.policy,
-            self.enc.resolve(surface),
-            self.layers.lower(pipeline),
-        )
+        let codec = self.enc.resolve(surface);
+        let policy =
+            <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::narrow(
+                self.policy,
+            );
+        (policy, codec, self.layers.lower(M::NAME, pipeline))
     }
 }
+
+/// The policy one slot pairs: its own, narrowed where the stack names the destination. Machinery;
+/// the commit spells it so the bound reads.
+#[doc(hidden)]
+pub type SlotPolicy<Layers, Policy> =
+    <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::Out;
 
 /// Resolves one slot's encode codec: the codec the chain named for that slot, or the registration
 /// surface's own when it named none. The slot counterpart of a reply wiring's
@@ -616,12 +767,12 @@ impl<Mount, M, Policy, const POS: usize, Rep, Slots> BindAt<Mount, M, Policy, Sl
     for (Rep, Slots)
 where
     M: OutSlot,
-    Slots: BindSlot<M, OutAttachment<Policy>, SlotPos<POS>>,
+    Slots: BindSlot<M, OutAttachment<M, Policy>, SlotPos<POS>>,
 {
     type Out = (Rep, Slots::Out);
 
     fn bind_at(self, policy: Policy) -> Self::Out {
-        (self.0, self.1.bind(OutAttachment::new(policy)))
+        (self.0, self.1.bind(OutAttachment::<M, Policy>::new(policy)))
     }
 }
 
@@ -712,6 +863,115 @@ impl<N, Rep, Slots> TransformLast<N, NoOutBound> for (Rep, Slots) {
         self
     }
 }
+
+/// Whether the position a chain named last admits the transform the `.transform(..)` step is
+/// about to compose, given what its stack has already declared.
+///
+/// This is where the six facts about naming a destination live. The position states what it
+/// offers - a reply type that leaves its destination open offers [`Names`], one that fixes it
+/// offers [`Reads`], a batch's replies offer [`Reads`] because they answer many deliveries, a slot
+/// offers what its `#[publishes(..)]` dictionary adds up to - and [`Admits`] settles it against
+/// what the transform declares and what the stack has taken. Machinery; never named directly.
+#[doc(hidden)]
+pub trait AdmitsAt<N, Last, Mount, Def> {}
+
+// The reply position: the mount token turns the definition's reply type into an offer, and the
+// wiring's own stack says whether the right has been taken already.
+impl<N, Policy, Enc, PL, BL, Tx, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+    for (WithSource<ReplyWiring<Policy, Enc, PL, BL, Tx>>, Slots)
+where
+    Mount: MountOffer<Def>,
+    Def: DeclaresReply,
+    PL: PublishTransform<ForReply<Def::Context>>,
+    N: PublishTransform<ForReply<Def::Context>>,
+    <N as PublishTransform<ForReply<Def::Context>>>::Destination: FitsOffer<
+            Mount::Offer,
+            <PL as PublishTransform<ForReply<Def::Context>>>::Destination,
+            Def::Reply,
+        >,
+{
+}
+
+// The byte-for-byte reply carries no transform stack at all, so `AddReplyTransform` is what has to
+// fail there; this arm keeps this check from failing first and hiding it.
+impl<N, Policy, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+    for (WithSource<RawReplyWiring<Policy>>, Slots)
+{
+}
+
+// One slot position, asked of the slot tuple through the positional machinery.
+impl<N, const POS: usize, Rep, Slots, Mount, Def> AdmitsAt<N, SlotPos<POS>, Mount, Def>
+    for (Rep, Slots)
+where
+    Slots: AdmitsSlotAt<N, SlotPos<POS>>,
+{
+}
+
+// See `TransformLast`'s own arm: `Step: NamedStep` is the bound that should fail with nothing
+// named, so this one must not fail first.
+impl<N, Rep, Slots, Mount, Def> AdmitsAt<N, NoOutBound, Mount, Def> for (Rep, Slots) {}
+
+/// Whether the slot bound at `Index` admits the transform the `.transform(..)` step is about to
+/// compose. The positional half of [`AdmitsAt`]; machinery, never named directly.
+#[doc(hidden)]
+pub trait AdmitsSlotAt<N, Index> {}
+
+/// What one mount token offers a reply transform, read off the definition's reply type.
+///
+/// A one-by-one reply offers what its type's destination form offers; a batch's replies offer
+/// [`Reads`] whatever their type says, because a batch answers many deliveries and carries none of
+/// their headers, so there is nothing a transform could name a destination from. Machinery.
+#[doc(hidden)]
+pub trait MountOffer<Def> {
+    /// The most a transform on this mount's reply may do to the destination.
+    type Offer;
+}
+
+/// What one reply type offers, folded out of its payload's destination declaration. Machinery
+/// behind [`MountOffer`].
+#[doc(hidden)]
+pub trait ReplyOffer {
+    /// The most a transform on this reply may do to the destination.
+    type Offer;
+}
+
+// The nested projection is the machinery of the resolution, not the user's mistake.
+#[diagnostic::do_not_recommend]
+impl<R> ReplyOffer for R
+where
+    R: ReplyShape<Body: OutgoingDestination<Form: DestinationOffer>>,
+{
+    type Offer = <<R::Body as OutgoingDestination>::Form as DestinationOffer>::Offer;
+}
+
+/// Implements [`MountOffer`] for the mounts whose reply answers one delivery: the offer is the
+/// reply type's own.
+macro_rules! impl_solo_mount_offer {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Def: DeclaresReply<Reply: ReplyOffer>> MountOffer<Def> for $mount {
+            type Offer = <Def::Reply as ReplyOffer>::Offer;
+        }
+    )+};
+}
+
+impl_solo_mount_offer!(PublishMount, PublishInjectMount);
+
+/// Implements [`MountOffer`] for the mounts that offer nothing: a batch answers many deliveries,
+/// and a byte-for-byte reply has no transform stack to offer anything to.
+macro_rules! impl_reads_only_mount_offer {
+    ($($mount:ident),+ $(,)?) => {$(
+        impl<Def> MountOffer<Def> for $mount {
+            type Offer = Reads;
+        }
+    )+};
+}
+
+impl_reads_only_mount_offer!(
+    BatchPublishMount,
+    BatchPublishInjectMount,
+    RawReplyMount,
+    RawReplyInjectMount,
+);
 
 /// Names the codec of whatever a mount chain named last: the reply's encode codec after
 /// `.out(Reply, ..)`, one slot's after `.out(marker, ..)`. Machinery; never named directly.
@@ -1076,12 +1336,12 @@ impl_bind_slot! {
 /// last `.out(..)` bound (`@ <position>`) grows its stack, the surrounding elements pass through.
 macro_rules! impl_step_at {
     ($(($($before:ident,)* @ $pos:literal $(, $after:ident)*))+) => {$(
-        impl<N, Policy, Layers, Enc $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
-            for ($($before,)* WithSource<OutAttachment<Policy, Layers, Enc>>, $($after,)*)
+        impl<N, M, Policy, Layers, Enc $(, $before)* $(, $after)*> TransformAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
         {
             type Out = (
                 $($before,)*
-                WithSource<OutAttachment<Policy, OutTransformStack<Layers, N>, Enc>>,
+                WithSource<OutAttachment<M, Policy, PublishTransformStack<Layers, N>, Enc>>,
                 $($after,)*
             );
 
@@ -1092,12 +1352,30 @@ macro_rules! impl_step_at {
             }
         }
 
-        impl<Cd, Policy, Layers $(, $before)* $(, $after)*> CodecAt<Cd, SlotPos<$pos>>
-            for ($($before,)* WithSource<OutAttachment<Policy, Layers, UnnamedCodec>>, $($after,)*)
+        impl<N, M, Policy, Layers, Enc $(, $before)* $(, $after)*> AdmitsSlotAt<N, SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
+        where
+            M: OutSlot,
+            Layers: PublishTransform<ForSlot>,
+            N: PublishTransform<ForSlot>,
+            <N as PublishTransform<ForSlot>>::Destination: FitsOffer<
+                    M::Destination,
+                    <Layers as PublishTransform<ForSlot>>::Destination,
+                    M,
+                >,
+        {
+        }
+
+        impl<Cd, M, Policy, Layers $(, $before)* $(, $after)*> CodecAt<Cd, SlotPos<$pos>>
+            for (
+                $($before,)*
+                WithSource<OutAttachment<M, Policy, Layers, UnnamedCodec>>,
+                $($after,)*
+            )
         {
             type Out = (
                 $($before,)*
-                WithSource<OutAttachment<Policy, Layers, CallCodec<Cd>>>,
+                WithSource<OutAttachment<M, Policy, Layers, CallCodec<Cd>>>,
                 $($after,)*
             );
 
@@ -1108,8 +1386,8 @@ macro_rules! impl_step_at {
             }
         }
 
-        impl<Policy, Layers, Enc $(, $before)* $(, $after)*> MapPolicyAt<SlotPos<$pos>>
-            for ($($before,)* WithSource<OutAttachment<Policy, Layers, Enc>>, $($after,)*)
+        impl<M, Policy, Layers, Enc $(, $before)* $(, $after)*> MapPolicyAt<SlotPos<$pos>>
+            for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
         {
             type Policy = Policy;
 
