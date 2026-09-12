@@ -452,10 +452,9 @@ already-configured value can be passed there directly:
 
 ### Per-message settings on the publish builder
 
-A setting one message differs from the next in - a QoS, a priority, an ordering key, an expiration
-- is a field of your `Publisher::Options`, and a call site adjusts it through a step you add to the
-publish builder. Nothing wraps the publisher, so the publish still leaves through the mount site's
-own entry, with the codec and the transforms that entry named.
+A call site adjusts a field of your `Publisher::Options` through a step you add to the publish
+builder. Nothing wraps the publisher, so the publish still goes through the mount site's own entry,
+with the codec and the transforms that entry named.
 
 The four pieces are an options type whose every field is optional, a policy that carries the
 defaults, a live publisher resolving one against the other, and an extension trait over
@@ -466,13 +465,14 @@ over another broker's publisher:
 --8<-- "tests/publish_options.rs:broker_side"
 ```
 
-The broker half is the same whichever way a service mounts, because it is ordinary trait impls
-either way. Ship the extension trait from your prelude next to the policy aliases.
+The broker half is the same on the macro path and the manual one. Ship the extension trait from
+your prelude next to the policy aliases.
 
-A step is the only shape a per-message setting takes. Do not put the send in the trait: a publish
-that leaves through a value of yours is a publish the slot view stops seeing, and a setting like an
-ordering key is exactly what a test wants to assert on. Do not carry one as a header either: it is
-a protocol field, and a string round trip through the header map inside one process is not one.
+A step is the only shape a per-message setting takes. Do not put the send in your own trait: a
+publish that goes through a value of yours is one the slot view no longer sees, and a setting like
+an ordering key is exactly what a test wants to assert on. Do not carry one as a header either:
+the setting is a protocol field, and the header map would carry it as bytes your `publish` has to
+parse back inside one process.
 
 A value your broker cannot honour is a publish error, never a silent fallback to the default: the
 caller asked for an ordering it would not get.
@@ -512,10 +512,9 @@ of your per-delivery context and publish `ContextField` keys for them. The in-me
 seeker from the batch context below, which carries no position.
 
 A `DescribeServer` description reports the host and port clients connect to. Credentials never
-appear in it: the document is generated to be published. A broker configured from a URL therefore
-builds its description with `ServerSpec::from_url`, which drops the user name and password, and not
-by trimming the scheme off the URL and passing the rest on. A broker that configures several
-addresses joins them from `ServerSpec::host_from_url`.
+appear in it: the document is generated to be published. A broker configured from a URL builds its
+description with `ServerSpec::from_url`, which drops the user name and password. A broker that
+configures several addresses joins them from `ServerSpec::host_from_url`.
 
 These traits are the vocabulary a handler body writes. A body bounds its slot with the capability
 it needs (`Out<impl TransactionalPublisher, Journal>`, or `where W: TransactionalPublisher` on the
@@ -644,10 +643,9 @@ publisher passes outside the slot view, so the harness does not attribute it to 
 than it does a settled owned transaction's buffer. Assert it on the broker's publish log instead.
 That is the attribution boundary and the price of handing out the inner publisher.
 
-A **step-shaped** capability sets one argument on a message and ends in a single publish: an
-ordering key, a priority, a QoS. That one is not a capability trait at all - it is a field of your
-`Publisher::Options` and a step on the publish builder, which keeps the send on the entry's own
-path and the setting out of the header map. See
+A **step-shaped** capability sets one per-message setting and ends in a single publish: an ordering
+key, a priority, a QoS. That one is not a capability trait at all: it is a field of your
+`Publisher::Options`, adjusted by a step on the publish builder. See
 [per-message settings on the publish builder](#per-message-settings-on-the-publish-builder).
 
 ### Your crate's prelude
@@ -660,10 +658,10 @@ publisher and never which broker provides it.
 
 A routes file imports your prelude, because mounting is where a broker is named.
 
-The one exception is a per-message setting. It is broker-specific by nature and the call site is in
-the body, so a body that adjusts one imports your prelude for the step and names your options type
-in its bound (`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). That body is tied to your
-broker, and it says so in its signature.
+The one exception is a per-message setting, whose call site is in the body. A body that adjusts one
+imports your prelude for the step and names your options type in its bound
+(`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). That body is tied to your broker, and
+its signature says so.
 
 That makes your prelude the one import of yours a service writes, so its shape is part of the
 contract. The policy aliases (`NatsPublish as Publish`, `KafkaTransactionalPublish as
