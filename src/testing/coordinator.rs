@@ -11,6 +11,7 @@
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
+use std::any::{Any, type_name};
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -51,11 +52,70 @@ impl HarnessScope {
     }
 }
 
-/// Records a publish made through an `Out` slot against the harness driving the current
-/// dispatch task, if any. Called by the slot publisher wrapper on every publish; outside a
-/// harness-driven handler (production, or a test without a `TestApp`) it is a no-op.
-pub(crate) fn record_slot_publish(slot: &'static str, msg: &OutgoingMessage<'_>) {
-    let _ = HARNESS.try_with(|scope| scope.coordinator.record_slot(slot, msg));
+/// Records a publish made through an `Out` slot, with the broker's per-message options it
+/// carried, against the harness driving the current dispatch task, if any. Called by the slot
+/// publisher wrapper on every publish; outside a harness-driven handler (production, or a test
+/// without a `TestApp`) it is a no-op.
+pub(crate) fn record_slot_publish<Options>(
+    slot: &'static str,
+    msg: &OutgoingMessage<'_>,
+    options: Option<&Options>,
+) where
+    Options: Clone + Send + Sync + 'static,
+{
+    let _ = HARNESS.try_with(|scope| {
+        scope
+            .coordinator
+            .record_slot(slot, msg, RecordedOptions::capture(options));
+    });
+}
+
+/// The broker's per-message options one slot publish carried, copied and type-erased so the
+/// assertions can hand them back to a test as the broker's own type.
+///
+/// The slot wrapper is the one place the options are still typed: the broker's `publish` resolves
+/// them into whatever its protocol does with them, so the publish log underneath sees none.
+#[derive(Clone)]
+pub(crate) struct RecordedOptions {
+    /// The broker's options type, so a `with_options` naming another one fails by name.
+    pub(crate) type_name: &'static str,
+    /// `None` when the publish carried no options: no step ran, the policy's defaults applied.
+    pub(crate) value: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl RecordedOptions {
+    fn capture<Options: Clone + Send + Sync + 'static>(options: Option<&Options>) -> Self {
+        Self {
+            type_name: type_name::<Options>(),
+            value: options.map(|options| Arc::new(options.clone()) as Arc<dyn Any + Send + Sync>),
+        }
+    }
+
+    /// The recorded options as `Options`, or `None` when the publish carried none.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the publish carried options of another type: the test named the wrong
+    /// broker's type, and the message says which one was recorded.
+    pub(crate) fn downcast<Options: 'static>(&self, channel: &str) -> Option<&Options> {
+        let value = self.value.as_ref()?;
+        Some(value.as_ref().downcast_ref::<Options>().unwrap_or_else(|| {
+            panic!(
+                "channel {channel:?} published with per-message options of type `{}`, not `{}`",
+                self.type_name,
+                type_name::<Options>(),
+            )
+        }))
+    }
+}
+
+impl fmt::Debug for RecordedOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecordedOptions")
+            .field("type_name", &self.type_name)
+            .field("set", &self.value.is_some())
+            .finish()
+    }
 }
 
 /// Records one batch against the harness driving the current dispatch task, if any: the batch
@@ -112,11 +172,13 @@ pub(crate) async fn in_harness_scope<F: Future>(scope: Option<HarnessScope>, fut
     }
 }
 
-/// One publish made through an `Out` slot: the slot's name and the outgoing message, captured
-/// as a [`RawMessage`] (destination, payload, headers).
+/// One publish made through an `Out` slot: the slot's name, the outgoing message captured as a
+/// [`RawMessage`] (destination, payload, headers), and the per-message options it carried.
+#[derive(Clone, Debug)]
 pub(crate) struct SlotRecord {
     pub(crate) slot: &'static str,
     pub(crate) message: RawMessage,
+    pub(crate) options: RecordedOptions,
 }
 
 /// The classified outcome the harness records for one delivery to a handler.
@@ -417,25 +479,34 @@ impl Coordinator {
     }
 
     /// Records one publish made through the `Out` slot named `slot`.
-    pub(crate) fn record_slot(&self, slot: &'static str, msg: &OutgoingMessage<'_>) {
+    pub(crate) fn record_slot(
+        &self,
+        slot: &'static str,
+        msg: &OutgoingMessage<'_>,
+        options: RecordedOptions,
+    ) {
         let message = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
             .with_headers(msg.headers().clone());
         self.inner
             .slot_records
             .lock()
             .expect("coordinator slot records mutex poisoned")
-            .push(SlotRecord { slot, message });
+            .push(SlotRecord {
+                slot,
+                message,
+                options,
+            });
     }
 
-    /// Every message published through the `Out` slot named `slot`, in publish order.
-    pub(crate) fn slot_published(&self, slot: &str) -> Vec<RawMessage> {
+    /// Every publish made through the `Out` slot named `slot`, in publish order.
+    pub(crate) fn slot_published(&self, slot: &str) -> Vec<SlotRecord> {
         self.inner
             .slot_records
             .lock()
             .expect("coordinator slot records mutex poisoned")
             .iter()
             .filter(|record| record.slot == slot)
-            .map(|record| record.message.clone())
+            .cloned()
             .collect()
     }
 

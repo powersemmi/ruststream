@@ -382,7 +382,7 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         #[cfg(feature = "testing")]
-        record_slot_publish(M::NAME, &msg);
+        record_slot_publish(M::NAME, &msg, options);
         self.inner.publish(msg, options).await
     }
 
@@ -425,8 +425,9 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         msg: OutgoingMessage<'_>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
+        // A request takes no call-site options, so what it carried is the policy's defaults.
         #[cfg(feature = "testing")]
-        record_slot_publish(M::NAME, &msg);
+        record_slot_publish::<P::Options>(M::NAME, &msg, None);
         self.inner.request(msg, timeout).await
     }
 }

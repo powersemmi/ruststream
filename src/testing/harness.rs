@@ -474,7 +474,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// ```
     #[must_use]
     pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
-        PublishedAssertions::new(
+        PublishedAssertions::captured(
             format!("Out slot `{}`", M::NAME),
             self.coordinator.slot_published(M::NAME),
         )

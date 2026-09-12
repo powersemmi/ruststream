@@ -471,7 +471,7 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 ## 发布
 
-策略在已连接 Broker 上实例化发布者，发布者与这个 Broker 共同拥有这条连接。每次发布时，发布者都
+策略在已连接 Broker 上实例化发布者，发布者与该 Broker 共同拥有这条连接。每次发布时，发布者都
 经由关闭检查读取客户端，并在有消息头时把它们一并转发。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -621,6 +621,7 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 ## 验证它
 
 在 `testing` feature 下提供一个进程内传输，它只做基础路由：一个 subject 匹配器，把发布的消息一次
-扇出给所有订阅者。它在自己的已连接形态上实现 `TestableBroker`，该类型用 `register_testable_broker!`
-注册。在它上面跑一遍 conformance 套件。这种传输切勿模拟 JetStream 的游标、重新投递计时器和保留期：
-那些要对着真实的 `nats-server` 端到端地验证。参见 [Conformance](conformance.md)。
+投递给该 subject 的所有订阅者。它在自己的已连接形态上实现 `TestableBroker`，该类型用
+`register_testable_broker!` 注册。在它上面跑一遍 conformance 套件。这种传输切勿模拟
+JetStream 的游标、重新投递计时器和保留期：那些要对着真实的 `nats-server` 端到端地验证。
+参见 [Conformance](conformance.md)。

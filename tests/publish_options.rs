@@ -27,8 +27,9 @@ use ruststream::{OutgoingMessage, PairError};
 
 // --8<-- [start:broker_side]
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
-/// the policy fixed.
-#[derive(Debug, Clone, Copy, Default)]
+/// the policy fixed. `Debug` and `PartialEq` are not part of the contract, they are what a test
+/// naming this type needs to assert on it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct PriorityOptions {
     priority: Option<u8>,
 }
@@ -272,6 +273,11 @@ async fn a_step_inside_a_transaction_scope_reaches_the_broker() {
         .assert_called_once()
         .with(&Order { id: 4 })
         .with_header("priority", "5");
+    // A transaction scope publishes through the slot's own publisher, so the slot view records
+    // the step the buffered message carried.
+    tb.out::<Staged>()
+        .assert_called_once()
+        .with_options(&PriorityOptions { priority: Some(5) });
 }
 
 /// The steps are on the builder, so they are there on a bare publisher too - here the one a
@@ -343,4 +349,145 @@ async fn the_reply_position_takes_the_policy_defaults() {
         .assert_called_once()
         .with(&Receipt { id: 2 })
         .with_header("priority", "4");
+}
+
+#[derive(OutSlot)]
+#[publishes(Order)]
+struct Notes;
+
+/// A body that names no step: the publish carries no options, and the policy's own setting is the
+/// whole answer.
+#[subscriber("options.note.in")]
+async fn note(
+    order: &Order,
+    Out(notes): Out<impl Publisher<Options = PriorityOptions>, Notes>,
+) -> HandlerOutcome {
+    if notes
+        .message(order)
+        .to("options.note.out")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// The broker folds the options into its protocol and the publish log sees only the result, so
+/// the slot view is where a test reads back what the call site asked for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_slot_view_reads_back_the_options_a_publish_carried() {
+    let app = RustStream::new(AppInfo::new("options-view", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(record)
+                .out(Ledger, PriorityPublish::default().priority(3))
+                .build();
+            b.include(note)
+                .out(Notes, PriorityPublish::default().priority(3))
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 7 })
+        .to("options.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Order { id: 7 })
+        .to("options.note.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    // --8<-- [start:options_assert]
+    tb.out::<Ledger>()
+        .assert_called(2)
+        .with_options(&PriorityOptions { priority: Some(9) });
+    tb.out::<Notes>()
+        .assert_called_once()
+        .assert_options_default();
+    // --8<-- [end:options_assert]
+}
+
+/// One delivery through `record`: the slot view holds an unstepped publish followed by a stepped
+/// one, and the broker's log holds both.
+async fn one_delivery() -> TestApp<()> {
+    let app = RustStream::new(AppInfo::new("options-panics", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(record)
+                .out(Ledger, PriorityPublish::default().priority(3))
+                .build();
+            b.include(note)
+                .out(Notes, PriorityPublish::default().priority(3))
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.message(&Order { id: 7 })
+        .to("options.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Order { id: 7 })
+        .to("options.note.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb
+}
+
+/// Another broker's options type, for the assertion that names the wrong one.
+#[derive(Debug, PartialEq, Eq)]
+struct TtlOptions {
+    ttl: Option<u8>,
+}
+
+/// The publish log has consumed the options by the time it records the message, so asking it for
+/// them is a test-authoring mistake and the panic says where to ask instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "does not record per-message options")]
+async fn the_publish_log_sends_an_options_assertion_to_the_slot_view() {
+    let tb = one_delivery().await;
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("options.urgent")
+        .assert_called_once()
+        .with_options(&PriorityOptions { priority: Some(9) });
+}
+
+/// Naming another broker's options type is the same mistake, and the panic names the type that
+/// was actually recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "PriorityOptions`, not `")]
+async fn options_of_another_type_name_the_recorded_one() {
+    let tb = one_delivery().await;
+
+    tb.out::<Ledger>()
+        .assert_called(2)
+        .with_options(&TtlOptions { ttl: Some(9) });
+}
+
+/// Expecting a value where no step ran reads as a missing step, so the panic says the publish
+/// took the policy's defaults.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "published with the policy's default options")]
+async fn expecting_options_on_an_unstepped_publish_says_so() {
+    let tb = one_delivery().await;
+
+    tb.out::<Notes>()
+        .assert_called_once()
+        .with_options(&PriorityOptions { priority: Some(9) });
+}
+
+/// The mirror mistake: a step did run, so the assertion that nothing was set names what it found.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "published with per-message options set")]
+async fn defaults_asserted_on_a_stepped_publish_name_the_options() {
+    let tb = one_delivery().await;
+
+    tb.out::<Ledger>().assert_called(2).assert_options_default();
 }

@@ -187,7 +187,7 @@ pub struct ClosedNatsBroker {
 
 ## Одна подписка на Core и JetStream
 
-Core NATS работает по принципу fire-and-forget, JetStream сохраняет сообщения и требует
+Core NATS отправляет сообщения без подтверждений, JetStream их сохраняет и требует
 подтверждения доставки. Оба режима описывает один дескриптор `SubscribeOptions` и один
 `NatsSubscriber`. `SubscribeOptions` и есть `SubscriptionSource`, а брокер выбирает ветку по тому,
 вызывали ли `jetstream(..)`. Каждый метод билдера соответствует одному именованному параметру

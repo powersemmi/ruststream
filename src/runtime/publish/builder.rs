@@ -489,7 +489,7 @@ impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, H
     /// use ruststream::runtime::{PublishBuilder, PublishSink};
     ///
     /// // The broker's settings: every field optional, so a call says only what it changes.
-    /// #[derive(Default)]
+    /// #[derive(Clone, Default)]
     /// struct MqttOptions {
     ///     retain: Option<bool>,
     /// }

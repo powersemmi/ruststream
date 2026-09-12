@@ -18,8 +18,8 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 
 ## 从处理器回复
 
-回复是服务发出的消息，所以回复类型要 derive `Outgoing`。返回回复值，并在订阅者上写 `publish`；
-目的地由类型上的 `#[outgoing(name = "..")]` 声明：
+每个回复类型都派生 `Outgoing`。类型上的 `#[outgoing(name = "..")]` 就是目的地。返回回复值，
+并在订阅者上写 `publish`：
 
 === "宏"
 
@@ -36,7 +36,7 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
     ```
 
 没有声明名字的回复类型，则从挂载点取名字：属性上写 `publish("responses")`，链上写
-`.to("responses")`。类型自己固定了名字时，挂载点的名字只是默认值，不会生效。
+`.to("responses")`。类型自己固定了名字时，回复就发往那里，挂载点的名字对它不起作用。
 
 === "宏"
 
@@ -55,12 +55,11 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 用普通的 `include` 挂载这样的处理器。不作其他指定时，回复用默认编解码器编码，经由 Broker 的默认
 发布策略发出。`.out(Reply, Publish)` 指定 Broker 的 `prelude` 导出的策略，链上其后的步骤把回复的
 接线补齐：`.codec(..)` 指定回复的编解码器，`.transform(..)` 加上静态发布变换，`.transactional()`
-让一个批次的回复共用同一个 Broker 事务。编解码器只指定一次，第二个 `.codec(..)` 是编译错误。变换
-会叠加，因此 `.transform(..)` 可以调用多次。
+让一个批次的回复共用同一个 Broker 事务。编解码器只指定一次，第二个 `.codec(..)` 是编译错误。
 
 处理器的定义不指定发布者，它声明处理器回复什么、发往哪里。发布策略属于 Broker，因此在点名 Broker
-的地方指定它，也就是挂载点，用绑定 `Out` 槽位的那个 `.out(marker, policy)` 调用。`Reply` 是一个位置
-标记，处理器返回的值经由这个位置发布。
+的地方指定它，也就是挂载点。这一步用的正是绑定 `Out` 槽位的那个 `.out(marker, policy)` 调用。
+`Reply` 是一个位置标记，处理器返回的值经由这个位置发布。
 
 === "宏"
 
@@ -130,8 +129,8 @@ Broker 重新投递它。让会发布的处理器对重新投递保持幂等。
     --8<-- "examples/manual/publishing.rs:forward"
     ```
 
-`message(&value)` 按值的类型选定的那种传输方式发布。`serde::Serialize` 的值用作用域的编解码器编码，
-单次调用可以用 `.with_codec(..)` 换一个。`Serialized` 的值按字节原样发出，没有编解码器的位置。两种
+`message(&value)` 的传输方式由值的类型选定。`serde::Serialize` 的值用作用域的编解码器编码，单次
+调用可以用 `.with_codec(..)` 换一个。`Serialized` 的值按字节原样发出，没有编解码器的位置。两种
 方式都有消息头这一位置：`.with_headers(..)` 按引用接收消息声明的契约（`&meta`），或者按值接收一份
 已经建好的 `HeaderMap`。发布以 `publish()` 收尾。
 
@@ -192,8 +191,8 @@ Broker 重新投递它。让会发布的处理器对重新投递保持幂等。
 才能编译。约束在挂载点检查，编译错误点名缺失的那项能力。约束里写的是 Broker 的能力
 trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestReply`，或者 Broker crate
 自己定义的那一个），不是任何 Broker 类型，因此函数体与 Broker 无关。手动路径上，同一个约束写在条目
-的活值上：`where L: OutEntry<Ledger, Wire: OwnedTransactions>`。在每一个这样的约束之下，条目在挂载点
-的编解码器和标记的列表之上，给出该能力的类型化形态：发布构建器、事务作用域和拥有式事务。槽位标记
+的活值上：`where L: OutEntry<Ledger, Wire: OwnedTransactions>`。在每一个这样的约束之下，条目按挂载点
+的编解码器和标记的列表，给出该能力的类型化形态：发布构建器、事务作用域和拥有式事务。槽位标记
 也是[测试套件](testing.md#asserting-on-out-slots)记录发布时所用的名字。
 
 `Out` 参数可选的第三个位置声明该处理器发布什么：`Out<impl Publisher, Marker, (A, B)>`，可以是单个
@@ -315,18 +314,19 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 令牌与生成它的 `Bindable` 包装器共享同一个槽位，因此要注册同一个包装器（`with_broker(bindable, ..)`），
 启动才会把已连接的 Broker 填进该槽位。令牌的 Broker 始终没有注册时，绑定就返回清晰的错误。同一套
-形态也用于回复发布（在 `publish("dest")` 处理器上写 `.out(Reply, token)`）和批量写法。在注册之外，
-启动连接了令牌的 Broker 之后，令牌自行完成绑定：`running.publisher(token)` 把活的发布者交给同级的
-任务，参见[与其他服务器并行运行](http.md)。启动时的第一次发布根本不需要令牌：作用域级别的
-`b.after_startup(policy, hook)` 在订阅打开之后，用一个已经绑好的发布者运行该钩子（参见
-[应用生命周期](lifespan.md#lifecycle-hooks)）；发布示例里的预填数据也在它上面完成。
+形态也用于回复发布（在 `publish("dest")` 处理器上写 `.out(Reply, token)`）和批量写法。
+
+在注册之外，启动连接了令牌的 Broker 之后，令牌自行完成绑定：`running.publisher(token)` 把活的
+发布者交给同级的任务，参见[与其他服务器并行运行](http.md)。启动时的第一次发布根本不需要令牌：
+作用域级别的 `b.after_startup(policy, hook)` 在订阅打开之后，用一个已经绑好的发布者运行该钩子
+（参见[应用生命周期](lifespan.md#lifecycle-hooks)）；发布示例里的预填数据也在它上面完成。
 
 ## 消息头从哪里来 { #where-the-headers-come-from }
 
 一次发布的消息头来自两处。调用点用 `.with_headers(..)` 指定消息头：按引用传入消息声明的契约，
-或者按值传入一份已经建好的 `HeaderMap`。发布者可以再加上自己的一份基础消息头。一系列消息共用同
-一个常量（租户、producer 名字、schema id）时，发布者从 `base_headers` 交出这个常量。
-从这个发布者开启的事务同样如此。
+或者按值传入一份已经建好的 `HeaderMap`。发布者可以再加上自己的一份基础消息头：`base_headers`
+存放它发出的每一条消息上都相同的那些消息头（租户、producer 名字、schema id）。从这个发布者
+开启的事务同样如此。
 
 构建器只组装一次出站的消息头：先写入基础消息头，再把调用点的消息头逐个键覆盖上去。每个键的取值
 按下面的顺序确定：
@@ -336,21 +336,21 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 - 没有基础消息头的发布者，让调用点的消息头保持原样。
 
 两种写法的合并方式相同：`HeaderMap` 逐条覆盖写入，声明的 `headers = Meta` 契约把自己的字段逐个
-序列化到基础消息头之上。因此带契约的消息同样得到发布者的那个常量。
+序列化到基础消息头之上。因此带契约的消息同样得到发布者的基础消息头。
 
 `.with_headers(..)` 只能填一次：第二次调用是编译期错误。
 
 回复按同一套顺序装配，尽管回复上没有 `.with_headers(..)`。挂载点为 `Reply` 位置指定了策略，
 策略构造的发布者先写入自己的基础消息头，同一条链上的 `.transform(..)` 步骤再覆盖上去。因此，
-发布者携带的那个常量会出现在三个地方：`publish("dest")` 处理器的回复、批次里的每一条回复和
+发布者基础消息头里的一项会出现在三个地方：`publish("dest")` 处理器的回复、批次里的每一条回复和
 函数体经由 `Out` 槽位发出的消息。处理器对它一无所知。
 
 ## 逐条消息的 Broker 设置 { #broker-settings-per-message }
 
-一条消息与下一条的差别不只是载荷：QoS、优先级、排序键、过期时间。这些不是消息头，而是 Broker 自己
-的设置，它们从两个地方进入一次发布。
+Broker 让一条消息与下一条的差别不止于载荷：QoS、优先级、排序键、过期时间。这些不是消息头，而是
+Broker 自己的设置，它们从两个地方进入一次发布。
 
-挂载点在策略上定下默认值，于是想让某个槽位的每条消息都按同一种方式发出的服务只说一次：
+一处是发布策略：你在挂载点设定默认值，经由该槽位发出的每一条消息都带着这些默认值：
 
 === "宏"
 
@@ -364,8 +364,8 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
     --8<-- "tests/manual_publish_options.rs:mount"
     ```
 
-同一份策略放在 `Reply` 位置，对 `publish("dest")` 处理器返回的回复也是如此。回复没有调用点，所以
-策略就是全部答案：
+同一份策略放在 `Reply` 位置，为 `publish("dest")` 处理器返回的回复设定默认值。回复没有调用点，
+因此策略是设定这些默认值的唯一地方：
 
 === "宏"
 
@@ -379,8 +379,8 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
     --8<-- "tests/manual_publish_options.rs:reply_mount"
     ```
 
-调用用 Broker 加到发布构建器上的步骤，为这一条消息改动一项设置。步骤没碰过的部分，保持策略定下的
-值：
+另一处是调用：用你的 Broker 加在发布构建器上的步骤，可以为某一条消息改动一项设置。
+步骤没有点名的设置，保持策略定下的默认值：
 
 === "宏"
 
@@ -394,23 +394,26 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
     --8<-- "tests/manual_publish_options.rs:body"
     ```
 
-步骤落在构建器本身上，所以这次发布仍然属于挂载点：那个条目指定的编解码器、它的变换、测试装置记录
-发布时用的槽位。每一种发布面上都有这些步骤 - `Out` 槽位、从它开启的事务、来自应用状态或启动钩子的
-普通发布者。
+这次发布的其余部分仍然属于挂载点：条目指定的编解码器、它的变换，以及测试套件记录这次发布时
+所用的槽位。每一种发布面上都有这些步骤：`Out` 槽位、在槽位上开启的事务，以及来自应用状态或
+启动钩子的普通发布者。
 
-设置天生属于某个 Broker，而调用点在函数体里，所以改动它的函数体为了那个步骤导入该 Broker 的
-prelude，并在约束里写出它的设置类型（`Out<impl Publisher<Options = MqttOptions>, Telemetry>`）。
-这是「处理器主体只导入框架 prelude」这条规则的唯一例外，签名也说清楚了函数体绑在哪个 Broker 上。
-有哪些步骤可用，由你的 Broker 的文档回答。
+在测试里，你可以读回经由 `Out` 槽位的一次发布带了哪些设置，包括 Broker 映射成协议字段
+而不是消息头的那些：见[对 Out 槽位做断言](testing.md#asserting-on-out-slots)。
+
+改动某项设置的函数体，会为那个步骤导入该 Broker 的 prelude，并在约束里写出 Broker 的设置类型
+（`Out<impl Publisher<Options = MqttOptions>, Telemetry>`）。处理器函数体只有在这一处会导入框架
+prelude 之外的东西，签名也就点明了该处理器绑在哪个 Broker 上。有哪些步骤可用，由你的 Broker 的
+文档回答。
 
 ## 发布管线 { #the-publish-pipeline }
 
-消息离开进程之前，有两个层次运行，而且它们可以组合：
+一条发布出去的消息离开进程之前会经过两个层次，而且它们可以组合：
 
 - **某一个位置上的静态 `PublishTransform`**，在点名该位置的那个 `.out(..)` 之后用
-  `.transform(..)` 添加：回复用 `.out(Reply, ..)`，`Out` 槽位用 `.out(marker, policy)`。这是
-  零成本、按目的地生效的变换：一层信封、一个固定的 content type、把这次投递的链路追踪 / 关联 id
-  写进回复，或者给槽位加一层 outbox 信封和一个租户标记。它们离值最近，在应用级管线之前运行。
+  `.transform(..)` 添加。这是零成本、按目的地生效的变换：一层信封、一个固定的 content type、
+  把这次投递的链路追踪 / 关联 id 写进回复，或者给槽位加一层 outbox 信封和一个租户标记。
+  它们离值最近，在应用级管线之前运行。
 - **应用上的静态 `PublishLayer`**，用 `.publish_layer(..)` 添加。这是横切关注点（发布指标、死信
   包装），作用于每一条发布出去的消息。它包在发送外面，因此能观察到发送的结果。整条链会组合成一个
   具体类型，于是它成为应用类型的一部分：构建器通常返回 `impl App`，从不把它写出来，而具体的
@@ -432,7 +435,7 @@ prelude，并在约束里写出它的设置类型（`Out<impl Publisher<Options 
 | `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
 
 它可以做什么由 `type Destination` 声明：不动目的地的变换写 `Reads`，要写入目的地的写 `Names`。
-stable Rust 没有关联类型的默认值，因此每个实现都要写这一行，而几乎每一个写的都是 `Reads`。
+每个实现都要写这一行，而几乎每一个写的都是 `Reads`。
 
 什么都不读的变换，写一个覆盖所有种类的实现，两个位置都能挂：
 
@@ -440,19 +443,19 @@ stable Rust 没有关联类型的默认值，因此每个实现都要写这一�
 --8<-- "examples/publishing.rs:static_transform"
 ```
 
-`ForReply` 交出产生这条回复的那次投递：它的 channel、入站消息头和 Broker 的单条投递类型化上下文。
-该上下文按 `Field` 键读取。因此变换可以把入站消息里的值转移到回复上；而写出这个种类，就等于声明它
-只属于回复。此后把它挂到槽位上，是挂载点处的一个编译错误。
+`ForReply` 把产生这条回复的那次投递交给变换，只供读取：它的 channel、入站消息头和 Broker 的
+单条投递类型化上下文。该上下文按 `Field` 键读取。因此变换可以把入站消息里的值复制到回复上。
+写出这个种类，也就定下了变换挂在哪里：挂到槽位上是挂载点处的编译错误。
 
-`ForSlot` 只交出槽位的名字：槽位上的发布由处理器函数体自己发出，函数体早已从自己的 `Context` 里
-读走想要的东西并写进消息，到这一步已经没有投递可交。
+`ForSlot` 只交出槽位自己的名字。槽位上的发布由处理器函数体发出，函数体可以读自己的 `Context`，
+把投递里需要的东西写进消息。
 
 ```rust
 --8<-- "examples/publishing.rs:slot_transform"
 ```
 
-批量处理器的回复不经过按消息生效的 `.transform(..)` 栈。用 `.batch_transform(..)` 给它们添加变换，
-按单条消息写成的 `PublishTransform` 可以用 `for_batch(transform)` 复用。
+批量处理器的回复不经过按消息生效的 `.transform(..)` 栈。可以用 `.batch_transform(..)` 给它们添加
+变换，按单条消息写成的 `PublishTransform` 用 `for_batch(transform)` 复用。
 
 回复逐条经过变换，但它们共用同一个 `PublishContext`，而该上下文属于整个批次，不属于某
 一条投递。一个批次跨越许多条投递，因此 `name()` 是订阅，`headers()` 是空的，`context(..)` 读到的
@@ -477,18 +480,18 @@ stable Rust 没有关联类型的默认值，因此每个实现都要写这一�
 --8<-- "examples/publishing.rs:naming_transform_mount"
 ```
 
-只有目的地尚未声明的位置才给出这项权利，否则这次 `.transform(..)` 调用无法通过编译。写了
-`#[outgoing(name = "receipts")]` 的回复类型就发往那里，生成的文档也这么报告，因此这样的位置不给
-权利，而错误会点名该回复类型。批的回复同样不给：一个批作答许多条投递，不带其中任何一条的消息头，
-没有地方可以读出目的地。权利只给一次，因此同一个位置上的第二个写入目的地的变换无法通过编译。
+只有目的地尚未声明的位置才给出这项权利，其他位置上这次 `.transform(..)` 调用无法通过编译。写了
+`#[outgoing(name = "receipts")]` 的回复类型不给这项权利，编译错误会点名该类型。批次的回复同样不给：
+它们一次作答许多条投递，没有哪一条投递能说出回复发往何处。权利只给一次，因此同一个位置上的第二个
+写入目的地的变换无法通过编译。
 
 挂载点的 `publish("answers")` 仍然是这条回复已声明的目的地：生成的文档报告这个名字，变换没有改
 名字时，回复也发往这里。
 
-只有当标记的 `#[publishes(..)]` 列表里每个类型都把目的地留空时，槽位才给出这项权利。函数体每次
-发布仍然要写 `.to(..)`，写入目的地的变换再改写这个名字。没有列表的标记接受任何已声明的消息，什么
-也保证不了，因此从不给出这项权利，单个匿名 `Out<impl Publisher>` 的隐式 `DefaultSlot` 也在其内。
-被收回的是写入目的地的权利，不是变换本身：这样的槽位照样接受普通变换。
+只有当标记的 `#[publishes(..)]` 词典里每个类型都把目的地留空时，槽位才给出这项权利。函数体每次
+发布仍然要写 `.to(..)`，写入目的地的变换再改写这个名字。没有词典的标记接受任何已声明的消息，包括
+自己固定了目的地的那些，因此从不给出这项权利。单个匿名 `Out<impl Publisher>` 的隐式 `DefaultSlot`
+就是这样一个标记。不给的只有写入目的地的权利：这样的槽位照样接受普通变换。
 
 已经把权利交出去的槽位只提供普通发送：事务和一次 request / reply 往返都绕过槽位的发布路径直达
 Broker，因此索要其中任何一项的处理器无法通过编译。
@@ -518,8 +521,8 @@ Broker，因此索要其中任何一项的处理器无法通过编译。
 
 挂载点上的变换作用在指定它的那个位置上：`.out(Reply, Publish).transform(StampSource)` 扩充回复的
 栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 扩充这个槽位的栈。两个位置都用到时，注册就
-把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。一个位置按链上写下的顺序运行它的
-变换，然后是应用级的中间件，最后是发送。
+把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。管线的顺序是：一个位置的变换
+按链上写下的顺序运行，然后是应用级的中间件，最后是发送。
 
 有两种发布不经过这条管线，都由处理器函数体自己驱动：在槽位上开启的事务（`begin()`、`transaction()`）
 发往 Broker 的事务，而一次 request / reply 往返（`request(..)`）等待回复，不以一次发送收尾。
@@ -582,7 +585,7 @@ Broker，因此索要其中任何一项的处理器无法通过编译。
 ```
 
 该作用域用的构建器与其他表面相同（`scope.message(&value).publish()`），只是发送到已打开的事务，
-而不是直接发给 Broker。它用发布者的编解码器编码值，然后直接发送：按发布者的变换和应用级的
+而不是直接发给 Broker。它用发布者的编解码器编码值，然后直接发送：按发布者生效的变换和应用级的
 `publish_layer` 中间件属于分发路径，它们要读取产生回复的那次投递，在这里不会运行。丢弃一个尚未
 结算的作用域会记录一条警告，并让该句柄上的 Broker 事务保持打开，因此要显式结算。
 

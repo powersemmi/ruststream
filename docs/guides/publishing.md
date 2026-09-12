@@ -23,8 +23,8 @@ not compile.
 
 ## Replying from a handler
 
-A reply is a message this service sends, so its type derives `Outgoing`. Return the reply value
-and write `publish` on the subscriber; `#[outgoing(name = "..")]` on the type is the destination:
+Every reply type derives `Outgoing`. `#[outgoing(name = "..")]` on the type is the destination.
+Return the reply value and write `publish` on the subscriber:
 
 === "Macros"
 
@@ -41,8 +41,8 @@ and write `publish` on the subscriber; `#[outgoing(name = "..")]` on the type is
     ```
 
 A reply type that declares no name takes one from the mount site: `publish("responses")` on the
-attribute, `.to("responses")` on the chain. On a type that fixes its own name that mount-site name
-is a default and does not apply.
+attribute, `.to("responses")` on the chain. A type that fixes its own name is published there, and
+a mount-site name does not apply to it.
 
 === "Macros"
 
@@ -364,9 +364,9 @@ example's seeding runs on it.
 
 A publish takes its headers from two places. The call site names them with `.with_headers(..)`:
 the message's declared contract by reference, or an already-built `HeaderMap` by value. The
-publisher can add a base of its own: it exposes through `base_headers` one constant for a whole run
-of messages (a tenant, a producer name, a schema id). A transaction opened from that publisher does
-the same.
+publisher can add a base of its own: `base_headers` holds the headers that are the same on every
+message it sends (a tenant, a producer name, a schema id). A transaction opened from that publisher
+does the same.
 
 The builder assembles the outgoing headers once: the base first, then the call site's headers over
 it, key by key. A key takes its value in this order:
@@ -377,24 +377,24 @@ it, key by key. A key takes its value in this order:
 
 Both forms merge the same way: an already-built `HeaderMap` is added entry by entry, and a declared
 `headers = Meta` contract serializes its fields over the base, so a message with a contract also
-gets the publisher's argument.
+gets the publisher's base.
 
 `.with_headers(..)` is filled once: a second call is a compile error.
 
 A reply is assembled the same way, though nothing writes `.with_headers(..)` on it. Its base comes
 from the publisher the policy constructed for the `Reply` position named at the mount site, and the
-chain's own `.transform(..)` steps write over it. So a constant the publisher carries is on the
+chain's own `.transform(..)` steps write over it. So a header from the publisher's base is on the
 reply of a `publish("dest")` handler, on every reply of a batch, and on what the body sends through
 an `Out` slot, without the handler knowing about it.
 
 ## Broker settings per message
 
 A broker lets one message differ from the next in more than its payload: a QoS, a priority, an
-ordering key, an expiration. These are not headers. They are the broker's own settings, and they
-reach a publish from two places.
+ordering key, an expiration. These are the broker's own settings, not headers, and they reach a
+publish from two places.
 
-The mount site fixes the defaults on the policy, so a service that wants every message through one
-slot sent the same way says it once:
+One place is the publish policy: you set the defaults at the mount site, and every message through
+that slot is sent with them:
 
 === "Macros"
 
@@ -408,8 +408,8 @@ slot sent the same way says it once:
     --8<-- "tests/manual_publish_options.rs:mount"
     ```
 
-The same policy in the `Reply` position does the same for what a `publish("dest")` handler
-returns. A reply has no call site, so the policy is the whole answer:
+The same policy in the `Reply` position sets the defaults for what a `publish("dest")` handler
+returns. A reply has no call site, so the policy is the only place to set them:
 
 === "Macros"
 
@@ -423,8 +423,8 @@ returns. A reply has no call site, so the policy is the whole answer:
     --8<-- "tests/manual_publish_options.rs:reply_mount"
     ```
 
-A call adjusts one setting for one message, through a step the broker adds to the publish builder.
-What no step touches keeps what the policy fixed:
+The other place is the call: you can change a setting for one message with a step your broker adds
+to the publish builder. A setting no step names keeps the policy's default:
 
 === "Macros"
 
@@ -438,26 +438,27 @@ What no step touches keeps what the policy fixed:
     --8<-- "tests/manual_publish_options.rs:body"
     ```
 
-The steps sit on the builder itself, so the publish is still the mount site's: the codec that entry
-named, the transforms it named, the slot the harness records against. They are there on every
-publish surface - an `Out` slot, a transaction opened on one, a bare publisher from the application
-state or a startup hook.
+The rest of the publish is still the mount site's: the codec the entry named, its transforms, and
+the slot the harness records it against. The steps are on every publish surface - an `Out` slot, a
+transaction opened on one, a bare publisher from the application state or a startup hook.
 
-A setting is broker-specific by nature and the call site is in the body, so a body that adjusts one
-imports that broker's prelude for the step and names its options type in the bound
-(`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). This is the one exception to a handler
-body importing the framework prelude alone, and the signature says which broker the body is tied
-to. Which steps exist is your broker's documentation to answer.
+In a test you can read back the settings a publish through an `Out` slot carried, including the
+ones the broker maps to a protocol field rather than a header: see
+[asserting on `Out` slots](testing.md#asserting-on-out-slots).
+
+A body that adjusts a setting imports that broker's prelude for the step, and names the broker's
+options type in the bound (`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). This is the
+one place a handler body imports more than the framework prelude, and the signature then names the
+broker the handler is tied to. Which steps exist is your broker's documentation to answer.
 
 ## The publish pipeline
 
-Two levels run before a message leaves the process, and they compose:
+A published message passes through two levels before it leaves the process, and they compose:
 
-- **Static `PublishTransform`** on one position, chained with `.transform(..)` after the
-  `.out(..)` that named it: after `.out(Reply, ..)` for a reply, after `.out(marker, policy)` for
-  an `Out` slot. Zero-cost transforms for one destination: an envelope, a fixed content type, the
-  delivery's trace / correlation id on a reply, an outbox envelope or a tenant tag on a slot. They
-  run closest to the value, before the app-wide pipeline.
+- **Static `PublishTransform`** on one position, chained with `.transform(..)` after the `.out(..)`
+  that named the position. Zero-cost transforms for one destination: an envelope, a fixed content
+  type, the delivery's trace / correlation id on a reply, an outbox envelope or a tenant tag on a
+  slot. They run closest to the value, before the app-wide pipeline.
 - **Static `PublishLayer`** on the application, added with `.publish_layer(..)`. Cross-cutting
   concerns (publish metrics, a dead-letter wrapper) applied to every published message, around the
   send so they can read its result. The chain composes into a concrete type and becomes part of the
@@ -481,23 +482,21 @@ What it reads is the position's context kind, the `K` in
 | `Out` slot, after `.out(marker, policy)` | `ForSlot` | `SlotContext<'_>`: the slot's own name |
 
 What it may do is `type Destination`: `Reads` for a transform that leaves the destination alone,
-`Names` for one that sets it. Stable Rust has no default for an associated type, so every impl
-writes the line, and almost every one writes `Reads`.
+`Names` for one that sets it. Every impl writes the line, and almost every one writes `Reads`.
 
-A transform that reads nothing writes one impl for every kind and mounts on either position:
+A transform that reads nothing writes a single impl over every kind and mounts on either position:
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
 ```
 
-`ForReply` hands over the delivery that produced the reply: its channel, the incoming headers, and
-the broker's typed per-delivery context, read by `Field` key. So a transform can copy a value from
-the incoming message to the reply, and by naming that kind it says it belongs on a reply. Mounting
-it on a slot is then a compile error at the mount site.
+`ForReply` gives read-only access to the delivery that produced the reply: its channel, the
+incoming headers, and the broker's typed per-delivery context, read by `Field` key. So a transform
+can copy a value from the incoming message to the reply. Naming that kind also fixes where the
+transform mounts: on a slot it is a compile error at the mount site.
 
-`ForSlot` hands over the slot's name and nothing else, because a slot publish is issued by the
-handler body: the body has already read whatever it wanted from its own `Context` and put it on the
-message, so there is no delivery left to pass on.
+`ForSlot` gives the slot's own name and nothing else. The handler body issues a slot publish, so it
+can read its own `Context` and put on the message whatever it needs from the delivery.
 
 ```rust
 --8<-- "examples/publishing.rs:slot_transform"
@@ -531,26 +530,25 @@ It goes on the chain like any other transform:
 --8<-- "examples/publishing.rs:naming_transform_mount"
 ```
 
-A position offers that right only where nothing has declared the destination already, and the
-`.transform(..)` call fails when it does not. A reply type carrying
-`#[outgoing(name = "receipts")]` is published there and the generated document reports it, so it
-offers nothing and the error names the reply type. A batch's replies offer nothing either: they
-answer many deliveries and carry none of their headers, so there is nothing to read a destination
-from. And a position offers the right once, so a second naming transform on it does not compile.
+A position offers that right only where nothing has declared the destination, and elsewhere the
+`.transform(..)` call does not compile. A reply type carrying `#[outgoing(name = "receipts")]`
+offers nothing, and the compile error names that type. A batch's replies offer nothing either: they
+answer many deliveries at once, so no single delivery says where an answer goes. A position offers
+the right once, so a second naming transform on it does not compile.
 
 The mount site's `publish("answers")` stays the reply's declared destination. It is the name the
 generated document reports, and where a reply goes when the transform leaves the name alone.
 
 A slot offers the right only when every type in its marker's `#[publishes(..)]` dictionary leaves
 its destination open. The body still writes `.to(..)` on every publish, and the naming transform
-writes over that name. A marker with no dictionary admits every declared message and can promise
-nothing, so it never offers the right - the implicit `DefaultSlot` of a single unnamed
-`Out<impl Publisher>` included. Withheld is the naming right, not transforms: such a slot takes an
-ordinary transform like any other.
+writes over that name. A marker with no dictionary admits every declared message, the ones that fix
+their own destination included, so it never offers the right. The implicit `DefaultSlot` of a
+single unnamed `Out<impl Publisher>` is one of those markers. Only the naming right is withheld:
+such a slot takes an ordinary transform like any other.
 
-A slot that has given the right away offers plain sending only: a transaction or a request / reply
-round trip reaches the broker without the slot's publish path, so a handler that asks for either
-does not compile.
+A slot that granted the right offers plain sending only: a transaction and a request / reply round
+trip reach the broker without the slot's publish path, so a handler that asks for either does not
+compile.
 
 A `PublishLayer` implements an around/next signature, so it can stop the chain, retry the send, or
 just observe:
@@ -579,8 +577,9 @@ message that leaves through an injected `Out` slot.
 The mount site's transforms act on the position they were named on:
 `.out(Reply, Publish).transform(StampSource)` grows the reply's stack,
 `.out(Audit, Publish).transform(OutboxEnvelope)` grows that slot's. A registration with both sides
-writes both calls, and `.transform(..)` applies to the position named before it. A position runs
-its transforms in the order the chain writes them, then the app-wide middleware, then the send.
+writes both calls, and `.transform(..)` applies to the position named before it. Order of the
+pipeline: a position's transforms in the order the chain writes them, then the app-wide middleware,
+then the send.
 
 Two publishes stay outside the pipeline, and the body drives both itself: a transaction opened on a
 slot (`begin()`, `transaction()`) sends into the broker's transaction, and a request / reply round
