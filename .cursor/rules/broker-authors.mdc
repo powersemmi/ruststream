@@ -23,35 +23,77 @@ alwaysApply: false
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
   `FromName` when a name alone is enough to build it.
+- Both answer `redelivery_address`: the name a publisher on your broker uses to reach this
+  subscription again (a NATS subject, a Kafka topic, a Redis stream key). That is where the
+  runtime publishes the deferred copy when `retry_after` has no native delayed redelivery to ride.
+  Both default to "cannot say", which is the right answer wherever a subscribe name is not a
+  publish destination: a Google Pub/Sub subscription is read by its own name and published to
+  through its topic, so the descriptor asks the API. A scope wired with `retry_via` over a source
+  that cannot say refuses to start, naming the subscription - so a silent broker loses no message,
+  it loses the fallback. `harness::lifecycle` holds the answer to its promise.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
   compiles with no `.out(Reply, ..)`). Make mode selection a policy type transition, not a runtime
   flag: only the transactional policy's live form implements `TransactionalPublisher`.
+- Per-message settings (a QoS, a priority, an ordering key, an expiration) are `Publisher::Options`,
+  a type you own with every field optional (`()` when you have none). The policy holds the defaults,
+  `publish(msg, options)` resolves the call's fields over them, and `options` is `None` on every
+  path with no call site - a reply, a deferred retry. `Transaction` names an `Options` of its own,
+  because a transaction may honour a different set than the publisher it was opened from. A value
+  you cannot honour is a publish error, never a silent fallback.
+- `DescribeServer` reports a coordinate, not the configuration: the host and port clients connect
+  to, never credentials - the generated document is published. A broker configured from a URL
+  builds its `ServerSpec` with `ServerSpec::from_url` (several addresses: `host_from_url` each);
+  trimming the scheme off the URL and passing the rest to `ServerSpec::new` keeps the userinfo, and
+  that bug shipped in more than one broker crate.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
-  the broker natively supports - never emulate.
+  the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching
+  for: a transport that delivers one message at a time still offers it, assembled on the client
+  with the core's `BufferedSubscriber`, whose `batches` honours the size the mount named. The size
+  is the framework's word and not yours; the deadline that closes a partial batch is yours, so put
+  it on your descriptor (`.max_wait(..)`) - the 10 ms default is sized for an in-process bus, and
+  the shipping broker crates settle between 10 and 50 ms. Put the capability on
+  `Subscribe::Subscriber` too, or a `&[T]` body on `#[subscriber("topic")]` fails to compile.
+  Declining it is still right where batching breaks a guarantee the transport carries (a ZeroMQ
+  `ROUTER` answers each peer at its own address, and a batch's replies share one context); say so
+  in your crate's docs.
 - Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
   types (unit structs with an associated `Context` and owned `Value`), so handlers can take
   `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path. A position that is
   not `Copy` borrows on the read side (`Field::Value<'a>` is generic over the source's lifetime);
   only the `ContextField::Value` behind `Ctx<K>` has to be owned and `'static`, so that key clones.
-- Your prelude has four layers in this order: `pub use ruststream::prelude::*;`, the crate surface
-  your examples name, your publish policies aliased to the uniform mount-site names
+- Your prelude has three layers in this order: `pub use ruststream::prelude::*;`, the crate surface
+  a service names (the broker, its subscription source, its `Config`, its error, the `ContextField`
+  keys a body reads), and your publish policies aliased to the uniform mount-site names
   (`NatsPublish as Publish`, `KafkaTransactionalPublish as TransactionalPublish`,
-  `LapinRequest as Request`), and the capability manifest (the core capability traits you actually
-  implement). A handler body imports only the core prelude and bounds a slot with the broker
-  capability trait (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
-  `Out<impl OwnedTransactions>`, `Out<impl RequestReply>`); a routes file imports yours. The core
-  exports no trait under the policy names, so the aliases collide with nothing - but your prelude
-  must never shadow a core name with anything of yours, because an explicit re-export beats the
-  core glob silently and the error lands in the service's file. Pin both halves behind your own
-  glob: `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
-- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`. A handle that
-  carries an argument for a run of messages (a tenant, a partition hint, a delivery option your
-  broker expresses as a header) returns it from `base_headers` rather than writing it inside
-  `publish`; the builder writes the call site's headers over that base key by key. Errors and logs
-  are self-explanatory: name the subscription and the type involved, not just the raw error.
+  `LapinRequest as Request`), with the consumer-side capability traits you implement added next to
+  them as a manifest. A handler body imports only the core prelude and bounds a slot with the
+  broker capability trait (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+  `Out<impl OwnedTransactions>`, `Out<impl RequestReply>`); a routes file imports yours. The one
+  exception is a body adjusting a per-message setting: it imports your prelude for the step and
+  names your options type in the bound, and its signature then says which broker it is tied to.
+  The core exports no trait under the policy names, so the aliases collide with nothing - but your
+  prelude must never shadow a core name with anything of yours, because an explicit re-export beats
+  the core glob silently and the error lands in the service's file. Leave out a trait whose method
+  collides with a defaulted core one (`Partitioned::partition_key` against
+  `IncomingMessage::partition_key`), and leave `BatchSubscriber` out of the manifest entirely: the
+  framework calls it and no body ever writes it as a bound. Pin both halves behind your own glob:
+  `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
+- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`, at every
+  settling site. That answer is what lets the runtime tell a transport that honoured a delay from
+  one that cannot hold a message back, and the conformance suite passes on it. A handle that
+  carries a constant for a run of messages (a tenant, a producer name, a schema id) returns it from
+  `base_headers` rather than writing it inside `publish`; the builder writes the call site's
+  headers over that base key by key. A delivery setting is not one of those - it belongs to the
+  message, as a field of `Options`. Errors and logs are self-explanatory: name the subscription and
+  the type involved, not just the raw error.
+- Ship a `cargo generate` template per transport or topology (`templates/nats`, `templates/nats-js`)
+  and render plus `cargo check` it in your own CI, so an API change breaks your build rather than a
+  user's first one. Template blocks are additive only, and the package manifest is
+  `Cargo.toml.liquid`: cargo parses every `Cargo.toml` in a git source and a placeholder in the
+  package name breaks every dependent.
 - Integrations that need async I/O around encode/decode (schema registries, wire-format envelopes)
   are middleware on the async edges: transcode on the subscription's delivery path for consuming,
   and a core `PublishLayer` (`RustStream::publish_layer`) for publishing. Never a custom sync
@@ -60,11 +102,18 @@ alwaysApply: false
   one wrapper method per option. Auth (TLS, SASL) rides that passthrough; surface only the cargo
   features that build hermetically everywhere, and let users enable exotic client features by
   depending on the client crate directly (cargo features are additive).
-- Testing: implement `TestableBroker` for the broker's in-process transport and register it with
-  `register_testable_broker!` (under a `testing` feature), so `TestApp` and `run_suite` can drive
-  it. Verify with the conformance harness; run `lifecycle` against a real server (env-gated). No
-  simulation of broker-specific semantics (durable cursors, offsets, DLX) - those are tested only
-  against a server.
+- Testing: implement `TestableBroker` on the in-process transport's **connected** form and register
+  it with `register_testable_broker!` (under a `testing` feature), so `TestApp` and `run_suite` can
+  drive it. Run the contract suites against the stand-in as well as against a real server; run
+  `lifecycle` first, because it asks what a stand-in is never otherwise asked - does a publisher
+  made before the shutdown error afterwards. The stand-in answers acks the way the real transport
+  answers them, including `AckError::Unsupported`: one that claims a settlement its transport never
+  performs is how a handler's retry passes in a test and loses the message in production. Reproduce
+  what the client does (competing consumers, group distribution, correlation, buffering until
+  commit); do not fake what the broker does (fencing, cluster atomicity, broker-held timeouts,
+  durable cursors, offsets, DLX), and give every gap a comment naming the assertion it makes
+  unsound plus a test pinning it. Mount it with the production wiring: your own sources and
+  policies have to work against it unchanged.
 
 ## The lifecycle ladder
 
@@ -118,17 +167,30 @@ once, at startup.
 ```rust
 use ruststream::{DefaultPublish, OutgoingMessage, PairError, PublishPolicy, Publisher};
 
-/// The publish policy: builder options only, no connection, no publish surface.
+/// The broker's per-message settings: every field optional, so a call carries only what it
+/// adjusted. Derive `Debug` and `PartialEq` too, and a test asserts `with_options(&MyOptions { .. })`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MyOptions {
+    priority: Option<u8>,
+}
+
+/// The publish policy: builder options only, no connection, no publish surface. This is where the
+/// per-message defaults are configured, at the mount site.
 #[derive(Debug, Clone, Default)]
 pub struct MyPublish {
     exchange: Option<String>,
+    priority: u8,
 }
 
 impl PublishPolicy<ConnectedMyBroker> for MyPublish {
     type Live = MyPublisher;
 
     async fn pair(self, connected: &ConnectedMyBroker) -> Result<MyPublisher, PairError> {
-        Ok(MyPublisher { client: connected.client.clone(), exchange: self.exchange })
+        Ok(MyPublisher {
+            client: connected.client.clone(),
+            exchange: self.exchange,
+            default_priority: self.priority,
+        })
     }
 }
 
@@ -139,12 +201,60 @@ impl DefaultPublish for ConnectedMyBroker {
 
 impl Publisher for MyPublisher {
     type Error = MyError;
+    type Options = MyOptions;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MyError> {
-        self.client.send(msg.name(), msg.payload()).await.map_err(MyError::publish)
+    /// Resolving the call's fields over the policy's is the first thing publish does.
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&MyOptions>,
+    ) -> Result<(), MyError> {
+        let priority = options
+            .and_then(|options| options.priority)
+            .unwrap_or(self.default_priority);
+        self.client
+            .send(msg.name(), msg.payload(), priority)
+            .await
+            .map_err(MyError::publish)
     }
 }
 ```
+
+## Per-message settings on the publish builder
+
+A call site adjusts one field through a step you add to the publish builder. Nothing wraps the
+publisher, so the publish still goes through the mount site's own entry, with the codec and the
+transforms that entry named. The bound on the sink's options type is what keeps your steps off a
+builder over another broker's publisher. Ship the trait from your prelude, next to the policy
+aliases.
+
+```rust
+use ruststream::runtime::{PublishBuilder, PublishSink};
+
+pub trait MyPublishSteps {
+    /// Sends this one message at `priority`, whatever the mount site's default is.
+    #[must_use]
+    fn priority(self, priority: u8) -> Self;
+}
+
+impl<Sink, Body, Enc, Hdrs, Dest> MyPublishSteps for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+where
+    Sink: PublishSink<Options = MyOptions>,
+{
+    fn priority(mut self, priority: u8) -> Self {
+        self.options_mut()
+            .get_or_insert_with(MyOptions::default)
+            .priority = Some(priority);
+        self
+    }
+}
+```
+
+A step is the only shape a per-message setting takes. Do not put the send in a trait of your own: a
+publish that leaves through a value of yours is one the test harness no longer attributes to the
+slot, and a setting like an ordering key is exactly what a test wants to assert on. Do not carry
+one as a header either - it is a protocol field, not bytes your `publish` parses back inside one
+process.
 
 ## Subscription source
 
@@ -152,12 +262,18 @@ impl Publisher for MyPublisher {
 options and resolves against the connected form at startup.
 
 ```rust
-use ruststream::{FromName, Subscribe, SubscriptionSource};
+use ruststream::{FromName, RedeliveryAddress, Subscribe, SubscriptionSource};
 
 impl Subscribe for ConnectedMyBroker {
     type Subscriber = MySubscriber;
     async fn subscribe(&self, name: &str) -> Result<MySubscriber, MyError> {
         self.open(MySubscribeOptions::new(name)).await
+    }
+
+    /// Where a publisher reaches this subscription again. Defaulted to `None`; answer with the
+    /// name itself wherever a publish under a subscribe name lands in that subscription.
+    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
+        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 
@@ -168,6 +284,15 @@ impl SubscriptionSource<ConnectedMyBroker> for MySubscribeOptions {
     }
     async fn subscribe(self, connected: &ConnectedMyBroker) -> Result<MySubscriber, MyError> {
         connected.open(self).await
+    }
+
+    /// The same answer for the descriptor, asking the broker where only the live connection
+    /// knows (a Pub/Sub subscription's topic). The runtime asks once, at startup.
+    async fn redelivery_address(
+        &self,
+        _connected: &ConnectedMyBroker,
+    ) -> Result<Option<RedeliveryAddress>, MyError> {
+        Ok(Some(RedeliveryAddress::new(self.subject.clone())))
     }
 }
 
@@ -204,6 +329,13 @@ impl<Def: Declared, W, F, P, Pg, Codec> MySubscriber
 }
 ```
 
+One core setting changes the source type rather than a state slot: `start_at(..)` wraps your
+descriptor in `StartAt<MySubscribeOptions, Position>`, and your methods fall out of scope on every
+subscription that named a start position. Cover it with a second impl over the wrapped source,
+where the position slot reads `Fixed` by construction, so the two never overlap;
+`StartAt::map_inner` takes the descriptor out and hands the position back untouched, so each method
+stays one line.
+
 The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
 `Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
 `MapPublisher` is the hook over the policy that position carries. Bind the extension trait to the
@@ -211,19 +343,47 @@ policy, not to the chain, so one impl covers the reply, every slot, a router and
 
 ```rust
 pub trait MyPublishSettings {
-    fn stream(self, name: impl Into<String>) -> Self;
+    fn ack_timeout(self, timeout: Duration) -> Self;
 }
 
 impl<T: MapPublisher<Policy = MyPublish>> MyPublishSettings for T {
-    fn stream(self, name: impl Into<String>) -> Self {
-        self.map_publisher(|policy| policy.stream(name))
+    fn ack_timeout(self, timeout: Duration) -> Self {
+        self.map_publisher(|policy| policy.ack_timeout(timeout))
     }
 }
 ```
 
+A policy setting is a property of the handle, never the destination: where a message goes is the
+message type's declaration or the call site's `.to(..)`, so a policy method that names a subject, a
+topic or a stream puts a second source of truth next to the one the document reports.
+
 `map_publisher` replaces the policy with one of the same type, which is what a publisher's own
 settings produce; a different policy type is a different publish mode and belongs in the
-`.out(marker, policy)` call itself.
+`.out(marker, policy)` call itself, where an already-configured value can be passed directly
+(`.out(Reply, Publish::default().ack_timeout(Duration::from_secs(5)))`).
+
+## Extending the `Out` slot vocabulary
+
+A body's `Out<impl X, Marker>` accepts any `X` the live value behind the slot implements, so a live
+value that is more than a publisher (a per-partition producer cache, a shard router) carries a
+capability trait of your own. What the body holds is not that value but the arena entry,
+`Slot<M, W, E, Pipe, Body>`, a transparent window onto it: autoderef carries a method call through,
+a trait bound does not. Graft one blanket impl next to your trait and helpers generic over the
+capability take the entry as it is:
+
+```rust
+impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body> {
+    fn lane(&self, shard: u64) -> (&MyPublisher, &'static str) {
+        (**self).lane(shard)
+    }
+}
+```
+
+A capability that hands out a publisher and lets the body send through it publishes outside the
+slot view, so the harness attributes nothing to the slot and a test asserts on the broker's publish
+log instead. That is the price of handing out the inner publisher. A capability that only sets one
+per-message setting and ends in a single publish is not a capability trait at all - it is a field
+of `Publisher::Options` and a step on the builder.
 
 ## Typed context and `Ctx` keys
 
@@ -263,13 +423,16 @@ impl at all - `()` is the default.
 
 ## Conformance
 
-Routing runs against the broker's in-process transport (its **connected** form is the
-`TestableBroker`); the full lifecycle ladder runs against a real server behind an env gate.
+The suites are written against the traits, so they run unchanged against the in-process transport
+(its **connected** form is the `TestableBroker`) and against a real server behind an env gate. Run
+both: the stand-in is what a service's whole test suite rides on, and the server is what the
+release runs against. `run_suite` covers the routing contract - ordering, ack and nack, headers,
+the publish log; the `capabilities::*` suites are yours to call, one per capability you implement,
+and they are not part of `run_suite`.
 
 ```rust
 use ruststream::conformance::harness;
 
-// routing contract: ordering, ack/nack, headers, ... (testing feature)
 // sync Fn() -> B, where B: Broker and B::Connected: TestableBroker + Subscribe
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routing_conformance() {
@@ -277,7 +440,9 @@ async fn routing_conformance() {
 }
 
 // the ladder: sync new -> connect(self) -> subscribe via SubscriptionSource -> publish ->
-// receive -> ack -> shutdown(self), then a publisher made before shutdown must error after it
+// receive -> ack (accepting AckError::Unsupported) -> shutdown(self), then a publisher made
+// before shutdown must error after it, and a publish to the address the subscription reported
+// must arrive at that subscription
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lifecycle_conformance() {
     let Ok(url) = std::env::var("MY_BROKER_TEST_URL") else { return };
@@ -293,4 +458,5 @@ async fn lifecycle_conformance() {
 ```
 
 When changing anything on the broker contract, run the conformance suite against the real broker
-before releasing - an in-process pass is not enough.
+before releasing - an in-process pass is not enough. Every broker repo has a `just test-brokers`
+recipe that starts its docker-compose stand and runs the live suites.
