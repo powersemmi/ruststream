@@ -93,10 +93,12 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-The second answer is the address the runtime publishes a deferred retry to, so it decides whether
-`#[subscriber("orders")]` works with `BrokerScope::retry_via` on your broker. Keep the default
-where a subscribe name is not a publish destination: a Google Pub/Sub subscription is subscribed to
-by its own name and published to through its topic, and the descriptor answers there instead.
+`redelivery_address` reports the address the runtime publishes a deferred retry to. Answering it is
+what makes `#[subscriber("orders")]` work with `BrokerScope::retry_via` on your broker.
+
+Keep the default where a subscribe name is not a publish destination. A Google Pub/Sub subscription
+is subscribed to by its own name and published to through its topic, so the descriptor answers
+there instead.
 
 ### `Subscriber`
 
@@ -195,18 +197,17 @@ destination, the codec and the headers, and makes exactly one call to `publish`.
 `publish` and the whole builder works on top of it.
 
 `Options` holds what belongs to the message rather than to the handle: a QoS, a priority, an
-ordering key, an expiration. Every field is optional, because a call carries only what it adjusted.
-What it left alone is what the policy fixed when it paired this publisher, so resolving the two is
-the first thing your `publish` does. A broker with no per-message setting writes
-`type Options = ();`.
+ordering key, an expiration. A call carries only the fields it adjusted, and the rest is what the
+policy fixed when it paired this publisher. Resolving the two is the first thing your `publish`
+does.
 
-`options` is `None` wherever there is no call site to adjust them - a reply, a deferred
-redelivery - and the policy's settings are then the whole answer.
+`options` is `None` on every path with no call site to adjust them - a reply, a deferred
+redelivery - and the policy's settings apply.
 
-`Clone` and `'static` are what the test harness asks of the type: it copies the options every
-publish through an `Out` slot carried, so a service testing your broker asserts on the value your
-`publish` received rather than on the protocol field it became. Derive `Debug` and `PartialEq` too,
-and the assertion reads `with_options(&YourOptions { .. })`
+`Clone` and `'static` are what the test harness asks of the type: it copies the options of a
+publish through an `Out` slot and hands them back to the test as this type. A service testing your
+broker then asserts on the value your `publish` received, not on the protocol field it became.
+Derive `Debug` and `PartialEq` as well, and the assertion reads `with_options(&YourOptions { .. })`
 ([asserting on `Out` slots](../guides/testing.md#asserting-on-out-slots)).
 
 `base_headers` is for a constant of the publisher itself: a tenant, a producer name, a schema id
@@ -215,9 +216,9 @@ writes the call site's headers over it key by key, so on a shared key the call s
 (see [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
 
 `Transaction` names an `Options` of its own and carries the same defaulted `base_headers`. A
-transaction is a publish surface of its own, so it may honour a different set of settings than the
-publisher it was opened from; most brokers name the publisher's type there. A publisher with
-nothing to add overrides neither.
+transaction is a publish surface of its own, so it may honour settings the publisher it was opened
+from does not. Most brokers name the publisher's options type there. A handle with no constant of
+its own leaves `base_headers` defaulted in both places.
 
 ### `PublishPolicy`
 
@@ -315,14 +316,15 @@ message once the delay is over. Your descriptor says where that copy goes.
 ```
 
 Answer with the name a publisher bound to your broker uses to reach this subscription again: the
-subject on NATS, the topic on Kafka, the stream key on Redis. On Google Pub/Sub it is neither - a
-subscription and a topic are separate resources there, so the answer is the topic the subscription
-is bound to, and the descriptor asks the API for it. The runtime asks once at startup, so a request
-here costs nothing per message.
+subject on NATS, the topic on Kafka, the stream key on Redis.
+
+On Google Pub/Sub a subscription and a topic are separate resources, so the answer is the topic the
+subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
+startup.
 
 Keep the default where publishing cannot reach your subscription at all. An application that wires
-a retry publisher over such a subscription then does not start, naming the subscription and its
-source, instead of publishing every delayed message to an address nobody reads.
+a retry publisher over such a subscription then does not start, and the error names the
+subscription and its source.
 
 `harness::lifecycle` checks the answer you give: a publish to the reported address must arrive at
 the subscription that reported it.
@@ -452,10 +454,9 @@ already-configured value can be passed there directly:
 
 ### Per-message settings on the publish builder
 
-A setting one message differs from the next in - a QoS, a priority, an ordering key, an expiration
-- is a field of your `Publisher::Options`, and a call site adjusts it through a step you add to the
-publish builder. Nothing wraps the publisher, so the publish still leaves through the mount site's
-own entry, with the codec and the transforms that entry named.
+A call site adjusts a field of your `Publisher::Options` through a step you add to the publish
+builder. Nothing wraps the publisher, so the publish still goes through the mount site's own entry,
+with the codec and the transforms that entry named.
 
 The four pieces are an options type whose every field is optional, a policy that carries the
 defaults, a live publisher resolving one against the other, and an extension trait over
@@ -466,13 +467,14 @@ over another broker's publisher:
 --8<-- "tests/publish_options.rs:broker_side"
 ```
 
-The broker half is the same whichever way a service mounts, because it is ordinary trait impls
-either way. Ship the extension trait from your prelude next to the policy aliases.
+The broker half is the same on the macro path and the manual one. Ship the extension trait from
+your prelude next to the policy aliases.
 
-A step is the only shape a per-message setting takes. Do not put the send in the trait: a publish
-that leaves through a value of yours is a publish the slot view stops seeing, and a setting like an
-ordering key is exactly what a test wants to assert on. Do not carry one as a header either: it is
-a protocol field, and a string round trip through the header map inside one process is not one.
+A step is the only shape a per-message setting takes. Do not put the send in your own trait: a
+publish that goes through a value of yours is one the slot view no longer sees, and a setting like
+an ordering key is exactly what a test wants to assert on. Do not carry one as a header either:
+the setting is a protocol field, and the header map would carry it as bytes your `publish` has to
+parse back inside one process.
 
 A value your broker cannot honour is a publish error, never a silent fallback to the default: the
 caller asked for an ordering it would not get.
