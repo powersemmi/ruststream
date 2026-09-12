@@ -192,9 +192,10 @@ where
 /// commits.
 ///
 /// A definition names its reply type the moment it exists - the handler's return type does not
-/// depend on the policies a chain is still binding - so a step that has to know the reply, like
-/// `.redirect(..)`, reads it here. Implemented by `#[subscriber]` next to the definition and by
-/// the value path's sealed reply definition; you never name it.
+/// depend on the policies a chain is still binding - so a step that has to know the reply, like a
+/// `.transform(..)` mounting a transform that names the destination, reads it here. Implemented by
+/// `#[subscriber]` next to the definition and by the value path's sealed reply definition; you
+/// never name it.
 #[doc(hidden)]
 pub trait DeclaresReply {
     /// The reply type, as [`ReplyShape`] sees it.
@@ -215,17 +216,19 @@ impl<A, R, O, C, H, Doc, Dest> DeclaresReply
 /// A reply whose destination a mount chain may name per delivery.
 ///
 /// A reply type that declares its own channel (`#[outgoing(name = "..")]`) is published there, and
-/// the generated document says so; letting a redirect move it would put the two back out of step,
-/// which is the whole reason the destination lives on the type. So `.redirect(..)` applies to a
-/// reply type that leaves the destination open - the mount site's `publish("dest")` name is then
-/// the declared fallback, and the redirect names where each answer actually goes.
+/// the generated document says so; letting a transform move it would put the two back out of
+/// step, which is the whole reason the destination lives on the type. So a transform that
+/// declares `Destination = Names` mounts only on a reply type that leaves the destination open -
+/// the mount site's `publish("dest")` name is then the declared fallback, and the transform names
+/// where each answer actually goes.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` declares where it is published, so it cannot be redirected",
+    message = "`{Self}` declares where it is published, so a transform cannot name its destination",
     label = "this reply's destination is its type's own",
     note = "drop `#[outgoing(name = \"..\")]` from the reply type and name the fallback at the \
             mount site (`publish(\"dest\")` on the attribute, `.to(\"dest\")` on the chain), or \
-            publish the reply where its declaration says and drop the `.redirect(..)` step"
+            publish the reply where its declaration says and mount a transform that declares \
+            `Destination = Reads`"
 )]
 pub trait RedirectableReply {}
 
