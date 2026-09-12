@@ -151,9 +151,11 @@
   加了一，处理器可以按它给重新投递次数封顶。
 
   在一个作用域里，可以调用
-  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via) 启用它，
-  该发布者必须指向同一个 Broker。没有发布者时，运行时丢弃延迟，消息立即重新入队。在延迟的这段
-  时间里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
+  [`BrokerScope::retry_via(policy)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via) 启用它，
+  `policy` 是这个 Broker 自己的发布策略（它的 prelude 里的 `Publish::default()`）：运行时在启动时
+  把它配到已连接的 Broker 上，所以连接之前不需要任何发布者。没有它时，运行时丢弃延迟，消息立即
+  重新入队。在延迟的这段时间里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本
+  就丢了。
 
   副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
   串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate，

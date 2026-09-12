@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{AppInfo, HandlerOutcome, RETRY_COUNT_HEADER, RustStream};
 use ruststream::subscriber;
 use ruststream::testing::{Outcome, TestApp};
@@ -149,12 +149,13 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 /// message would be lost.
 #[tokio::test(start_paused = true)]
 async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(reconcile);
-    });
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.retry_via(MemoryPublish);
+            b.include(reconcile);
+        },
+    );
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -196,12 +197,13 @@ async fn settle_later(_order: &Order) -> HandlerOutcome {
 /// redelivery is published fails to start, naming the subscription, its source and the fix.
 #[tokio::test]
 async fn a_retry_publisher_over_an_unaddressed_source_refuses_to_start() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(settle_later);
-    });
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.retry_via(MemoryPublish);
+            b.include(settle_later);
+        },
+    );
 
     let failed = TestApp::start(app)
         .await

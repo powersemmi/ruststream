@@ -11,7 +11,7 @@ use crate::runtime::lifecycle::ConnectedSlot;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity};
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
-use crate::runtime::publisher_registry::ErasedPublisher;
+use crate::runtime::redelivery::RetryPairing;
 use crate::runtime::router::{RouterDef, RouterSink};
 
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
@@ -34,7 +34,9 @@ pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipelin
     pub(super) startup_hooks: Vec<LifecycleHook<State>>,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
-    pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
+    /// The deferred-retry policy wired with [`retry_via`](Self::retry_via), as the pairing the
+    /// runtime takes once the broker is connected.
+    pub(super) retry: Option<RetryPairing>,
     pub(super) global: Layers,
     pub(super) codec: C,
 }
@@ -89,13 +91,17 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
             ));
     }
 
-    /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
+    /// Wires the publish policy the broker-agnostic `retry_after` fallback publishes through on
+    /// this scope.
     ///
     /// When a handler returns [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after)
     /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
-    /// redelivery, the runtime re-publishes the message after the delay through `publisher`, with
-    /// the [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a
-    /// publisher bound to the same broker (`b.broker().publisher()`).
+    /// redelivery, the runtime re-publishes the message after the delay through the publisher
+    /// `policy` pairs into, with the [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER)
+    /// incremented. The policy is this broker's own (`Publish::default()` from its prelude): it is
+    /// paired with the connected broker at startup, before the scope's first subscription opens,
+    /// so a broker that hands out no publisher before `connect` wires the fallback like any
+    /// other. A policy that fails to pair aborts startup, like a reply policy that does.
     ///
     /// Where that copy goes is the subscription's own answer, read once at startup from
     /// [`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address).
@@ -116,23 +122,30 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// # Examples
     ///
     /// ```
-    /// use ruststream::runtime::BrokerScope;
-    /// use ruststream::{Broker, Publisher};
+    /// # #[cfg(feature = "memory")]
+    /// # fn demo() {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{AppInfo, RustStream};
     ///
-    /// // Wire a deferred-retry publisher bound to the same broker as the scope.
-    /// fn configure<B, P>(scope: &mut BrokerScope<B>, retry_publisher: P)
-    /// where
-    ///     B: Broker + 'static,
-    ///     P: Publisher + 'static,
-    /// {
-    ///     scope.retry_via(retry_publisher);
-    /// }
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| {
+    ///         // The broker's own publish policy; paired once the broker is connected.
+    ///         b.retry_via(MemoryPublish);
+    ///     });
+    /// # let _ = app;
+    /// # }
     /// ```
-    pub fn retry_via<P>(&mut self, publisher: P)
+    pub fn retry_via<Policy>(&mut self, policy: Policy)
     where
-        P: Publisher + 'static,
+        Policy: PublishPolicy<Connected<B>> + Send + 'static,
+        Policy::Live: Publisher + 'static,
     {
-        self.retry_publisher = Some(Arc::new(publisher));
+        // The slot's type projects through `Broker::Connected`, which inference cannot walk back
+        // to `B`, so the pairing names both parameters.
+        self.retry = Some(RetryPairing::new::<B, Policy>(
+            Arc::clone(&self.slot),
+            policy,
+        ));
     }
 
     /// Attaches `handler` (wrapped with the app's global stack) to an already-created
@@ -183,49 +196,23 @@ impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
 
 #[cfg(all(test, feature = "memory"))]
 mod tests {
-    use std::pin::pin;
-
-    use futures::StreamExt as _;
-
-    use crate::memory::MemoryBroker;
-    use crate::runtime::publisher_registry::ErasedPublisher;
+    use crate::memory::{MemoryBroker, MemoryPublish};
     use crate::runtime::{AppInfo, RustStream};
-    use crate::{IncomingMessage, OutgoingMessage, Subscriber};
-
-    use super::Arc;
 
     /// The deferred-retry fallback is only reachable through a broker without native delayed
-    /// redelivery (the in-memory one has it), so what the scope owes is the wiring: the publisher
-    /// handed to `retry_via` is held erased and still reaches the broker.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn retry_via_holds_a_live_erased_publisher() {
-        let broker = MemoryBroker::new();
-        let mut subscriber = broker.subscribe("retry.fallback");
-        let publisher = broker.publisher();
-
-        let mut fallback: Option<Arc<dyn ErasedPublisher>> = None;
-        let _app = RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(broker, |b| {
-            assert!(
-                b.retry_publisher.is_none(),
-                "a fresh scope has no fallback publisher",
-            );
-            b.retry_via(publisher);
-            fallback = b.retry_publisher.clone();
-        });
-
-        let fallback = fallback.expect("retry_via must wire the deferred-retry publisher");
-        fallback
-            .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
-            .await
-            .expect("the erased fallback publish failed");
-
-        let mut stream = pin!(subscriber.stream());
-        let msg = stream
-            .next()
-            .await
-            .expect("the fallback publish must reach the broker")
-            .expect("delivery");
-        assert_eq!(msg.payload(), b"deferred");
+    /// redelivery (the in-memory one has it), so what the scope owes at build time is the wiring:
+    /// the policy handed to `retry_via` is held as a pairing the runtime takes at startup. That
+    /// the pairing yields a publisher which reaches the broker is proven where the pairing lives.
+    #[test]
+    fn retry_via_holds_the_policy_as_a_pairing() {
+        let mut wired = false;
+        let _app =
+            RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                assert!(b.retry.is_none(), "a fresh scope defers nothing");
+                b.retry_via(MemoryPublish);
+                wired = b.retry.is_some();
+            });
+        assert!(wired, "retry_via must wire the deferred-retry pairing");
     }
 
     #[test]

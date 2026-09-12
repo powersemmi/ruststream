@@ -160,10 +160,12 @@ The runtime honours the delay as follows:
   is incremented by one, and a handler can read it to cap redeliveries.
 
   You can turn it on per scope with
-  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via);
-  the publisher must target the same broker. Without a publisher the delay is dropped and the
-  message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
-  window: if the process exits before the timer fires, the copy is lost.
+  [`BrokerScope::retry_via(policy)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via),
+  where `policy` is the broker's own publish policy (`Publish::default()` from its prelude): the
+  runtime pairs it with the connected broker at startup, so no publisher has to exist before the
+  broker connects. Without it the delay is dropped and the message is requeued immediately. The
+  deferred re-publish is **at-most-once** over the delay window: if the process exits before the
+  timer fires, the copy is lost.
 
   The copy goes to the address the subscription reports, which is not always its name. A NATS
   subject and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its

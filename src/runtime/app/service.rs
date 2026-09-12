@@ -619,7 +619,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             startup_hooks: Vec::new(),
             sink: RouterSink::new(),
             pipeline: self.publish_pipeline.clone(),
-            retry_publisher: None,
+            retry: None,
             global: self.global.clone(),
             codec,
         }
@@ -644,14 +644,14 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             slot,
             startup_hooks,
             sink,
-            retry_publisher,
+            retry,
             ..
         } = scope;
         self.after_startup.extend(startup_hooks);
         // The scope id is the index this broker will occupy once pushed below; the harness uses it
         // to scope recorded deliveries per broker.
         let scope_delivery = Arc::new(ScopeDelivery::new(
-            retry_publisher,
+            retry,
             self.continuations.clone(),
             #[cfg(feature = "testing")]
             self.test_hooks.clone(),
