@@ -45,7 +45,11 @@ pub trait Publisher: Send + Sync {
     /// The type is the broker's own, and so are the builder steps that fill it: a broker ships an
     /// extension trait over [`PublishBuilder`](crate::runtime::PublishBuilder) bounded on this
     /// type, so its steps appear on a builder over its own publisher and nowhere else.
-    type Options: Send + Sync;
+    ///
+    /// `Clone` and `'static` are what the test harness needs: it copies the options a slot
+    /// publish carried and hands them back to the test as this type
+    /// (`tb.out::<Marker>().with_options(..)` under the `testing` feature).
+    type Options: Clone + Send + Sync + 'static;
 
     /// Publishes a message to the broker, with the per-message settings the call site adjusted.
     ///

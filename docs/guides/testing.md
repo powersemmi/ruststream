@@ -182,6 +182,29 @@ same messages.
 Publishes that leave the handler task (a spawned sibling task, the buffer of a settled owned
 transaction) are not attributed to the slot: assert on the broker's publish log for those.
 
+The slot view also records what each publish carried as
+[broker settings](publishing.md#broker-settings-per-message), so a setting the broker maps to a
+protocol field rather than a header is still assertable. `with_options` names the broker's options
+type and compares the value; `assert_options_default` states that no builder step ran on that
+publish, so the mount site's policy was the whole answer:
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:options_assert"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:options_assert"
+    ```
+
+Both read the most recent publish, the way `with_header` does. Options live on the slot view alone.
+The broker's publish log sees the message after the broker resolved them, so asking
+`published::<T>(name)` for options panics and points back here; and a bare publisher from a startup
+hook or the application state belongs to no slot, so nothing records its options at all.
+
 ### Failure policy, panic, and shutdown
 
 The harness runs dispatch under the application's real `FailurePolicy`, so a negative test is a

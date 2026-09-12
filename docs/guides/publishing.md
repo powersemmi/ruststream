@@ -443,6 +443,9 @@ named, the transforms it named, the slot the harness records against. They are t
 publish surface - an `Out` slot, a transaction opened on one, a bare publisher from the application
 state or a startup hook.
 
+What a publish through an `Out` slot carried is readable in a test, whether or not the broker turned
+it into a header: see [asserting on `Out` slots](testing.md#asserting-on-out-slots).
+
 A setting is broker-specific by nature and the call site is in the body, so a body that adjusts one
 imports that broker's prelude for the step and names its options type in the bound
 (`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). This is the one exception to a handler

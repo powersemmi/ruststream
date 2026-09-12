@@ -162,6 +162,27 @@ Broker 时，它返回 `TestError::Ambiguous`。
 离开处理器任务的发布不归属到槽位上，例如另一个 spawn 出来的任务，或者一个已结算的自有事务的
 缓冲区。这类发布对着 Broker 的发布日志断言。
 
+槽位视图连同消息一起记下每次发布所带的 [Broker 逐条消息设置](publishing.md#broker-settings-per-message)。
+因此，Broker 映射到协议字段而不是消息头的那种设置，同样可以断言。`with_options` 点名 Broker 的设置
+类型并比对取值；`assert_options_default` 断言这次发布上没有任何构建器步骤跑过，一切由挂载点的策略
+说了算：
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:options_assert"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:options_assert"
+    ```
+
+两者都读最近一次发布，和 `with_header` 一样。设置只在槽位视图上可见。Broker 的发布日志看到消息时，
+Broker 已经把设置解析掉了，所以向 `published::<T>(name)` 要设置会 panic，并把你指回这里；而启动钩子
+或应用状态拿到的裸发布者不属于任何槽位，它的设置根本无人记录。
+
 ### 失败策略、panic 与关闭
 
 测试套件在应用自己真实的 `FailurePolicy` 之下运行分发，负面测试因此也是完整的场景。默认的

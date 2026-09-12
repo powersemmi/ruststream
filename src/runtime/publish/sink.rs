@@ -45,7 +45,7 @@ pub trait PublishSink: Send {
     /// This is the type a broker's builder steps are bounded on: an extension trait written
     /// `where Sink: PublishSink<Options = MyOptions>` appears on a builder over that broker's
     /// publisher and on no other. See [`Publisher::Options`](crate::Publisher::Options).
-    type Options: Send + Sync;
+    type Options: Clone + Send + Sync + 'static;
 
     /// Sends one message into the sink, with the settings the builder's steps put on it.
     ///

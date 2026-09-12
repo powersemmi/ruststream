@@ -160,7 +160,7 @@ pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// 你的 Broker 的逐条消息设置。每个字段都是可选的；没有这类设置就写 `()`。
-    type Options: Send + Sync;
+    type Options: Clone + Send + Sync + 'static;
 
     async fn publish(
         &self,
@@ -184,6 +184,11 @@ pub trait Publisher: Send + Sync {
 
 在没有调用点可以改动设置的路径上，`options` 是 `None`：处理器的回复、延迟重投。那里由策略的设置说了
 算。
+
+`Clone` 和 `'static` 是测试台需要的：它把每次经由 `Out` 槽位发布所带的设置复制一份。于是，测试你这个
+Broker 的服务断言的是你的 `publish` 收到的值，而不是它变成的那个协议字段。再派生 `Debug` 和
+`PartialEq`，断言就写成 `with_options(&YourOptions { .. })`
+（见[对 Out 槽位做断言](../guides/testing.md#asserting-on-out-slots)）。
 
 `base_headers` 留给发布者自身的常量：租户、producer 名字、这个句柄每条消息都带的 schema id。构建器以
 这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值

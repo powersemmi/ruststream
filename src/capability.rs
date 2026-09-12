@@ -248,11 +248,11 @@ pub trait Transaction: Send {
     /// transaction is a publish surface of its own and may honour a different set of settings
     /// than the publisher it was opened from. Most brokers name the publisher's type here.
     ///
-    /// See [`Publisher::Options`]. A transaction with no per-message setting writes
-    /// `type Options = ();`.
+    /// See [`Publisher::Options`], including why the type is `Clone + 'static`. A transaction
+    /// with no per-message setting writes `type Options = ();`.
     ///
     /// [`Publisher::Options`]: crate::Publisher::Options
-    type Options: Send + Sync;
+    type Options: Clone + Send + Sync + 'static;
 
     /// Publishes `msg` into the transaction: buffered, not visible before [`commit`](Self::commit).
     ///

@@ -403,6 +403,9 @@ prelude，并在约束里写出它的设置类型（`Out<impl Publisher<Options 
 这是「处理器主体只导入框架 prelude」这条规则的唯一例外，签名也说清楚了函数体绑在哪个 Broker 上。
 有哪些步骤可用，由你的 Broker 的文档回答。
 
+经由 `Out` 槽位的一次发布带了什么，在测试里读得到，与 Broker 是否把它变成消息头无关：见
+[对 Out 槽位做断言](testing.md#asserting-on-out-slots)。
+
 ## 发布管线 { #the-publish-pipeline }
 
 消息离开进程之前，有两个层次运行，而且它们可以组合：

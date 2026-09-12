@@ -174,7 +174,7 @@ pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Your broker's per-message settings. Every field optional; `()` when you have none.
-    type Options: Send + Sync;
+    type Options: Clone + Send + Sync + 'static;
 
     async fn publish(
         &self,
@@ -202,6 +202,12 @@ the first thing your `publish` does. A broker with no per-message setting writes
 
 `options` is `None` wherever there is no call site to adjust them - a reply, a deferred
 redelivery - and the policy's settings are then the whole answer.
+
+`Clone` and `'static` are what the test harness asks of the type: it copies the options every
+publish through an `Out` slot carried, so a service testing your broker asserts on the value your
+`publish` received rather than on the protocol field it became. Derive `Debug` and `PartialEq` too,
+and the assertion reads `with_options(&YourOptions { .. })`
+([asserting on `Out` slots](../guides/testing.md#asserting-on-out-slots)).
 
 `base_headers` is for a constant of the publisher itself: a tenant, a producer name, a schema id
 every message of this handle carries. The builder starts the outgoing headers from that base and
