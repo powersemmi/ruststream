@@ -364,6 +364,21 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
     --8<-- "tests/manual_publish_options.rs:mount"
     ```
 
+同一份策略放在 `Reply` 位置，对 `publish("dest")` 处理器返回的回复也是如此。回复没有调用点，所以
+策略就是全部答案：
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:reply_mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:reply_mount"
+    ```
+
 调用用 Broker 加到发布构建器上的步骤，为这一条消息改动一项设置。步骤没碰过的部分，保持策略定下的
 值：
 

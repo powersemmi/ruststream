@@ -408,6 +408,21 @@ slot sent the same way says it once:
     --8<-- "tests/manual_publish_options.rs:mount"
     ```
 
+The same policy in the `Reply` position does the same for what a `publish("dest")` handler
+returns. A reply has no call site, so the policy is the whole answer:
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:reply_mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:reply_mount"
+    ```
+
 A call adjusts one setting for one message, through a step the broker adds to the publish builder.
 What no step touches keeps what the policy fixed:
 

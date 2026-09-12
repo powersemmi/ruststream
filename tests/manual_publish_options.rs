@@ -346,3 +346,63 @@ async fn a_bare_publisher_takes_the_same_steps() {
         .assert_called_once()
         .with_header("priority", "8");
 }
+
+/// The reply of the replying body, declaring no name so the chain names one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+struct Receipt {
+    id: u64,
+}
+
+impl OutgoingDestination for Receipt {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Receipt {
+    type Contract = NoHeaders;
+}
+
+/// A replying body adjusts nothing: a reply has no call site, so the policy the chain names for
+/// the `Reply` position is the whole answer.
+struct Acknowledge;
+
+impl Handle<Order, Receipt> for Acknowledge {
+    async fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> Result<Receipt, HandlerOutcome> {
+        Ok(Receipt { id: order.id })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_reply_position_takes_the_policy_defaults() {
+    // --8<-- [start:reply_mount]
+    let app = RustStream::new(AppInfo::new("options-reply", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(
+                subscriber("options.reply.in", Acknowledge)
+                    .reply()
+                    .to("options.reply.out")
+                    .build(),
+            )
+            .out(Reply, PriorityPublish::default().priority(4));
+        },
+    );
+    // --8<-- [end:reply_mount]
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with(&Receipt { id: 2 })
+        .with_header("priority", "4");
+}

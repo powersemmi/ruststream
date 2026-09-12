@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::Order;
+use common::{Order, Receipt};
 
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
@@ -310,4 +310,37 @@ async fn a_bare_publisher_takes_the_same_steps() {
         .published::<Order>("options.announce.urgent")
         .assert_called_once()
         .with_header("priority", "8");
+}
+
+/// A reply adjusts nothing: it has no call site, so the policy the mount site names for the
+/// `Reply` position is the whole answer.
+#[subscriber("options.reply.in", publish("options.reply.out"))]
+async fn acknowledge(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_reply_position_takes_the_policy_defaults() {
+    // --8<-- [start:reply_mount]
+    let app = RustStream::new(AppInfo::new("options-reply", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(acknowledge)
+                .out(Reply, PriorityPublish::default().priority(4));
+        },
+    );
+    // --8<-- [end:reply_mount]
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with(&Receipt { id: 2 })
+        .with_header("priority", "4");
 }
