@@ -633,7 +633,7 @@ impl ArenaPieces {
                     + 'static
             });
             bounds.push(quote! {
-                #pipeline: ::ruststream::runtime::OutPipeline + 'static
+                #pipeline: ::ruststream::runtime::OutPipeline<#wired> + 'static
             });
             bindings.push(arena_binding(out.pat, marker));
             we_params.push(wired);

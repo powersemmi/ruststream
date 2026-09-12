@@ -908,7 +908,11 @@ impl BrokerHandle<'_> {
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
         let messages = self.testable.map(|t| t.published(name)).unwrap_or_default();
-        PublishedAssertions::new(name.to_owned(), messages)
+        PublishedAssertions::new(
+            name.to_owned(),
+            messages,
+            self.coordinator.reply_published(name),
+        )
     }
 }
 

@@ -202,10 +202,10 @@ async fn scope_default_codec_drops_per_call_codec() {
 /// A static (zero-cost) publish transform composed onto the reply wiring.
 struct StaticEnvelope;
 
-impl<K: ContextKind> PublishTransform<K> for StaticEnvelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for StaticEnvelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-static", b"1".to_vec());
     }
 }

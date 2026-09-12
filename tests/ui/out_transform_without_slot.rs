@@ -10,10 +10,15 @@ struct Encoded;
 
 struct Envelope;
 
-impl<K: ContextKind> PublishTransform<K> for Envelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        _cx: &K::View<'_>,
+    ) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

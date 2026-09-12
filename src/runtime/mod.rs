@@ -102,7 +102,7 @@ pub use publish::{
     AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, DestinationUse,
     Direct, Either, EncodeOutcome, FitsOffer, InTransaction, LowerOutTransforms, MapReplyPolicy,
     NameReplyCodec, NamedDestinationSend, NamingOffered, NamingUntaken, NarrowToUse, PayloadError,
-    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy,
+    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy, SlotStackUse,
     SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
@@ -148,9 +148,9 @@ pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use slot::{
     AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,
     DestinationOffer, InitSlots, IntoSlotSource, MapPolicyAt, MapPolicyLast, MissingSlot,
-    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, OutPosition, ReplyLast, ReplyOffer,
-    ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast, TransformAt,
-    TransformLast, WithSource,
+    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, OutPosition, PositionOptions,
+    ReplyLast, ReplyOffer, ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast,
+    TransformAt, TransformLast, WithSource,
 };
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,

@@ -19,10 +19,15 @@ struct Audit;
 
 struct ByTenant;
 
-impl<K: ContextKind> PublishTransform<K> for ByTenant {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {
     type Destination = Names;
 
-    fn apply(&self, out: &mut OutgoingMessage<'_>, _cx: &K::View<'_>) {
+    fn apply(
+        &self,
+        out: &mut OutgoingMessage<'_>,
+        _options: &mut Option<Options>,
+        _cx: &K::View<'_>,
+    ) {
         out.set_name("audit.north");
     }
 }

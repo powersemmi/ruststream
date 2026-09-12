@@ -63,10 +63,10 @@ impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C,
 /// onto the confirmations reply, so every confirmation carries the header.
 pub(crate) struct StampSource;
 
-impl<K: ContextKind> PublishTransform<K> for StampSource {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for StampSource {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut()
             .insert("x-source-service", b"orders-service".to_vec());
     }

@@ -200,10 +200,12 @@ step touched a setting on that publish, and the policy's defaults applied:
     --8<-- "tests/manual_publish_options.rs:options_assert"
     ```
 
-Both read the most recent publish, the way `with_header` does. Options are recorded on the slot
-view alone. The broker's publish log sees the message after the broker resolved them, so asking
-`published::<T>(name)` for options panics. A bare publisher from a startup hook or the application
-state belongs to no slot, and its options are recorded nowhere.
+Both read the most recent publish, the way `with_header` does. The same two assertions work on
+`published::<T>(name)` for a channel a handler replied to, which is where a reply's settings are
+read back: a reply has no call site, so what they show is what a transform on the reply position
+left. A channel the runtime reached only through a slot has nothing to show there - assert on the
+slot view - and so does a message the test published itself, or one a bare publisher from a
+startup hook sent.
 
 ### Failure policy, panic, and shutdown
 

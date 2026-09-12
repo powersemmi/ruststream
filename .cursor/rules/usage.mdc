@@ -517,28 +517,55 @@ replies and slots alike. A position's transforms run first, then the app-wide la
 send. A router's slots run their own transforms and not the app-wide chain, because its routes are
 typed before the app that mounts them.
 
-Every impl of `PublishTransform<K>` declares two things. What it **reads** is the position's kind:
-`ForReply<C>` hands it `PublishContext<'_, C>` (the delivery being answered - its channel, the
-incoming headers, the broker's typed per-delivery fields), `ForSlot` hands it `SlotContext<'_>`
-(the slot's own name and nothing else, because the body issued that publish and has already read
-its own `Context`). A transform reading nothing writes one impl over every kind and mounts
-anywhere. What it **may do** is `type Destination`: `Reads` leaves the destination alone, `Names`
-sets it. Stable Rust has no associated-type default, so every impl writes the line; almost every
-one writes `Reads`.
+Every impl of `PublishTransform<K, Options>` declares three things. What it **reads** is the
+position's kind: `ForReply<C>` hands it `PublishContext<'_, C>` (the delivery being answered - its
+channel, the incoming headers, the broker's typed per-delivery fields), `ForSlot` hands it
+`SlotContext<'_>` (the slot's own name and nothing else, because the body issued that publish and
+has already read its own `Context`). A transform reading nothing writes one impl over every kind
+and mounts anywhere. What it **writes** is `Options`, the broker's per-message settings: a
+transform generic over them touches none and mounts over any broker's publisher, one naming a
+broker's type mounts over that broker's publisher and nowhere else. What it **may do** is
+`type Destination`: `Reads` leaves the destination alone, `Names` sets it. Stable Rust has no
+associated-type default, so every impl writes the line; almost every one writes `Reads`.
 
 ```rust
 use ruststream::runtime::{
-    ContextKind, ForReply, Names, Outgoing, PublishContext, PublishTransform, Reads,
+    ContextKind, ForReply, ForSlot, Names, Outgoing, PublishContext, PublishTransform, Reads,
+    SlotContext,
 };
 
-/// Reads nothing, so one impl serves a reply and a slot alike.
+/// Reads and writes nothing, so one impl serves a reply and a slot on any broker alike.
 struct EnvelopeTransform;
 
-impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        _cx: &K::View<'_>,
+    ) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
+    }
+}
+
+/// Writes one of the broker's per-message settings, so it mounts over that broker's publisher
+/// only. The position starts at `None` - the policy's defaults apply - and on a slot it starts
+/// as a copy of what the call site's steps set, so this completes the call rather than
+/// replacing it.
+struct Expedite;
+
+impl PublishTransform<ForSlot, MqttOptions> for Expedite {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<MqttOptions>,
+        _cx: &SlotContext<'_>,
+    ) {
+        options.get_or_insert_with(MqttOptions::default).retain = Some(true);
     }
 }
 ```
@@ -553,10 +580,15 @@ declaring `Destination = Names` sets the name per delivery, and it mounts with t
 ```rust
 struct ReplyTo;
 
-impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     type Destination = Names;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
         {
@@ -590,8 +622,10 @@ b.include(acknowledge).out_reply(Publish::default().qos(1));  // a reply has no 
 ```
 
 The call adjusts one setting for one message, through a step the broker adds to the publish
-builder. A setting no step names keeps the policy's default, and the rest of the publish is still
-the mount site's: the entry's codec, its transforms, the slot the test harness records it against.
+builder, and a transform on the position adjusts one where there is no call site to (a reply, the
+deferred retry copy). A setting neither names keeps the policy's default, and the rest of the
+publish is still the mount site's: the entry's codec, its transforms, the slot the test harness
+records it against.
 
 ```rust
 // the body imports the broker's prelude for the step, and names its options type in the bound -

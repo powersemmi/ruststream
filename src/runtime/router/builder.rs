@@ -18,8 +18,7 @@ use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
-    ForSlot, LowerOutTransforms, NarrowToUse, OutPipeline, PublishIdentity, PublishPipeline,
-    PublishTransform,
+    LowerOutTransforms, NarrowToUse, OutPipeline, PublishIdentity, PublishPipeline, SlotStackUse,
 };
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::redelivery::RetryPairing;
@@ -870,6 +869,15 @@ impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
     type Broker = B;
 }
 
+/// The live publisher the deferred-retry slot's policy pairs into: what fixes the per-message
+/// options its transforms write.
+type RetryLive<Policy, B> = <Policy as PublishPolicy<Connected<B>>>::Live;
+
+/// The value the deferred-retry slot is actually wired with: the policy after the narrowing a
+/// naming transform would apply, paired.
+type RetryWire<Transforms, Policy, B> =
+    <SlotPolicy<Transforms, Policy, RetryLive<Policy, B>> as PublishPolicy<Connected<B>>>::Live;
+
 /// Wires the deferred-retry slot onto the registration a router grew last: the tail of
 /// `.out(Retry, policy)` on a mount chain, after the chain committed its registration.
 ///
@@ -894,10 +902,13 @@ where
     C: Clone,
     Pipe: Clone,
     Enc: SlotCodec<C, Codec: Send + Sync + 'static>,
-    Transforms: LowerOutTransforms<Pipe, Out: OutPipeline + 'static> + PublishTransform<ForSlot>,
-    <Transforms as PublishTransform<ForSlot>>::Destination: NarrowToUse<Policy>,
-    SlotPolicy<Transforms, Policy>:
+    Policy: PublishPolicy<Connected<B>>,
+    Transforms: LowerOutTransforms<Pipe> + SlotStackUse<RetryLive<Policy, B>>,
+    <Transforms as SlotStackUse<RetryLive<Policy, B>>>::Destination: NarrowToUse<Policy>,
+    SlotPolicy<Transforms, Policy, RetryLive<Policy, B>>:
         PublishPolicy<Connected<B>, Live: Publisher + 'static> + Send + 'static,
+    <Transforms as LowerOutTransforms<Pipe>>::Out:
+        OutPipeline<RetryWire<Transforms, Policy, B>> + 'static,
 {
     type Out = Router<B, (RetriedRoute<Head, B>, Tail), C, Layers, Pipe>;
 

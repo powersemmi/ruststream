@@ -18,15 +18,16 @@
 
 use std::fmt;
 
-use crate::Broker;
 use crate::runtime::publish::{
     CallCodec, FitsOffer, ForSlot, PublishTransform, PublishTransformStack, Reads, UnnamedCodec,
 };
 use crate::runtime::router::{AttachRetry, Router, RouterCommit, RouterWith};
 use crate::runtime::slot::{
     AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoReply,
-    OutAttachment, OutSlot, Reply, ReplyLast, SlotPos, TransactionalLast, TransformLast,
+    OutAttachment, OutSlot, PositionOptions, Reply, ReplyLast, SlotPos, TransactionalLast,
+    TransformLast,
 };
+use crate::{Broker, Connected, PublishPolicy, Publisher};
 
 /// The marker of a registration's deferred-retry slot: `.out(Retry, policy)` names the publish
 /// policy a `retry_after` copy leaves through.
@@ -293,14 +294,16 @@ impl<N, Under, Policy, Layers, Enc> TransformLast<N, RetryPos>
 // What the slot offers a transform is the marker's own declaration, read the way a handler's slot
 // reads its `#[publishes(..)]` dictionary: `Retry` offers `Reads`, so a transform that names a
 // destination is refused here, naming the slot.
-impl<N, Under, Policy, Layers, Enc, Mount, Def> AdmitsAt<N, RetryPos, Mount, Def>
+impl<N, Under, Policy, Layers, Enc, Mount, Def, B> AdmitsAt<N, RetryPos, Mount, Def, B>
     for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>>
 where
-    Layers: PublishTransform<ForSlot>,
-    N: PublishTransform<ForSlot>,
-    <N as PublishTransform<ForSlot>>::Destination: FitsOffer<
+    B: Broker,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
+    Layers: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
+    N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
+    <N as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination: FitsOffer<
             <Retry as OutSlot>::Destination,
-            <Layers as PublishTransform<ForSlot>>::Destination,
+            <Layers as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination,
             Retry,
         >,
 {
@@ -391,17 +394,17 @@ where
     }
 }
 
-impl<N, Under, Attachment, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+impl<N, Under, Attachment, Mount, Def, B> AdmitsAt<N, ReplyLast, Mount, Def, B>
     for Retried<Under, Attachment>
 where
-    Under: AdmitsAt<N, ReplyLast, Mount, Def>,
+    Under: AdmitsAt<N, ReplyLast, Mount, Def, B>,
 {
 }
 
-impl<N, Under, Attachment, Mount, Def, const POS: usize> AdmitsAt<N, SlotPos<POS>, Mount, Def>
+impl<N, Under, Attachment, Mount, Def, B, const POS: usize> AdmitsAt<N, SlotPos<POS>, Mount, Def, B>
     for Retried<Under, Attachment>
 where
-    Under: AdmitsAt<N, SlotPos<POS>, Mount, Def>,
+    Under: AdmitsAt<N, SlotPos<POS>, Mount, Def, B>,
 {
 }
 

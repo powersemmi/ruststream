@@ -368,7 +368,7 @@ Broker 自己的设置，它们从两个地方进入一次发布。
     ```
 
 同一份策略放在 `Reply` 位置，为 `publish("dest")` 处理器返回的回复设定默认值。回复没有调用点，
-因此策略是设定这些默认值的唯一地方：
+因此这些设置由策略写出，而逐条改动它们的是这一位置上的 [变换](#what-a-transform-declares)：
 
 === "宏"
 
@@ -383,7 +383,7 @@ Broker 自己的设置，它们从两个地方进入一次发布。
     ```
 
 另一处是调用：用你的 Broker 加在发布构建器上的步骤，可以为某一条消息改动一项设置。
-步骤没有点名的设置，保持策略定下的默认值：
+步骤和变换都没有点名的设置，保持策略定下的默认值：
 
 === "宏"
 
@@ -427,20 +427,24 @@ prelude 之外的东西，签名也就点明了该处理器绑在哪个 Broker �
 
 ### 变换声明什么 { #what-a-transform-declares }
 
-变换声明两件事：它读什么，以及它可以对目的地做什么。
+变换声明三件事：它读什么、它写什么，以及它可以对目的地做什么。
 
-它读的是这个位置的上下文种类，也就是 `apply(&mut Outgoing<'_>, &K::View<'_>)` 里的 `K`，由挂载点
-在编译期选定：
+它读的是这个位置的上下文种类，也就是 `apply(&mut Outgoing<'_>, &mut Option<Options>,
+&K::View<'_>)` 里的 `K`，由挂载点在编译期选定：
 
 | 位置 | 种类 | 变换读到什么 |
 |---|---|---|
 | 回复，在 `.out_reply(..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
 | `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
 
+它写的是 `Options`，也就是 [逐条消息的 Broker 设置](#broker-settings-per-message)。一项都不碰的
+变换对这个类型是泛型的，挂在任何 Broker 的发布器之上；要设定某项设置的变换写出该 Broker 的类型，
+于是它只挂在这个 Broker 的发布器之上。
+
 它可以做什么由 `type Destination` 声明：不动目的地的变换写 `Reads`，要写入目的地的写 `Names`。
 每个实现都要写这一行，而几乎每一个写的都是 `Reads`。
 
-什么都不读的变换，写一个覆盖所有种类的实现，两个位置都能挂：
+什么都不读、什么都不写的变换，写一个覆盖所有种类和所有设置类型的实现，两个位置都能挂：
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
@@ -456,6 +460,15 @@ prelude 之外的东西，签名也就点明了该处理器绑在哪个 Broker �
 ```rust
 --8<-- "examples/publishing.rs:slot_transform"
 ```
+
+写出 Broker 的设置类型，与写出种类一样定下变换挂在哪里：
+
+```rust
+--8<-- "tests/publish_options.rs:transform"
+```
+
+在槽位上，设置这一位置从调用点各步骤写下的值的副本开始，因此变换是在补全这次调用：调用没有碰过的
+设置由它填上，调用点名过的设置由它覆盖。回复没有调用点，那里的设置只由变换写入。
 
 批量处理器的回复不经过按消息生效的 `.transform(..)` 栈。可以用 `.batch_transform(..)` 给它们添加
 变换，按单条消息写成的 `PublishTransform` 用 `for_batch(transform)` 复用。

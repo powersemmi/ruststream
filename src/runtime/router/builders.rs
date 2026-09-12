@@ -199,7 +199,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         transform: N,
     ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
     where
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
+        R: RouterBroker,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, R::Broker>,
     {
         RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
     }

@@ -12,6 +12,8 @@ use super::{
 use crate::Publisher;
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::record_reply_publish;
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -87,7 +89,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
-        PL: PublishTransform<ForReply<Cx>>,
+        PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
         Cx: Sync,
         PP: PublishPipeline,
@@ -97,10 +99,15 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
-        self.layers.apply(&mut out, cx);
-        // A reply has no call site to adjust the broker's per-message settings, so the publish
-        // policy's own are what apply.
-        pipeline.run(&mut out, &self.publisher, None).await
+        // A reply has no call site to adjust the broker's per-message settings, so the position
+        // starts at the publish policy's own and only a transform fills it.
+        let mut options = None;
+        self.layers.apply(&mut out, &mut options, cx);
+        #[cfg(feature = "testing")]
+        record_reply_publish(out.name(), options.as_ref());
+        pipeline
+            .run(&mut out, &self.publisher, options.as_ref())
+            .await
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
@@ -115,7 +122,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         cx: &PublishContext<'_, Cx>,
     ) -> Result<(), BoxError>
     where
-        PL: PublishTransform<ForReply<Cx>>,
+        PL: PublishTransform<ForReply<Cx>, P::Options>,
         BL: Sync,
         Cx: Sync,
         PP: PublishPipeline,
@@ -128,8 +135,13 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         out.headers_mut()
             .insert_typed(headers)
             .map_err(|e| Box::new(e) as BoxError)?;
-        self.layers.apply(&mut out, cx);
-        pipeline.run(&mut out, &self.publisher, None).await
+        let mut options = None;
+        self.layers.apply(&mut out, &mut options, cx);
+        #[cfg(feature = "testing")]
+        record_reply_publish(out.name(), options.as_ref());
+        pipeline
+            .run(&mut out, &self.publisher, options.as_ref())
+            .await
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
@@ -145,7 +157,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     ) -> Result<(), BoxError>
     where
         PL: Sync,
-        BL: BatchPublishTransform<Cx>,
+        BL: BatchPublishTransform<Cx, P::Options>,
         Cx: Sync,
         PP: PublishPipeline,
     {
@@ -154,8 +166,13 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .encode(value)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
-        self.batch_layers.apply(&mut out, cx);
-        pipeline.run(&mut out, &self.publisher, None).await
+        let mut options = None;
+        self.batch_layers.apply(&mut out, &mut options, cx);
+        #[cfg(feature = "testing")]
+        record_reply_publish(out.name(), options.as_ref());
+        pipeline
+            .run(&mut out, &self.publisher, options.as_ref())
+            .await
     }
 }
 

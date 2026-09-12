@@ -72,7 +72,7 @@ impl<B: Broker + 'static> RetryPairing<B> {
         Policy: PublishPolicy<Connected<B>> + Send + 'static,
         Policy::Live: Publisher + 'static,
         Enc: Send + Sync + 'static,
-        Pipe: OutPipeline + 'static,
+        Pipe: OutPipeline<Policy::Live> + 'static,
     {
         Self(Box::new(move |connected| {
             Box::pin(async move {

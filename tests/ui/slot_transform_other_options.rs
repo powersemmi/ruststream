@@ -1,6 +1,9 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForReply, HandlerOutcome, Out, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reads, RustStream};
-use ruststream::{OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::runtime::{
+    AppInfo, ForSlot, HandlerOutcome, Out, Outgoing, PublishTransform, Reads, RustStream,
+    SlotContext,
+};
+use ruststream::{OutSlot, Publisher, subscriber};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -8,7 +11,7 @@ struct Order {
     id: u32,
 }
 
-#[derive(Serialize, Outgoing)]
+#[derive(Serialize, ruststream::Outgoing)]
 struct Audited {
     id: u32,
 }
@@ -17,21 +20,26 @@ struct Audited {
 #[publishes(Audited)]
 struct Audit;
 
-// The transform reads the delivery, so it is a reply transform. A slot publish is issued by the
-// handler body and has no delivery to hand on, so this one has no place on a slot.
-struct StampSource;
+/// Another broker's per-message settings.
+#[derive(Clone, Default)]
+struct Priority {
+    level: Option<u8>,
+}
 
-impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
+// The transform writes `Priority`, so it belongs over a publisher whose `Publisher::Options` is
+// `Priority`. The in-memory broker has no per-message setting at all (`Options = ()`).
+struct Urgent;
+
+impl PublishTransform<ForSlot, Priority> for Urgent {
     type Destination = Reads;
 
     fn apply(
         &self,
-        out: &mut OutgoingMessage<'_>,
-        _options: &mut Option<Options>,
-        cx: &PublishContext<'_, C>,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<Priority>,
+        _cx: &SlotContext<'_>,
     ) {
-        out.headers_mut()
-            .insert("x-source", cx.name().as_bytes().to_vec());
+        options.get_or_insert_with(Priority::default).level = Some(9);
     }
 }
 
@@ -52,7 +60,7 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(mirror)
             .out(Audit, MemoryPublish)
-            .transform(StampSource)
+            .transform(Urgent)
             .build();
     });
 }

@@ -228,17 +228,23 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// # Which positions a transform mounts on
 ///
 /// `K` is the position's [`ContextKind`], and writing the impl is how a transform says where it
-/// belongs. A transform that reads nothing is generic over the kind and mounts anywhere:
+/// belongs. A transform that reads nothing is generic over the kind and over the options, and
+/// mounts anywhere:
 ///
 /// ```
 /// use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
 ///
 /// struct Envelope;
 ///
-/// impl<K: ContextKind> PublishTransform<K> for Envelope {
+/// impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
 ///     type Destination = Reads;
 ///
-///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         _cx: &K::View<'_>,
+///     ) {
 ///         out.headers_mut().insert("x-envelope", b"1".to_vec());
 ///     }
 /// }
@@ -252,21 +258,63 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 ///
 /// struct StampSource;
 ///
-/// impl<C> PublishTransform<ForReply<C>> for StampSource {
+/// impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
 ///     type Destination = Reads;
 ///
-///     fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         cx: &PublishContext<'_, C>,
+///     ) {
 ///         out.headers_mut().insert("x-source", cx.name().as_bytes().to_vec());
 ///     }
 /// }
 /// ```
 ///
+/// # What a transform writes
+///
+/// `Options` is the broker's per-message settings type ([`Publisher::Options`](crate::Publisher::Options)),
+/// and the position is `None` until something fills it: the publish policy's own settings are
+/// what apply. A transform that sets one writes the broker's type into its impl, so it mounts
+/// over that broker's publisher and nowhere else:
+///
+/// ```
+/// use ruststream::runtime::{ForSlot, Outgoing, PublishTransform, Reads, SlotContext};
+///
+/// /// What one broker lets a single message differ in.
+/// #[derive(Clone, Default)]
+/// struct Priority {
+///     level: Option<u8>,
+/// }
+///
+/// struct Urgent;
+///
+/// impl PublishTransform<ForSlot, Priority> for Urgent {
+///     type Destination = Reads;
+///
+///     fn apply(
+///         &self,
+///         _out: &mut Outgoing<'_>,
+///         options: &mut Option<Priority>,
+///         _cx: &SlotContext<'_>,
+///     ) {
+///         options.get_or_insert_with(Priority::default).level = Some(9);
+///     }
+/// }
+/// ```
+///
+/// On a slot the position starts as a copy of what the call site's own builder steps set, so a
+/// transform completes the call rather than replacing it: it reads a field the call left alone
+/// and overrides one it filled. A reply has no call site, so there the position starts at `None`.
+///
 /// # What a transform may do to the destination
 ///
-/// [`Destination`](Self::Destination) is the other half of the declaration, beside the view: a
+/// [`Destination`](Self::Destination) is the third half of the declaration, beside the view and
+/// the options: a
 /// transform that leaves the destination alone declares [`Reads`], one that names it declares
 /// [`Names`]. Stable Rust has no default for an associated type, so every impl writes the line -
-/// including the two above, which declare `Reads`.
+/// including the three above, which declare `Reads`.
 ///
 /// A position offers the right to name only where nothing has declared the destination already:
 /// a reply type that leaves it open, a slot whose whole `#[publishes(..)]` dictionary leaves it
@@ -274,28 +322,36 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// site, which is what keeps a declaration and the wire in step. [`Outgoing::set_name`] stays a
 /// plain method; what is checked is the declaration, not the call.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a publish transform for `{K}`",
+    message = "`{Self}` is not a publish transform for `{K}` writing `{Options}`",
     note = "a transform states its position by the kind it implements: `PublishTransform<K>` for \
             every `K: ContextKind` mounts anywhere, `PublishTransform<ForReply<C>>` reads the \
             delivery and mounts on a reply, `PublishTransform<ForSlot>` mounts on an `Out` slot. A \
-            slot publish is issued by the handler body, so it has no delivery to hand on"
+            slot publish is issued by the handler body, so it has no delivery to hand on",
+    note = "a transform also states the broker's per-message options it writes, and mounts only \
+            over a publisher whose `Publisher::Options` is that type: `{Options}` here. One that \
+            writes none is generic over them - `impl<K: ContextKind, Options> \
+            PublishTransform<K, Options> for ..` - and mounts anywhere"
 )]
-pub trait PublishTransform<K: ContextKind>: Send + Sync {
+pub trait PublishTransform<K: ContextKind, Options = ()>: Send + Sync {
     /// What this transform does to the destination: [`Reads`] or [`Names`].
     type Destination: DestinationUse;
 
-    /// Transforms `out` in place before it is sent, reading the position's view through `cx`.
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>);
+    /// Transforms `out` in place before it is sent, reading the position's view through `cx` and
+    /// resolving the broker's per-message settings through `options`.
+    ///
+    /// `options` is `None` while nothing has set a field: the publish policy's own settings
+    /// apply. Set one with `options.get_or_insert_with(Default::default).field = Some(..)`.
+    fn apply(&self, out: &mut Outgoing<'_>, options: &mut Option<Options>, cx: &K::View<'_>);
 }
 
 /// The no-op [`PublishTransform`]: the default for a reply wiring with no static transforms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PublishTransformIdentity;
 
-impl<K: ContextKind> PublishTransform<K> for PublishTransformIdentity {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for PublishTransformIdentity {
     type Destination = Reads;
 
-    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &K::View<'_>) {}
+    fn apply(&self, _out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {}
 }
 
 /// Composes two [`PublishTransform`]s: `inner` runs first, then `outer`. Built by a chain's
@@ -307,16 +363,18 @@ pub struct PublishTransformStack<Inner, Outer> {
     pub(crate) outer: Outer,
 }
 
-impl<K: ContextKind, Inner, Outer> PublishTransform<K> for PublishTransformStack<Inner, Outer>
+impl<K: ContextKind, Options, Inner, Outer> PublishTransform<K, Options>
+    for PublishTransformStack<Inner, Outer>
 where
-    Inner: PublishTransform<K, Destination: Either<Outer::Destination, Out: DestinationUse>>,
-    Outer: PublishTransform<K>,
+    Inner:
+        PublishTransform<K, Options, Destination: Either<Outer::Destination, Out: DestinationUse>>,
+    Outer: PublishTransform<K, Options>,
 {
     type Destination = <Inner::Destination as Either<Outer::Destination>>::Out;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &K::View<'_>) {
-        self.inner.apply(out, cx);
-        self.outer.apply(out, cx);
+    fn apply(&self, out: &mut Outgoing<'_>, options: &mut Option<Options>, cx: &K::View<'_>) {
+        self.inner.apply(out, options, cx);
+        self.outer.apply(out, options, cx);
     }
 }
 
@@ -338,20 +396,40 @@ where
 /// [`context`](PublishContext::context) reads the broker's batch context (built from the batch's
 /// first delivery). A transform that has to read the message it answers for belongs on the
 /// per-message path, where the reply and its delivery are one.
-pub trait BatchPublishTransform<C = ()>: Send + Sync {
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a batch publish transform writing `{Options}`",
+    note = "a batch transform states the broker's per-message options it writes, and mounts only \
+            over a publisher whose `Publisher::Options` is that type: `{Options}` here. One that \
+            writes none is generic over them - `impl<C, Options> BatchPublishTransform<C, \
+            Options> for ..` - and mounts anywhere. `for_batch(..)` lifts a per-message \
+            `PublishTransform` onto this path"
+)]
+pub trait BatchPublishTransform<C = (), Options = ()>: Send + Sync {
     /// Transforms one of the batch's outgoing replies before it is sent.
     ///
     /// `cx` is the batch's context, not the reply's own delivery: see the trait's own docs for
-    /// what it carries.
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>);
+    /// what it carries. `options` starts at `None` - a reply has no call site - and what the
+    /// stack leaves there is what the publish carries.
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    );
 }
 
 /// The no-op [`BatchPublishTransform`]: the default for a reply wiring with no batch transforms.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BatchTransformIdentity;
 
-impl<C> BatchPublishTransform<C> for BatchTransformIdentity {
-    fn apply(&self, _out: &mut Outgoing<'_>, _cx: &PublishContext<'_, C>) {}
+impl<C, Options> BatchPublishTransform<C, Options> for BatchTransformIdentity {
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        _cx: &PublishContext<'_, C>,
+    ) {
+    }
 }
 
 /// Composes two [`BatchPublishTransform`]s: `inner` runs first, then `outer`. Built by a chain's
@@ -363,12 +441,20 @@ pub struct BatchPublishTransformStack<Inner, Outer> {
     pub(super) outer: Outer,
 }
 
-impl<C, Inner: BatchPublishTransform<C>, Outer: BatchPublishTransform<C>> BatchPublishTransform<C>
+impl<C, Options, Inner, Outer> BatchPublishTransform<C, Options>
     for BatchPublishTransformStack<Inner, Outer>
+where
+    Inner: BatchPublishTransform<C, Options>,
+    Outer: BatchPublishTransform<C, Options>,
 {
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
-        self.inner.apply(out, cx);
-        self.outer.apply(out, cx);
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
+        self.inner.apply(out, options, cx);
+        self.outer.apply(out, options, cx);
     }
 }
 
@@ -377,9 +463,16 @@ impl<C, Inner: BatchPublishTransform<C>, Outer: BatchPublishTransform<C>> BatchP
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ForBatch<L>(L);
 
-impl<C, L: PublishTransform<ForReply<C>>> BatchPublishTransform<C> for ForBatch<L> {
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
-        self.0.apply(out, cx);
+impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransform<C, Options>
+    for ForBatch<L>
+{
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
+        self.0.apply(out, options, cx);
     }
 }
 
@@ -404,10 +497,15 @@ impl<C, L: PublishTransform<ForReply<C>>> BatchPublishTransform<C> for ForBatch<
 /// # }
 ///
 /// struct Stamp;
-/// impl<K: ContextKind> PublishTransform<K> for Stamp {
+/// impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
 ///     type Destination = Reads;
 ///
-///     fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         _cx: &K::View<'_>,
+///     ) {
 ///         out.headers_mut().insert("x-stamp", b"1".to_vec());
 ///     }
 /// }

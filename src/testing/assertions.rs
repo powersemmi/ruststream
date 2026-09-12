@@ -447,20 +447,25 @@ impl<'a> SubscriberAssertions<'a> {
 pub struct PublishedAssertions<T> {
     name: String,
     messages: Vec<RawMessage>,
-    // One entry per message on a slot view; empty on the broker's publish log, which records no
-    // options because the broker has resolved them into its protocol by the time the log sees the
-    // message.
+    // One entry per message on a slot view; on a channel view, one per reply the runtime
+    // published there. The broker's publish log records none of its own: by the time it sees a
+    // message the broker has resolved the options into its protocol.
     options: Vec<RecordedOptions>,
     _payload: PhantomData<fn() -> T>,
 }
 
 impl<T> PublishedAssertions<T> {
-    /// Assertions over the broker's publish log, which carries messages and nothing else.
-    pub(crate) fn new(name: String, messages: Vec<RawMessage>) -> Self {
+    /// Assertions over the broker's publish log, with the options of whatever replies the
+    /// runtime published to the same channel.
+    pub(crate) fn new(
+        name: String,
+        messages: Vec<RawMessage>,
+        options: Vec<RecordedOptions>,
+    ) -> Self {
         Self {
             name,
             messages,
-            options: Vec::new(),
+            options,
             _payload: PhantomData,
         }
     }
@@ -543,14 +548,14 @@ impl<T> PublishedAssertions<T> {
         }
     }
 
-    /// The options of the most recent publish, panicking if there was none or if these
-    /// assertions read the broker's publish log, which records no options.
+    /// The options of the most recent recorded publish, panicking if there was none.
     fn last_options(&self, what: &str) -> &RecordedOptions {
         self.last(what);
         self.options.last().unwrap_or_else(|| {
             panic!(
-                "channel {:?} is read from the broker's publish log, which does not record \
-                 per-message options: assert {what} on the slot view, `tb.out::<Marker>()`",
+                "nothing the runtime published carries per-message options on {:?}, cannot \
+                 assert {what}: they are recorded for a reply and for a slot publish \
+                 (`tb.out::<Marker>()`), never for a message the test published itself",
                 self.name,
             )
         })
@@ -772,6 +777,7 @@ mod tests {
         PublishedAssertions::new(
             "orders".to_owned(),
             vec![RawMessage::new("orders", b"not json".as_slice())],
+            Vec::new(),
         )
     }
 
@@ -780,6 +786,7 @@ mod tests {
         let logged = PublishedAssertions::<Order>::new(
             "orders".to_owned(),
             vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+            Vec::new(),
         );
         assert_eq!(logged.decoded_with(&JsonCodec), vec![Order { id: 7 }]);
         logged.with_codec(&JsonCodec, &Order { id: 7 });
@@ -787,7 +794,7 @@ mod tests {
 
     #[test]
     fn an_empty_channel_names_itself_when_asserted_on() {
-        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new());
+        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new(), Vec::new());
         // The recorded options are type-erased behind `Arc<dyn Any>`, which is not `UnwindSafe`;
         // nothing here observes state across the unwind, so the assertion is safe to make.
         let failure = catch_unwind(AssertUnwindSafe(move || empty.decoded_with(&JsonCodec)));
@@ -819,6 +826,7 @@ mod tests {
                 RawMessage::new("orders", br#"{"id":7}"#.as_slice())
                     .with_headers(headers("x-app", b"1")),
             ],
+            Vec::new(),
         );
         stamped.assert_called(1).with_header("x-app", b"1");
     }
@@ -831,6 +839,7 @@ mod tests {
         let bare = PublishedAssertions::<Order>::new(
             "orders".to_owned(),
             vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+            Vec::new(),
         );
         bare.with_header("x-app", b"1");
     }
@@ -841,6 +850,7 @@ mod tests {
         let one = PublishedAssertions::<Order>::new(
             "orders".to_owned(),
             vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
+            Vec::new(),
         );
         one.assert_called(2);
     }
@@ -848,7 +858,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "nothing was published to \"orders\"")]
     fn asserting_on_a_channel_that_published_nothing_says_so() {
-        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new());
+        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new(), Vec::new());
         empty.with_codec(&JsonCodec, &Order { id: 7 });
     }
 }

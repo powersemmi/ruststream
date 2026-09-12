@@ -412,7 +412,8 @@ that slot is sent with them:
     ```
 
 The same policy in the `Reply` position sets the defaults for what a `publish("dest")` handler
-returns. A reply has no call site, so the policy is the only place to set them:
+returns. A reply has no call site, so the policy is where its settings are named, and a
+[transform](#what-a-transform-declares) on that position is what adjusts them per message:
 
 === "Macros"
 
@@ -427,7 +428,7 @@ returns. A reply has no call site, so the policy is the only place to set them:
     ```
 
 The other place is the call: you can change a setting for one message with a step your broker adds
-to the publish builder. A setting no step names keeps the policy's default:
+to the publish builder. A setting neither a step nor a transform names keeps the policy's default:
 
 === "Macros"
 
@@ -474,20 +475,27 @@ A published message passes through two levels before it leaves the process, and 
 
 ### What a transform declares
 
-A transform declares two things: what it reads and what it may do to the destination.
+A transform declares three things: what it reads, what it writes, and what it may do to the
+destination.
 
 What it reads is the position's context kind, the `K` in
-`apply(&mut Outgoing<'_>, &K::View<'_>)`, chosen at the mount site:
+`apply(&mut Outgoing<'_>, &mut Option<Options>, &K::View<'_>)`, chosen at the mount site:
 
 | position | kind | what the transform reads |
 |---|---|---|
 | reply, after `.out_reply(..)` | `ForReply<C>` | `PublishContext<'_, C>`: the delivery being answered |
 | `Out` slot, after `.out(marker, policy)` | `ForSlot` | `SlotContext<'_>`: the slot's own name |
 
+What it writes is `Options`, the broker's [per-message settings](#broker-settings-per-message). A
+transform that touches none of them is generic over the type and mounts over any broker's
+publisher; one that sets a setting names that broker's type, and then mounts over that broker's
+publisher and nowhere else.
+
 What it may do is `type Destination`: `Reads` for a transform that leaves the destination alone,
 `Names` for one that sets it. Every impl writes the line, and almost every one writes `Reads`.
 
-A transform that reads nothing writes a single impl over every kind and mounts on either position:
+A transform that reads and writes nothing writes a single impl over every kind and every options
+type, and mounts on either position:
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
@@ -504,6 +512,16 @@ can read its own `Context` and put on the message whatever it needs from the del
 ```rust
 --8<-- "examples/publishing.rs:slot_transform"
 ```
+
+Naming a broker's options type fixes where the transform mounts the same way naming a kind does:
+
+```rust
+--8<-- "tests/publish_options.rs:transform"
+```
+
+On a slot the settings position starts as a copy of what the call site's own steps set, so a
+transform completes that call: it fills a setting the call left alone, and overrides one the call
+named. A reply has no call site, so there a transform is the only thing that adjusts its settings.
 
 A batch handler's replies go past the per-message `.transform(..)` stack. You can add a transform
 for them with `.batch_transform(..)`, reusing a per-message `PublishTransform` through

@@ -199,10 +199,10 @@ async fn route(
 /// reads no context, so one impl serves every position - a reply and an `Out` slot alike.
 struct EnvelopeTransform;
 
-impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -214,10 +214,10 @@ impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
 /// publish itself, so the delivery is the body's own to read and put on the message.
 struct OutboxEnvelope;
 
-impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for OutboxEnvelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
@@ -230,10 +230,15 @@ impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
 /// stands.
 struct ReplyTo;
 
-impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     type Destination = Names;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
         {

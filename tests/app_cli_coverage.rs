@@ -589,10 +589,10 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
 /// Stamps every outgoing reply, so a test can prove which reply source was used.
 struct Envelope;
 
-impl<K: ContextKind> PublishTransform<K> for Envelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }

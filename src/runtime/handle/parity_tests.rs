@@ -466,10 +466,10 @@ where
 /// no context, so one impl serves every position.
 struct Trace;
 
-impl<K: ContextKind> PublishTransform<K> for Trace {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Trace {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-trace", b"1".to_vec());
     }
 }
@@ -660,10 +660,10 @@ fn reply_axes() -> impl RouterDef<Bus> {
 #[derive(Clone, Copy)]
 struct StampReply;
 
-impl<K: ContextKind> PublishTransform<K> for StampReply {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for StampReply {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamped", "1");
     }
 }

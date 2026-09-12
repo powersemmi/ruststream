@@ -21,7 +21,10 @@ use common::{Order, Receipt};
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
-use ruststream::runtime::{PublishBuilder, PublishSink};
+use ruststream::runtime::{
+    ContextKind, ForSlot, Outgoing, PublishBuilder, PublishSink, PublishTransform, Reads,
+    SlotContext, for_batch,
+};
 use ruststream::testing::TestApp;
 use ruststream::{OutgoingMessage, PairError};
 
@@ -32,6 +35,7 @@ use ruststream::{OutgoingMessage, PairError};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct PriorityOptions {
     priority: Option<u8>,
+    ttl: Option<u8>,
 }
 
 /// The publish policy: pure declaration, constructible anywhere, and the place the defaults are
@@ -39,11 +43,17 @@ struct PriorityOptions {
 #[derive(Debug, Clone, Copy, Default)]
 struct PriorityPublish {
     priority: u8,
+    ttl: u8,
 }
 
 impl PriorityPublish {
     fn priority(mut self, priority: u8) -> Self {
         self.priority = priority;
+        self
+    }
+
+    fn ttl(mut self, ttl: u8) -> Self {
+        self.ttl = ttl;
         self
     }
 }
@@ -52,6 +62,7 @@ impl PriorityPublish {
 struct PriorityPublisher {
     inner: MemoryPublisher,
     default_priority: u8,
+    default_ttl: u8,
 }
 
 impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
@@ -61,6 +72,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
         Ok(PriorityPublisher {
             inner: Publish.pair(connected).await?,
             default_priority: self.priority,
+            default_ttl: self.ttl,
         })
     }
 }
@@ -77,10 +89,15 @@ impl Publisher for PriorityPublisher {
         let priority = options
             .and_then(|options| options.priority)
             .unwrap_or(self.default_priority);
-        // A real broker hands the resolved value to its client as the protocol field it is. The
-        // in-memory bus has no such field, so this one puts it where a test can read it back.
+        let ttl = options
+            .and_then(|options| options.ttl)
+            .unwrap_or(self.default_ttl);
+        // A real broker hands the resolved values to its client as the protocol fields they are.
+        // The in-memory bus has no such field, so this one puts them where a test can read them
+        // back.
         let mut headers = msg.headers().clone();
         headers.insert("priority", priority.to_string());
+        headers.insert("ttl", ttl.to_string());
         let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
         self.inner.publish(stamped, None).await
     }
@@ -106,6 +123,10 @@ trait PriorityPublishSteps {
     /// Sends this one message at `priority`, whatever the mount site's default is.
     #[must_use]
     fn priority(self, priority: u8) -> Self;
+
+    /// Sends this one message with `ttl`, whatever the mount site's default is.
+    #[must_use]
+    fn ttl(self, ttl: u8) -> Self;
 }
 
 impl<Sink, Body, Enc, Hdrs, Dest> PriorityPublishSteps
@@ -117,6 +138,13 @@ where
         self.options_mut()
             .get_or_insert_with(PriorityOptions::default)
             .priority = Some(priority);
+        self
+    }
+
+    fn ttl(mut self, ttl: u8) -> Self {
+        self.options_mut()
+            .get_or_insert_with(PriorityOptions::default)
+            .ttl = Some(ttl);
         self
     }
 }
@@ -237,6 +265,7 @@ async fn stage(
         .message(order)
         .to("options.staged")
         .priority(5)
+        .ttl(6)
         .publish()
         .await
         .is_err()
@@ -272,12 +301,16 @@ async fn a_step_inside_a_transaction_scope_reaches_the_broker() {
         .published::<Order>("options.staged")
         .assert_called_once()
         .with(&Order { id: 4 })
-        .with_header("priority", "5");
+        .with_header("priority", "5")
+        .with_header("ttl", "6");
     // A transaction scope publishes through the slot's own publisher, so the slot view records
     // the step the buffered message carried.
     tb.out::<Staged>()
         .assert_called_once()
-        .with_options(&PriorityOptions { priority: Some(5) });
+        .with_options(&PriorityOptions {
+            priority: Some(5),
+            ttl: Some(6),
+        });
 }
 
 /// The steps are on the builder, so they are there on a bare publisher too - here the one a
@@ -405,7 +438,10 @@ async fn the_slot_view_reads_back_the_options_a_publish_carried() {
     // --8<-- [start:options_assert]
     tb.out::<Ledger>()
         .assert_called(2)
-        .with_options(&PriorityOptions { priority: Some(9) });
+        .with_options(&PriorityOptions {
+            priority: Some(9),
+            ttl: None,
+        });
     tb.out::<Notes>()
         .assert_called_once()
         .assert_options_default();
@@ -446,17 +482,21 @@ struct TtlOptions {
     ttl: Option<u8>,
 }
 
-/// The publish log has consumed the options by the time it records the message, so asking it for
-/// them is a test-authoring mistake and the panic says where to ask instead.
+/// The broker has consumed the options by the time its publish log records the message, so a
+/// channel the runtime only reached through a slot has none to read there, and the panic says
+/// where to ask instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "does not record per-message options")]
+#[should_panic(expected = "recorded for a reply and for a slot publish")]
 async fn the_publish_log_sends_an_options_assertion_to_the_slot_view() {
     let tb = one_delivery().await;
 
     tb.broker::<MemoryBroker>()
         .published::<Order>("options.urgent")
         .assert_called_once()
-        .with_options(&PriorityOptions { priority: Some(9) });
+        .with_options(&PriorityOptions {
+            priority: Some(9),
+            ttl: None,
+        });
 }
 
 /// Naming another broker's options type is the same mistake, and the panic names the type that
@@ -480,7 +520,10 @@ async fn expecting_options_on_an_unstepped_publish_says_so() {
 
     tb.out::<Notes>()
         .assert_called_once()
-        .with_options(&PriorityOptions { priority: Some(9) });
+        .with_options(&PriorityOptions {
+            priority: Some(9),
+            ttl: None,
+        });
 }
 
 /// The mirror mistake: a step did run, so the assertion that nothing was set names what it found.
@@ -490,4 +533,181 @@ async fn defaults_asserted_on_a_stepped_publish_name_the_options() {
     let tb = one_delivery().await;
 
     tb.out::<Ledger>().assert_called(2).assert_options_default();
+}
+
+// --8<-- [start:transform]
+/// A transform that writes this broker's per-message settings. It names the options type, so it
+/// mounts over this broker's publisher and nowhere else; the position it reads is still free, so
+/// it goes on a reply and on a slot alike.
+struct Expedite;
+
+impl<K: ContextKind> PublishTransform<K, PriorityOptions> for Expedite {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<PriorityOptions>,
+        _cx: &K::View<'_>,
+    ) {
+        options.get_or_insert_with(PriorityOptions::default).ttl = Some(2);
+    }
+}
+// --8<-- [end:transform]
+
+/// A transform that writes a field the call site also writes, to show which one wins.
+struct Downgrade;
+
+impl PublishTransform<ForSlot, PriorityOptions> for Downgrade {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<PriorityOptions>,
+        _cx: &SlotContext<'_>,
+    ) {
+        options
+            .get_or_insert_with(PriorityOptions::default)
+            .priority = Some(1);
+    }
+}
+
+/// The transform completes the call rather than replacing it: the call site names one field, the
+/// transform another, and the broker resolves both against the policy's defaults.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slot_transform_completes_what_the_call_site_set() {
+    let app = RustStream::new(AppInfo::new("options-transform", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(record)
+                .out(Ledger, PriorityPublish::default().priority(3).ttl(9))
+                .transform(Expedite)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 7 })
+        .to("options.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    // Nothing at the call site: the transform's field applies, the other keeps the policy's.
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("options.normal")
+        .assert_called_once()
+        .with_header("priority", "3")
+        .with_header("ttl", "2");
+    // A step at the call site: both fields are set, by different writers.
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("options.urgent")
+        .assert_called_once()
+        .with_header("priority", "9")
+        .with_header("ttl", "2");
+    tb.out::<Ledger>()
+        .assert_called(2)
+        .with_options(&PriorityOptions {
+            priority: Some(9),
+            ttl: Some(2),
+        });
+}
+
+/// A transform writes after the call site, so it wins a field they both name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slot_transform_overrides_a_field_the_call_site_named() {
+    let app = RustStream::new(AppInfo::new("options-override", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(record)
+                .out(Ledger, PriorityPublish::default().priority(3))
+                .transform(Downgrade)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 7 })
+        .to("options.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("options.urgent")
+        .assert_called_once()
+        .with_header("priority", "1");
+}
+
+/// A reply has no call site, so a transform is the only thing that adjusts its settings, and the
+/// harness reads them back on the channel the reply went to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_transform_sets_what_the_reply_has_no_call_site_for() {
+    let app = RustStream::new(AppInfo::new("options-reply-transform", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with(&Receipt { id: 2 })
+        .with_header("priority", "4")
+        .with_header("ttl", "2")
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+#[subscriber("options.batch.in", publish("options.batch.out"))]
+async fn confirm_all(orders: &[Order]) -> Vec<Receipt> {
+    orders
+        .iter()
+        .map(|order| Receipt { id: order.id })
+        .collect()
+}
+
+/// The batch path carries the position too: the same transform, lifted with `for_batch`, writes
+/// the settings of every reply in the batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_transform_sets_the_options_of_every_reply() {
+    let app = RustStream::new(AppInfo::new("options-batch", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(confirm_all.batch(nonzero!(8)))
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .batch_transform(for_batch(Expedite));
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+
+    tb.message(&Order { id: 3 })
+        .to("options.batch.in")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.batch.out")
+        .assert_called_once()
+        .with(&Receipt { id: 3 })
+        .with_header("priority", "4")
+        .with_header("ttl", "2")
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
 }

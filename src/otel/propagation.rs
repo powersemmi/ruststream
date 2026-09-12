@@ -256,10 +256,15 @@ where
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TracePropagation;
 
-impl<C> PublishTransform<ForReply<C>> for TracePropagation {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for TracePropagation {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         if let Some(traceparent) = cx.headers().get_str(TRACEPARENT) {
             out.headers_mut()
                 .insert(TRACEPARENT, traceparent.as_bytes().to_vec());
@@ -324,7 +329,7 @@ mod tests {
         let cx = PublishContext::new("orders", &incoming, &());
 
         let mut out = Outgoing::new("replies", b"body".as_slice());
-        PublishTransform::apply(&TracePropagation, &mut out, &cx);
+        PublishTransform::apply(&TracePropagation, &mut out, &mut None::<()>, &cx);
 
         // Without both headers the downstream span would start a new trace instead of continuing.
         assert_eq!(out.headers().get_str(TRACEPARENT), Some(HEADER));
@@ -339,7 +344,7 @@ mod tests {
         let cx = PublishContext::new("orders", &incoming, &());
 
         let mut out = Outgoing::new("replies", b"body".as_slice());
-        PublishTransform::apply(&TracePropagation, &mut out, &cx);
+        PublishTransform::apply(&TracePropagation, &mut out, &mut None::<()>, &cx);
         assert!(!out.headers().contains(TRACEPARENT));
     }
 }

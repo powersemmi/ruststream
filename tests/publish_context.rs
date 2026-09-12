@@ -54,10 +54,15 @@ impl Field<TraceCtx> for Correlation {
 /// reply, read off the typed context through [`PublishContext`].
 struct PropagateCorrelation;
 
-impl PublishTransform<ForReply<TraceCtx>> for PropagateCorrelation {
+impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrelation {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, TraceCtx>,
+    ) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
                 .insert("correlation-id", id.as_bytes().to_vec());
@@ -115,10 +120,10 @@ async fn delivery_context_propagates_to_the_reply() {
 /// A batch-only transform: marks every batched reply, never a single-message one.
 struct MarkBatched;
 
-impl<K: ContextKind> PublishTransform<K> for MarkBatched {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for MarkBatched {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-batched", b"1".to_vec());
     }
 }

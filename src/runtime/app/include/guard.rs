@@ -279,7 +279,8 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
+        R: RouterBroker<Broker = B>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
         SteppedChain<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>:
             ScopeCommit<B, Layers, C, State, Pipeline>,
     {
@@ -682,7 +683,8 @@ where
         Last,
     >
     where
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
+        R: RouterBroker<Broker = B>,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
     {
         self.map_chain(|chain| chain.transform(transform))
     }

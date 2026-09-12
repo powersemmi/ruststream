@@ -29,10 +29,15 @@ fn reply_to(name: &'static str) -> HeaderMap {
 /// `Names`, so it mounts only where the position offers the right to set the destination.
 struct ReplyTo;
 
-impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     type Destination = Names;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
         {
@@ -44,10 +49,10 @@ impl<C> PublishTransform<ForReply<C>> for ReplyTo {
 /// An ordinary transform beside the redirect: it owns the headers and nothing else.
 struct Stamp;
 
-impl<K: ContextKind> PublishTransform<K> for Stamp {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         let destination = out.name().as_bytes().to_vec();
         out.headers_mut().insert("x-destination", destination);
     }
@@ -162,10 +167,10 @@ async fn without_one_the_declared_destination_stands() {
 /// The slot counterpart: a shard router deciding where each message goes.
 struct ByTenant;
 
-impl<K: ContextKind> PublishTransform<K> for ByTenant {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {
     type Destination = Names;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         if let Some(tenant) = out.headers().get("x-tenant")
             && let Ok(tenant) = std::str::from_utf8(tenant)
         {

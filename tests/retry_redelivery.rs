@@ -290,10 +290,10 @@ async fn a_router_registration_binds_the_retry_position() {
 #[derive(Debug, Clone, Copy)]
 struct StampSlot;
 
-impl PublishTransform<ForSlot> for StampSlot {
+impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
         out.headers_mut()
             .insert("x-left-through", cx.slot().to_owned());
     }
@@ -386,6 +386,112 @@ async fn a_transform_on_the_retry_slot_stamps_the_deferred_copy() {
             .outcomes(),
         [Outcome::Nack, Outcome::Ack],
         "the stamped copy must still reach the handler",
+    );
+}
+
+/// A broker's per-message settings, as small as a broker's can be, so the retry slot has
+/// something to carry. The publisher resolves the call's value against the policy's and puts the
+/// answer in a header the assertion reads back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PriorityOptions {
+    priority: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PriorityPublish {
+    priority: u8,
+}
+
+/// The live form of [`PriorityPublish`].
+#[derive(Debug)]
+struct PriorityPublisher<P> {
+    inner: P,
+    default_priority: u8,
+}
+
+impl<C: ConnectedBroker> PublishPolicy<C> for PriorityPublish
+where
+    MemoryPublish: PublishPolicy<C>,
+{
+    type Live = PriorityPublisher<<MemoryPublish as PublishPolicy<C>>::Live>;
+
+    async fn pair(self, connected: &C) -> Result<Self::Live, PairError> {
+        Ok(PriorityPublisher {
+            inner: MemoryPublish.pair(connected).await?,
+            default_priority: self.priority,
+        })
+    }
+}
+
+impl<P: Publisher> Publisher for PriorityPublisher<P> {
+    type Error = P::Error;
+    type Options = PriorityOptions;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        let priority = options
+            .and_then(|options| options.priority)
+            .unwrap_or(self.default_priority);
+        let mut headers = msg.headers().clone();
+        headers.insert("priority", priority.to_string());
+        let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
+        self.inner.publish(stamped, None).await
+    }
+}
+
+/// Sends the deferred copy at a priority of its own: the copy has no call site, so a transform on
+/// the retry slot is where its per-message settings come from.
+#[derive(Debug, Clone, Copy)]
+struct Expedite;
+
+impl PublishTransform<ForSlot, PriorityOptions> for Expedite {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<PriorityOptions>,
+        _cx: &SlotContext<'_>,
+    ) {
+        options
+            .get_or_insert_with(PriorityOptions::default)
+            .priority = Some(7);
+    }
+}
+
+/// The runtime publishes the deferred copy, so nothing on the chain names its per-message
+/// settings; a transform on the retry slot does, and the broker sees them.
+#[tokio::test(start_paused = true)]
+async fn a_transform_on_the_retry_slot_sets_the_deferred_copy_options() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile)
+                .out_retry(PriorityPublish::default())
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("priority", "7");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the copy the transform settled must still reach the handler",
     );
 }
 

@@ -73,7 +73,7 @@ pub(crate) trait EncodeReply: Send + Sync {
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<ForReply<Cx>>,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline;
 }
@@ -89,7 +89,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<ForReply<Cx>>,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline,
     {
@@ -112,7 +112,7 @@ where
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
-        Transforms: PublishTransform<ForReply<Cx>>,
+        Transforms: PublishTransform<ForReply<Cx>, Leaf::Options>,
         Cx: Sync,
         PP: PublishPipeline,
     {
@@ -133,7 +133,7 @@ where
     Pipeline: PublishPipeline,
     Leaf: Publisher,
     ReplyCodec: Codec,
-    Transforms: PublishTransform<ForReply<DeliveryCx>>,
+    Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 

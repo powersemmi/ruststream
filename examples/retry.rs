@@ -58,10 +58,10 @@ async fn reconcile_batch(payments: &[Payment]) -> Vec<HandlerOutcome> {
 /// transforms read a `SlotContext` like any other slot's.
 struct DeferredStamp;
 
-impl PublishTransform<ForSlot> for DeferredStamp {
+impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
         out.headers_mut()
             .insert("x-left-through", cx.slot().to_owned());
     }

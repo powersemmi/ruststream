@@ -36,10 +36,10 @@ struct Receipt {
 /// distinguishable from one that did not.
 struct Stamp;
 
-impl<K: ContextKind> PublishTransform<K> for Stamp {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamped", b"1".to_vec());
     }
 }

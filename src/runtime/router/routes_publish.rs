@@ -156,7 +156,7 @@ where
         + 'static,
     Leaf: Publisher + 'static,
     ReplyCodec: Codec + Send + Sync + 'static,
-    Transforms: PublishTransform<ForReply<Def::Context>> + Send + Sync + 'static,
+    Transforms: PublishTransform<ForReply<Def::Context>, Leaf::Options> + Send + Sync + 'static,
 {
     fn mount_one<G, PP>(
         self,

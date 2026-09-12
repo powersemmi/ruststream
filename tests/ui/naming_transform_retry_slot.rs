@@ -10,10 +10,15 @@ struct Order {
 
 struct ByTenant;
 
-impl PublishTransform<ForSlot> for ByTenant {
+impl<Options> PublishTransform<ForSlot, Options> for ByTenant {
     type Destination = Names;
 
-    fn apply(&self, out: &mut OutgoingMessage<'_>, _cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut OutgoingMessage<'_>,
+        _options: &mut Option<Options>,
+        _cx: &SlotContext<'_>,
+    ) {
         out.set_name("orders.north");
     }
 }

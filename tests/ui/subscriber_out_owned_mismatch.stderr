@@ -13,7 +13,7 @@ help: the following other types implement trait `OwnedTransactions`
    |
   ::: src/runtime/handle/outs.rs
    |
-   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline, Body> OwnedTransactions
+   | / impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
