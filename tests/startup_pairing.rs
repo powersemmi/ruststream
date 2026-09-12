@@ -22,7 +22,12 @@ async fn consume(_event: &Event) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: &[u8]) {
+/// The broker both checks publish through: they read the payload back off its publish log.
+fn replaying() -> MemoryBroker<Retaining> {
+    MemoryBroker::retaining(Retention::Messages(nonzero!(8)))
+}
+
+async fn expect_payload(observer: &ConnectedMemoryBroker<Retaining>, name: &str, expected: &[u8]) {
     let seen = expect_published(observer, name, 1, Duration::from_secs(2)).await;
     assert_eq!(seen.len(), 1, "expected one publish on {name}");
     assert_eq!(seen[0].payload(), expected);
@@ -33,7 +38,7 @@ async fn expect_payload(observer: &ConnectedMemoryBroker, name: &str, expected: 
 /// would reach nobody on the in-memory bus) and nothing leaves the wiring closure.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
-    let broker = MemoryBroker::new();
+    let broker = replaying();
     let observer = connected(&broker).await;
 
     let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
@@ -56,7 +61,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
 /// that startup connected the broker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
-    let broker = MemoryBroker::new().bindable();
+    let broker = replaying().bindable();
     let observer = connected(broker.broker()).await;
     let egress = broker.bind(Publish);
 

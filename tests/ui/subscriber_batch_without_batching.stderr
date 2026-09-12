@@ -13,8 +13,8 @@ help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
 help: the following other types implement trait `BatchSubscriber`
   --> src/memory/capability.rs
    |
-   | impl BatchSubscriber for MemorySubscriber {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber`
+   | impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber<Log>`
    |
   ::: src/buffered.rs
    |

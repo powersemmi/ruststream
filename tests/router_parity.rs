@@ -18,6 +18,10 @@ use common::{Event, Wire, connected, expect_id, observed_memory};
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
+/// The broker of every suite here that reads a publish log back (`observed_memory`) or seeks:
+/// both need the broker to keep what it published.
+type Bus = MemoryBroker<Retaining>;
+
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
@@ -49,7 +53,7 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
 async fn a_router_mounts_a_single_out_slot() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new()
+    let router = Router::<Bus>::new()
         .include(forward)
         .out(DefaultSlot, Publish)
         .build();
@@ -198,7 +202,7 @@ async fn forward_batch(events: &[Event], Out(out): Out<impl Publisher>) -> Handl
 async fn a_router_mounts_a_batch_out_slot() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new()
+    let router = Router::<Bus>::new()
         .include(forward_batch.batch(nonzero!(64)))
         .out(DefaultSlot, Publish)
         .build();
@@ -229,19 +233,22 @@ async fn rewind(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_seek_key_reader() {
-    let router = Router::<MemoryBroker>::new().include(rewind);
-    let app = RustStream::new(AppInfo::new("rp-seek", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    // A seek key needs a log to reposition over, so this router mounts on a retaining broker.
+    let router = Router::<MemoryBroker<Retaining>>::new().include(rewind);
+    let app = RustStream::new(AppInfo::new("rp-seek", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
+        |b| b.include_router(router),
+    );
     let tb = TestApp::start(app).await.expect("harness start");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .message(&Event { id: 1 })
         .to("rp.seek.in")
         .publish()
         .await
         .expect("publish");
     tb.settle().await.expect("settle");
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("rp.seek.in")
         .assert_called_once();
 }
@@ -258,7 +265,7 @@ async fn relay(event: &Event) -> Event {
 async fn a_router_defaults_the_reply_publisher_on_mount() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new().include(relay).build();
+    let router = Router::<Bus>::new().include(relay).build();
     let app = RustStream::new(AppInfo::new("rp-reply", "0.1.0"))
         .with_broker(broker, |b| b.include_router(router));
     let running = app.start().await.expect("startup failed");
@@ -352,7 +359,7 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 async fn a_router_composes_a_default_reply_with_out_slots() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new()
+    let router = Router::<Bus>::new()
         .include(gate)
         .out(DefaultSlot, Publish)
         .build();
@@ -440,7 +447,7 @@ async fn settle_batch(
 async fn a_router_composes_a_batch_reply_with_out_slots() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new()
+    let router = Router::<Bus>::new()
         .include(settle_batch.batch(nonzero!(64)))
         .out(Reply, Publish)
         .out(DefaultSlot, Publish)
@@ -465,7 +472,8 @@ async fn a_router_composes_a_batch_reply_with_out_slots() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_accepts_a_cross_broker_bind_token() {
-    let egress_broker = MemoryBroker::new().bindable();
+    // The observer reads the egress broker's publish log, so that one keeps what it published.
+    let egress_broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64))).bindable();
     let egress = egress_broker.bind(Publish);
     let observer = connected(egress_broker.broker()).await;
 
@@ -510,7 +518,7 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
     let (broker, ingress, observer) = observed_memory().await;
 
-    let router = Router::<MemoryBroker>::new()
+    let router = Router::<Bus>::new()
         .include(bulk_relay.batch(nonzero!(64)))
         .build();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))

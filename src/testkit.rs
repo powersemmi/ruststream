@@ -93,11 +93,15 @@ pub(crate) mod log_capture {
 pub(crate) mod batch {
     use futures::StreamExt;
 
-    use crate::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
+    use crate::memory::{LogMode, MemoryBroker, MemoryMessage, MemorySubscriber};
     use crate::{BatchSubscriber, OutgoingMessage, Publisher};
 
     /// Publishes each number as its JSON encoding, so a `Decoded<u32>` handler sees them.
-    pub(crate) async fn publish_numbers(broker: &MemoryBroker, name: &str, numbers: &[u32]) {
+    pub(crate) async fn publish_numbers<Log: LogMode>(
+        broker: &MemoryBroker<Log>,
+        name: &str,
+        numbers: &[u32],
+    ) {
         for n in numbers {
             publish_payloads(broker, name, &[&serde_json::to_vec(n).unwrap()]).await;
         }
@@ -106,7 +110,11 @@ pub(crate) mod batch {
     /// Puts payloads on the bus as they are. These tests drive the transport itself, so they
     /// publish through the broker SPI (`Publisher::publish`) rather than the typed builder a
     /// service uses.
-    pub(crate) async fn publish_payloads(broker: &MemoryBroker, name: &str, payloads: &[&[u8]]) {
+    pub(crate) async fn publish_payloads<Log: LogMode>(
+        broker: &MemoryBroker<Log>,
+        name: &str,
+        payloads: &[&[u8]],
+    ) {
         let publisher = broker.publisher();
         for payload in payloads {
             publisher
@@ -118,7 +126,9 @@ pub(crate) mod batch {
 
     /// Pulls the next batch off the subscriber, opened wide enough that only what is published
     /// bounds it.
-    pub(crate) async fn pull_batch(sub: &mut MemorySubscriber) -> Vec<MemoryMessage> {
+    pub(crate) async fn pull_batch<Log: LogMode>(
+        sub: &mut MemorySubscriber<Log>,
+    ) -> Vec<MemoryMessage<Log>> {
         let mut stream =
             std::pin::pin!(sub.batches(std::num::NonZeroUsize::new(64).expect("64 is nonzero")));
         stream.next().await.unwrap().unwrap()

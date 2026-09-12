@@ -336,9 +336,9 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
 /// # #[cfg(all(feature = "memory", feature = "macros"))]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use futures::StreamExt;
-/// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource};
+/// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource, Retention};
 /// use ruststream::runtime::PublishExt;
-/// use ruststream::{Broker, IncomingMessage, Outgoing, Serialized, StartAt};
+/// use ruststream::{Broker, IncomingMessage, Outgoing, Serialized, StartAt, nonzero};
 /// use ruststream::{Subscriber, SubscriptionSource};
 ///
 /// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
@@ -346,7 +346,10 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
 /// #[derive(Outgoing, Serialized)]
 /// struct Entry(Vec<u8>);
 ///
-/// let connected = MemoryBroker::new().connect().await?;
+/// // Opening at a position replays what the broker kept, so this one keeps a window.
+/// let connected = MemoryBroker::retaining(Retention::Messages(nonzero!(8)))
+///     .connect()
+///     .await?;
 /// let publisher = connected.publisher();
 /// publisher.message(&Entry(b"one".to_vec())).to("audit").publish().await?;
 ///
@@ -396,7 +399,7 @@ impl<S, P> StartAt<S, P> {
     /// # {
     /// use std::time::Duration;
     ///
-    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource};
+    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource, Retaining};
     /// use ruststream::{Buffered, StartAt, SubscriptionSource};
     ///
     /// // What `start_at(..)` builds at the mount site: the broker's descriptor, wrapped.
@@ -409,7 +412,7 @@ impl<S, P> StartAt<S, P> {
     ///     source.map_inner(|inner| Buffered::new(inner).max_wait(Duration::from_millis(25)));
     ///
     /// assert_eq!(
-    ///     SubscriptionSource::<ConnectedMemoryBroker>::name(&buffered),
+    ///     SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::name(&buffered),
     ///     "orders",
     /// );
     /// # }
@@ -429,6 +432,9 @@ impl<S, P> fmt::Debug for StartAt<S, P> {
     }
 }
 
+// Same as the buffering decorator: it wraps a source the mount site already has, so it is never
+// the answer to "which source does this broker take" and stays out of the suggested list.
+#[diagnostic::do_not_recommend]
 impl<C, S, P> SubscriptionSource<C> for StartAt<S, P>
 where
     C: ConnectedBroker,
@@ -468,8 +474,10 @@ where
 #[cfg(all(test, feature = "memory"))]
 mod tests {
     use super::*;
-    use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPosition, MemorySource};
-    use crate::{Broker, Buffered};
+    use crate::memory::{
+        ConnectedMemoryBroker, MemoryBroker, MemoryPosition, MemorySource, Retaining, Retention,
+    };
+    use crate::{Broker, Buffered, nonzero};
 
     /// The generic clone keeps the assertion honest: a `Copy` placeholder would otherwise make
     /// the call read as redundant at the call site.
@@ -493,7 +501,7 @@ mod tests {
     fn a_start_position_decorates_the_source_it_wraps() {
         let source = StartAt::new(MemorySource::new("orders"), MemoryPosition::start());
         assert_eq!(
-            SubscriptionSource::<ConnectedMemoryBroker>::name(&source),
+            SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::name(&source),
             "orders"
         );
         assert!(format!("{source:?}").contains("StartAt"));
@@ -519,17 +527,24 @@ mod tests {
             Some(address.clone()),
         );
         assert_eq!(
-            StartAt::new(MemorySource::new("orders"), MemoryPosition::start())
-                .redelivery_address(&connected)
-                .await
-                .expect("a start position changes no address"),
-            Some(address.clone()),
-        );
-        assert_eq!(
             Buffered::new(MemorySource::new("orders"))
                 .redelivery_address(&connected)
                 .await
                 .expect("client-side batching changes no address"),
+            Some(address.clone()),
+        );
+
+        // The start-position decorator only wraps a source whose subscriptions replay, so it is
+        // asked on a retaining broker.
+        let retaining = MemoryBroker::retaining(Retention::Messages(nonzero!(8)))
+            .connect()
+            .await
+            .expect("the in-memory broker connects");
+        assert_eq!(
+            StartAt::new(MemorySource::new("orders"), MemoryPosition::start())
+                .redelivery_address(&retaining)
+                .await
+                .expect("a start position changes no address"),
             Some(address),
         );
     }
@@ -541,13 +556,13 @@ mod tests {
         let renamed =
             StartAt::new(MemorySource::new("orders"), MemoryPosition::start()).map_inner(|inner| {
                 assert_eq!(
-                    SubscriptionSource::<ConnectedMemoryBroker>::name(&inner),
+                    SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::name(&inner),
                     "orders",
                 );
                 MemorySource::new("orders-7")
             });
         assert_eq!(
-            SubscriptionSource::<ConnectedMemoryBroker>::name(&renamed),
+            SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::name(&renamed),
             "orders-7",
         );
     }

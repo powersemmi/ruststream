@@ -15,7 +15,7 @@ use opentelemetry_sdk::metrics::data::{
 };
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, Retention};
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
 use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
 use ruststream::testing::{TestApp, expect_published};
@@ -418,7 +418,8 @@ async fn shutdown_flushes_metrics_even_when_the_tracer_fails() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
-    let broker = MemoryBroker::new();
+    // The reply is read back off the publish log, so the broker keeps what it published.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64)));
     let publisher = broker.publisher();
     let observer = connected(&broker).await;
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))

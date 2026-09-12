@@ -1,9 +1,9 @@
 # Memory
 
-`MemoryBroker`, behind the `memory` feature, is a complete broker that runs inside your process: it
-keeps publications in a per-topic log, like Kafka. It suits a queue that belongs to a single
-application rather than to a network. The default `cargo generate` template (`templates/memory`)
-uses it, so a fresh project runs with no external dependencies.
+`MemoryBroker`, behind the `memory` feature, is a complete broker that runs inside your process. It
+suits a queue that belongs to a single application rather than to a network. The default `cargo
+generate` template (`templates/memory`) uses it, so a fresh project runs with no external
+dependencies.
 
 ```toml
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
@@ -16,12 +16,36 @@ use ruststream::memory::MemoryBroker;
 let broker = MemoryBroker::new();
 ```
 
+## How much it keeps { #retention }
+
+A broker built with `MemoryBroker::new()` keeps nothing. A message lives from the publish until the
+last subscriber has read it, so the memory a long-running service holds is the work its handlers
+have yet to do, whatever the message count.
+
+A service that replays needs history, and says how much of it to keep:
+
+```rust
+--8<-- "examples/seek.rs:retaining"
+```
+
+`Retention` bounds one topic: `Messages(n)` keeps the newest `n` messages of every topic,
+`Bytes(n)` keeps the newest payloads that fit in `n` bytes, and `MessagesAndBytes { .. }` applies
+both at once. A broker publishing under a thousand topics therefore holds up to that much for each
+of them. The newest message always stays, so a payload wider than a byte bound is kept alone rather
+than dropped when it arrives.
+
+The two forms are different types: `MemoryBroker::retaining(..)` gives the one whose subscriptions
+are `Seekable`, and a mount that opens at a position or reads a seek handle only compiles against
+it. Replaying on a broker that keeps nothing is a compile error, not a replay that quietly finds
+nothing.
+
 ## The prelude a mount site imports { #prelude }
 
 `ruststream::memory::prelude` is this broker's glob, built like the prelude of every broker crate.
 It re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
-`MemoryError`, `MemoryPosition` and the context keys `MemoryContext` / `MemoryBatchContext` /
-`Position` / `SeekHandle`), then the publish policies under the uniform names `Publish`,
+`MemoryError`, `MemoryPosition`, `Retention` with the log modes `Discarding` / `Retaining`, and the
+context keys `MemoryContext` / `MemoryBatchContext` / `Position` / `SeekHandle`), then the publish
+policies under the uniform names `Publish`,
 `TransactionalPublish` and `Request`. All three are aliases of `MemoryPublish` and `MemoryRequest`.
 This broker's publisher implements both transaction kinds, so `TransactionalPublish` here is the
 same policy as `Publish`; on a broker with a separate transactional configuration that name points
@@ -78,13 +102,16 @@ Every capability trait is implemented over this broker's own in-process semantic
   untouched, and a `commit` or `abort` without one returns `NoTransaction`.
 - **Partition keys.** `MemoryMessage` implements `Partitioned` and reads the key from the
   `partition-key` header (`memory::PARTITION_KEY_HEADER`).
-- **Seeking.** `MemorySubscriber` implements `Seekable` over the per-topic publish log: get a
-  `MemorySeeker` before reading starts, then call `seek` with a `MemoryPosition`, taken from a
-  delivered message with `Positioned::position` (which delivers that same message again) or
-  constructed (`MemoryPosition::start()` / `sequence(n)`). Seeking forward skips the deliveries
-  queued before the target; seeking to the end of the log or past it skips everything published so
-  far. A seek acts on one subscriber instance. Through a handle to a bus that has already shut down
-  it returns `MemoryError::ShutDown`. Inside an application, `MemoryContext` holds the position
+- **Seeking.** On a [retaining broker](#retention), `MemorySubscriber` implements `Seekable` over
+  the per-topic log: get a `MemorySeeker` before reading starts, then call `seek` with a
+  `MemoryPosition`, taken from a delivered message with `Positioned::position` (which delivers that
+  same message again) or constructed (`MemoryPosition::start()` / `sequence(n)` / `end()`).
+  Sequence numbers are absolute and keep naming the same message as the retention bound evicts
+  older ones. `start()` is the oldest message still kept and `end()` is the tip, past everything
+  published so far. Seeking forward skips the deliveries queued before the target. A sequence the
+  bound has already evicted returns `MemoryError::PositionEvicted`, which reports the oldest
+  position left. A seek acts on one subscriber instance. Through a handle to a bus that has already
+  shut down it returns `MemoryError::ShutDown`. Inside an application, `MemoryContext` holds the position
   of the message and the `MemorySeeker`, and a handler reads them under the `Position` and
   `SeekHandle` keys (see [Seeking](../guides/subscribers.md#seeking)). A batch handler reads
   `MemoryBatchContext`: it holds `SeekHandle` but no `Position`, because a batch spans many
@@ -123,3 +150,8 @@ You test an application built on `MemoryBroker` with the [`TestApp`](../guides/t
 build the app, hand it to `TestApp::start`, publish messages, and assert on what the handlers
 received and published. [Testing](../guides/testing.md#unit-testing-a-service-with-testapp) walks
 through the full pattern.
+
+The harness records what the service publishes for the length of a run, so `published::<T>(..)`
+assertions read the same list whichever form of the broker the application was built on. Outside
+the harness, reading a broker's log back through `TestableBroker::published` shows what that broker
+keeps: everything on a retaining one within its bound, nothing on the default one.

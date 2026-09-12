@@ -72,6 +72,9 @@ impl<S> Buffered<S> {
     }
 }
 
+// A decorator wraps a source the mount site already has; it is never the answer to "which source
+// does this broker take", so it stays out of the list a failed obligation suggests.
+#[diagnostic::do_not_recommend]
 impl<C, S> SubscriptionSource<C> for Buffered<S>
 where
     C: ConnectedBroker,
@@ -277,18 +280,19 @@ mod tests {
     use futures::StreamExt;
 
     use super::*;
-    use crate::memory::{MemoryBroker, MemorySubscriber};
-    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher};
+    use crate::memory::{LogMode, MemoryBroker, MemorySubscriber, Retention};
+    use crate::{Broker, IncomingMessage, Name, OutgoingMessage, Publisher, nonzero};
 
     /// The batch size the checks below open their stream at, spelled once.
     fn batch(size: usize) -> NonZeroUsize {
         NonZeroUsize::new(size).expect("test sizes are nonzero")
     }
 
-    async fn buffered(
-        broker: &MemoryBroker,
+    // Generic over the broker's log mode: most checks here need no history, the seek one does.
+    async fn buffered<Log: LogMode>(
+        broker: &MemoryBroker<Log>,
         max_wait: Duration,
-    ) -> BufferedSubscriber<MemorySubscriber> {
+    ) -> BufferedSubscriber<MemorySubscriber<Log>> {
         let connected = broker
             .clone()
             .connect()
@@ -441,7 +445,7 @@ mod tests {
         use crate::memory::MemoryPosition;
         use crate::{Seekable, Seeker};
 
-        let broker = MemoryBroker::new();
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
         let publisher = broker.publisher();
         for i in 0..2u8 {
             publisher
