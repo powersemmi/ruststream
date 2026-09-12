@@ -74,4 +74,8 @@ jobs:
           fetch-depth: 0
 
       - name: Check that an edit reached every language
-        run: python3 scripts/check_doc_parity.py --base "origin/${{ github.base_ref }}"
+        # The branch name goes through the environment, not into the script text: a name is
+        # attacker-controlled input, and a template expansion inside `run` is an injection.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/check_doc_parity.py --base "origin/$BASE_REF"
