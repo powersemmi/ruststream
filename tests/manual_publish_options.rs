@@ -12,6 +12,8 @@
     feature = "testing"
 ))]
 
+use std::future::{Future, ready};
+
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
@@ -366,13 +368,13 @@ impl MessageHeaders for Receipt {
 struct Acknowledge;
 
 impl Handle<Order, Receipt> for Acknowledge {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Receipt, HandlerOutcome> {
-        Ok(Receipt { id: order.id })
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+        ready(Ok(Receipt { id: order.id }))
     }
 }
 
