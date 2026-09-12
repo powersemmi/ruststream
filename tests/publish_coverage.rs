@@ -98,12 +98,17 @@ struct FailsOnce {
 
 impl Publisher for FailsOnce {
     type Error = Rejected;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
         if self.armed.swap(false, Ordering::SeqCst) {
             return Err(Rejected);
         }
-        self.inner.publish(msg).await.map_err(|_| Rejected)
+        self.inner.publish(msg, options).await.map_err(|_| Rejected)
     }
 }
 

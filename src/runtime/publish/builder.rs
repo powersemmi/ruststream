@@ -40,17 +40,25 @@ use super::sink::{CallCodec, PublishCodec, PublishSink};
 /// * `Dest` - the destination: [`FixedName`] and [`SuppliedName`] are resolved, [`CallerName`]
 ///   and [`NameTemplate`] are still waiting for the call site.
 ///
+/// Beside the positions it carries the broker's per-message settings
+/// ([`PublishSink::Options`]), unset until a step of the broker's own extension trait fills one
+/// in through [`options_mut`](Self::options_mut); what no step touches keeps what the publish
+/// policy fixed.
+///
 /// You never name this type; the entry points return it and the compiler carries it.
 #[must_use = "a publish builder does nothing until publish() is awaited"]
-pub struct PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
+pub struct PublishBuilder<Sink: PublishSink, Body, Enc, Hdrs, Dest> {
     sink: Sink,
     body: Body,
     codec: Enc,
     headers: Hdrs,
     dest: Dest,
+    options: Option<Sink::Options>,
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> fmt::Debug for PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> fmt::Debug
+    for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishBuilder").finish_non_exhaustive()
     }
@@ -447,16 +455,64 @@ impl<E> From<PayloadError> for PublishError<E> {
     }
 }
 
-impl<Sink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
-    /// The whole-tuple constructor the entry points share.
-    pub(crate) const fn new(sink: Sink, body: Body, codec: Enc, headers: Hdrs, dest: Dest) -> Self {
+impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
+    /// The whole-tuple constructor the entry points and the position transitions share.
+    pub(crate) const fn new(
+        sink: Sink,
+        body: Body,
+        codec: Enc,
+        headers: Hdrs,
+        dest: Dest,
+        options: Option<Sink::Options>,
+    ) -> Self {
         Self {
             sink,
             body,
             codec,
             headers,
             dest,
+            options,
         }
+    }
+
+    /// The broker's per-message settings for this publish, still unset (`None`) until something
+    /// fills them in.
+    ///
+    /// The one seam a broker extends the builder through. A broker ships an extension trait
+    /// bounded on its own options type, so its steps appear on a builder over its own publisher
+    /// and nowhere else; each step reaches in here, sets one field, and returns the builder. What
+    /// no step touches stays unset, and the publish policy's own settings apply to it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::{PublishBuilder, PublishSink};
+    ///
+    /// // The broker's settings: every field optional, so a call says only what it changes.
+    /// #[derive(Clone, Default)]
+    /// struct MqttOptions {
+    ///     retain: Option<bool>,
+    /// }
+    ///
+    /// // The broker's own step, in its prelude. The bound is what keeps it off every other
+    /// // broker's builder.
+    /// trait MqttSteps {
+    ///     #[must_use]
+    ///     fn retain(self, retain: bool) -> Self;
+    /// }
+    ///
+    /// impl<Sink, Body, Enc, Hdrs, Dest> MqttSteps for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+    /// where
+    ///     Sink: PublishSink<Options = MqttOptions>,
+    /// {
+    ///     fn retain(mut self, retain: bool) -> Self {
+    ///         self.options_mut().get_or_insert_with(MqttOptions::default).retain = Some(retain);
+    ///         self
+    ///     }
+    /// }
+    /// ```
+    pub const fn options_mut(&mut self) -> &mut Option<Sink::Options> {
+        &mut self.options
     }
 }
 
@@ -468,6 +524,7 @@ pub(crate) fn message_of<Sink, T, Enc>(
     codec: Enc,
 ) -> PublishBuilder<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
 where
+    Sink: PublishSink,
     T: OutgoingDestination,
 {
     PublishBuilder::new(
@@ -476,6 +533,7 @@ where
         codec,
         HeadersUnset,
         <T::Form as Default>::default(),
+        None,
     )
 }
 
@@ -485,6 +543,7 @@ pub(crate) fn raw_of<Sink, B>(
     payload: &B,
 ) -> PublishBuilder<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
 where
+    Sink: PublishSink,
     B: AsRef<[u8]> + ?Sized,
 {
     PublishBuilder::new(
@@ -493,10 +552,13 @@ where
         (),
         HeadersUnset,
         CallerName,
+        None,
     )
 }
 
-impl<'a, Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest> {
+impl<'a, Sink: PublishSink, T, Enc, Hdrs, Dest>
+    PublishBuilder<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest>
+{
     /// Names the codec for this publish, the most specific level of the codec ladder: it wins
     /// over the surface's codec, which in turn won over the application's and the crate default.
     ///
@@ -518,6 +580,7 @@ impl<'a, Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'a, T>, Enc,
             CallCodec(codec),
             self.headers,
             self.dest,
+            self.options,
         )
     }
 }
@@ -565,7 +628,7 @@ impl HeaderSource for HeaderMap {
     }
 }
 
-impl<Sink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
+impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
     /// already-built [`HeaderMap`] by value.
     ///
@@ -586,11 +649,12 @@ impl<Sink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> 
             self.codec,
             headers.into_position(),
             self.dest,
+            self.options,
         )
     }
 }
 
-impl<Sink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
+impl<Sink: PublishSink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
     /// Names the destination of this publish.
     ///
     /// Present when the message type declares no name of its own, and on the byte entry point.
@@ -605,12 +669,14 @@ impl<Sink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
             self.codec,
             self.headers,
             SuppliedName(name.into()),
+            self.options,
         )
     }
 }
 
 impl<Sink, T, Enc, Hdrs> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
+    Sink: PublishSink,
     T: TemplateAddress<Self>,
 {
     /// Opens the placeholder setters of a templated destination: one per `{placeholder}` of the
@@ -689,12 +755,13 @@ pub trait PublishAt {
     ) -> impl Future<Output = Result<(), PublishError<Self::Error>>> + Send;
 }
 
-/// Sends one message, applying the headers position and the sink.
+/// Sends one message, applying the headers position, the broker's settings and the sink.
 async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     mut sink: Sink,
     name: &str,
     payload: &[u8],
     headers: Hdrs,
+    options: Option<&Sink::Options>,
 ) -> Result<(), PublishError<Sink::Error>> {
     // The one place the outgoing map is built: the sink's base first, the publish's own headers
     // over it. A sink without a base yields the empty map this always started from, so nothing is
@@ -702,7 +769,7 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
     let msg = OutgoingMessage::new(name, payload).with_headers(map);
-    sink.send(msg).await.map_err(PublishError::Publish)
+    sink.send(msg, options).await.map_err(PublishError::Publish)
 }
 
 /// Produces the value's wire payload and sends it, shared by the resolved and the rendered
@@ -714,6 +781,7 @@ async fn wire_and_send<Sink, T, Enc, Hdrs>(
     value: &T,
     headers: Hdrs,
     name: &str,
+    options: Option<&Sink::Options>,
 ) -> Result<(), PublishError<Sink::Error>>
 where
     Sink: PublishSink,
@@ -726,7 +794,7 @@ where
     // nothing for it.
     let mut buf = BytesMut::new();
     let payload = <T::Wire as WirePayload<T, Enc>>::payload(value, &codec, &mut buf)?;
-    deliver(sink, name, payload, headers).await
+    deliver(sink, name, payload, headers, options).await
 }
 
 // No `Enc: PublishCodec` here: what a publish needs of its codec position is the wire's business,
@@ -768,11 +836,12 @@ where
             codec,
             headers,
             dest,
+            options,
         } = self;
         // The fixed form's name is borrowed straight from the declaration; the supplied form
         // ignores it and lends its own.
         let name = dest.resolve(T::DESTINATION);
-        wire_and_send(sink, codec, body.0, headers, name).await
+        wire_and_send(sink, codec, body.0, headers, name, options.as_ref()).await
     }
 }
 
@@ -788,7 +857,15 @@ where
     type Error = Sink::Error;
 
     async fn publish_at(self, name: &str) -> Result<(), PublishError<Sink::Error>> {
-        wire_and_send(self.sink, self.codec, self.body.0, self.headers, name).await
+        let Self {
+            sink,
+            body,
+            codec,
+            headers,
+            options,
+            ..
+        } = self;
+        wire_and_send(sink, codec, body.0, headers, name, options.as_ref()).await
     }
 }
 
@@ -819,10 +896,11 @@ where
             body,
             headers,
             dest,
+            options,
             ..
         } = self;
         // Bytes declare no name of their own, so the destination is always the supplied one.
         let name = dest.resolve("");
-        deliver(sink, name, body.0, headers).await
+        deliver(sink, name, body.0, headers, options.as_ref()).await
     }
 }

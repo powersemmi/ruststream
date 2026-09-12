@@ -294,7 +294,10 @@ async fn settle_raw(
     };
     let payload = serde_json::to_vec(event).expect("serializable");
     if txn
-        .publish(OutgoingMessage::new("slots.raw-owned.settled", &payload))
+        .publish(
+            OutgoingMessage::new("slots.raw-owned.settled", &payload),
+            None,
+        )
         .await
         .is_err()
     {

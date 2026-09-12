@@ -39,21 +39,21 @@ async fn concurrent_transactions_commit_independently_and_atomically() {
     let mut second = publisher.transaction().await.expect("second transaction");
 
     first
-        .publish(OutgoingMessage::new("orders", b"first-a".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"first-a".as_slice()), None)
         .await
         .expect("publish into first failed");
     second
-        .publish(OutgoingMessage::new("orders", b"second-a".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"second-a".as_slice()), None)
         .await
         .expect("publish into second failed");
     first
-        .publish(OutgoingMessage::new("orders", b"first-b".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"first-b".as_slice()), None)
         .await
         .expect("publish into first failed");
 
     // The handle stays direct while both transactions are open.
     publisher
-        .publish(OutgoingMessage::new("orders", b"direct".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"direct".as_slice()), None)
         .await
         .expect("direct publish failed");
 
@@ -94,7 +94,7 @@ async fn abort_discards_the_owned_buffer() {
     let publisher = broker.publisher();
 
     let mut txn = publisher.transaction().await.expect("transaction failed");
-    txn.publish(OutgoingMessage::new("orders", b"gone".as_slice()))
+    txn.publish(OutgoingMessage::new("orders", b"gone".as_slice()), None)
         .await
         .expect("publish into the transaction failed");
     txn.abort().await.expect("abort failed");
@@ -108,7 +108,7 @@ async fn abort_discards_the_owned_buffer() {
 
     // The handle is unaffected by the settled transaction.
     publisher
-        .publish(OutgoingMessage::new("orders", b"kept".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"kept".as_slice()), None)
         .await
         .expect("direct publish failed");
     assert_eq!(
@@ -123,7 +123,7 @@ async fn commit_against_a_shut_down_bus_errors() {
     let publisher = broker.publisher();
 
     let mut txn = publisher.transaction().await.expect("transaction failed");
-    txn.publish(OutgoingMessage::new("orders", b"buffered".as_slice()))
+    txn.publish(OutgoingMessage::new("orders", b"buffered".as_slice()), None)
         .await
         .expect("publish into the transaction failed");
 

@@ -146,9 +146,14 @@ pub struct NamedDestinationSend<P>(P);
 
 impl<P: Publisher> Publisher for NamedDestinationSend<P> {
     type Error = P::Error;
+    type Options = P::Options;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.0.publish(msg).await
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        self.0.publish(msg, options).await
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -184,11 +189,13 @@ pub trait OutPipeline: Send + Sync {
     /// request round trip) in the entry's error type.
     fn from_publish_error<E: StdError + Send + Sync + 'static>(err: E) -> Self::Error<E>;
 
-    /// Sends one message through the pipeline into `leaf`, the slot's attributed publisher.
+    /// Sends one message through the pipeline into `leaf`, the slot's attributed publisher, with
+    /// the broker's per-message settings the call site adjusted.
     fn send<P: Publisher>(
         &self,
         leaf: &P,
         msg: OutgoingMessage<'_>,
+        options: Option<&P::Options>,
     ) -> impl Future<Output = Result<(), Self::Error<P::Error>>> + Send;
 }
 
@@ -201,8 +208,13 @@ impl OutPipeline for PublishIdentity {
 
     // Nothing composed onto this slot: the publish is the leaf call it always was, with no
     // message rebuilt and no error rewrapped.
-    async fn send<P: Publisher>(&self, leaf: &P, msg: OutgoingMessage<'_>) -> Result<(), P::Error> {
-        leaf.publish(msg).await
+    async fn send<P: Publisher>(
+        &self,
+        leaf: &P,
+        msg: OutgoingMessage<'_>,
+        options: Option<&P::Options>,
+    ) -> Result<(), P::Error> {
+        leaf.publish(msg, options).await
     }
 }
 
@@ -217,12 +229,15 @@ impl<Head: PublishLayer, Tail: PublishPipeline> OutPipeline for PublishStack<Hea
         &self,
         leaf: &P,
         msg: OutgoingMessage<'_>,
+        options: Option<&P::Options>,
     ) -> Result<(), PipelinePublishError> {
         // The pipeline mutates the message, so the borrowed publish takes ownership of its parts
         // here; only a slot that actually has middleware pays for that.
         let mut out = Outgoing::new(msg.name(), BytesMut::from(msg.payload()));
         *out.headers_mut() = msg.headers().clone();
-        self.run(&mut out, leaf).await.map_err(PipelinePublishError)
+        self.run(&mut out, leaf, options)
+            .await
+            .map_err(PipelinePublishError)
     }
 }
 

@@ -153,7 +153,7 @@ Broker 时，它返回 `TestError::Ambiguous`。
 处理器的 [`Out` 槽位](publishing.md#named-slots)在测试里也是它的身份。`tb.out::<Marker>()` 恰好返回
 经由这个注入的发布者发出的消息，连同目的地和消息头，并且跨所有 Broker。断言接口与 `published` 相同：
 `assert_called_once`、`with_raw`、`messages`；要用类型化的 `with`，在链上加 `.decoded_as::<T>()`。
-槽位只多给出归属信息，Broker 按通道记录的发布日志看到的是同一批消息。
+槽位给这些消息加上归属：Broker 按通道记录的发布日志看到的是同一批消息。
 
 ```rust
 --8<-- "tests/out_slots.rs:slot_capture"
@@ -161,6 +161,27 @@ Broker 时，它返回 `TestError::Ambiguous`。
 
 离开处理器任务的发布不归属到槽位上，例如另一个 spawn 出来的任务，或者一个已结算的自有事务的
 缓冲区。这类发布对着 Broker 的发布日志断言。
+
+槽位视图还会记录每次发布所带的[逐条消息的 Broker 设置](publishing.md#broker-settings-per-message)。
+因此，Broker 映射到协议字段而不是消息头的那种设置，你同样可以对它做断言。`with_options` 点名
+Broker 的设置类型并比对取值；`assert_options_default` 断言这次发布上没有任何步骤碰过设置，
+生效的是策略定下的默认值：
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:options_assert"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:options_assert"
+    ```
+
+两者都读最近一次发布，和 `with_header` 一样。设置只记录在槽位视图上。Broker 的发布日志看到消息时，
+这些设置已经映射进了它自己的协议，所以向 `published::<T>(name)` 要设置会 panic。启动钩子或应用状态
+拿到的裸发布者不属于任何槽位，它的设置不会记录在任何地方。
 
 ### 失败策略、panic 与关闭
 

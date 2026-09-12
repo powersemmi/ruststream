@@ -93,8 +93,13 @@ struct RejectingPublisher;
 
 impl Publisher for RejectingPublisher {
     type Error = std::io::Error;
+    type Options = ();
 
-    fn publish(&self, _msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+    fn publish(
+        &self,
+        _msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(Err(std::io::Error::other("connection closed")))
     }
 }
@@ -432,7 +437,7 @@ async fn native_support_defers_to_the_broker_nack_after() {
     let mut sub = broker.subscribe("orders");
     let publisher = broker.publisher();
     publisher
-        .publish(OutgoingMessage::new("orders", b"native"))
+        .publish(OutgoingMessage::new("orders", b"native"), None)
         .await
         .unwrap();
 

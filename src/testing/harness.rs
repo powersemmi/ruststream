@@ -474,7 +474,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// ```
     #[must_use]
     pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
-        PublishedAssertions::new(
+        PublishedAssertions::captured(
             format!("Out slot `{}`", M::NAME),
             self.coordinator.slot_published(M::NAME),
         )
@@ -742,8 +742,14 @@ impl fmt::Debug for InjectSink<'_> {
 
 impl PublishSink for InjectSink<'_> {
     type Error = TestError;
+    // An injection stands in for an external producer, which reaches no broker's options type.
+    type Options = ();
 
-    async fn send(&mut self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn send(
+        &mut self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
         let Target::Broker {
             coordinator,
             testable,
@@ -855,7 +861,9 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink().send(OutgoingMessage::new(name, &bytes)).await
+        self.sink()
+            .send(OutgoingMessage::new(name, &bytes), None)
+            .await
     }
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
@@ -887,7 +895,7 @@ impl BrokerHandle<'_> {
         let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink().send(msg).await
+        self.sink().send(msg, None).await
     }
 
     /// Asserts on what the handler subscribed to `name` received and how it settled.

@@ -19,7 +19,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 ///
 /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
 ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
-///     publisher.publish(msg).await
+///     publisher.publish(msg, None).await
 /// }
 /// ```
 ///
@@ -35,7 +35,23 @@ pub trait Publisher: Send + Sync {
     /// [`publish`]: Self::publish
     type Error: StdError + Send + Sync + 'static;
 
-    /// Publishes a message to the broker.
+    /// The broker's per-message settings: a `QoS`, a priority, an ordering key, whatever this
+    /// transport lets one message differ from the next in.
+    ///
+    /// Every field is optional, because a publish carries only what its call site adjusted: the
+    /// rest keeps what the [`PublishPolicy`] fixed when it paired this publisher. A broker with
+    /// no per-message setting writes `type Options = ();`.
+    ///
+    /// The type is the broker's own, and so are the builder steps that fill it: a broker ships an
+    /// extension trait over [`PublishBuilder`](crate::runtime::PublishBuilder) bounded on this
+    /// type, so its steps appear on a builder over its own publisher and nowhere else.
+    ///
+    /// `Clone` and `'static` are what the test harness needs: it copies the options a slot
+    /// publish carried and hands them back to the test as this type
+    /// (`tb.out::<Marker>().with_options(..)` under the `testing` feature).
+    type Options: Clone + Send + Sync + 'static;
+
+    /// Publishes a message to the broker, with the per-message settings the call site adjusted.
     ///
     /// This is the contract a broker implements, and the direct call a broker crate used on its
     /// own - without this one - is written against. Inside a service built on `ruststream` it is
@@ -44,6 +60,9 @@ pub trait Publisher: Send + Sync {
     /// codec and the headers and assembles the
     /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
     /// publish transform, a middleware, a post-settle hook.
+    ///
+    /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
+    /// redelivery - and the policy's own settings apply.
     ///
     /// # Cancel safety
     ///
@@ -58,17 +77,20 @@ pub trait Publisher: Send + Sync {
     fn publish(
         &self,
         msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// The headers this publisher contributes to every message it sends, underneath whatever the
     /// message itself names.
     ///
     /// `None` by default: a plain broker publisher contributes nothing and the outgoing map starts
-    /// empty. A handle that carries an argument for a run of publishes - a partition key, a
-    /// tenant, a delivery option the broker expresses as a header - returns it here instead of
-    /// stamping it into the message inside [`publish`](Self::publish). The base is then laid down
-    /// first and the message's own headers are written over it key by key, so the call site wins
-    /// over the handle.
+    /// empty. This is the place for a constant of the publisher itself - a tenant, a producer
+    /// name, a schema id every message of this handle carries - laid down first, with the
+    /// message's own headers written over it key by key, so the call site wins over the handle.
+    ///
+    /// A delivery setting is not one of those: it belongs to the message, and a broker carries it
+    /// as a field of [`Options`](Self::Options) that the policy defaults and the call site
+    /// adjusts.
     ///
     /// Every message the runtime sends through this publisher starts from that base: a publish
     /// through the builder, and the reply a `publish("dest")` handler returns (whose
@@ -93,9 +115,14 @@ pub trait Publisher: Send + Sync {
     ///
     /// impl<P: Publisher> Publisher for Tenanted<P> {
     ///     type Error = P::Error;
+    ///     type Options = P::Options;
     ///
-    ///     async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-    ///         self.0.publish(msg).await
+    ///     async fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> Result<(), Self::Error> {
+    ///         self.0.publish(msg, options).await
     ///     }
     ///
     ///     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -127,6 +154,10 @@ pub trait Publisher: Send + Sync {
 /// connection and no broker instance identity. [`pair`](Self::pair) joins it with a
 /// [`ConnectedBroker`] witness to produce the live [`Publisher`], so "not connected" is not
 /// representable on this path: a publisher exists only after the connection does.
+///
+/// The policy is also where a broker's per-message settings ([`Publisher::Options`]) get their
+/// defaults: the mount site configures the policy, pairing hands the live publisher whatever it
+/// fixed, and a call site adjusts single fields over that.
 ///
 /// This is the publish-side mirror of [`SubscriptionSource`](crate::SubscriptionSource). The
 /// reply wiring a mount site's chain builds over a policy is itself a `PublishPolicy`, resolved

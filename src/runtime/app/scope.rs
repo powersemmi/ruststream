@@ -66,7 +66,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///     .with_broker(MemoryBroker::new(), |b| {
     ///         b.after_startup(MemoryPublish, async move |publisher| {
     ///             let msg = OutgoingMessage::new("announcements", b"up".as_slice());
-    ///             publisher.publish(msg).await
+    ///             publisher.publish(msg, None).await
     ///         });
     ///     });
     /// # let _ = app;

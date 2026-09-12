@@ -21,7 +21,7 @@ async fn debug_formats_and_message_accessors() {
     assert!(format!("{sub:?}").contains("MemorySubscriber"));
 
     publisher
-        .publish(OutgoingMessage::new("dbg", b"payload"))
+        .publish(OutgoingMessage::new("dbg", b"payload"), None)
         .await
         .unwrap();
 
@@ -48,7 +48,7 @@ async fn a_reconnect_revives_a_bus_that_was_shut_down() {
     let mut subscriber = reconnected.subscribe("orders").await.unwrap();
     reconnected
         .publisher()
-        .publish(OutgoingMessage::new("orders", b"after"))
+        .publish(OutgoingMessage::new("orders", b"after"), None)
         .await
         .unwrap();
 
@@ -93,7 +93,7 @@ async fn nack_after_redelivers_after_the_delay() {
     let publisher = broker.publisher();
 
     publisher
-        .publish(OutgoingMessage::new("delayed", b"later"))
+        .publish(OutgoingMessage::new("delayed", b"later"), None)
         .await
         .unwrap();
 
@@ -120,7 +120,7 @@ async fn a_discarding_broker_records_nothing_it_publishes() {
     let publisher = broker.publisher();
     for i in 0..100u8 {
         publisher
-            .publish(OutgoingMessage::new("orders", &[i]))
+            .publish(OutgoingMessage::new("orders", &[i]), None)
             .await
             .unwrap();
     }
@@ -137,7 +137,7 @@ async fn a_retaining_broker_evicts_past_its_message_bound() {
     let publisher = broker.publisher();
     for i in 0..5u8 {
         publisher
-            .publish(OutgoingMessage::new("orders", &[i]))
+            .publish(OutgoingMessage::new("orders", &[i]), None)
             .await
             .unwrap();
     }
@@ -165,7 +165,7 @@ async fn a_byte_bound_keeps_the_newest_message_whatever_its_size() {
     let broker = MemoryBroker::retaining(Retention::Bytes(crate::nonzero!(4)));
     let publisher = broker.publisher();
     publisher
-        .publish(OutgoingMessage::new("frames", &[0u8; 64]))
+        .publish(OutgoingMessage::new("frames", &[0u8; 64]), None)
         .await
         .unwrap();
 
@@ -185,7 +185,7 @@ async fn stream_can_be_reentered() {
     let publisher = broker.publisher();
 
     publisher
-        .publish(OutgoingMessage::new("test", b"one"))
+        .publish(OutgoingMessage::new("test", b"one"), None)
         .await
         .unwrap();
     {
@@ -198,7 +198,7 @@ async fn stream_can_be_reentered() {
     // Helpers like `conformance::helpers::next_message` re-enter `stream` per call; the
     // subscriber must keep yielding after the first stream is dropped.
     publisher
-        .publish(OutgoingMessage::new("test", b"two"))
+        .publish(OutgoingMessage::new("test", b"two"), None)
         .await
         .unwrap();
     let mut stream = std::pin::pin!(sub.stream());

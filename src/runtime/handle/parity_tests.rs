@@ -1036,7 +1036,10 @@ async fn seek_reaches_the_body_through_the_context() {
         b.include(subscriber("orders", Replayer).build());
         b.after_startup(MemoryPublish, async move |publisher| {
             publisher
-                .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
+                .publish(
+                    OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()),
+                    None,
+                )
                 .await
         });
     });
@@ -1120,7 +1123,10 @@ async fn a_subscriber_dispatches_end_to_end() {
         .build();
         b.after_startup(MemoryPublish, async move |publisher| {
             publisher
-                .publish(OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()))
+                .publish(
+                    OutgoingMessage::new("orders", br#"{"id":7}"#.as_slice()),
+                    None,
+                )
                 .await
         });
     });

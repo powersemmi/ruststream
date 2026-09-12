@@ -879,6 +879,7 @@ async fn a_slot_entry_is_a_publisher_in_its_own_right() {
     Publisher::publish(
         &entry,
         OutgoingMessage::new("slots.direct", b"bytes".as_slice()),
+        None,
     )
     .await
     .expect("the in-memory publisher accepts the message");

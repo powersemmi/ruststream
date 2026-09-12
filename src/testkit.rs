@@ -118,7 +118,7 @@ pub(crate) mod batch {
         let publisher = broker.publisher();
         for payload in payloads {
             publisher
-                .publish(OutgoingMessage::new(name, payload))
+                .publish(OutgoingMessage::new(name, payload), None)
                 .await
                 .unwrap();
         }

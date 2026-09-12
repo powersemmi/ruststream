@@ -205,7 +205,7 @@ mod tests {
         let mut sub = broker.subscribe("conf-next");
         broker
             .publisher()
-            .publish(OutgoingMessage::new("conf-next", b"hi".as_slice()))
+            .publish(OutgoingMessage::new("conf-next", b"hi".as_slice()), None)
             .await
             .unwrap();
 
@@ -231,7 +231,10 @@ mod tests {
 
         broker
             .publisher()
-            .publish(OutgoingMessage::new("conf-quiet", b"surprise".as_slice()))
+            .publish(
+                OutgoingMessage::new("conf-quiet", b"surprise".as_slice()),
+                None,
+            )
             .await
             .unwrap();
         // Now a delivery arrives, so the helper hands it back as an error.

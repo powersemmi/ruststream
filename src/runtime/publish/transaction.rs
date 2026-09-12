@@ -10,7 +10,8 @@ use tracing::warn;
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, message_of};
 use crate::codec::{Codec, CodecError};
 use crate::{
-    OutgoingDestination, OutgoingMessage, OwnedTransactions, Transaction, TransactionalPublisher,
+    OutgoingDestination, OutgoingMessage, OwnedTransactions, Publisher, Transaction,
+    TransactionalPublisher,
 };
 
 /// What a surface's transactions admit into their typed publish entry: implemented by the
@@ -83,7 +84,7 @@ where
     }
 }
 
-impl<'s, P, Enc: Copy, Admit> TransactionScope<'s, P, Enc, Admit> {
+impl<'s, P: Publisher, Enc: Copy, Admit> TransactionScope<'s, P, Enc, Admit> {
     /// Starts a typed publish inside the transaction, encoded with the surface's codec: the same
     /// builder as everywhere else, sending into the open transaction instead of straight to the
     /// broker.
@@ -140,7 +141,7 @@ where
             .encode(value)
             .map_err(TransactionPublishError::Encode)?;
         self.publisher
-            .publish(OutgoingMessage::new(name, &payload))
+            .publish(OutgoingMessage::new(name, &payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }
@@ -251,7 +252,7 @@ impl<Txn, Enc, Admit> TypedTransaction<Txn, Enc, Admit> {
     }
 }
 
-impl<Txn, Enc: Copy, Admit> TypedTransaction<Txn, Enc, Admit> {
+impl<Txn: Transaction, Enc: Copy, Admit> TypedTransaction<Txn, Enc, Admit> {
     /// Starts a typed publish into the transaction's buffer, encoded with the surface's codec.
     ///
     /// The unique borrow is what the buffer needs, so one publish is built and awaited at a
@@ -309,7 +310,7 @@ where
             .encode(value)
             .map_err(TransactionPublishError::Encode)?;
         self.txn
-            .publish(OutgoingMessage::new(name, &payload))
+            .publish(OutgoingMessage::new(name, &payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }

@@ -62,10 +62,12 @@ mod fixtures {
 
     impl Publisher for Rigged {
         type Error = RiggedError;
+        type Options = ();
 
         fn publish(
             &self,
             _msg: OutgoingMessage<'_>,
+            _options: Option<&Self::Options>,
         ) -> impl Future<Output = Result<(), Self::Error>> {
             self.published.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
@@ -169,10 +171,12 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     impl Publisher for PendingCommit {
         type Error = std::convert::Infallible;
+        type Options = ();
 
         fn publish(
             &self,
             _msg: OutgoingMessage<'_>,
+            _options: Option<&Self::Options>,
         ) -> impl Future<Output = Result<(), Self::Error>> {
             ready(Ok(()))
         }
@@ -922,4 +926,68 @@ async fn a_refused_owned_transaction_reports_the_publisher_error() {
         .await
         .expect_err("the publisher refuses to open a transaction");
     assert_eq!(err.to_string(), "the rigged publisher refused");
+}
+
+/// The broker's per-message settings travel the builder untouched: the position starts empty,
+/// and the sink is handed exactly what the steps left there - nothing at all when none ran.
+#[tokio::test]
+async fn the_options_position_starts_empty_and_reaches_the_sink() {
+    use std::convert::Infallible;
+    use std::future::ready;
+    use std::sync::Mutex;
+
+    use crate::{OutgoingMessage, Publisher};
+
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    struct Settings {
+        priority: u8,
+    }
+
+    /// Records the settings of every message it is handed, which is the whole subject here.
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<Option<Settings>>>);
+
+    impl Publisher for Recording {
+        type Error = Infallible;
+        type Options = Settings;
+
+        fn publish(
+            &self,
+            _msg: OutgoingMessage<'_>,
+            options: Option<&Settings>,
+        ) -> impl Future<Output = Result<(), Infallible>> {
+            self.0
+                .lock()
+                .expect("the recording publisher's mutex is poisoned")
+                .push(options.copied());
+            ready(Ok(()))
+        }
+    }
+
+    let publisher = Recording::default();
+
+    let mut stepped = raw_of(&publisher, b"stepped");
+    assert!(
+        stepped.options_mut().is_none(),
+        "a fresh publish carries no settings until a step fills them in",
+    );
+    *stepped.options_mut() = Some(Settings { priority: 7 });
+    stepped
+        .to("unit.options")
+        .publish()
+        .await
+        .expect("the recording publisher never refuses");
+
+    raw_of(&publisher, b"plain")
+        .to("unit.options")
+        .publish()
+        .await
+        .expect("the recording publisher never refuses");
+
+    let recorded = publisher
+        .0
+        .lock()
+        .expect("the recording publisher's mutex is poisoned")
+        .clone();
+    assert_eq!(recorded, [Some(Settings { priority: 7 }), None]);
 }

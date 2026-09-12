@@ -130,7 +130,7 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
     let slot = SlotPublisher::<_, Events>::new(broker.publisher());
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"))
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"), None)
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");
@@ -172,7 +172,7 @@ async fn a_slot_entry_delegates_request_reply() {
             .expect("a request carries reply-to")
             .to_owned();
         responder
-            .publish(OutgoingMessage::new(&reply_to, msg.payload()))
+            .publish(OutgoingMessage::new(&reply_to, msg.payload()), None)
             .await
             .expect("reply publish failed");
         msg.ack().await.expect("ack failed");
@@ -207,7 +207,7 @@ async fn a_slot_entry_delegates_the_transaction_protocol() {
     let slot = Slot::<Events, _, _>::test_entry(broker.publisher(), JsonCodec, PublishIdentity);
 
     slot.begin_transaction().await.expect("begin failed");
-    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"))
+    slot.publish(OutgoingMessage::new("slots.ledger", b"staged"), None)
         .await
         .expect("publish failed");
     slot.abort().await.expect("abort failed");

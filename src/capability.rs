@@ -230,8 +230,8 @@ pub trait TransactionalPublisher: Publisher {
 /// use ruststream::{OutgoingMessage, Transaction};
 ///
 /// async fn settle_pair<T: Transaction>(mut txn: T) -> Result<(), T::Error> {
-///     txn.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
-///     txn.publish(OutgoingMessage::new("audit", b"{}".as_slice())).await?;
+///     txn.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
+///     txn.publish(OutgoingMessage::new("audit", b"{}".as_slice()), None).await?;
 ///     txn.commit().await
 /// }
 /// ```
@@ -244,10 +244,21 @@ pub trait Transaction: Send {
     /// The error type returned by transaction operations.
     type Error: StdError + Send + Sync + 'static;
 
+    /// The broker's per-message settings inside this transaction: a type of its own, because a
+    /// transaction is a publish surface of its own and may honour a different set of settings
+    /// than the publisher it was opened from. Most brokers name the publisher's type here.
+    ///
+    /// See [`Publisher::Options`], including why the type is `Clone + 'static`. A transaction
+    /// with no per-message setting writes `type Options = ();`.
+    ///
+    /// [`Publisher::Options`]: crate::Publisher::Options
+    type Options: Clone + Send + Sync + 'static;
+
     /// Publishes `msg` into the transaction: buffered, not visible before [`commit`](Self::commit).
     ///
     /// A failed publish does not settle the transaction; the caller decides between retrying
-    /// and [`abort`](Self::abort).
+    /// and [`abort`](Self::abort). `options` is what the call site adjusted, and `None` where
+    /// nothing did.
     ///
     /// # Errors
     ///
@@ -257,6 +268,7 @@ pub trait Transaction: Send {
     fn publish(
         &mut self,
         msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Commits the transaction: the whole buffer becomes visible atomically, in publish order.
@@ -293,9 +305,14 @@ pub trait Transaction: Send {
     ///
     /// impl<T: Transaction> Transaction for Tagged<T> {
     ///     type Error = T::Error;
+    ///     type Options = T::Options;
     ///
-    ///     async fn publish(&mut self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-    ///         self.0.publish(msg).await
+    ///     async fn publish(
+    ///         &mut self,
+    ///         msg: OutgoingMessage<'_>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> Result<(), Self::Error> {
+    ///         self.0.publish(msg, options).await
     ///     }
     ///
     ///     async fn commit(self) -> Result<(), Self::Error> {
@@ -349,8 +366,8 @@ pub trait Transaction: Send {
 /// ) -> Result<(), Box<dyn std::error::Error>> {
 ///     let mut orders = publisher.transaction().await?;
 ///     let mut audit = publisher.transaction().await?; // concurrent with `orders`
-///     orders.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
-///     audit.publish(OutgoingMessage::new("audit", b"{}".as_slice())).await?;
+///     orders.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
+///     audit.publish(OutgoingMessage::new("audit", b"{}".as_slice()), None).await?;
 ///     orders.commit().await?;
 ///     audit.commit().await?;
 ///     Ok(())

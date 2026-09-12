@@ -224,12 +224,17 @@ struct FlakyPublisher {
 
 impl Publisher for FlakyPublisher {
     type Error = MemoryError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MemoryError> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), MemoryError> {
         if self.fail_next.swap(false, Ordering::SeqCst) {
             return Err(MemoryError::ShutDown);
         }
-        self.inner.publish(msg).await
+        self.inner.publish(msg, options).await
     }
 }
 

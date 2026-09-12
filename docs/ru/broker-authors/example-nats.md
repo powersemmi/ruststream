@@ -187,7 +187,7 @@ pub struct ClosedNatsBroker {
 
 ## Одна подписка на Core и JetStream
 
-Core NATS работает по принципу fire-and-forget, JetStream сохраняет сообщения и требует
+Core NATS отправляет сообщения без подтверждений, JetStream их сохраняет и требует
 подтверждения доставки. Оба режима описывает один дескриптор `SubscribeOptions` и один
 `NatsSubscriber`. `SubscribeOptions` и есть `SubscriptionSource`, а брокер выбирает ветку по тому,
 вызывали ли `jetstream(..)`. Каждый метод билдера соответствует одному именованному параметру
@@ -502,11 +502,19 @@ pub struct NatsPublisher {
 impl Publisher for NatsPublisher {
     type Error = NatsError;
 
+    // Core NATS lets a message differ from the next in nothing the client exposes per publish, so
+    // there is no per-message setting to carry.
+    type Options = ();
+
     /// # Cancel safety
     ///
     /// Core NATS publishing is fire-and-forget: the message is handed to the connection's writer
     /// without waiting for the server. Dropping the future may leave it either sent or unsent.
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
         let client = self.connection.live_client(msg.name())?.clone();
         let subject = msg.name().to_owned();
         let payload = Bytes::copy_from_slice(msg.payload());

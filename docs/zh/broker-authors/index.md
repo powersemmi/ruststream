@@ -84,9 +84,11 @@ pub trait Subscribe: ConnectedBroker {
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-第二个答案就是运行时发布延后重试用的地址，它决定了 `#[subscriber("orders")]` 在你的 Broker 上能不
-能和 `BrokerScope::retry_via` 一起用。订阅名不是发布地址的地方，保留默认值：Google Pub/Sub 的订阅
-按自己的名字订阅，发布走它背后的 topic，那里由描述符来回答。
+`redelivery_address` 报出的是运行时发布延后重试所用的地址。回答了它，`#[subscriber("orders")]`
+在你的 Broker 上才能和 `BrokerScope::retry_via` 一起用。
+
+订阅名不是发布地址的地方，保留默认值。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic，
+那里改由描述符回答。
 
 ### `Subscriber`
 
@@ -158,7 +160,15 @@ pub trait IncomingMessage: Send + Sync {
 ```rust
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
+
+    /// 你的 Broker 的逐条消息设置。每个字段都是可选的；没有这类设置就写 `()`。
+    type Options: Clone + Send + Sync + 'static;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error>;
 
     /// 带默认实现：这个发布者垫在每次发布下面的消息头。
     fn base_headers(&self) -> Option<&HeaderMap> { None }
@@ -170,14 +180,24 @@ pub trait Publisher: Send + Sync {
 服务写的不是这个方法，而是构建器：`publisher.message(&value).publish()` 选定目的地、编解码器和消息
 头，然后恰好调用一次 `publish`。实现 `publish`，整个构建器就在它之上工作起来。
 
-为一整串消息持有同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），把这个
-参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。
+`Options` 装的是属于消息而不属于句柄的东西：QoS、优先级、排序键、过期时间。一次调用只带上它改动过的
+字段，其余的就是策略在构造这个发布者时定下的值。把两者合起来是你的 `publish` 要做的第一件事。
 
-构建器以这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
+在没有调用点可以改动设置的路径上，`options` 是 `None`：处理器的回复、延后重试。那里生效的是策略的
+设置。
+
+`Clone` 和 `'static` 是测试套件对这个类型的要求：它把经由 `Out` 槽位的一次发布所带的设置复制一份，
+再以这个类型交回给测试。于是，测试你这个 Broker 的服务断言的是你的 `publish` 收到的值，而不是它
+变成的那个协议字段。再派生 `Debug` 和 `PartialEq`，断言就写成 `with_options(&YourOptions { .. })`
+（见[对 Out 槽位做断言](../guides/testing.md#asserting-on-out-slots)）。
+
+`base_headers` 留给发布者自身的常量：租户、producer 名字、这个句柄每条消息都带的 schema id。构建器以
+这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
 （参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
 
-`Transaction` 上有同样带默认实现的方法，因此从这样的发布者开启的事务行为一致。没有东西要补的发布者两
-个都不必实现。
+`Transaction` 指定自己的 `Options`，也带同样的默认 `base_headers`。事务是一个独立的发布面，所以它
+认可的设置可以和开启它的发布者不同。多数 Broker 在这里写的就是发布者的设置类型。自身没有常量的句
+柄，两处的 `base_headers` 都停在默认实现上。
 
 ### `PublishPolicy`
 
@@ -265,12 +285,13 @@ Broker 上。
 ```
 
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
-topic，Redis 上是流的键。在 Google Pub/Sub 上两者都不是：订阅和 topic 在那里是两种资源，答案是订
-阅所绑定的那个 topic，描述符要向 API 问出来。运行时只在启动时问一次，所以这里的一次请求不摊到每条
-消息上。
+topic，Redis 上是流的键。
 
-发布根本到不了你的订阅时，保留默认值。这样，把重试发布者接到这种订阅上的应用就起不来，并报出是哪条
-订阅、来自哪个来源，而不是把每条延后的消息发到没人读的地址上。
+在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API 问
+出来。运行时只在启动时问一次。
+
+发布根本到不了你的订阅时，保留默认值。这样，把重试发布者接到这种订阅上的应用就起不来，错误会指明是
+哪条订阅、来自哪个来源。
 
 `harness::lifecycle` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条订阅。
 
@@ -392,6 +413,27 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 `.out(marker, policy)` 调用本身。已经配置好的值也可以直接传到那里：
 `.out(Reply, Publish::default().stream("ORDERS"))`。
 
+### 发布构建器上的逐条设置 { #per-message-settings-on-the-publish-builder }
+
+调用点通过你加到发布构建器上的一个步骤，去改你的 `Publisher::Options` 的某个字段。没有任何东西
+包裹发布者，所以这次发布仍然从挂载点自己的条目走出去，带着那个条目指定的编解码器和变换。
+
+一共四块：一个每个字段都可选的设置类型，一份携带默认值的策略，一个把两者合起来的活发布者，以及一个
+以设置类型为约束、写在 `PublishBuilder` 上的扩展 trait。正是这个约束把你的步骤挡在别的 Broker 的发布
+者构建器之外：
+
+```rust
+--8<-- "tests/publish_options.rs:broker_side"
+```
+
+宏路径和手写路径上，Broker 这一半是一样的。把扩展 trait 从你的 prelude 导出，就放在策略别名旁边。
+
+逐条设置只有步骤这一种形状。不要把发送放进你自己的 trait：从你自己的值走出去的发布，槽位视图不再看
+得见，而排序键这类设置恰恰是测试要断言的东西。也不要用消息头携带它：这个设置是协议字段，而消息头只
+会把它变成一串字节，再让你的 `publish` 在同一个进程里解析回来。
+
+你的 Broker 满足不了的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它拿不到。
+
 ## 能力 trait
 
 只实现你的 Broker 真正支持的能力，它们都不属于必需接口。最接近必需的是 `BatchSubscriber`：
@@ -424,9 +466,10 @@ ack 记账。
 那些写法从下面的批量上下文拿到 seeker，那里没有位置。
 
 `DescribeServer` 给出的服务器描述，报告客户端所连接的主机和端口。凭据绝不出现在其中，因为这份文档
-就是为了发布而生成的。因此，用 URL 配置的 Broker 通过 `ServerSpec::from_url` 构建描述，它会去掉
-URL 里的用户名和密码，而不是只去掉协议前缀。配置了多个地址的 Broker，用 `ServerSpec::host_from_url`
-把它们拼起来。
+就是为了发布而生成的。用 URL 配置的 Broker 通过 `ServerSpec::from_url` 构建描述，它会去掉 URL 里的
+用户名和密码。只去掉协议前缀、把剩下的部分照原样传进去，用户名和密码就留在了描述里：这正是
+`from_url` 替掉的那个缺陷，它曾出现在不止一个 Broker crate 的发布版本里。配置了多个地址的 Broker，
+用 `ServerSpec::host_from_url` 把它们拼起来。
 
 这些 trait 就是处理器主体所写的词汇。主体用它需要的那项能力约束自己的槽位
 （`Out<impl TransactionalPublisher, Journal>`，手动路径上是 `where W: TransactionalPublisher`），
@@ -539,15 +582,9 @@ trait。
 一个已结算的 owned 事务的缓冲区那样。改在 Broker 的发布日志上断言它。这是归属的边界，也是交出
 内层发布者所付的代价。
 
-**步骤形状**的能力给一条消息设定一个参数，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。
-不要把发送放进 trait：从你自己的值走出去的发布，槽位视图不再看得见，而排序键这类参数恰恰是测试
-要断言的东西。
-
-把这一步建在条目自己的类型化发布路径上（`out.message(&value).publish()`），参数用消息头携带。为
-一串消息持有它的发布者从 `Publisher::base_headers` 交出它；为单条消息设定它的调用点用
-`.with_headers(..)` 写下它；你的 `publish` 从出站消息头里读走它，并在发送之前把它去掉。
-
-你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它拿不到。
+**步骤形状**的能力设定一项逐条设置，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。这一种
+根本不是能力 trait：它是你的 `Publisher::Options` 的一个字段，由发布构建器上的一个步骤去改。参见
+[发布构建器上的逐条设置](#per-message-settings-on-the-publish-builder)。
 
 ### 你这个 crate 的 prelude
 
@@ -557,6 +594,10 @@ trait。
 于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。
 
 挂载文件导入你的 prelude，因为指名 Broker 的地方就在那里。
+
+只有一个例外：逐条设置，它的调用点在主体里。改动它的主体为了那个步骤导入你的 prelude，并在约束里
+写出你的设置类型（`Out<impl Publisher<Options = MqttOptions>, Telemetry>`）。这样的主体绑在你的
+Broker 上，它的签名也把这一点说了出来。
 
 这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
 策略别名（`NatsPublish as Publish`、`KafkaTransactionalPublish as TransactionalPublish`、
@@ -653,8 +694,8 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 ## 测试支持 { #test-support }
 
 在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`。用
-`register_testable_broker!` 为这个已连接类型注册：套件会先连接每一个 Broker，然后才取回它的传输。
-用户于是可以借助 `TestApp`，对着你的 Broker 单元测试处理器。
+`register_testable_broker!` 为这个已连接类型注册：测试套件会先连接每一个 Broker，然后才取回它的
+传输。用户于是可以借助 `TestApp`，对着你的 Broker 单元测试处理器。
 
 该传输**只做核心路由**：把发布出去的消息分发给匹配的订阅者，对 `ack` 和 `nack` 的答复与真实传输
 一致。传输能确认的地方，就在内存里结算，`nack(requeue = true)` 把这条投递放回去。传输根本无法确认
@@ -671,7 +712,7 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 ```
 
 该传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在结算或丢弃一次投递时调用
-`Coordinator::consumed`，套件据此判断这次反应已经结束。延迟的重新投递由它交给
+`Coordinator::consumed`，测试套件据此判断这次反应已经结束。延迟的重新投递由它交给
 `Coordinator::schedule_redelivery` 去路由。
 
 同一个类型既适用于 `TestApp`，也适用于 conformance 校验套件。面向用户的那一侧参见

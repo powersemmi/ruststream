@@ -374,11 +374,16 @@ impl<P, M> SlotPublisher<P, M> {
 
 impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
     type Error = P::Error;
+    type Options = P::Options;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
         #[cfg(feature = "testing")]
-        record_slot_publish(M::NAME, &msg);
-        self.inner.publish(msg).await
+        record_slot_publish(M::NAME, &msg, options);
+        self.inner.publish(msg, options).await
     }
 
     // The slot is attribution, not policy: whatever the broker's publisher contributes to every
@@ -420,8 +425,9 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         msg: OutgoingMessage<'_>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
+        // A request takes no call-site options, so what it carried is the policy's defaults.
         #[cfg(feature = "testing")]
-        record_slot_publish(M::NAME, &msg);
+        record_slot_publish::<P::Options>(M::NAME, &msg, None);
         self.inner.request(msg, timeout).await
     }
 }

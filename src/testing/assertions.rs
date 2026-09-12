@@ -21,7 +21,7 @@ use crate::runtime::HandlerOutcome;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
-use super::coordinator::{Coordinator, Delivered, Outcome, Record};
+use super::coordinator::{Coordinator, Delivered, Outcome, Record, RecordedOptions, SlotRecord};
 
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
@@ -440,20 +440,41 @@ impl<'a> SubscriberAssertions<'a> {
     }
 }
 
-/// Assertions over what was published to one channel, read from the broker's publish log. The type
-/// parameter `T` is the expected payload type for [`with`](Self::with).
+/// Assertions over what was published to one channel, read from the broker's publish log or from
+/// an `Out` slot's view. The type parameter `T` is the expected payload type for
+/// [`with`](Self::with).
 #[derive(Debug)]
 pub struct PublishedAssertions<T> {
     name: String,
     messages: Vec<RawMessage>,
+    // One entry per message on a slot view; empty on the broker's publish log, which records no
+    // options because the broker has resolved them into its protocol by the time the log sees the
+    // message.
+    options: Vec<RecordedOptions>,
     _payload: PhantomData<fn() -> T>,
 }
 
 impl<T> PublishedAssertions<T> {
+    /// Assertions over the broker's publish log, which carries messages and nothing else.
     pub(crate) fn new(name: String, messages: Vec<RawMessage>) -> Self {
         Self {
             name,
             messages,
+            options: Vec::new(),
+            _payload: PhantomData,
+        }
+    }
+
+    /// Assertions over an `Out` slot's view, where every publish also carries the options.
+    pub(crate) fn captured(name: String, records: Vec<SlotRecord>) -> Self {
+        let (messages, options) = records
+            .into_iter()
+            .map(|record| (record.message, record.options))
+            .unzip();
+        Self {
+            name,
+            messages,
+            options,
             _payload: PhantomData,
         }
     }
@@ -514,7 +535,81 @@ impl<T> PublishedAssertions<T> {
     /// (`tb.out::<Slot>().decoded_as::<Reply>().with(&expected)`).
     #[must_use]
     pub fn decoded_as<U>(self) -> PublishedAssertions<U> {
-        PublishedAssertions::new(self.name, self.messages)
+        PublishedAssertions {
+            name: self.name,
+            messages: self.messages,
+            options: self.options,
+            _payload: PhantomData,
+        }
+    }
+
+    /// The options of the most recent publish, panicking if there was none or if these
+    /// assertions read the broker's publish log, which records no options.
+    fn last_options(&self, what: &str) -> &RecordedOptions {
+        self.last(what);
+        self.options.last().unwrap_or_else(|| {
+            panic!(
+                "channel {:?} is read from the broker's publish log, which does not record \
+                 per-message options: assert {what} on the slot view, `tb.out::<Marker>()`",
+                self.name,
+            )
+        })
+    }
+
+    /// Asserts the most recent publish carried exactly `expected` as the broker's per-message
+    /// options.
+    ///
+    /// The options are what the broker's builder steps set on that one publish (see
+    /// [`PublishBuilder::options_mut`](crate::runtime::PublishBuilder::options_mut)); a publish
+    /// no step touched carried none, which
+    /// [`assert_options_default`](Self::assert_options_default) asserts. They are recorded on
+    /// the slot view only (`tb.out::<Marker>()`): the broker's publish log sees the message after
+    /// the broker resolved them, and a bare publisher no slot attributes records nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing was published, these assertions read the broker's publish log rather
+    /// than a slot view, the publish carried no options, the broker's options type is not
+    /// `Options`, or the value differs from `expected`.
+    pub fn with_options<Options>(self, expected: &Options) -> Self
+    where
+        Options: PartialEq + Debug + 'static,
+    {
+        let recorded = self.last_options("the per-message options");
+        let actual = recorded.downcast::<Options>(&self.name).unwrap_or_else(|| {
+            panic!(
+                "channel {:?} published with the policy's default options, expected \
+                     {expected:?}",
+                self.name,
+            )
+        });
+        assert_eq!(
+            actual, expected,
+            "channel {:?} published with unexpected per-message options",
+            self.name,
+        );
+        self
+    }
+
+    /// Asserts the most recent publish carried no per-message options: no builder step ran on
+    /// it, and the publish policy's own settings applied.
+    ///
+    /// Recorded on the slot view only, like [`with_options`](Self::with_options).
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing was published, these assertions read the broker's publish log rather
+    /// than a slot view, or a step did set options on the publish.
+    pub fn assert_options_default(self) -> Self {
+        let recorded = self.last_options("the per-message options");
+        assert!(
+            recorded.value.is_none(),
+            "channel {:?} published with per-message options set (`{}`), expected the policy's \
+             defaults",
+            self.name,
+            recorded.type_name,
+        );
+        self
     }
 
     /// The most recent published message, panicking if there were none.
@@ -657,6 +752,8 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
     use super::*;
     use crate::codec::JsonCodec;
 
@@ -691,7 +788,9 @@ mod tests {
     #[test]
     fn an_empty_channel_names_itself_when_asserted_on() {
         let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new());
-        let failure = std::panic::catch_unwind(move || empty.decoded_with(&JsonCodec));
+        // The recorded options are type-erased behind `Arc<dyn Any>`, which is not `UnwindSafe`;
+        // nothing here observes state across the unwind, so the assertion is safe to make.
+        let failure = catch_unwind(AssertUnwindSafe(move || empty.decoded_with(&JsonCodec)));
         assert!(
             failure.is_ok(),
             "no messages is an empty result, not a panic"

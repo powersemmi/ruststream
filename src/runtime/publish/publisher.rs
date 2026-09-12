@@ -98,7 +98,9 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
         self.layers.apply(&mut out, cx);
-        pipeline.run(&mut out, &self.publisher).await
+        // A reply has no call site to adjust the broker's per-message settings, so the publish
+        // policy's own are what apply.
+        pipeline.run(&mut out, &self.publisher, None).await
     }
 
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
@@ -127,7 +129,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .insert_typed(headers)
             .map_err(|e| Box::new(e) as BoxError)?;
         self.layers.apply(&mut out, cx);
-        pipeline.run(&mut out, &self.publisher).await
+        pipeline.run(&mut out, &self.publisher, None).await
     }
 
     /// Like [`publish`](Self::publish), but applies the batch-only [`BatchPublishTransform`] stack
@@ -153,7 +155,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
         self.batch_layers.apply(&mut out, cx);
-        pipeline.run(&mut out, &self.publisher).await
+        pipeline.run(&mut out, &self.publisher, None).await
     }
 }
 

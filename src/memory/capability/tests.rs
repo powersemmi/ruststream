@@ -21,7 +21,7 @@ async fn batches_drain_buffered_deliveries() {
     let publisher = broker.publisher();
     for i in 0..5u8 {
         publisher
-            .publish(OutgoingMessage::new("batch", &[i]))
+            .publish(OutgoingMessage::new("batch", &[i]), None)
             .await
             .unwrap();
     }
@@ -43,7 +43,7 @@ async fn the_batch_size_caps_each_batch() {
     let publisher = broker.publisher();
     for i in 0..3u8 {
         publisher
-            .publish(OutgoingMessage::new("batch.capped", &[i]))
+            .publish(OutgoingMessage::new("batch.capped", &[i]), None)
             .await
             .unwrap();
     }
@@ -66,11 +66,11 @@ async fn transaction_buffers_until_commit() {
 
     publisher.begin_transaction().await.unwrap();
     publisher
-        .publish(OutgoingMessage::new("txn", b"a"))
+        .publish(OutgoingMessage::new("txn", b"a"), None)
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("txn", b"b"))
+        .publish(OutgoingMessage::new("txn", b"b"), None)
         .await
         .unwrap();
 
@@ -95,7 +95,7 @@ async fn abort_discards_buffered_publishes() {
 
     publisher.begin_transaction().await.unwrap();
     publisher
-        .publish(OutgoingMessage::new("txn.abort", b"gone"))
+        .publish(OutgoingMessage::new("txn.abort", b"gone"), None)
         .await
         .unwrap();
     publisher.abort().await.unwrap();
@@ -104,7 +104,7 @@ async fn abort_discards_buffered_publishes() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .publish(OutgoingMessage::new("txn.abort", b"kept"))
+        .publish(OutgoingMessage::new("txn.abort", b"kept"), None)
         .await
         .unwrap();
     let msg = stream.next().await.unwrap().unwrap();
@@ -120,13 +120,13 @@ async fn clone_does_not_join_transaction() {
 
     transactional.begin_transaction().await.unwrap();
     transactional
-        .publish(OutgoingMessage::new("txn.clone", b"buffered"))
+        .publish(OutgoingMessage::new("txn.clone", b"buffered"), None)
         .await
         .unwrap();
 
     let independent = transactional.clone();
     independent
-        .publish(OutgoingMessage::new("txn.clone", b"direct"))
+        .publish(OutgoingMessage::new("txn.clone", b"direct"), None)
         .await
         .unwrap();
 
@@ -166,7 +166,7 @@ async fn commit_after_shutdown_errors() {
 
     publisher.begin_transaction().await.unwrap();
     publisher
-        .publish(OutgoingMessage::new("txn.down", b"buffered"))
+        .publish(OutgoingMessage::new("txn.down", b"buffered"), None)
         .await
         .unwrap();
     let connected = broker.connect().await.unwrap();
@@ -207,7 +207,7 @@ async fn an_owned_transaction_dropped_unsettled_discards_its_buffer() {
 
     let mut transaction = publisher.transaction().await.unwrap();
     transaction
-        .publish(OutgoingMessage::new("orders", b"buffered".as_slice()))
+        .publish(OutgoingMessage::new("orders", b"buffered".as_slice()), None)
         .await
         .unwrap();
     assert!(format!("{transaction:?}").contains("buffered: 1"));
@@ -239,6 +239,7 @@ async fn requester_errors_after_shutdown() {
     let publish = Publisher::publish(
         &requester,
         OutgoingMessage::new("svc.echo", b"ping".as_slice()),
+        None,
     )
     .await;
     assert!(
@@ -271,7 +272,7 @@ async fn request_resolves_on_reply() {
         assert_eq!(msg.payload(), b"ping");
         let reply_to = msg.headers().reply_to().unwrap().to_owned();
         publisher
-            .publish(OutgoingMessage::new(&reply_to, b"pong"))
+            .publish(OutgoingMessage::new(&reply_to, b"pong"), None)
             .await
             .unwrap();
         msg.ack().await.unwrap();
@@ -307,7 +308,7 @@ async fn a_resolved_request_leaves_no_log_entry_for_its_inbox() {
         let msg = stream.next().await.unwrap().unwrap();
         let reply_to = msg.headers().reply_to().unwrap().to_owned();
         publisher
-            .publish(OutgoingMessage::new(&reply_to, b"pong"))
+            .publish(OutgoingMessage::new(&reply_to, b"pong"), None)
             .await
             .unwrap();
         msg.ack().await.unwrap();
@@ -365,7 +366,7 @@ async fn seek_back_redelivers_from_the_captured_position() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .publish(OutgoingMessage::new("seek.back", payload))
+            .publish(OutgoingMessage::new("seek.back", payload), None)
             .await
             .unwrap();
     }
@@ -401,7 +402,7 @@ async fn seeking_to_an_evicted_position_reports_it() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c", b"d"] {
         publisher
-            .publish(OutgoingMessage::new("seek.evicted", payload))
+            .publish(OutgoingMessage::new("seek.evicted", payload), None)
             .await
             .unwrap();
     }
@@ -431,7 +432,7 @@ async fn constructed_position_seeks_forward_skipping_queued() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .publish(OutgoingMessage::new("seek.fwd", payload))
+            .publish(OutgoingMessage::new("seek.fwd", payload), None)
             .await
             .unwrap();
     }
@@ -457,7 +458,7 @@ async fn stale_requeue_racing_a_seek_is_dropped() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .publish(OutgoingMessage::new("seek.stale", payload))
+            .publish(OutgoingMessage::new("seek.stale", payload), None)
             .await
             .unwrap();
     }
@@ -477,7 +478,7 @@ async fn stale_requeue_racing_a_seek_is_dropped() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .publish(OutgoingMessage::new("seek.stale", b"d"))
+        .publish(OutgoingMessage::new("seek.stale", b"d"), None)
         .await
         .unwrap();
     let live = stream.next().await.unwrap().unwrap();
@@ -493,7 +494,7 @@ async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .publish(OutgoingMessage::new("seek.end", payload))
+            .publish(OutgoingMessage::new("seek.end", payload), None)
             .await
             .unwrap();
     }
@@ -505,7 +506,7 @@ async fn seek_past_the_end_skips_the_queue_and_resumes_with_the_next_publish() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .publish(OutgoingMessage::new("seek.end", b"c"))
+        .publish(OutgoingMessage::new("seek.end", b"c"), None)
         .await
         .unwrap();
     let live = stream.next().await.unwrap().unwrap();
@@ -520,7 +521,7 @@ async fn start_at_replays_the_log_into_a_fresh_subscription() {
     let publisher = connected.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .publish(OutgoingMessage::new("start.replay", payload))
+            .publish(OutgoingMessage::new("start.replay", payload), None)
             .await
             .unwrap();
     }
@@ -546,7 +547,7 @@ async fn start_at_end_skips_history_and_sees_the_next_publish() {
     let connected = broker.connect().await.unwrap();
     let publisher = connected.publisher();
     publisher
-        .publish(OutgoingMessage::new("start.end", b"old"))
+        .publish(OutgoingMessage::new("start.end", b"old"), None)
         .await
         .unwrap();
 
@@ -558,7 +559,7 @@ async fn start_at_end_skips_history_and_sees_the_next_publish() {
     assert!(futures::poll!(stream.next()).is_pending());
 
     publisher
-        .publish(OutgoingMessage::new("start.end", b"new"))
+        .publish(OutgoingMessage::new("start.end", b"new"), None)
         .await
         .unwrap();
     let live = stream.next().await.unwrap().unwrap();
@@ -588,7 +589,7 @@ async fn batches_replay_after_a_seek() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .publish(OutgoingMessage::new("seek.batch", payload))
+            .publish(OutgoingMessage::new("seek.batch", payload), None)
             .await
             .unwrap();
     }
@@ -618,7 +619,7 @@ async fn position_is_stable_across_a_requeue() {
     let mut sub = broker.subscribe("seek.requeue");
     let publisher = broker.publisher();
     publisher
-        .publish(OutgoingMessage::new("seek.requeue", b"a"))
+        .publish(OutgoingMessage::new("seek.requeue", b"a"), None)
         .await
         .unwrap();
 
@@ -642,7 +643,7 @@ async fn seek_wakes_a_parked_stream() {
     let seeker = sub.seeker();
     let publisher = broker.publisher();
     publisher
-        .publish(OutgoingMessage::new("seek.wake", b"a"))
+        .publish(OutgoingMessage::new("seek.wake", b"a"), None)
         .await
         .unwrap();
     {
@@ -686,7 +687,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b", b"c"] {
         publisher
-            .publish(OutgoingMessage::new("seek.batch.stale", payload))
+            .publish(OutgoingMessage::new("seek.batch.stale", payload), None)
             .await
             .unwrap();
     }
@@ -709,7 +710,7 @@ async fn batches_drop_stale_requeues_after_a_seek() {
 
     // A stale copy behind a live delivery: the batch-fill loop filters it out.
     publisher
-        .publish(OutgoingMessage::new("seek.batch.stale", b"d"))
+        .publish(OutgoingMessage::new("seek.batch.stale", b"d"), None)
         .await
         .unwrap();
     held_a.nack(true).await.unwrap();
@@ -736,7 +737,7 @@ async fn seek_keeps_the_coordinator_in_flight_count_balanced() {
     let publisher = connected.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .publish(OutgoingMessage::new("seek.balance", payload))
+            .publish(OutgoingMessage::new("seek.balance", payload), None)
             .await
             .unwrap();
     }
@@ -770,7 +771,7 @@ async fn seek_scope_is_one_subscriber_instance() {
     let publisher = broker.publisher();
     for payload in [b"a", b"b"] {
         publisher
-            .publish(OutgoingMessage::new("seek.scope", payload))
+            .publish(OutgoingMessage::new("seek.scope", payload), None)
             .await
             .unwrap();
     }
@@ -805,11 +806,14 @@ async fn partition_key_reads_well_known_header() {
     let mut headers = HeaderMap::new();
     headers.insert(PARTITION_KEY_HEADER, b"user-42".as_slice());
     publisher
-        .publish(OutgoingMessage::new("keyed", b"a").with_headers(headers))
+        .publish(
+            OutgoingMessage::new("keyed", b"a").with_headers(headers),
+            None,
+        )
         .await
         .unwrap();
     publisher
-        .publish(OutgoingMessage::new("keyed", b"b"))
+        .publish(OutgoingMessage::new("keyed", b"b"), None)
         .await
         .unwrap();
 
