@@ -150,12 +150,17 @@ struct PrefixedPublisher {
 
 impl Publisher for PrefixedPublisher {
     type Error = MemoryError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
         let name = format!("{}{}", self.prefix, msg.name());
         let forwarded =
             OutgoingMessage::new(name.as_str(), msg.payload()).with_headers(msg.headers().clone());
-        self.inner.publish(forwarded).await
+        self.inner.publish(forwarded, options).await
     }
 }
 

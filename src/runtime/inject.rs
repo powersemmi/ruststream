@@ -404,7 +404,7 @@ mod tests {
             let mut subscriber = broker.subscribe(name);
             broker
                 .publisher()
-                .publish(OutgoingMessage::new(name, payload))
+                .publish(OutgoingMessage::new(name, payload), None)
                 .await
                 .expect("publish failed");
             let mut stream = std::pin::pin!(subscriber.stream());

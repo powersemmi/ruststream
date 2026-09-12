@@ -401,7 +401,7 @@ mod tests {
         let publisher = broker.publisher();
         for i in 0..4u8 {
             publisher
-                .publish(OutgoingMessage::new("buffered", &[i]))
+                .publish(OutgoingMessage::new("buffered", &[i]), None)
                 .await
                 .unwrap();
         }
@@ -425,7 +425,7 @@ mod tests {
         let mut sub = buffered(&broker, Duration::from_millis(10)).await;
         let publisher = broker.publisher();
         publisher
-            .publish(OutgoingMessage::new("buffered", b"only"))
+            .publish(OutgoingMessage::new("buffered", b"only"), None)
             .await
             .unwrap();
 
@@ -449,7 +449,7 @@ mod tests {
         let publisher = broker.publisher();
         for i in 0..2u8 {
             publisher
-                .publish(OutgoingMessage::new("buffered", &[i]))
+                .publish(OutgoingMessage::new("buffered", &[i]), None)
                 .await
                 .unwrap();
         }
@@ -475,7 +475,7 @@ mod tests {
         let mut sub = buffered(&broker, Duration::from_millis(10)).await;
         let publisher = broker.publisher();
         publisher
-            .publish(OutgoingMessage::new("buffered", b"single"))
+            .publish(OutgoingMessage::new("buffered", b"single"), None)
             .await
             .unwrap();
 

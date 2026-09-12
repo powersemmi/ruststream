@@ -364,9 +364,9 @@ example's seeding runs on it.
 
 A publish takes its headers from two places. The call site names them with `.with_headers(..)`:
 the message's declared contract by reference, or an already-built `HeaderMap` by value. The
-publisher can add a base of its own: it exposes through `base_headers` one argument for a whole run
-of messages (a tenant, a partition hint, a delivery option the broker expresses as a header). A
-transaction opened from that publisher does the same.
+publisher can add a base of its own: it exposes through `base_headers` one constant for a whole run
+of messages (a tenant, a producer name, a schema id). A transaction opened from that publisher does
+the same.
 
 The builder assembles the outgoing headers once: the base first, then the call site's headers over
 it, key by key. A key takes its value in this order:
@@ -383,9 +383,56 @@ gets the publisher's argument.
 
 A reply is assembled the same way, though nothing writes `.with_headers(..)` on it. Its base comes
 from the publisher the policy constructed for the `Reply` position named at the mount site, and the
-chain's own `.transform(..)` steps write over it. So a broker option set through a header is on the
+chain's own `.transform(..)` steps write over it. So a constant the publisher carries is on the
 reply of a `publish("dest")` handler, on every reply of a batch, and on what the body sends through
 an `Out` slot, without the handler knowing about it.
+
+## Broker settings per message
+
+A broker lets one message differ from the next in more than its payload: a QoS, a priority, an
+ordering key, an expiration. These are not headers. They are the broker's own settings, and they
+reach a publish from two places.
+
+The mount site fixes the defaults on the policy, so a service that wants every message through one
+slot sent the same way says it once:
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:mount"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:mount"
+    ```
+
+A call adjusts one setting for one message, through a step the broker adds to the publish builder.
+What no step touches keeps what the policy fixed:
+
+=== "Macros"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:handler"
+    ```
+
+=== "Manual"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:body"
+    ```
+
+The steps sit on the builder itself, so the publish is still the mount site's: the codec that entry
+named, the transforms it named, the slot the harness records against. They are there on every
+publish surface - an `Out` slot, a transaction opened on one, a bare publisher from the application
+state or a startup hook.
+
+A setting is broker-specific by nature and the call site is in the body, so a body that adjusts one
+imports that broker's prelude for the step and names its options type in the bound
+(`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). This is the one exception to a handler
+body importing the framework prelude alone, and the signature says which broker the body is tied
+to. Which steps exist is your broker's documentation to answer.
 
 ## The publish pipeline
 

@@ -161,9 +161,14 @@ struct Laned {
 
 impl Publisher for Laned {
     type Error = MemoryError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.inner.publish(msg).await
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        self.inner.publish(msg, options).await
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {

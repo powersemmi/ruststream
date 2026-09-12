@@ -30,7 +30,7 @@ use crate::{HeaderMap, OutgoingMessage, Publisher, Transaction};
 /// let broker = MemoryBroker::new();
 /// let publisher = broker.publisher();
 /// let mut sink = &publisher; // any &Publisher is a sink
-/// sink.send(OutgoingMessage::new("orders", b"{}".as_slice()))
+/// sink.send(OutgoingMessage::new("orders", b"{}".as_slice()), None)
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -39,7 +39,15 @@ pub trait PublishSink: Send {
     /// The error the sink reports when the message cannot be sent.
     type Error: StdError + Send + Sync + 'static;
 
-    /// Sends one message into the sink.
+    /// The per-message settings of the publisher or transaction underneath, forwarded so the
+    /// publish builder can carry them.
+    ///
+    /// This is the type a broker's builder steps are bounded on: an extension trait written
+    /// `where Sink: PublishSink<Options = MyOptions>` appears on a builder over that broker's
+    /// publisher and on no other. See [`Publisher::Options`](crate::Publisher::Options).
+    type Options: Send + Sync;
+
+    /// Sends one message into the sink, with the settings the builder's steps put on it.
     ///
     /// # Errors
     ///
@@ -52,6 +60,7 @@ pub trait PublishSink: Send {
     fn send(
         &mut self,
         msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// The headers the sink contributes underneath the publish's own, or `None` when it
@@ -71,12 +80,14 @@ pub trait PublishSink: Send {
 // only ever borrows it.
 impl<P: Publisher + ?Sized> PublishSink for &P {
     type Error = P::Error;
+    type Options = P::Options;
 
     fn send(
         &mut self,
         msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        (**self).publish(msg)
+        (**self).publish(msg, options)
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -88,12 +99,14 @@ impl<P: Publisher + ?Sized> PublishSink for &P {
 // duration of one publish.
 impl<T: Transaction> PublishSink for &mut T {
     type Error = T::Error;
+    type Options = T::Options;
 
     fn send(
         &mut self,
         msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        (**self).publish(msg)
+        (**self).publish(msg, options)
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {

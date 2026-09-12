@@ -266,7 +266,7 @@ mod tests {
         for (token, payload) in [(token, b"one"), (spare, b"two")] {
             let publisher = token.live().await.expect("pairing after startup failed");
             publisher
-                .publish(OutgoingMessage::new("bound.out", payload))
+                .publish(OutgoingMessage::new("bound.out", payload), None)
                 .await
                 .expect("publish through the paired token failed");
         }

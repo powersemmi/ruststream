@@ -63,7 +63,11 @@ async fn publish_entry(broker: &MemoryBroker<Retaining>, id: u64, resume_at: Opt
     let msg = OutgoingMessage::new("replay.log", payload.as_slice())
         .with_typed_headers(&Cursor { resume_at })
         .expect("a flat header contract");
-    broker.publisher().publish(msg).await.expect("publish");
+    broker
+        .publisher()
+        .publish(msg, None)
+        .await
+        .expect("publish");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

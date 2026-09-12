@@ -56,7 +56,13 @@ impl<P: Publisher> ErasedPublisher for P {
         &'a self,
         msg: OutgoingMessage<'a>,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(async move { self.publish(msg).await.map_err(|e| Box::new(e) as BoxError) })
+        // A deferred redelivery has no call site, so it sends with the retry publisher's own
+        // policy and adjusts nothing - which is what keeps this leg object-safe.
+        Box::pin(async move {
+            self.publish(msg, None)
+                .await
+                .map_err(|e| Box::new(e) as BoxError)
+        })
     }
 
     fn base_headers_erased(&self) -> Option<&HeaderMap> {
@@ -73,10 +79,13 @@ pub(crate) struct ErasedSink<'a>(pub(crate) &'a dyn ErasedPublisher);
 
 impl PublishSink for ErasedSink<'_> {
     type Error = ErasedPublishError;
+    // The erased leg reaches no broker's options type, and the fallback adjusts none.
+    type Options = ();
 
     fn send(
         &mut self,
         msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         let publisher = self.0;
         async move {

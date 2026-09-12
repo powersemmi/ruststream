@@ -408,9 +408,16 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline, Body> Publishe
     for Slot<M, W, E, Pipe, Body>
 {
     type Error = Pipe::Error<W::Error>;
+    // The slot is attribution, not policy: the broker's per-message settings are the wired
+    // publisher's, which is what puts that broker's builder steps on this entry's `message(..)`.
+    type Options = W::Options;
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error> {
-        self.pipeline.send(&self.wired, msg).await
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        self.pipeline.send(&self.wired, msg, options).await
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {

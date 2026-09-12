@@ -18,11 +18,13 @@ use crate::{OutgoingMessage, Publisher};
 /// publish counterpart of [`DynStack`](crate::runtime::DynStack), can be layered in later without changing
 /// this contract.)
 pub trait PublishPipeline: Send + Sync {
-    /// Runs `out` through the remaining middleware, then sends it via `send`.
+    /// Runs `out` through the remaining middleware, then sends it via `send` with the broker's
+    /// per-message settings the call site adjusted (`None` on a reply, which has no call site).
     fn run<'a, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         send: &'a P,
+        options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
@@ -36,10 +38,13 @@ impl PublishPipeline for PublishIdentity {
         &'a self,
         out: &'a mut Outgoing<'a>,
         send: &'a P,
+        options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
         let msg =
             OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
-        send.publish(msg).await.map_err(|e| Box::new(e) as BoxError)
+        send.publish(msg, options)
+            .await
+            .map_err(|e| Box::new(e) as BoxError)
     }
 }
 
@@ -63,12 +68,14 @@ impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack
         &'a self,
         out: &'a mut Outgoing<'a>,
         send: &'a P,
+        options: Option<&'a P::Options>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         self.head.on_publish(
             out,
             PublishNext {
                 tail: &self.tail,
                 send,
+                options,
             },
         )
     }
@@ -91,9 +98,10 @@ pub trait PublishLayer: Send + Sync {
 
 /// A cursor over the rest of the publish pipeline, ending in the broker send. Handed to a
 /// [`PublishLayer`]; call [`run`](Self::run) to continue.
-pub struct PublishNext<'a, N, P> {
+pub struct PublishNext<'a, N, P: Publisher> {
     tail: &'a N,
     send: &'a P,
+    options: Option<&'a P::Options>,
 }
 
 impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
@@ -102,11 +110,11 @@ impl<'a, N: PublishPipeline, P: Publisher> PublishNext<'a, N, P> {
         self,
         out: &'a mut Outgoing<'a>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
-        self.tail.run(out, self.send)
+        self.tail.run(out, self.send, self.options)
     }
 }
 
-impl<N, P> fmt::Debug for PublishNext<'_, N, P> {
+impl<N, P: Publisher> fmt::Debug for PublishNext<'_, N, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishNext").finish_non_exhaustive()
     }

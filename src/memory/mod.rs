@@ -370,7 +370,7 @@ impl MemoryBroker<Retaining> {
     /// let seeker = subscriber.seeker();
     /// broker
     ///     .publisher()
-    ///     .publish(OutgoingMessage::new("audit", b"entry"))
+    ///     .publish(OutgoingMessage::new("audit", b"entry"), None)
     ///     .await?;
     ///
     /// seeker.seek(MemoryPosition::start()).await?;
@@ -925,8 +925,15 @@ pub enum MemoryError {
 
 impl Publisher for MemoryPublisher {
     type Error = MemoryError;
+    // The in-memory bus has no protocol field a message can differ in, so there is nothing to
+    // settle per message.
+    type Options = ();
 
-    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),

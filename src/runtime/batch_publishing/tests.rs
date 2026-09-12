@@ -281,12 +281,17 @@ impl HalfwayPublisher {
 
 impl Publisher for HalfwayPublisher {
     type Error = MemoryError;
+    type Options = ();
 
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), MemoryError> {
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), MemoryError> {
         if self.published.fetch_add(1, Ordering::SeqCst) >= self.succeed_first {
             return Err(MemoryError::ShutDown);
         }
-        self.inner.publish(msg).await
+        self.inner.publish(msg, options).await
     }
 }
 

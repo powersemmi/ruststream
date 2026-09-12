@@ -172,7 +172,15 @@ one that honoured the delay, and run its own fallback.
 ```rust
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
+
+    /// Your broker's per-message settings. Every field optional; `()` when you have none.
+    type Options: Send + Sync;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error>;
 
     /// Defaulted: headers this handle contributes under every publish.
     fn base_headers(&self) -> Option<&HeaderMap> { None }
@@ -186,16 +194,23 @@ A service writes the builder, not this method: `publisher.message(&value).publis
 destination, the codec and the headers, and makes exactly one call to `publish`. Implement
 `publish` and the whole builder works on top of it.
 
-A publisher that holds one argument for a run of messages (a tenant, a partition hint, a delivery
-option your broker expresses as a header) returns it from `base_headers` rather than writing it
-into the message inside `publish`.
+`Options` holds what belongs to the message rather than to the handle: a QoS, a priority, an
+ordering key, an expiration. Every field is optional, because a call carries only what it adjusted.
+What it left alone is what the policy fixed when it paired this publisher, so resolving the two is
+the first thing your `publish` does. A broker with no per-message setting writes
+`type Options = ();`.
 
-The builder starts the outgoing headers from that base and writes the call site's headers over it
-key by key, so on a shared key the call site's value stays (see
-[where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
+`options` is `None` wherever there is no call site to adjust them - a reply, a deferred
+redelivery - and the policy's settings are then the whole answer.
 
-`Transaction` carries the same defaulted method, so a transaction opened from such a publisher
-behaves the same way. A publisher with nothing to add overrides neither.
+`base_headers` is for a constant of the publisher itself: a tenant, a producer name, a schema id
+every message of this handle carries. The builder starts the outgoing headers from that base and
+writes the call site's headers over it key by key, so on a shared key the call site's value stays
+(see [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
+
+`Transaction` names the same `Options` and carries the same defaulted `base_headers`, so a message
+inside a transaction takes the settings a message outside one takes. A publisher with nothing to
+add overrides neither.
 
 ### `PublishPolicy`
 
@@ -428,6 +443,33 @@ different publish mode, which belongs in the `.out(marker, policy)` call itself.
 already-configured value can be passed there directly:
 `.out(Reply, Publish::default().stream("ORDERS"))`.
 
+### Per-message settings on the publish builder
+
+A setting one message differs from the next in - a QoS, a priority, an ordering key, an expiration
+- is a field of your `Publisher::Options`, and a call site adjusts it through a step you add to the
+publish builder. Nothing wraps the publisher, so the publish still leaves through the mount site's
+own entry, with the codec and the transforms that entry named.
+
+The four pieces are an options type whose every field is optional, a policy that carries the
+defaults, a live publisher resolving one against the other, and an extension trait over
+`PublishBuilder` bounded on the options type. The bound is what keeps your steps off a builder
+over another broker's publisher:
+
+```rust
+--8<-- "tests/publish_options.rs:broker_side"
+```
+
+The broker half is the same whichever way a service mounts, because it is ordinary trait impls
+either way. Ship the extension trait from your prelude next to the policy aliases.
+
+A step is the only shape a per-message setting takes. Do not put the send in the trait: a publish
+that leaves through a value of yours is a publish the slot view stops seeing, and a setting like an
+ordering key is exactly what a test wants to assert on. Do not carry one as a header either: it is
+a protocol field, and a string round trip through the header map inside one process is not one.
+
+A value your broker cannot honour is a publish error, never a silent fallback to the default: the
+caller asked for an ordering it would not get.
+
 ## Capability traits
 
 Implement only the capabilities your broker supports; none are part of the mandatory interface.
@@ -596,17 +638,10 @@ than it does a settled owned transaction's buffer. Assert it on the broker's pub
 That is the attribution boundary and the price of handing out the inner publisher.
 
 A **step-shaped** capability sets one argument on a message and ends in a single publish: an
-ordering key, a priority, a QoS. Do not put the send in the trait. A publish that leaves through
-your own value is a publish the slot view stops seeing, and an argument like an ordering key is
-exactly what a test wants to assert on.
-
-Build the step on the entry's own typed publish path (`out.message(&value).publish()`) and carry
-the argument as a header. A publisher holding it for a run of messages returns it from
-`Publisher::base_headers`; a call site setting it per message writes it with `.with_headers(..)`;
-your `publish` reads it off the outgoing map and strips it before sending.
-
-A value your publisher cannot read is a publish error, never a silent fallback to the default: the
-caller asked for an ordering it would not get.
+ordering key, a priority, a QoS. That one is not a capability trait at all - it is a field of your
+`Publisher::Options` and a step on the publish builder, which keeps the send on the entry's own
+path and the setting out of the header map. See
+[per-message settings on the publish builder](#per-message-settings-on-the-publish-builder).
 
 ### Your crate's prelude
 
@@ -617,6 +652,11 @@ capability trait it needs (`Out<impl Publisher>`, `Out<impl TransactionalPublish
 publisher and never which broker provides it.
 
 A routes file imports your prelude, because mounting is where a broker is named.
+
+The one exception is a per-message setting. It is broker-specific by nature and the call site is in
+the body, so a body that adjusts one imports your prelude for the step and names your options type
+in its bound (`Out<impl Publisher<Options = MqttOptions>, Telemetry>`). That body is tied to your
+broker, and it says so in its signature.
 
 That makes your prelude the one import of yours a service writes, so its shape is part of the
 contract. The policy aliases (`NatsPublish as Publish`, `KafkaTransactionalPublish as

@@ -130,8 +130,13 @@ impl fmt::Debug for MemoryRequester {
 
 impl Publisher for MemoryRequester {
     type Error = RequestError;
+    type Options = ();
 
-    fn publish(&self, msg: OutgoingMessage<'_>) -> impl Future<Output = Result<(), Self::Error>> {
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
             name: msg.name().to_owned(),
             payload: Bytes::copy_from_slice(msg.payload()),
@@ -337,7 +342,7 @@ impl TransactionalPublisher for MemoryPublisher {
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// let publisher = MemoryBroker::new().publisher();
 /// let mut txn = publisher.transaction().await?;
-/// txn.publish(OutgoingMessage::new("orders", b"{}".as_slice())).await?;
+/// txn.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
 /// txn.commit().await?;
 /// # Ok(())
 /// # }
@@ -376,10 +381,12 @@ impl Drop for MemoryTransaction {
 
 impl Transaction for MemoryTransaction {
     type Error = MemoryError;
+    type Options = ();
 
     fn publish(
         &mut self,
         msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), MemoryError>> {
         // Buffering is local to this value and never touches the bus; a commit against a
         // shut-down bus is what reports the error.

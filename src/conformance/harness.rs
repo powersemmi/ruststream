@@ -171,7 +171,10 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let publisher = make_publisher(&connected);
 
     publisher
-        .publish(OutgoingMessage::new(&subject, b"lifecycle".as_slice()))
+        .publish(
+            OutgoingMessage::new(&subject, b"lifecycle".as_slice()),
+            None,
+        )
         .await
         .expect("publish after connect failed");
 
@@ -198,10 +201,10 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .expect("reporting a redelivery address must not fail against a live connection");
     if let Some(address) = address {
         publisher
-            .publish(OutgoingMessage::new(
-                address.as_str(),
-                b"redelivered".as_slice(),
-            ))
+            .publish(
+                OutgoingMessage::new(address.as_str(), b"redelivered".as_slice()),
+                None,
+            )
             .await
             .expect("publish to the reported redelivery address failed");
         let msg = expect_next(&mut stream, "redelivery_address").await;
@@ -226,7 +229,10 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     // the shutdown is the surface that must stay honest at runtime.
     assert!(
         publisher
-            .publish(OutgoingMessage::new(&subject, b"post-shutdown".as_slice()))
+            .publish(
+                OutgoingMessage::new(&subject, b"post-shutdown".as_slice()),
+                None,
+            )
             .await
             .is_err(),
         "publish through a handle aliasing the closed connection must error",

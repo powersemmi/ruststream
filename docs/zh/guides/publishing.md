@@ -325,7 +325,7 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 一次发布的消息头来自两处。调用点用 `.with_headers(..)` 指定消息头：按引用传入消息声明的契约，
 或者按值传入一份已经建好的 `HeaderMap`。发布者可以再加上自己的一份基础消息头。一系列消息共用同
-一个参数（租户、分区提示、Broker 用消息头表达的投递选项）时，发布者从 `base_headers` 交出这个参数。
+一个常量（租户、producer 名字、schema id）时，发布者从 `base_headers` 交出这个常量。
 从这个发布者开启的事务同样如此。
 
 构建器只组装一次出站的消息头：先写入基础消息头，再把调用点的消息头逐个键覆盖上去。每个键的取值
@@ -336,14 +336,57 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 - 没有基础消息头的发布者，让调用点的消息头保持原样。
 
 两种写法的合并方式相同：`HeaderMap` 逐条覆盖写入，声明的 `headers = Meta` 契约把自己的字段逐个
-序列化到基础消息头之上。因此带契约的消息同样得到发布者的那个参数。
+序列化到基础消息头之上。因此带契约的消息同样得到发布者的那个常量。
 
 `.with_headers(..)` 只能填一次：第二次调用是编译期错误。
 
 回复按同一套顺序装配，尽管回复上没有 `.with_headers(..)`。挂载点为 `Reply` 位置指定了策略，
-策略构造的发布者先写入自己的基础消息头，同一条链上的 `.transform(..)` 步骤再覆盖上去。因此，用
-消息头表达的 Broker 选项会出现在三个地方：`publish("dest")` 处理器的回复、批次里的每一条回复和
+策略构造的发布者先写入自己的基础消息头，同一条链上的 `.transform(..)` 步骤再覆盖上去。因此，
+发布者携带的那个常量会出现在三个地方：`publish("dest")` 处理器的回复、批次里的每一条回复和
 函数体经由 `Out` 槽位发出的消息。处理器对它一无所知。
+
+## 逐条消息的 Broker 设置 { #broker-settings-per-message }
+
+一条消息与下一条的差别不只是载荷：QoS、优先级、排序键、过期时间。这些不是消息头，而是 Broker 自己
+的设置，它们从两个地方进入一次发布。
+
+挂载点在策略上定下默认值，于是想让某个槽位的每条消息都按同一种方式发出的服务只说一次：
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:mount"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:mount"
+    ```
+
+调用用 Broker 加到发布构建器上的步骤，为这一条消息改动一项设置。步骤没碰过的部分，保持策略定下的
+值：
+
+=== "宏"
+
+    ```rust
+    --8<-- "tests/publish_options.rs:handler"
+    ```
+
+=== "手写"
+
+    ```rust
+    --8<-- "tests/manual_publish_options.rs:body"
+    ```
+
+步骤落在构建器本身上，所以这次发布仍然属于挂载点：那个条目指定的编解码器、它的变换、测试装置记录
+发布时用的槽位。每一种发布面上都有这些步骤 - `Out` 槽位、从它开启的事务、来自应用状态或启动钩子的
+普通发布者。
+
+设置天生属于某个 Broker，而调用点在函数体里，所以改动它的函数体为了那个步骤导入该 Broker 的
+prelude，并在约束里写出它的设置类型（`Out<impl Publisher<Options = MqttOptions>, Telemetry>`）。
+这是「处理器主体只导入框架 prelude」这条规则的唯一例外，签名也说清楚了函数体绑在哪个 Broker 上。
+有哪些步骤可用，由你的 Broker 的文档回答。
 
 ## 发布管线 { #the-publish-pipeline }
 

@@ -172,7 +172,7 @@ where
         // and leaves this buffer untouched.
         let mut buf = BytesMut::new();
         let payload = reply.wire_bytes(&mut buf)?;
-        self.publish(OutgoingMessage::new(name, payload))
+        self.publish(OutgoingMessage::new(name, payload), None)
             .await
             .map_err(Into::into)
     }
@@ -511,7 +511,7 @@ mod tests {
             let mut subscriber = broker.subscribe(name);
             broker
                 .publisher()
-                .publish(OutgoingMessage::new(name, payload))
+                .publish(OutgoingMessage::new(name, payload), None)
                 .await
                 .expect("publish failed");
             let mut stream = std::pin::pin!(subscriber.stream());
@@ -527,10 +527,12 @@ mod tests {
 
         impl Publisher for Rejecting {
             type Error = MemoryError;
+            type Options = ();
 
             fn publish(
                 &self,
                 _msg: OutgoingMessage<'_>,
+                _options: Option<&Self::Options>,
             ) -> impl Future<Output = Result<(), Self::Error>> {
                 ready(Err(MemoryError::ShutDown))
             }

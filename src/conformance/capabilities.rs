@@ -110,7 +110,10 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
             headers.insert("correlation-id", correlation_id.to_owned());
         }
         publisher
-            .publish(OutgoingMessage::new(&reply_to, b"pong".as_slice()).with_headers(headers))
+            .publish(
+                OutgoingMessage::new(&reply_to, b"pong".as_slice()).with_headers(headers),
+                None,
+            )
             .await
             .expect("reply publish failed");
         match msg.ack().await {
@@ -203,7 +206,10 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 
     for i in 0..COUNT {
         publisher
-            .publish(OutgoingMessage::new(&subject, i.to_be_bytes().as_slice()))
+            .publish(
+                OutgoingMessage::new(&subject, i.to_be_bytes().as_slice()),
+                None,
+            )
             .await
             .expect("publish failed");
     }
@@ -303,11 +309,11 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .await
         .expect("begin_transaction failed");
     publisher
-        .publish(OutgoingMessage::new(&subject, b"first".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"first".as_slice()), None)
         .await
         .expect("publish inside transaction failed");
     publisher
-        .publish(OutgoingMessage::new(&subject, b"second".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"second".as_slice()), None)
         .await
         .expect("publish inside transaction failed");
     expect_no_more(&mut stream, "transactions: before commit").await;
@@ -335,7 +341,10 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .await
         .expect("begin_transaction failed");
     publisher
-        .publish(OutgoingMessage::new(&subject, b"discarded".as_slice()))
+        .publish(
+            OutgoingMessage::new(&subject, b"discarded".as_slice()),
+            None,
+        )
         .await
         .expect("publish inside transaction failed");
     publisher.abort().await.expect("abort failed");
@@ -360,7 +369,7 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     );
     // The rejected second begin must not have disturbed the open transaction.
     publisher
-        .publish(OutgoingMessage::new(&subject, b"third".as_slice()))
+        .publish(OutgoingMessage::new(&subject, b"third".as_slice()), None)
         .await
         .expect("publish inside transaction failed");
     publisher
@@ -464,11 +473,11 @@ where
         .await
         .expect("transaction must open");
     committed
-        .publish(OutgoingMessage::new(subject, b"first".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"first".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     committed
-        .publish(OutgoingMessage::new(subject, b"second".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"second".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     expect_no_more(stream, "owned_transactions: before commit").await;
@@ -485,7 +494,7 @@ where
         .await
         .expect("transaction must open");
     aborted
-        .publish(OutgoingMessage::new(subject, b"discarded".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"discarded".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     aborted.abort().await.expect("abort failed");
@@ -509,18 +518,18 @@ where
         .transaction()
         .await
         .expect("a second transaction must open while the first is open");
-    kept.publish(OutgoingMessage::new(subject, b"kept-1".as_slice()))
+    kept.publish(OutgoingMessage::new(subject, b"kept-1".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     dropped
-        .publish(OutgoingMessage::new(subject, b"dropped-1".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"dropped-1".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
-    kept.publish(OutgoingMessage::new(subject, b"kept-2".as_slice()))
+    kept.publish(OutgoingMessage::new(subject, b"kept-2".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     dropped
-        .publish(OutgoingMessage::new(subject, b"dropped-2".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"dropped-2".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
 
@@ -552,14 +561,14 @@ where
         .transaction()
         .await
         .expect("a second transaction must open while the first is open");
-    left.publish(OutgoingMessage::new(subject, b"left-1".as_slice()))
+    left.publish(OutgoingMessage::new(subject, b"left-1".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     right
-        .publish(OutgoingMessage::new(subject, b"right-1".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"right-1".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
-    left.publish(OutgoingMessage::new(subject, b"left-2".as_slice()))
+    left.publish(OutgoingMessage::new(subject, b"left-2".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
 
@@ -596,11 +605,11 @@ where
         .transaction()
         .await
         .expect("transaction must open");
-    open.publish(OutgoingMessage::new(subject, b"buffered".as_slice()))
+    open.publish(OutgoingMessage::new(subject, b"buffered".as_slice()), None)
         .await
         .expect("publish into a transaction failed");
     publisher
-        .publish(OutgoingMessage::new(subject, b"direct".as_slice()))
+        .publish(OutgoingMessage::new(subject, b"direct".as_slice()), None)
         .await
         .expect("the handle must keep publishing directly while a transaction is open");
     assert_eq!(
@@ -696,7 +705,7 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 
     for i in 0..COUNT {
         publisher
-            .publish(OutgoingMessage::new(&subject, &[i]))
+            .publish(OutgoingMessage::new(&subject, &[i]), None)
             .await
             .expect("publish failed");
     }
@@ -761,7 +770,7 @@ pub async fn seeking<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     expect_no_more(&mut stream, "seeking: after the forward target").await;
 
     publisher
-        .publish(OutgoingMessage::new(&subject, &[COUNT]))
+        .publish(OutgoingMessage::new(&subject, &[COUNT]), None)
         .await
         .expect("publish failed");
     let live = expect_next(&mut stream, "seeking: after a new publish").await;

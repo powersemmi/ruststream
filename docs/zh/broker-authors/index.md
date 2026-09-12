@@ -158,7 +158,15 @@ pub trait IncomingMessage: Send + Sync {
 ```rust
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    async fn publish(&self, msg: OutgoingMessage<'_>) -> Result<(), Self::Error>;
+
+    /// 你的 Broker 的逐条消息设置。每个字段都是可选的；没有这类设置就写 `()`。
+    type Options: Send + Sync;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error>;
 
     /// 带默认实现：这个发布者垫在每次发布下面的消息头。
     fn base_headers(&self) -> Option<&HeaderMap> { None }
@@ -170,14 +178,19 @@ pub trait Publisher: Send + Sync {
 服务写的不是这个方法，而是构建器：`publisher.message(&value).publish()` 选定目的地、编解码器和消息
 头，然后恰好调用一次 `publish`。实现 `publish`，整个构建器就在它之上工作起来。
 
-为一整串消息持有同一个参数的发布者（租户、分区提示、你的 Broker 用消息头表达的某个投递选项），把这个
-参数从 `base_headers` 返回，而不是在 `publish` 内部写进消息里。
+`Options` 装的是属于消息而不属于句柄的东西：QoS、优先级、排序键、过期时间。每个字段都是可选的，因为
+一次调用只带上它改动过的部分。它没碰的部分，就是策略在配出这个发布者时定下的值，把两者合起来是你的
+`publish` 要做的第一件事。没有逐条设置的 Broker 写 `type Options = ();`。
 
-构建器以这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
+在没有调用点可以改动设置的路径上，`options` 是 `None`：处理器的回复、延迟重投。那里由策略的设置说了
+算。
+
+`base_headers` 留给发布者自身的常量：租户、producer 名字、这个句柄每条消息都带的 schema id。构建器以
+这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
 （参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
 
-`Transaction` 上有同样带默认实现的方法，因此从这样的发布者开启的事务行为一致。没有东西要补的发布者两
-个都不必实现。
+`Transaction` 指定同一个 `Options`，也带同样的默认 `base_headers`，因此事务里的消息和事务外的消息带
+着同样的设置离开。没有东西要补的发布者两个都不必实现。
 
 ### `PublishPolicy`
 
@@ -392,6 +405,29 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 `.out(marker, policy)` 调用本身。已经配置好的值也可以直接传到那里：
 `.out(Reply, Publish::default().stream("ORDERS"))`。
 
+### 发布构建器上的逐条设置 { #per-message-settings-on-the-publish-builder }
+
+一条消息与下一条可以不同的设置 - 一个 QoS、一个优先级、一个排序键、一个过期时间 - 是你的
+`Publisher::Options` 的一个字段，调用点用你加到发布构建器上的步骤去改它。发布者不被任何东西包裹，
+所以这次发布仍然从挂载点自己的条目走出去，带着那个条目指定的编解码器和变换。
+
+一共四块：一个每个字段都可选的设置类型，一份携带默认值的策略，一个把两者合起来的活发布者，以及一个
+以设置类型为约束、写在 `PublishBuilder` 上的扩展 trait。正是这个约束让你的步骤出现不了在别的 Broker
+的发布者的构建器上：
+
+```rust
+--8<-- "tests/publish_options.rs:broker_side"
+```
+
+服务用哪种方式挂载都不影响 Broker 这一半：两条路上它都是普通的 trait 实现。把扩展 trait 从你的
+prelude 导出，就放在策略别名旁边。
+
+逐条设置只有步骤这一种形状。不要把发送放进 trait：从你自己的值走出去的发布，槽位视图不再看得见，而
+排序键这类设置恰恰是测试要断言的东西。也不要用消息头携带它：它是协议字段，在一个进程内绕一圈字符串
+消息头不是协议字段。
+
+你的 Broker 满足不了的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它拿不到。
+
 ## 能力 trait
 
 只实现你的 Broker 真正支持的能力，它们都不属于必需接口。最接近必需的是 `BatchSubscriber`：
@@ -540,14 +576,9 @@ trait。
 内层发布者所付的代价。
 
 **步骤形状**的能力给一条消息设定一个参数，并以一次发布收尾：一个排序键、一个优先级、一个 QoS。
-不要把发送放进 trait：从你自己的值走出去的发布，槽位视图不再看得见，而排序键这类参数恰恰是测试
-要断言的东西。
-
-把这一步建在条目自己的类型化发布路径上（`out.message(&value).publish()`），参数用消息头携带。为
-一串消息持有它的发布者从 `Publisher::base_headers` 交出它；为单条消息设定它的调用点用
-`.with_headers(..)` 写下它；你的 `publish` 从出站消息头里读走它，并在发送之前把它去掉。
-
-你的发布者读不出来的值是一次发布错误，而不是悄悄退回默认值：调用方要的那个顺序，它拿不到。
+这一种根本不是能力 trait：它是你的 `Publisher::Options` 的一个字段，加上发布构建器上的一个步骤，
+这样发送留在条目自己的路径上，设置也留在消息头之外。参见
+[发布构建器上的逐条设置](#per-message-settings-on-the-publish-builder)。
 
 ### 你这个 crate 的 prelude
 
@@ -557,6 +588,10 @@ trait。
 于是主体说清楚它对发布者有什么要求，却从不说这是哪个 Broker 提供的。
 
 挂载文件导入你的 prelude，因为指名 Broker 的地方就在那里。
+
+只有一个例外：逐条设置。它天生属于某个 Broker，而调用点在主体里，所以改动它的主体为了那个步骤导入
+你的 prelude，并在约束里写出你的设置类型（`Out<impl Publisher<Options = MqttOptions>, Telemetry>`）。
+这样的主体绑在你的 Broker 上，它的签名也把这一点说了出来。
 
 这样一来，你的 prelude 就是使用你这个 Broker 的服务所写的那一个导入，它的形状因此属于契约的一部分。
 策略别名（`NatsPublish as Publish`、`KafkaTransactionalPublish as TransactionalPublish`、
