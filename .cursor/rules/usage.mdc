@@ -9,7 +9,8 @@ alwaysApply: false
   `Headers`, `Out`), the mount-site settings, the publish builder (`PublishExt`), the publisher
   capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`), and the attribute macros and derives. A body never names a publish policy, so it
-  never knows which broker runs it.
+  never knows which broker runs it. The one exception is a body that adjusts a per-message broker
+  setting: it imports that broker's prelude for the step and names its options type in the bound.
 - A mount site imports the BROKER's glob (`use ruststream_nats::prelude::*;`,
   `use ruststream::memory::prelude::*;`): it re-exports the core prelude, the broker, its
   subscription descriptor and its context keys, plus its publish policies under the uniform names
@@ -19,23 +20,34 @@ alwaysApply: false
   items they share resolve to the same types.
 - Only what a given service actually reaches for stays an explicit import: codecs
   (`ruststream::codec`) and the optional feature modules (`ruststream::testing`, `asyncapi`,
-  `metrics`, `logging`, `otel`). `RouterDef`, `DefaultSlot`, `FailurePolicies` / `FailurePolicy`,
-  `Workers`, `Unnamed`, `nonzero!` and the manual path's `Handle` / `subscriber` pair are all in
-  the prelude.
+  `metrics`, `logging`, `otel`). `Router` / `RouterDef`, `Reply`, `DefaultSlot`, `OutSlot`,
+  `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `nonzero!`, the transform vocabulary
+  (`PublishTransform`, `ForReply` / `ForSlot`, `Reads` / `Names`) and the manual path's `Handle` /
+  `subscriber` pair are all in the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
   payload, and its type alone picks the form: `&T` is one message and `&[T]` a batch, while the
   lane is the type's own business - `T: serde::Deserialize` decodes with the codec, a
   `#[derive(Deserialized)]` type builds itself from the raw bytes (`&Frame<'_>`, batch
   `&[Frame<'_>]`). No clause names any of this. Further parameters are extractors:
   `State<T>` injects a component of the application state, `Ctx<K>` one broker context field,
-  `Headers<T>` the delivery headers parsed into a typed contract, `Out<impl Publisher, ..>` a live
-  publisher. An explicit `ctx: &mut Context` parameter is optional and last; omit it unless you
+  `Headers<T>` the delivery headers parsed into a typed contract, and any type implementing
+  `FromContext` is one you wrote yourself (an auth guard, a request-scoped lookup); an extractor
+  that rejects settles the delivery and the body never runs. `Out<impl Publisher, ..>` is not an
+  extractor but an injection: a live publisher the mount site's policy built. An explicit
+  `ctx: &mut Context` parameter is optional and comes right after the payload; omit it unless you
   use it.
 - The return type drives acknowledgement: `HandlerOutcome`, `()` (always acks), `Result<_, E>` (an
-  `Err` nacks), `Result<HandlerOutcome, E>`, or `Vec<HandlerOutcome>` on a batch to settle entry by
-  entry. For a reply handler, add a `publish("subject")` clause and return the reply value, or
-  `Result<Reply, HandlerOutcome>` for explicit ack control (`Vec<Reply>` and
+  `Err` drops - a nack with no requeue), `Result<HandlerOutcome, E>`, or `Vec<HandlerOutcome>` on a
+  batch to settle entry by entry. For a reply handler, add a `publish` clause and return the reply
+  value, or `Result<Reply, HandlerOutcome>` for explicit ack control (`Vec<Reply>` and
   `Result<Vec<Reply>, HandlerOutcome>` are the batch counterparts).
+- Where a reply goes is a property of the reply type, not of the mount site. Every reply type
+  derives `Outgoing`, and a type without it is a compile error at the handler naming the derive.
+  `#[outgoing(name = "dest")]` on the type is the destination and the clause stays bare
+  (`publish`); a derive naming nothing takes the clause's name (`publish("dest")`). A name template
+  does not resolve on the reply path - nothing binds its placeholders there. The generated AsyncAPI
+  document reports the resolved destination, so a declaration cannot document one channel and
+  publish to another.
 - Build the service with `#[ruststream::app]` on a synchronous `fn app() -> RustStream` (or
   `impl App` when layers/state change the type). Do not write your own `main` or `#[tokio::main]`.
 - Application state is built once in `on_startup` (async closures: `async move |()| ...`) and
@@ -157,9 +169,8 @@ value carries a builder for the declarative settings, applied before `include` t
 ```rust
 use std::time::Duration;
 
-use ruststream::nonzero;
-use ruststream::prelude::*;
-use ruststream::runtime::{FailurePolicies, FailurePolicy};
+// FailurePolicies, FailurePolicy and nonzero! ride the prelude; no second import
+use ruststream::memory::prelude::*;
 
 #[subscriber]
 async fn bill(order: &Order) -> HandlerOutcome {
@@ -194,21 +205,44 @@ b.include(audit.name("orders").start_at(MemoryPosition::start()));
 
 `workers(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute clauses
 (`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("orders", on_failure(decode = retry))]`,
-`#[subscriber("audit", start_at(MemoryPosition::start()))]`). `start_at` forces the position on
+`#[subscriber("audit", start_at(MemoryPosition::start()))]`); those four (`publish` is the fourth)
+are the only clauses, and `batch(n)` is mount-site only. `start_at` forces the position on
 every startup and takes a value of the broker's own position type; without it the subscription
 opens at the broker's default. A conditional default (apply only when no stored cursor exists for
 the group) belongs on the broker's own subscription descriptor.
 
+Seeking needs a log to seek in. `MemoryBroker::new()` keeps nothing, so the two forms are different
+types: `MemoryBroker::retaining(Retention::Messages(nonzero!(64)))` is the one whose subscriptions
+are `Seekable`, and a `start_at(..)` or a `SeekHandle` read only compiles against it. A handler
+repositions its own subscription through the broker's context keys
+(`Ctx(seeker): Ctx<SeekHandle>`, then `seeker.seek(MemoryPosition::sequence(3))`); a position the
+retention bound already evicted reports `MemoryError::PositionEvicted`.
+
 ## Replying (request/response)
 
-Return the reply value and add `publish("subject")`. The reply publisher is the broker's default
-policy unless the mount names one with `.out(Reply, ..)`.
+Return the reply value and write `publish` on the subscriber. The reply type derives `Outgoing`,
+and its declaration decides where the answer goes: a type fixing its own name is published there
+and the clause names nothing, a type naming nothing takes the clause's name. The reply publisher is
+the broker's default policy unless the mount names one with `.out(Reply, ..)`.
 
 ```rust
 use ruststream::memory::prelude::*;
 use serde::Serialize;
 
-#[derive(Serialize)]
+// the destination on the type: the clause stays bare
+#[derive(Debug, Serialize, Outgoing)]
+#[outgoing(name = "receipts")]
+struct Receipt {
+    id: u64,
+}
+
+#[subscriber("receipt-requests", publish)]
+async fn issue_receipt(order: &Order) -> Receipt {
+    Receipt { id: order.id }
+}
+
+// the destination left open: the mount site says
+#[derive(Debug, Serialize, Outgoing)]
 struct Confirmation {
     id: u64,
     accepted: bool,
@@ -220,6 +254,7 @@ async fn confirm(order: &Order) -> Confirmation {
 }
 
 // in with_broker(broker, |b| { ... }):
+b.include(issue_receipt);                              // the type carries the destination
 b.include(confirm);                                    // broker's default publish policy
 b.include(confirm).out(Reply, Publish);                // an explicit one
 b.include(confirm).out(Reply, Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
@@ -236,8 +271,9 @@ Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` p
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
 publish nacks the incoming message with `requeue = true`.
 
-Note the `publish(..)` clause takes a string literal; runtime-computed destinations are not
-supported there.
+The `publish(..)` clause takes a string literal, and a name template does not resolve here.
+Answering somewhere else per delivery (a direct `reply-to`, a `ROUTER` peer identity) is a
+transform; see [naming a destination from a transform](#naming-a-destination-from-a-transform).
 
 ## Raw payloads
 
@@ -280,7 +316,7 @@ both compile. A `Vec<u8>` reply is not a byte reply - it encodes like any `Seria
 `Serialized` batch reply does not exist.
 
 ```rust
-#[derive(Serialized)]
+#[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
 #[subscriber("relay-in", publish("relay-out"))]
@@ -293,8 +329,26 @@ A `Serialized` reply names its publish policy at the include site the same way a
 (`b.include(relay).out(Reply, Publish)`, or nothing for the broker's default); what it does not take
 is the wiring steps after it, since its bytes leave with no codec and no transform stack.
 
-For a custom serialization format you want *typed* handlers for, implement `Codec` instead and
-keep the typed path.
+A binary protocol (Protobuf, Cap'n Proto, FlatBuffers) is not a codec: the generated message *is*
+its encoding, so it rides the same lanes and the model type stays visible at the mount site, in a
+slot's dictionary and in the document. Three derives and one attribute put a whole schema there,
+and a generator writes them for you (`prost_build`'s `message_attribute`):
+
+```rust
+#[derive(Clone, PartialEq, prost::Message, Outgoing, Serialized, Deserialized)]
+#[outgoing(name = "orders")]
+#[wire(prost)]
+struct Order {
+    #[prost(uint64, tag = "1")]
+    id: u64,
+}
+```
+
+`#[wire(prost)]` is shorthand for one generator's pair of functions; the general form names them,
+`#[wire(encode = <path>, decode = <path>)]`, where `encode` is a `fn(&Self, &mut BytesMut)` and
+`decode` a `fn(&[u8]) -> Result<Self, E>`. Neither lane resolves a codec, so such a service
+compiles with no codec feature at all. For a custom serialization format you want *typed* handlers
+for, implement `Codec` instead and keep the typed path.
 
 ## Publishing from a handler (`Out`)
 
@@ -354,26 +408,25 @@ async fn route(
 
 b.include(route)
     .out(Audit, Publish)
-    .transform(OutboxEnvelope)  // an OutTransform on the slot the .out(..) before it bound
+    .transform(OutboxEnvelope)  // rides the slot the .out(..) before it bound
     .out(Orders, Publish)
     .build();
 ```
 
-`.transform(..)` composes an `OutTransform` (`apply(&mut Outgoing<'_>)`, no publish context: the
-body issues a slot publish itself) onto the slot named right before it, and onto that one only.
-Before any `.out(..)` the step does not exist. On a registration that also has a reply,
-`.transform(..)` after `.out(Reply, ..)` grows the reply's `PublishTransform` stack and after
-`.out(marker, ..)` the slot's.
+`.transform(..)` composes a `PublishTransform` onto the position named right before it, and onto
+that one only; before any `.out(..)` the step has no position to ride. The step repeats, and the
+transforms run in the order the chain writes them. On a registration that also replies,
+`.transform(..)` after `.out(Reply, ..)` grows the reply's stack and after `.out(marker, ..)` the
+slot's.
 
 The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
 against a policy whose live publisher supports owned transactions, checked at the include site.
 The bound names a broker capability trait (`Publisher`, `TransactionalPublisher`,
 `OwnedTransactions`, `RequestReply`, or one a broker crate defines), never a broker type; on the
-manual path the same bound sits on the entry's wired value, `where W: OwnedTransactions, E: Codec
-+ Send + Sync, Pipe: OutPipeline` (the third parameter is the slot's publish path, left generic so
-one body mounts under any transform or app-wide layer). Under it the entry offers that
-capability's typed form - `message(..)`, `begin()`, `transaction()` - over the include site's
-codec and the marker's list.
+manual path the same bound sits on the entry's wired value,
+`where L: OutEntry<Ledger, Wire: OwnedTransactions>`. Under it the entry offers that capability's
+typed form - `message(..)`, `begin()`, `transaction()` - over the include site's codec and the
+marker's list.
 
 ### Narrowing one path to a set of types
 
@@ -446,7 +499,115 @@ out.message(&Export(bytes)).to("egress").publish().await?;
 A message declaring `headers = Meta` publishes only with `.with_headers(&meta)` - forgetting it,
 or passing another type, does not compile. `with_headers` also takes an already-built `HeaderMap`
 by value. A `Serialize` type owned by another crate cannot derive `Outgoing`: wrap it in a newtype
-that does.
+that does. The publisher may add a base of its own (`base_headers`, a tenant or a producer name);
+the builder lays that base down first and writes the call site's headers over it, key by key.
+
+## Publish transforms
+
+A published message passes two levels. A `PublishTransform` sits on one position, chained with
+`.transform(..)` after the `.out(..)` that named it; a `PublishLayer` sits on the application,
+added with `.publish_layer(..)` before `with_broker`, and wraps every publish a handler makes,
+replies and slots alike. A position's transforms run first, then the app-wide layers, then the
+send. A router's slots run their own transforms and not the app-wide chain, because its routes are
+typed before the app that mounts them.
+
+Every impl of `PublishTransform<K>` declares two things. What it **reads** is the position's kind:
+`ForReply<C>` hands it `PublishContext<'_, C>` (the delivery being answered - its channel, the
+incoming headers, the broker's typed per-delivery fields), `ForSlot` hands it `SlotContext<'_>`
+(the slot's own name and nothing else, because the body issued that publish and has already read
+its own `Context`). A transform reading nothing writes one impl over every kind and mounts
+anywhere. What it **may do** is `type Destination`: `Reads` leaves the destination alone, `Names`
+sets it. Stable Rust has no associated-type default, so every impl writes the line; almost every
+one writes `Reads`.
+
+```rust
+use ruststream::runtime::{
+    ContextKind, ForReply, Names, Outgoing, PublishContext, PublishTransform, Reads,
+};
+
+/// Reads nothing, so one impl serves a reply and a slot alike.
+struct EnvelopeTransform;
+
+impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+        out.headers_mut().insert("x-envelope", b"1".to_vec());
+    }
+}
+```
+
+### Naming a destination from a transform
+
+Some answers have no destination to declare: an AMQP request carries the queue to answer on in its
+`reply-to` header, a ZeroMQ `ROUTER` addresses each answer to the peer that asked. A transform
+declaring `Destination = Names` sets the name per delivery, and it mounts with the ordinary
+`.transform(..)` step - there is no second verb.
+
+```rust
+struct ReplyTo;
+
+impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+    type Destination = Names;
+
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+        if let Some(to) = cx.headers().get("reply-to")
+            && let Ok(to) = std::str::from_utf8(to)
+        {
+            out.set_name(to.to_owned());
+        }
+    }
+}
+
+// `Response` leaves its destination open, so this position offers the naming right;
+// "answers" is the declared fallback and what the document reports
+b.include(answer).out(Reply, Publish).transform(ReplyTo);
+```
+
+A position offers that right only where nothing declared the destination, and elsewhere the
+`.transform(..)` call does not compile, naming the type that already declared one. A reply type
+carrying `#[outgoing(name = ..)]` offers nothing, a batch's replies never do (they answer many
+deliveries at once), and a position offers it once. A slot offers it only when every type in its
+marker's `#[publishes(..)]` dictionary leaves its destination open, which means a marker with no
+dictionary - `DefaultSlot` included - never does. A slot that gave the right away offers plain
+sending only: a transaction and a request / reply round trip do not compile on it.
+
+## Broker settings per message
+
+A QoS, a priority, an ordering key, an expiration are the broker's own per-message settings, not
+headers. They reach a publish from two places. The publish policy carries the defaults, named at
+the mount site, and every message through that position is sent with them:
+
+```rust
+b.include(record).out(Ledger, Publish::default().qos(1)).build();
+b.include(acknowledge).out(Reply, Publish::default().qos(1));  // a reply has no call site
+```
+
+The call adjusts one setting for one message, through a step the broker adds to the publish
+builder. A setting no step names keeps the policy's default, and the rest of the publish is still
+the mount site's: the entry's codec, its transforms, the slot the test harness records it against.
+
+```rust
+// the body imports the broker's prelude for the step, and names its options type in the bound -
+// the one place a handler body imports more than the framework prelude
+use ruststream_rumqttc::prelude::*;
+
+#[subscriber("telemetry.in")]
+async fn record(
+    reading: &Reading,
+    Out(audit): Out<impl Publisher<Options = MqttOptions>, Telemetry>,
+) -> HandlerOutcome {
+    if audit.message(reading).to("telemetry.out").retain(true).publish().await.is_err() {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+```
+
+The steps are on the builder, so they work on every publish surface: an `Out` slot, a transaction
+opened on one, a bare publisher from the state or a startup hook. Which steps exist is the broker's
+documentation to answer. A setting never rides a header and never wraps the publisher (an adapter
+would lose the mount site's codec).
 
 ## State injection (dependency injection)
 
@@ -533,15 +694,11 @@ commit, or a publish after settling do not compile:
 ```rust
 use std::error::Error;
 
-use ruststream::TransactionalPublisher;
-use ruststream::codec::JsonCodec;
-use ruststream::runtime::Transactional;
+use ruststream::prelude::*;
 
 // The bound names the capability the seeding needs, not the broker's publisher; the same
 // capability unlocks `begin()` on an `Out` slot (`Out<impl TransactionalPublisher, Journal>`).
-async fn seed_events<P>(
-    seeder: Transactional<P, JsonCodec>,
-) -> Result<(), Box<dyn Error + Send + Sync>>
+async fn seed_events<P>(seeder: P) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     P: TransactionalPublisher,
 {
@@ -553,8 +710,9 @@ where
 }
 ```
 
-The same policy-plus-wrapper choice applies wherever a publisher is attached, and the verb is the
-same on both: `.out(Reply, ..)` for a reply handler, `.out(marker, ..)` for a slot.
+A policy is named the same way wherever a publisher is attached, and the verb is one:
+`.out(Reply, ..)` for a reply handler, `.out(marker, ..)` for a slot, `after_startup(policy, hook)`
+for the first publish.
 
 ## Broker context fields (`Ctx<K>`)
 
@@ -592,15 +750,19 @@ async fn convert(chunk: &Chunk, Headers(meta): Headers<ChunkMeta>) -> HandlerOut
 
 ## Context (optional explicit parameter)
 
-When you need the raw delivery objects, take `ctx: &mut Context<'_, C, S>` as the last parameter
-(`C` = broker context type, `S` = application state):
+When you need the raw delivery objects, take `ctx: &mut Context<'_, C, S>` as the second parameter,
+right after the payload (`C` = broker context type, `S` = application state):
 
 - `ctx.name()` - the subject/channel the message arrived on.
 - `ctx.headers()` / `ctx.headers_mut()` - the working copy of the message headers (`HeaderMap`).
 - `ctx.state()` - the shared application state built by `on_startup`.
+- `ctx.context(KEY)` - one broker field by compile-time key, the `Ctx<K>` extractor's other half.
+- `ctx.set(KEY, value)` - a per-delivery scratch value, for middleware.
+- `ctx.after(outcome).then(fut)`, `ctx.after_ack(fut)`, `ctx.after_settle(fut)` - a post-settle
+  hook selected by how the delivery settles.
 
 There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`State<T>` /
-`ctx.state()`), and publishing goes through `publish(..)` replies or an `Out` parameter.
+`ctx.state()`), and publishing goes through a `publish` reply or an `Out` parameter.
 
 On a batch handler `C` is the broker's *subscription-scoped* context, not its per-delivery one:
 name it (`ctx: &mut Context<'_, MemoryBatchContext>`) to read what the whole subscription shares -
@@ -640,8 +802,7 @@ makes, replies and `Out` slots alike, except in a router (its routes are typed b
 that mounts them, so a router's slots carry their own `.transform(..)` steps only).
 
 ```rust
-use ruststream::memory::prelude::*;
-use ruststream::runtime::RouterDef; // the only router item outside the prelude
+use ruststream::memory::prelude::*; // Router and RouterDef ride the prelude
 
 fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
     Router::new().include(accept)
@@ -654,6 +815,10 @@ fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
 // in with_broker(broker, |b| { ... }):
 b.include_router(orders().merge(shipping()));
 ```
+
+On a router every registration that carries an attachment (a reply publisher, an `Out` slot) ends
+with an explicit `.build()`: a chain without it never becomes a router, so it does not compile.
+With no `.out(Reply, ..)` named, `.build()` takes the broker's own default publish policy.
 
 ## Broker-specific subscriptions
 
@@ -706,7 +871,8 @@ use ruststream::testing::TestApp;
 
 let tb = TestApp::start(service()).await?;
 
-// the publish drives the handler to a standstill before returning
+// the publish drives the handler to a standstill before returning; in a single-broker app
+// `tb.message(..)` says the same without naming the broker
 tb.broker::<MemoryBroker>()
     .message(&Order { id: 42 })
     .to("orders")
@@ -723,6 +889,21 @@ tb.broker::<MemoryBroker>()
     .published::<Receipt>("receipts")
     .assert_called_once()
     .with(&Receipt { order_id: 42 });
+```
+
+`tb.out::<Marker>()` is the other view: exactly what left through one injected publisher, across
+every broker. It takes the same assertions as `published` (`assert_called_once`, `with_raw`,
+`messages`; chain `.decoded_as::<T>()` for the typed `with`), and it is the only place a test reads
+back the per-message broker settings a publish carried - `with_options(&expected)` compares them,
+`assert_options_default()` states that no step touched one. The broker's publish log has already
+resolved the settings into the protocol, so asking it for options panics.
+
+```rust
+// every field of an options type is optional, so the expectation is a struct literal
+tb.out::<Telemetry>()
+    .assert_called_once()
+    .with_options(&MqttOptions { retain: Some(true), ..MqttOptions::default() });
+tb.out::<Notes>().assert_called_once().assert_options_default();
 ```
 
 Broker crates ship their own in-process test broker under their `testing` feature; `TestApp` drives

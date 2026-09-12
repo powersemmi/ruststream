@@ -7,31 +7,32 @@ alwaysApply: false
 - Everything the attribute macros produce can be written by hand. `macros` is a convenience
   feature, not a layer: `#[subscriber]` expands into calls on the same public runtime API, so a
   service without it loses no capability that does not come *from* a declaration.
-- What the attribute emits for `async fn handle(order: &Order) -> HandlerOutcome` is, in order: a
-  unit struct named after the function, an `impl Handler` whose `async fn handle` carries the body,
-  and the `Declared` + `SubscriberDef` impls that let `include` mount it. Every one of those traits
-  is public, so **how far you write it out is a choice, not a limit**.
-- So a handler is a named type implementing `Handle<In, R, O, C, S>`, whose `async fn handle(&self,
-  input: &In, outs: &O, ctx: &mut Context<'_, C, S>)` is an ordinary async method. What a closure
-  would capture becomes a field on that type - a closure is not a `Handle`, the body is always a
-  named type.
-- **Level one** - stop at the body trait and mount with
-  `b.include(subscriber(source, body).build())`. There is one body trait and one constructor:
-  every axis of the form matrix is a defaulted parameter the impl pins, so the signature decides
-  the form and nothing else names it. `In` is the input spelling (`T` decoded, `F<'_>` a type that
-  deserializes itself from the bytes, `Message<H, P>` a decoded payload next to its typed header
-  contract, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a batch of each), `R` the reply type
-  (`()` declares none), `O` the injections arena (`()` declares none), `C` the broker's typed
-  context - per delivery on the single forms, the broker's subscription-scoped batch context
-  (`BuildBatchContext`, built once per batch) on the batch ones - and `S` the application state the
-  body reads with `ctx.state()`. What the signature does
-  not carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
-  `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply declaration (`.reply()`,
-  `.to(dest)` - never a publisher, which is the mount site's `.out(Reply, policy)`) and the
-  document controls
-  (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and `include` mounts it. Nothing
-  else to implement; the registration metadata is derived from the source and the body's input
-  type.
+- What the attribute emits for `async fn handle(order: &Order) -> HandlerOutcome` is a unit struct
+  named after the function, an `impl Handle` carrying the body, and a `Declared` impl that builds
+  the same sealed definition the `subscriber(..) .. .build()` chain produces. So the attribute is
+  sugar over the manual path's own vocabulary, and what it writes you can write.
+- A handler is a named type implementing `Handle<In, R, O, C, S>`, whose `fn handle(&self, input:
+  &In, outs: &O, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Verdict<In, R>> + Send` is an
+  ordinary method. What a closure would capture becomes a field on that type - a closure is not a
+  `Handle`, the body is always a named type. A body with nothing to await returns `ready(..)`
+  rather than being `async fn`; clippy's `unused_async_trait_impl` reports the other spelling.
+- There is one body trait and one constructor. Every axis of the form matrix is a defaulted
+  parameter the impl pins, so the signature decides the form and nothing else names it. `In` is the
+  input spelling (`T` decoded, `F<'_>` a type that deserializes itself from the bytes,
+  `Message<H, P>` a decoded payload next to its typed header contract, and `[T]` / `[F<'_>]` /
+  `[Message<H, P>]` for a batch of each), `R` the reply type (`()` declares none), `O` the
+  injections arena (`()` declares none), `C` the broker's typed context - per delivery on the
+  single forms, the broker's subscription-scoped batch context (`BuildBatchContext`, built once per
+  batch) on the batch ones - and `S` the application state the body reads with `ctx.state()`. What
+  the signature does not carry rides the chain: the declarative settings (`.name`, `.workers`,
+  `.workers_by_key`, `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply declaration
+  (`.reply()`, `.to(dest)` - never a publisher, which is the mount site's `.out(Reply, policy)`)
+  and the document controls (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and
+  `include` mounts it. The registration metadata comes off the source and the body's input type.
+- That constructor is the only way in. The definition traits behind it (`SubscriberDef`, the batch
+  and publishing defs) are crate-internal machinery, not an extension point: a service cannot write
+  a definition type of its own, and a custom source, custom metadata or computed settings go on the
+  chain instead. `IncludeDef` and `Declared` stay public because `include` dispatches on them.
 - The return shape is computed from the same two axes, so an illegal combination has no type to be
   written in and each shape has exactly one accepted spelling: `Result<(), HandlerOutcome>` for a
   single message with no reply (`Ok(())` acks), `Result<Reply, HandlerOutcome>` for a single one
@@ -41,26 +42,16 @@ alwaysApply: false
   whole-batch uniform outcome; a continuation is not a shape of its own either - return
   `Err(HandlerOutcome::ack().and_after(..))`. The batch vector settles element-wise and is
   batch-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
-- **Level two** - implement `SubscriberDef` plus `Declared`, and `b.include(def)` works on your own
-  type with the whole mount surface: the settings builder (`.name`, `.workers`, `.on_failure`,
-  `.batch`), `.out(marker, policy)` per publish position and `.build()`. The settings live on
-  `Declared::Settings`, which must be a `SubscriberBuilder` - `SubscriberBuilder::new(def, source)`
-  is public for exactly this. Implementing `IncludeDef` alone routes through the blanket
-  `impl<T: IncludeDef> Declared for T`, whose `Settings = Self`: that serves the codec-free forms, but a
-  decoded one resolves its codec through the builder, so a bare definition does not mount there -
-  and the steps (`NameStep`, `WorkersStep`, `FailureStep`, `BatchStep`) are implemented for
-  `SubscriberBuilder`, not for a bare definition, so that route has no settings surface either. A
-  batch definition must also implement `BatchSized`, which is how the mount reads back the size
-  `.batch(n)` named.
 - The derives are equally reproducible, and reading their expansion is the fastest way to get one
-  right: `#[derive(Outgoing)]` writes `OutgoingDestination` plus a `MessageHeaders` contract
-  (`NoHeaders` or `WithHeaders<H>`), `#[derive(OutSlot)]` writes `OutSlot` plus the
-  `ContainsMessage` memberships, `#[derive(OutMessages)]` writes `OutMessages` over an enum's
-  variants, `#[derive(Deserialized)]` writes the payload construction plus the `Input` spelling
-  that puts a type on the codec-free lane, `#[derive(Serialized)]` writes `fn bytes(&self)` plus
-  the wire spellings that send the value byte-for-byte (`MessageWire` for a typed publish,
-  `ReplyShape` for the reply position), and `#[derive(FromRef)]` writes one `FromRef`
-  impl per field.
+  right: `#[derive(Outgoing)]` writes `OutgoingDestination` (the `Form` plus the `DESTINATION`
+  constant a declared name fills) with a `MessageHeaders` contract (`NoHeaders` or
+  `WithHeaders<H>`) and the type's `OutMessages` entry, `#[derive(OutSlot)]` writes `OutSlot` (its
+  `NAME`, its `Destination` offer and its dictionary) plus a `PublishedThrough` membership per
+  listed type, `#[derive(OutMessages)]` writes `OutMessages` over an enum's variants,
+  `#[derive(Deserialized)]` writes `from_payload` plus the `Input` spelling that puts a type on the
+  codec-free lane, `#[derive(Serialized)]` writes `wire_bytes` plus the wire spellings that send
+  the value byte-for-byte (`MessageWire` for a typed publish, `ReplyShape` for the reply position),
+  and `#[derive(FromRef)]` writes one `FromRef` impl per field.
 - The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
   a clause for you, so what the attribute would have declared you write as a trait impl.
 - `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
@@ -70,14 +61,19 @@ alwaysApply: false
   reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` and the publisher
   capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`), plus `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
-  `DefaultSlot`, `RouterDef` and `nonzero!`), and so do the spellings the hand-written impls
-  name: `Input` / `SoloDeserialized`, `MessageWire` / `SerializedWire`, `SerializedReply`,
-  `OutgoingDestination` with `CallerName` / `FixedName` / `NameTemplate`, `MessageHeaders` with
-  `NoHeaders` / `WithHeaders`, `PublishedThrough`, `OutMessages` / `OutgoingMessageMetadata`,
-  and `FromContext`. A service without the feature imports nothing beyond the glob.
-- Mount with `b.include(subscriber(source, body).build())` (the portable form: the source resolves
-  at startup), or `b.handle(subscriber, handler, metadata)` when you already hold an open
-  subscriber. Routers have the same `include` method, so grouping still works.
+  `DefaultSlot`, `Reply`, `Router` / `RouterDef` and `nonzero!`), and so do the spellings the
+  hand-written impls name: `Input` / `SoloDeserialized`, `MessageWire` / `SerializedWire`,
+  `ReplyShape` / `SerializedReply`, `BytesMut` (a `Serialized` impl names it), `OutEntry` (the
+  bound a body declares its arena with), `OutgoingDestination` with `CallerName` / `FixedName` /
+  `NameTemplate`, `MessageHeaders` with `NoHeaders` / `WithHeaders`, `PublishedThrough`,
+  `OutMessages` / `OutgoingMessageMetadata`, the transform vocabulary (`PublishTransform`,
+  `ContextKind`, `ForReply` / `ForSlot`, `Reads` / `Names`) and `FromContext`. A service without
+  the feature imports nothing beyond the glob.
+- Mount with `b.include(subscriber(source, body).build())`; the source resolves at startup.
+  Routers have the same `include` method, so grouping still works. `Router::handle` and
+  `BrokerScope::handle` take an already-open subscriber and a fully wired handler: they are the
+  runtime's own machinery, they read no scope codec and no settings, and a service does not write
+  them.
 - Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
   `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
 - State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
@@ -88,6 +84,7 @@ alwaysApply: false
 
 ```rust
 use std::error::Error;
+use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
 use serde::Deserialize;
@@ -102,14 +99,14 @@ struct Order {
 struct Receive;
 
 impl Handle<Order> for Receive {
-    async fn handle(
+    fn handle(
         &self,
         order: &Order,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         tracing::info!(order.id, "processing order");
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -135,7 +132,8 @@ The body's two unused parameters are not ceremony: `_outs` is the injections are
 declared none, and `_ctx` is the per-delivery context that is always in reach. **Keep anything that
 can panic inside the future**: the dispatcher calls `handler.handle(..)` and only then wraps the
 result in `catch_unwind`, so a panic raised before the first `await` escapes the guard and kills
-the task instead of settling by `on_failure(panic = ..)`.
+the task instead of settling by `on_failure(panic = ..)`. Writing the body as `async fn handle`
+is equally legal, and the right shape as soon as it awaits anything.
 
 `run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
 (a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
@@ -146,9 +144,7 @@ another foreground server.
 The constructor resolves the decode codec off the mount surface, the same ladder the attribute path
 uses: the scope's (`with_broker_codec`), the router chain's (`Router::with_codec`), else
 `DefaultCodec`. `.codec(..)` overrides it for one registration, and `.on_failure(..)` carries the
-decode-failure policy. (`typed(codec, handler)` is the wrapper underneath - it decodes the delivery
-and calls the inner handler with `&T` - and the one you build yourself for the `handle` SPI below,
-which reads no scope codec.)
+decode-failure policy.
 
 ```rust
 use ruststream::codec::CborCodec;
@@ -196,14 +192,14 @@ impl Input for Frame<'_> {
 struct Ingest;
 
 impl<'p> Handle<Frame<'p>> for Ingest {
-    async fn handle(
+    fn handle(
         &self,
         frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         parse(frame.0);
-        Ok(())
+        ready(Ok(()))
     }
 }
 
@@ -214,26 +210,31 @@ A constructor that validates (a flatbuffers root, a length check) returns `Err` 
 settles by the subscriber's `on_failure(decode = ..)` policy - the same rung a codec decode
 failure lands on, so that policy is accepted on this lane.
 
-Use `b.handle(subscriber, handler, meta)` instead when the broker hands you an open subscriber
-before registration (how you obtain one is broker-specific; the in-memory broker's `subscribe` is
-a plain synchronous call):
+A generated message (Protobuf, Cap'n Proto, FlatBuffers) rides the same lanes with the format's own
+functions in the impls, which is all `#[wire(prost)]` and `#[wire(encode = .., decode = ..)]` fill
+in. The outgoing half is three impls: `Serialized::wire_bytes` takes the publish path's own
+`BytesMut` and lends back what it wrote, so the message is encoded once and nothing intermediate is
+allocated, and the two wire spellings say where the value may be used.
 
 ```rust
-use ruststream::memory::MemoryMessage;
-use ruststream::runtime::HandlerMetadata;
+impl Serialized for Order {
+    type Error = prost::EncodeError;
 
-// The SPI takes a handler over the broker's own message, not over `[u8]`.
-struct Frames;
-
-impl Handler<MemoryMessage> for Frames {
-    async fn handle(&self, msg: &MemoryMessage, _ctx: &mut Context<'_>) -> HandlerOutcome {
-        parse(msg.payload());
-        HandlerOutcome::ack()
+    fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Self::Error> {
+        prost::Message::encode(self, &mut *buf)?;
+        Ok(&buf[..])
     }
 }
 
-let subscriber = b.broker().subscribe("orders");
-b.handle(subscriber, Frames, HandlerMetadata::raw("orders"));
+impl MessageWire for Order {
+    type Wire = SerializedWire;
+}
+
+impl ReplyShape for Order {
+    type Body = Self;
+    type Headers = ();
+    type Wire = SerializedReply;
+}
 ```
 
 ## Dependencies and state
@@ -330,7 +331,11 @@ short ones, and then the value publishes like any declared message:
 
 ```rust
 impl OutgoingDestination for Receipt {
-    type Form = CallerName; // FixedName / NameTemplate for a declared destination
+    // FixedName or NameTemplate for a declared destination, and then the name itself:
+    //   type Form = FixedName;
+    //   const DESTINATION: &'static str = "receipts";
+    // NameTemplate adds PARAMETERS and a TemplateAddress builder, one setter per placeholder.
+    type Form = CallerName;
 }
 
 impl MessageHeaders for Receipt {
@@ -339,16 +344,19 @@ impl MessageHeaders for Receipt {
 
 impl<M: OutSlot> OutMessages<M> for Receipt {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
-        Vec::new()
+        Vec::new() // a declared type reports one entry here; the document reads it
     }
 }
 
 publisher.message(&Receipt { order_id: 7 }).to("receipts").publish().await?;
 ```
 
-A payload that already is bytes implements `Serialized` the same way - `fn bytes(&self) -> &[u8]`
-plus the wire spellings (`MessageWire`, `ReplyShape`), exactly what `#[derive(Serialized)]`
-writes - and rides the same `message(..)` entry with no codec on the path.
+A slot marker is the same kind of declaration: `impl OutSlot` names the marker's `NAME`, its
+`Destination` offer (`Reads` unless the slot may name a destination) and the dictionary its
+`outgoing()` reports, and one `impl PublishedThrough<Marker> for Msg` per listed type is the
+membership the typed publish checks. A payload that already is bytes adds the `Serialized` and
+wire impls from [Raw bytes](#raw-bytes) and rides the same `message(..)` entry with no codec on
+the path.
 
 The mount chain, `after_startup`, publish transforms and `publish_layer` are all runtime API
 and work unchanged. The reply clause becomes the body's `R` axis plus the one `.reply()` on the
@@ -360,25 +368,24 @@ after it. A `serde::Serialize`
 an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire = SerializedReply`
 covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
 `.reply()` and one `.out(Reply, ..)` for both wires. A batch reply always publishes through the
-reply codec; the `Serialized` wire covers single replies. The `Out` slot parameter becomes the `O` axis:
-`Outs<(Slot<Marker, W, Enc, Pipe>,)>`, where `W` is the wired live value, `Enc` the include site's
-encode codec and `Pipe` the publish path it gave the slot (its `.transform(..)` steps over the
-app's own middleware), with the broker capability the body needs stated as a mandatory bound on
-that wired value, one entry per marker. Leaving `Pipe` generic under `OutPipeline` is what lets
-one body mount under any of them; spelled without it the entry pins the plain path
-(`PublishIdentity`: no slot transform, no app-wide `publish_layer`).
+reply codec; the `Serialized` wire covers single replies. A reply type that declares its own
+destination takes the bare `.reply()`, exactly as the attribute's bare `publish` clause does.
+
+The `Out` slot parameter becomes the `O` axis: `Outs<(E,)>` with one type parameter per marker,
+each bounded `E: OutEntry<Marker, Wire: Capability>`. The body states the marker and the broker
+capability it needs of the wired value, and nothing else: the codec the include site gave the slot
+and the publish path it composed (its `.transform(..)` steps over the app's own `publish_layer`)
+stay behind the bound, which is what lets one body mount under any of them.
 
 ```rust
-impl<W, Enc, Pipe> Handle<Order, (), Outs<(Slot<Primary, W, Enc, Pipe>,)>> for Mirror
+impl<M> Handle<Order, (), Outs<(M,)>> for Mirror
 where
-    W: Publisher,
-    Enc: Codec + Send + Sync,
-    Pipe: OutPipeline,
+    M: OutEntry<Primary, Wire: Publisher>,
 {
     async fn handle(
         &self,
         order: &Order,
-        outs: &Outs<(Slot<Primary, W, Enc, Pipe>,)>,
+        outs: &Outs<(M,)>,
         _ctx: &mut Context<'_>,
     ) -> Result<(), HandlerOutcome> {
         outs.get(Primary)
@@ -400,10 +407,11 @@ b.include(subscriber("mirror", Mirror).build())
 
 The markers come from the impl, so a missing, duplicate or extra `.out(..)` is a compile error
 naming the slot, and a single unnamed slot binds through the implicit `DefaultSlot`
-(`.out(DefaultSlot, policy).build()`). `outs.get(Marker)` hands back the entry itself: it keeps the `.message(..)`
-builder and is a transparent `Deref` onto the wired live value, so a broker-defined
-capability is called straight on it - a body that needs one pins the concrete live type
-(`Slot<Lanes, LaneRouter, Enc, Pipe>`) or bounds `W` with the broker's own trait.
+(`.out(DefaultSlot, policy).build()`). `outs.get(Marker)` hands back the entry itself: it keeps the
+`.message(..)` builder and is a transparent `Deref` onto the wired live value, so a broker-defined
+capability is called straight on it. A trait bound does not travel through that `Deref`, so a
+helper generic over such a capability works only where the broker crate grafted a blanket impl onto
+`Slot<M, W, E, Pipe, Body>`.
 
 ## Middleware
 
@@ -431,90 +439,30 @@ where
 }
 ```
 
-## Reaching the rest: write the definition out
+## What the chain reaches, and what it does not
 
-`b.handle` registers with the default failure policies and no settings, because it takes a handler,
-not a definition. It also never reads the scope codec, so `with_broker_codec` and
-`Router::with_codec` are inert on a `handle` registration - the codec is the one you named at
-`typed(..)`.
+Every form is reachable through the one constructor. The application state, the typed broker
+context and the injections are axes of the body's own `impl Handle`; the reply and document steps
+ride the chain (`.reply()` / `.to(..)`, `.describe(..)`, `.undocumented()`) next to the declarative
+settings the attribute path shares, the mandatory batch size `.batch(n)` among them. Registrations
+are documented by default under `asyncapi`, which is why message types need `schemars::JsonSchema`
+and `.undocumented()` is the per-registration exit.
 
-A `Router` reaches a little further without a definition: `Router::workers(Workers::pool(n))` /
-`Workers::keyed(n)` is the functional counterpart of the `workers(..)` clause (`BrokerScope` has no
-worker control at all). The batch shapes need nothing extra - `[T]` and `[Frame<'_>]` are input
-spellings of the one constructor, and the decoded one resolves the chain's codec.
+What used to be a second route is closed. The definition traits the retired expansion targeted are
+crate-internal now, so a definition type of your own is not something a service writes: a computed
+source is a value handed to `subscriber(..)`, computed settings are calls on the chain, and a
+description is `.describe(..)`. The settings state rides in the builder's type (`Open` per setting
+still free, `Fixed` per setting already named), which is what makes naming one twice a compile
+error rather than a silent override.
 
-Every form is reachable through that one constructor, so none is locked behind the definition
-traits: the application state, the typed broker context and the injections are all axes read off
-the body's own `impl Handle`, and the reply and document steps ride the chain
-(`.reply()` / `.to(..)`, `.describe(..)`, `.undocumented()`) next to the
-declarative settings the attribute path shares, the mandatory batch size `.batch(n)` among them.
-Registrations are documented by default under `asyncapi`, which is why the
-message types need `schemars::JsonSchema` and `.undocumented()` is the per-registration exit.
-What is left for the definition traits is being the attribute's own expansion target, and a fully
-custom definition - one whose source, metadata or settings are computed rather than named - so
-implement one and the whole mount surface opens up on your own type.
+A `Router` adds two steps of its own, each applying to the registration just included:
+`.workers(Workers::pool(n))` / `Workers::keyed(n)` is the functional counterpart of the
+`workers(..)` clause, and `.layer(..)` wraps that one registration outside its decode step.
+`Router::with_codec` sets the decode codec of everything included after it.
 
-```rust
-use ruststream::runtime::{
-    Declared, FailurePolicies, FailurePolicy, Fixed, Open, SubscriberBuilder, SubscriberDef,
-    SubscriberSettings, forms,
-};
-
-// This exact case is shorter as `subscriber("orders", Receive).on_failure(..).build()`; the
-// shape below is what a definition carrying its own declaration looks like. The SPI takes the
-// dispatch trait `Handler`, not the manual path's `Handle`.
-impl SubscriberDef for Receive {
-    type Input = /* the decode kind */;
-    type Context = ();
-    type Handler = Self;
-    type Source = Name;
-
-    fn source(&self) -> Self::Source { Name::new("orders") }
-    fn into_handler(self) -> Self { self }
-}
-
-// `Declared` is where the settings live, and its `Settings` has to be a builder. This is
-// verbatim what the expansion emits: `SubscriberBuilder::new(self, source)` plus the chain the
-// attribute's clauses parsed into.
-impl Declared for Receive {
-    type Form = forms::Subscribing;
-    // (workers, failure policies, start position, batch supply)
-    type Settings = SubscriberBuilder<Self, Name, (Open, Fixed, Open, Open)>;
-
-    fn declare(self) -> Self::Settings {
-        SubscriberBuilder::new(self, Name::new("orders"))
-            .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry))
-    }
-}
-
-b.include(Receive);
-```
-
-The two routes are mutually exclusive: a direct `impl Declared` conflicts with the blanket
-`impl<T: IncludeDef> Declared for T`, so pick one per definition. The builder route is the one that
-scales - `SubscriberBuilder` forwards `SubscriberDef`, `InjectDef`/`InjectCall`,
-`PublishingDef`/`PublishingCall`, `BatchPublishingDef`/`BatchPublishingCall` and
-`HasSlots`/`BindSlots`, so the same shape carries every handler form, injected slots included.
-It does mean the source is written twice, in `declare()` and in the def's own `source()`, which is
-what the attribute writes too.
-
-The settings state rides in the `Settings` type (`AllOpen` when the declaration fixed none,
-`Fixed` in the slot for each one it did), which is what makes naming the same setting again at the
-mount site a compile error rather than a silent override. Put a setting in `declare` to keep it
-next to the handler, or leave the state open and let the mount site name it - the same choice the
-attribute gives you between a clause and a builder call.
-
-Read the expansion in `crates/ruststream-macros/src/expand.rs` before writing one of these: it
-names the exact `Input` kind, `Context` and form marker per handler shape, and it is the only place
-the whole mapping is written down. A definition that wants the attribute's own settings surface
-instead of the blanket can implement `Declared` directly and return
-`SubscriberBuilder::new(self, source)` with the chain applied, which is literally what the macro
-emits.
-
-The same holds for the derives: implement `OutgoingDestination` + `MessageHeaders` for a declared
-message, `OutSlot` + `ContainsMessage` for a slot marker, `OutMessages` for a set, `FromRef` per
-state field. The schema hooks on `SubscriberDef` are what feed the generated AsyncAPI document, so
-a hand-written definition contributes the same schemas.
+Read the expansion in `crates/ruststream-macros/src/expand/unified.rs` when you need the exact
+mapping from a handler shape to the axes and the form marker: it is the only place the whole table
+is written down.
 
 Enabling `macros` remains the shorter road, and the two styles compose in one application: a
 macro-free registration and an `include(def)` sit in the same `with_broker` scope.
