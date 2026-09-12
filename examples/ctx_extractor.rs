@@ -60,8 +60,10 @@ async fn audit(order: &Order, Ctx(len): Ctx<PayloadLen>) -> HandlerOutcome {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(audit));
+    let app =
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(audit);
+        });
 
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()

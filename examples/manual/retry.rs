@@ -65,18 +65,25 @@ impl Handle<[Payment]> for ReconcileBatch {
 }
 // --8<-- [end:batch_retry_after]
 
+// --8<-- [start:mount]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("payments", Reconcile).build());
+        // The publisher a deferred copy leaves through, named once per registration. The
+        // in-memory broker honours the delay itself, so nothing here defers; a broker without
+        // delayed redelivery of its own does, and then this position is what carries the delay.
+        b.include(subscriber("payments", Reconcile).build())
+            .out_retry(Publish);
         // Batches dispatch per batch rather than per delivery, and the batch input is what says
         // so; the batch size is the one parameter the mount owes the broker.
         b.include(
             subscriber("payments", ReconcileBatch)
                 .batch(nonzero!(64))
                 .build(),
-        );
+        )
+        .out_retry(Publish);
     })
 }
+// --8<-- [end:mount]
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

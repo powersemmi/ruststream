@@ -47,10 +47,16 @@ async fn reconcile_batch(payments: &[Payment]) -> Vec<HandlerOutcome> {
 }
 // --8<-- [end:batch_retry_after]
 
+// --8<-- [start:mount]
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(reconcile);
-        b.include(reconcile_batch.batch(nonzero!(64)));
+        // The publisher a deferred copy leaves through, named once per registration. The
+        // in-memory broker honours the delay itself, so nothing here defers; a broker without
+        // delayed redelivery of its own does, and then this position is what carries the delay.
+        b.include(reconcile).out_retry(Publish);
+        b.include(reconcile_batch.batch(nonzero!(64)))
+            .out_retry(Publish);
     })
 }
+// --8<-- [end:mount]

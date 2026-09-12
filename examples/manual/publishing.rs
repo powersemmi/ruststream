@@ -3,7 +3,7 @@
 //! declaration they mint is written out here: the reply bodies, the slot markers and their
 //! dictionaries, and what a message type says about being sent. Everything a body does is an axis
 //! of its own `impl Handle`, and the mount site then reads exactly as it does with the attribute -
-//! `include`, `.out(Reply, ..)`, `.out(marker, ..)`, `.build()`.
+//! `include`, `.out_reply(..)`, `.out(marker, ..)`, `.build()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -548,7 +548,7 @@ fn app() -> impl App {
                     .to("responses")
                     .build(),
             )
-            .out(Reply, Publish)
+            .out_reply(Publish)
             .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(
@@ -573,7 +573,7 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // one verb for both positions: .out_reply(..) names who publishes the returned
             // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
             // slot - DefaultSlot for a single unnamed slot
             b.include(
@@ -602,7 +602,7 @@ fn app() -> impl App {
                     .batch(nonzero!(64))
                     .build(),
             )
-            .out(Reply, TransactionalPublish)
+            .out_reply(TransactionalPublish)
             .transactional();
             // --8<-- [end:batch_publishing_mount]
         })

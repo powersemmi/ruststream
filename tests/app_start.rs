@@ -59,7 +59,9 @@ async fn start_resolves_running_and_shutdown_completes() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| b.include(observe));
+        .with_broker(broker, |b| {
+            b.include(observe);
+        });
 
     // --8<-- [start:handle]
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
@@ -84,7 +86,9 @@ async fn stopping_resolves_on_fail_fast_and_shutdown_surfaces_it() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| b.include(boom));
+        .with_broker(broker, |b| {
+            b.include(boom);
+        });
 
     let running = app.start().await.expect("startup failed");
 
@@ -197,7 +201,9 @@ async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
         .on_shutdown(async move |_state| Err::<(), _>(io::Error::other("on_shutdown boom")))
         .after_shutdown(async move |_state| Err::<(), _>(io::Error::other("after_shutdown boom")))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| b.include(quiet));
+        .with_broker(broker, |b| {
+            b.include(quiet);
+        });
 
     let running = app.start().await.expect("startup failed");
     assert!(format!("{running:?}").contains("RunningApp"));
@@ -335,7 +341,9 @@ async fn failed_after_startup_unwinds_connected_brokers() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .after_startup(async move |_state| Err::<(), _>(io::Error::other("after_startup boom")))
-        .with_broker(broker, |b| b.include(quiet));
+        .with_broker(broker, |b| {
+            b.include(quiet);
+        });
 
     let err = app
         .start()

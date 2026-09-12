@@ -53,7 +53,9 @@ async fn a_bare_attribute_is_named_at_the_mount_site() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), {
         let subject = subject.clone();
-        |b| b.include(audit.name(subject))
+        |b| {
+            b.include(audit.name(subject));
+        }
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 

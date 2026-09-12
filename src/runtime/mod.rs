@@ -22,6 +22,7 @@ mod publish_source;
 mod publisher_registry;
 mod publishing;
 mod redelivery;
+mod retry;
 mod router;
 mod settings;
 mod slot;
@@ -123,9 +124,15 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
+pub use redelivery::RetryPairing;
+pub use retry::Retry;
+#[doc(hidden)]
+pub use retry::{Retried, RetryOpen, RetryPos};
+#[doc(hidden)]
 pub use router::{
-    BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
-    RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterCommit, RouterMount,
+    AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount,
+    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterBroker, RouterCommit,
+    RouterMount,
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,
@@ -141,9 +148,9 @@ pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
 pub use slot::{
     AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,
     DestinationOffer, InitSlots, IntoSlotSource, MapPolicyAt, MapPolicyLast, MissingSlot,
-    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, ReplyLast, ReplyOffer, ReplyOpen,
-    ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast, TransformAt, TransformLast,
-    WithSource,
+    MountOffer, NamedStep, NoOutBound, NoReply, OutAttachment, OutPosition, ReplyLast, ReplyOffer,
+    ReplyOpen, ReplyStep, SlotCodec, SlotPolicy, SlotPos, TransactionalLast, TransformAt,
+    TransformLast, WithSource,
 };
 pub use slot::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,

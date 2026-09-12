@@ -18,10 +18,11 @@ mod common;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use common::Order;
+use common::{Order, Receipt};
 use futures::{Stream, StreamExt};
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RETRY_COUNT_HEADER, RustStream};
+use ruststream::codec::JsonCodec;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RETRY_COUNT_HEADER, Router, RustStream};
 use ruststream::subscriber;
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
@@ -144,17 +145,75 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
     }
 }
 
+/// Defers the first delivery and answers the copy, so one registration carries both a reply and
+/// a deferred retry.
+#[subscriber(
+    BoundSubscription::new("invoices-workers", "invoices"),
+    publish("receipts")
+)]
+async fn settle(order: &Order, ctx: &mut Context) -> Result<Receipt, HandlerOutcome> {
+    let attempt = ctx
+        .headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    if attempt == 0 {
+        Err(HandlerOutcome::retry_after(RETRY_DELAY))
+    } else {
+        Ok(Receipt { id: order.id })
+    }
+}
+
+/// The retry position sits beside the rest of the chain: the reply keeps its own policy and
+/// codec whichever order the two are named in, and the deferred copy still comes back.
+#[tokio::test(start_paused = true)]
+async fn the_retry_position_composes_with_the_reply_wiring() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle)
+                .out_retry(MemoryPublish)
+                .out_reply(MemoryPublish)
+                .codec(JsonCodec);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 7 })
+        .to("invoices")
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("invoices-workers")
+        .assert_called_once()
+        .settled(HandlerOutcome::retry_after(RETRY_DELAY));
+
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("invoices-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the deferred copy must reach the handler and be answered",
+    );
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { id: 7 });
+}
+
 /// The deferred copy goes to the address the source reported, so the handler sees the message
 /// again. Published under the subscription's own name it would reach nothing, and the delayed
 /// message would be lost.
 #[tokio::test(start_paused = true)]
 async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(reconcile);
-    });
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+        },
+    );
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -185,6 +244,38 @@ async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
     );
 }
 
+/// The router surface binds the position the same way: a registration grouped in a `Router` names
+/// its deferred-retry publisher where it is included, and the copy comes back as it does on a
+/// scope.
+#[tokio::test(start_paused = true)]
+async fn a_router_registration_binds_the_retry_position() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_router(
+                Router::<MemoryBroker>::new()
+                    .include(reconcile)
+                    .out_retry(MemoryPublish),
+            );
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the deferred copy must reach the handler and settle",
+    );
+}
+
 /// Defers every delivery. Mounted on a source that reports no redelivery address, so the app it
 /// belongs to never starts.
 #[subscriber(SilentSubscription::new("payments"))]
@@ -192,34 +283,46 @@ async fn settle_later(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-/// A scope that wires a deferred-retry publisher over a subscription that cannot say where a
-/// redelivery is published fails to start, naming the subscription, its source and the fix.
+/// A registration that binds the deferred-retry position over a subscription which cannot say
+/// where a redelivery is published fails to start, naming that subscription, its source and the
+/// fix. The registration beside it in the same scope is addressed and bound the same way, so the
+/// refusal is the one registration's, not the scope's.
 #[tokio::test]
-async fn a_retry_publisher_over_an_unaddressed_source_refuses_to_start() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(settle_later);
-    });
+async fn a_retry_position_over_an_unaddressed_source_refuses_to_start() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+            b.include(settle_later).out_retry(MemoryPublish);
+        },
+    );
 
     let failed = TestApp::start(app)
         .await
-        .expect_err("a scope that cannot address its retries must not start");
+        .expect_err("a registration that cannot address its retries must not start");
     let message = failed.to_string();
     assert!(message.contains("payments"), "{message}");
     assert!(message.contains("SilentSubscription"), "{message}");
     assert!(message.contains("MemoryBroker"), "{message}");
-    assert!(message.contains("retry_via"), "{message}");
+    assert!(message.contains("out_retry"), "{message}");
+    assert!(
+        !message.contains("orders-workers"),
+        "the addressed registration is untouched: {message}",
+    );
 }
 
-/// Without a retry publisher the same subscription starts: `retry_after` then degrades to an
-/// immediate requeue, which is the documented answer for a broker with neither native delayed
-/// redelivery nor a publisher to defer through.
+/// Without the position the same subscription starts, beside one that binds it: `retry_after`
+/// then degrades to an immediate requeue, which is the documented answer for a registration with
+/// neither native delayed redelivery nor a publisher to defer through.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unaddressed_source_starts_when_the_scope_defers_nothing() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(settle_later));
+async fn an_unaddressed_source_starts_when_the_registration_defers_nothing() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+            b.include(settle_later);
+        },
+    );
 
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.shutdown().await.expect("graceful shutdown failed");

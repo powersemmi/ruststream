@@ -1,5 +1,6 @@
 //! The registration list: route types, the per-route mount trait and [`RouterDef`].
 
+use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
@@ -12,6 +13,8 @@ use crate::runtime::handler::Handler;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
+use crate::runtime::redelivery::RetryPairing;
+use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
 use super::sink::RouterSink;
@@ -64,12 +67,85 @@ pub struct BatchRoute<S, H, Cx = ()> {
 /// One mountable registration: applies the global blanket layer to its handler and registers it.
 /// `State` is the app's shared-state type, threaded so a route only mounts on a sink whose state type
 /// its handler matches (a state-agnostic handler matches any).
+///
+/// `retry` is the deferred-retry policy the mount site bound with `.out(Retry, policy)`, erased
+/// against the broker; it reaches the starter, which pairs it once the broker is connected.
 pub(super) trait MountRoute<B: Broker, State> {
-    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static;
 }
+
+/// One registration with the deferred-retry position bound: the route, plus the pairing the
+/// mount site's policy owes.
+///
+/// The wrapper is what makes the position bindable once - a bound registration is no longer
+/// [`RetryOpen`], so a second `.out(Retry, ..)` has nothing to bind - and it keeps the pairing out
+/// of every route type: a route that binds nothing carries nothing.
+#[doc(hidden)]
+pub struct RetriedRoute<Route, B: Broker> {
+    route: Route,
+    retry: RetryPairing<B>,
+}
+
+impl<Route, B: Broker> RetriedRoute<Route, B> {
+    pub(super) fn new(route: Route, retry: RetryPairing<B>) -> Self {
+        Self { route, retry }
+    }
+}
+
+// The pairing is a closure with nothing to print, so the wrapper renders as the route it carries.
+impl<Route: fmt::Debug, B: Broker> fmt::Debug for RetriedRoute<Route, B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RetriedRoute")
+            .field("route", &self.route)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Route: RouteMeta, B: Broker> RouteMeta for RetriedRoute<Route, B> {
+    fn collect(&self, out: &mut Vec<HandlerMetadata>) {
+        self.route.collect(out);
+    }
+}
+
+// The wrapped route mounts as it always does, with the pairing the mount site bound: this is the
+// one place a `Some` reaches the sink.
+impl<B, Route, State> MountRoute<B, State> for RetriedRoute<Route, B>
+where
+    B: Broker + 'static,
+    Route: MountRoute<B, State>,
+{
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        _retry: Option<RetryPairing<B>>,
+    ) where
+        G: BlanketLayer + Clone + Send + Sync + 'static,
+        PP: PublishPipeline + Clone + Send + 'static,
+    {
+        self.route
+            .mount_one(global, pipeline, sink, Some(self.retry));
+    }
+}
+
+/// Implements [`RetryOpen`] for the routes a mount site produces: none has bound the
+/// deferred-retry position, which is what `.out(Retry, policy)` asks.
+macro_rules! impl_retry_open {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> RetryOpen for $route<$($param),+> {}
+    )+};
+}
+
+impl_retry_open!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
 
 /// One registration's `AsyncAPI` metadata, collected independently of the app state type (so
 /// [`Router::handlers`](crate::runtime::Router::handlers) works whatever state the handlers read).
@@ -105,15 +181,27 @@ where
     State: Send + Sync + 'static,
     H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        _pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
         // The apply-and-push tail: the app's stack wraps through `BlanketLayer::apply`, whose
         // return type cannot be named, so this one step stays here rather than in a helper.
         let handler = global.apply::<SourceMessage<B, S>, Cx, State, H>(self.handler);
-        sink.push_subscribe_workers(self.source, handler, self.meta, self.policies, self.workers);
+        sink.push_subscribe_workers(
+            self.source,
+            handler,
+            self.meta,
+            self.policies,
+            self.workers,
+            retry,
+        );
     }
 }
 
@@ -127,8 +215,13 @@ where
     State: Send + Sync + 'static,
     H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
 {
-    fn mount_one<G, PP>(self, _global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        _global: &G,
+        _pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -141,6 +234,7 @@ where
             self.policies,
             self.workers,
             self.batch_size,
+            retry,
         );
     }
 }
@@ -153,13 +247,18 @@ where
     State: Send + Sync + 'static,
     H: Handler<S::Message, (), State> + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        _pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
         let handler = global.apply::<S::Message, (), State, H>(self.handler);
-        sink.push_handle(self.subscriber, handler, self.meta, self.policies);
+        sink.push_handle(self.subscriber, handler, self.meta, self.policies, retry);
     }
 }
 /// A mountable group of handler registrations.
@@ -217,9 +316,10 @@ where
         PP: PublishPipeline + Clone + Send + 'static,
     {
         // Registrations are prepended, so the tail holds the earlier ones; mount it first to keep
-        // registration order.
+        // registration order. A route's own deferred-retry position rides the route (see
+        // `RetriedRoute`), so the list has none of its own to hand down.
         self.1.mount(global, pipeline, sink);
-        self.0.mount_one(global, pipeline, sink);
+        self.0.mount_one(global, pipeline, sink, None);
     }
 }
 

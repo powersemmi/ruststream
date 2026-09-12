@@ -18,7 +18,7 @@ use crate::{orders, payments};
 /// The order-lifecycle router: a publishing handler that replies to `confirmations`, plus the
 /// cancellation handler.
 ///
-/// `confirm` needs a publisher for its reply; `.out(Reply, Publish)` names the position and the
+/// `confirm` needs a publisher for its reply; `.out_reply(Publish)` names the position and the
 /// policy, and `.transform(StampSource)` composes a static publish transform onto it that stamps a
 /// provenance header on every confirmation - reply settings live on this chain, not in the
 /// `publish("..")` decorator (which only names the destination).
@@ -33,7 +33,7 @@ pub(crate) fn orders(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposito
     Router::new()
         .layer(metrics.consume_layer())
         .include(orders::confirm)
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .transform(StampSource)
         .build()
         .include(orders::on_cancel)
@@ -52,7 +52,7 @@ pub(crate) fn payments(metrics: &Metrics) -> impl RouterDef<MemoryBroker, Reposi
         .layer(metrics.consume_layer())
         .include(payments::process_payment)
         .include(payments::settle.batch(nonzero!(64)))
-        .out(Reply, TransactionalPublish)
+        .out_reply(TransactionalPublish)
         .transactional()
         .build()
 }

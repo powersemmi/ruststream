@@ -59,7 +59,9 @@ fn service() -> RustStream<ruststream::runtime::Identity, AppState> {
         .on_startup(
             move |()| async move { Ok::<_, std::convert::Infallible>(AppState { receipts }) },
         )
-        .with_broker(broker, |b| b.include(handle_order))
+        .with_broker(broker, |b| {
+            b.include(handle_order);
+        })
 }
 // --8<-- [end:app]
 

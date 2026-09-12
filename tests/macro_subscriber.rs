@@ -85,8 +85,9 @@ async fn on_ctor(order: &Order) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_descriptor_in_decorator() {
     // No source at the call site - it came from the macro argument.
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(on_ctor));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(on_ctor);
+    });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 6, total: 1.0 })
@@ -112,8 +113,9 @@ async fn on_chain(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_builder_chain_in_decorator() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(on_chain));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(on_chain);
+    });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // The `at(..)` option won: the subscription binds to "chain.stream".
@@ -148,8 +150,9 @@ fn derive_message_metadata() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_subscriber_dispatches() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle);
+    });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 5, total: 1.0 })
@@ -177,7 +180,9 @@ async fn scope_default_codec_drops_per_call_codec() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
         MemoryBroker::new(),
         JsonCodec,
-        |b| b.include(handle_default),
+        |b| {
+            b.include(handle_default);
+        },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -458,7 +463,9 @@ async fn retry_after_redelivers_through_the_dispatcher() {
             let attempts = state_attempts;
             async move { Ok::<_, Infallible>(Attempts(attempts)) }
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(eventually));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(eventually);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.

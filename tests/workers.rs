@@ -43,7 +43,9 @@ async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> Handle
 async fn pool_processes_deliveries_concurrently() {
     let app = RustStream::new(AppInfo::new("jobs", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(4))))
-        .with_broker(MemoryBroker::new(), |b| b.include(crunch));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(crunch);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // Exactly the barrier's worth of jobs: dispatched sequentially, the first would park on the
@@ -82,8 +84,10 @@ async fn by_key_lanes_preserve_per_key_order() {
     // delivery belongs to, so per-key order is readable off the recorded deliveries alone.
     const BETA_BAND: u32 = 100;
 
-    let app = RustStream::new(AppInfo::new("keyed", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(keyed));
+    let app =
+        RustStream::new(AppInfo::new("keyed", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(keyed);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     let keyed_input = |key: &'static str, id: u32| {

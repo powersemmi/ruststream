@@ -28,6 +28,8 @@ mod sink;
 
 pub use builder::Router;
 #[doc(hidden)]
+pub use builder::{AttachRetry, RouterBroker};
+#[doc(hidden)]
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
 // The typed default-reply token is machinery, but the macro expansion names it in generated

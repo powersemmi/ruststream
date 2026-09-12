@@ -75,7 +75,7 @@ async fn confirms_valid_orders() {
         MemoryBroker::new(),
         |b| {
             b.include(subscriber("orders", Confirm).reply().build())
-                .out(Reply, Publish);
+                .out_reply(Publish);
         },
     );
 

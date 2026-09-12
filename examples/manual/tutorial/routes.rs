@@ -14,7 +14,7 @@ pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
     Router::new()
         .include(subscriber("orders", Receive).build())
         .include(subscriber("orders", Confirm).reply().build())
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .build()
 }
 // --8<-- [end:routes]

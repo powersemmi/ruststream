@@ -69,8 +69,9 @@ async fn loop_forever(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn records_received_value_and_ack() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.broker::<MemoryBroker>()
@@ -135,8 +136,9 @@ async fn a_batch_reaches_the_body_as_the_broker_built_it() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn records_drop_outcome() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(drop_all));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(drop_all);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.message(&Order { id: 1 })
@@ -154,8 +156,9 @@ async fn records_drop_outcome() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn records_decode_failure() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     // Not valid JSON for `Order`: the typed adapter fails to decode, the handler never runs.
@@ -177,8 +180,9 @@ async fn records_decode_failure() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     // --8<-- [start:panic]
@@ -213,8 +217,9 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn skip_policy_panic_keeps_running() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(skip_panics));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(skip_panics);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.message(&Order { id: 0 })
@@ -234,8 +239,9 @@ async fn skip_policy_panic_keeps_running() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn perpetual_requeue_hits_the_step_budget() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(loop_forever));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(loop_forever);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     let result = tb.message(&Order { id: 1 }).to("loops").publish().await;
@@ -248,8 +254,9 @@ async fn perpetual_requeue_hits_the_step_budget() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn assert_not_called_when_no_input() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.broker::<MemoryBroker>()
@@ -267,7 +274,9 @@ async fn custom_codec_assertions_use_the_handlers_codec() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_codec(
         MemoryBroker::new(),
         CborCodec,
-        |b| b.include(handle_orders),
+        |b| {
+            b.include(handle_orders);
+        },
     );
     let tb = TestApp::start(app).await.unwrap();
 
@@ -318,7 +327,9 @@ async fn requeue_redelivers_and_settles() {
             let seen = state_seen;
             async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(retry_once));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(retry_once);
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     tb.message(&Order { id: 1 })
@@ -357,7 +368,9 @@ async fn retry_after_redelivers_after_advancing_time() {
             let seen = state_seen;
             async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(delayed_retry));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(delayed_retry);
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     // The publish records the immediate NackAfter settlement and returns; the redelivery is pending.
@@ -416,8 +429,12 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(Egress { egress }) })
-        .with_broker_labeled("ingress", nats, |b| b.include(forward))
-        .with_broker_labeled("egress", redis, |b| b.include(on_event));
+        .with_broker_labeled("ingress", nats, |b| {
+            b.include(forward);
+        })
+        .with_broker_labeled("egress", redis, |b| {
+            b.include(on_event);
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     // Publishing into "ingress" drives the ingress handler, its publish into "egress", and the
@@ -455,8 +472,12 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unscoped_publish_is_ambiguous_with_two_brokers() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("a", MemoryBroker::new(), |b| b.include(handle_orders))
-        .with_broker_labeled("b", MemoryBroker::new(), |b| b.include(drop_all));
+        .with_broker_labeled("a", MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        })
+        .with_broker_labeled("b", MemoryBroker::new(), |b| {
+            b.include(drop_all);
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     assert!(matches!(
@@ -469,8 +490,12 @@ async fn unscoped_publish_is_ambiguous_with_two_brokers() {
 #[should_panic(expected = "more than one broker of type")]
 async fn broker_by_type_panics_when_ambiguous() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("a", MemoryBroker::new(), |b| b.include(handle_orders))
-        .with_broker_labeled("b", MemoryBroker::new(), |b| b.include(drop_all));
+        .with_broker_labeled("a", MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        })
+        .with_broker_labeled("b", MemoryBroker::new(), |b| {
+            b.include(drop_all);
+        });
     let tb = TestApp::start(app).await.unwrap();
 
     // Two brokers of the same type: addressing by type is ambiguous, use broker_named.
@@ -562,8 +587,9 @@ async fn inspect_raw_messages_and_debug_surfaces() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "was not called")]
 async fn with_on_uncalled_subscriber_panics() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.unwrap();
     // Nothing was published, so the subscriber was not called.
     tb.broker::<MemoryBroker>()
@@ -589,7 +615,9 @@ async fn addressing_an_unknown_label_names_the_label() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker_labeled(
         "a",
         MemoryBroker::new(),
-        |b| b.include(handle_orders),
+        |b| {
+            b.include(handle_orders);
+        },
     );
     let tb = TestApp::start(app).await.unwrap();
 
@@ -605,7 +633,9 @@ async fn a_failing_startup_hook_is_reported_as_a_startup_error() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Err::<(), _>(StartupFailed))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        });
 
     let started = TestApp::start(app).await;
     match started {

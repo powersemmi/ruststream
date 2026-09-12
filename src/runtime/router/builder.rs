@@ -17,12 +17,15 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
+use crate::runtime::redelivery::RetryPairing;
+use crate::runtime::retry::{Retry, RetryOpen, RoutePosition};
 use crate::runtime::settings::BatchSized;
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
 use super::routes::{
-    BatchRoute, HandleRoute, MountRoute, RouteMeta, RouterDef, RouterHandlers, SubscribeRoute,
+    BatchRoute, HandleRoute, MountRoute, RetriedRoute, RouteMeta, RouterDef, RouterHandlers,
+    SubscribeRoute,
 };
 use super::routes_inject::{BatchInjectRoute, InjectRoute};
 use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
@@ -770,6 +773,67 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
+impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+    Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>
+{
+    /// Names the publish policy of one position of the registration just added (the preceding
+    /// `include` call).
+    ///
+    /// A form that publishes nothing of its own hands back the grown router rather than a mount
+    /// chain, and the one position such a registration still has is the deferred retry - see
+    /// [`Retry`](crate::runtime::Retry). The forms that do publish carry the position on their
+    /// chain instead, next to the reply and the slots
+    /// ([`RouterWith::out`](crate::runtime::RouterWith::out)).
+    ///
+    /// Name it after that registration's other settings ([`workers`](Self::workers),
+    /// [`layer`](Self::layer)): those read the route this call wraps.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{HandlerOutcome, Retry, Router};
+    /// use ruststream::subscriber;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Job { id: u64 }
+    ///
+    /// #[subscriber("jobs")]
+    /// async fn work(job: &Job) -> HandlerOutcome {
+    ///     let _ = job.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// let router = Router::<MemoryBroker>::new()
+    ///     .include(work)
+    ///     .out(Retry, MemoryPublish);
+    /// # }
+    /// ```
+    // The unit marker drives inference, so it travels by value to keep the call site
+    // `.out(Retry, ..)`, like every other position's.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn out<M, Policy>(
+        self,
+        marker: M,
+        policy: Policy,
+    ) -> <M as RoutePosition<B, Self, Policy>>::Out
+    where
+        M: RoutePosition<B, Self, Policy>,
+    {
+        let _ = marker;
+        M::bind(self, policy)
+    }
+
+    /// The same call with the marker spelled out: `.out(Retry, policy)`.
+    pub fn out_retry<Policy>(self, policy: Policy) -> <Retry as RoutePosition<B, Self, Policy>>::Out
+    where
+        Retry: RoutePosition<B, Self, Policy>,
+    {
+        self.out(Retry, policy)
+    }
+}
+
 impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
     Router<B, Routes, C, Layers, Pipe>
 {
@@ -779,6 +843,54 @@ impl<B: Broker + 'static, Routes: RouterHandlers, C, Layers, Pipe>
         let mut out = Vec::new();
         self.routes.collect_handlers(&mut out);
         out
+    }
+}
+
+/// The broker a router's registrations mount on, read off the router type.
+///
+/// A mount chain names its router, not its broker, so this is how `.out(Retry, policy)` reaches
+/// the broker the policy pairs against. Machinery; never named directly.
+#[doc(hidden)]
+pub trait RouterBroker {
+    /// The broker every registration of this router mounts on.
+    type Broker: Broker + 'static;
+}
+
+impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
+    for Router<B, Routes, C, Layers, Pipe>
+{
+    type Broker = B;
+}
+
+/// Binds the deferred-retry position of the registration a router grew last: the tail of
+/// `.out(Retry, policy)` on a mount chain, after the chain committed its registration.
+///
+/// Machinery; never named directly.
+#[doc(hidden)]
+pub trait AttachRetry<B: Broker>: Sized {
+    /// The router with that registration's retry position bound.
+    type Out;
+
+    /// Binds it.
+    fn attach_retry(self, retry: RetryPairing<B>) -> Self::Out;
+}
+
+impl<B, Head, Tail, C, Layers, Pipe> AttachRetry<B> for Router<B, (Head, Tail), C, Layers, Pipe>
+where
+    B: Broker + 'static,
+    Head: RetryOpen,
+{
+    type Out = Router<B, (RetriedRoute<Head, B>, Tail), C, Layers, Pipe>;
+
+    fn attach_retry(self, retry: RetryPairing<B>) -> Self::Out {
+        let (head, tail) = self.routes;
+        Router {
+            routes: (RetriedRoute::new(head, retry), tail),
+            codec: self.codec,
+            layers: self.layers,
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
     }
 }
 
@@ -838,8 +950,15 @@ where
     Routes: RouterDef<B, State>,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        // A whole router is many registrations, and the deferred-retry position belongs to one, so
+        // nothing binds it here: `RetryOpen` is not implemented for a router.
+        _retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {

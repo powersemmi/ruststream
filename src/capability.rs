@@ -480,8 +480,8 @@ pub trait Subscribe: ConnectedBroker {
     /// there ([`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address)).
     ///
     /// This is what the [`Name`](crate::Name) source reports, so it decides whether
-    /// `#[subscriber("orders")]` composes with
-    /// [`retry_via`](crate::runtime::BrokerScope::retry_via) on this broker.
+    /// `#[subscriber("orders")]` composes with the deferred-retry position
+    /// ([`Retry`](crate::runtime::Retry)) on this broker.
     ///
     /// # Examples
     ///

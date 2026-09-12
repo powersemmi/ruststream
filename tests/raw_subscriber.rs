@@ -55,8 +55,9 @@ async fn on_frame(frame: &Frame<'_>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_handler_receives_exact_bytes() {
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(on_frame));
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(on_frame);
+    });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -94,7 +95,7 @@ async fn relay_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_round_trips_exact_bytes() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay).out(Reply, Publish);
+        b.include(relay).out_reply(Publish);
         b.include(relay_capture);
     });
 
@@ -120,7 +121,7 @@ async fn raw_reply_round_trips_exact_bytes() {
         .settled(HandlerOutcome::ack());
 }
 
-// --- without .out(Reply, ..) the reply commits with the broker's default publish policy ---
+// --- without .out_reply(..) the reply commits with the broker's default publish policy ---
 
 #[subscriber("relay-default-in", publish("relay-default-out"))]
 async fn relay_default(frame: &Frame<'_>) -> Export {
@@ -172,7 +173,7 @@ async fn relay_checked_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_reply_result_form_controls_the_publish() {
     let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(relay_checked).out(Reply, Publish);
+        b.include(relay_checked).out_reply(Publish);
         b.include(relay_checked_capture);
     });
 
@@ -269,7 +270,7 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
     let app =
         RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
             b.include(relay_flaky)
-                .out(Reply, FlakyPublish(publisher_flag));
+                .out_reply(FlakyPublish(publisher_flag));
             b.include(relay_flaky_capture);
         });
 
@@ -305,8 +306,8 @@ mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, Publish, Reply, RustStream,
-        TestApp, Wire, subscriber,
+        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, Publish, RustStream, TestApp,
+        Wire, subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -342,7 +343,7 @@ mod typed_in {
         let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(gateway).out(Reply, Publish);
+                b.include(gateway).out_reply(Publish);
                 b.include(gateway_capture);
             },
         );
@@ -429,7 +430,9 @@ async fn state_extractor_and_ctx_resolve_alongside_raw() {
                 bytes_seen: state_bytes,
             })
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(with_state));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(with_state);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -505,7 +508,9 @@ async fn ctx_extractor_projects_the_context_under_raw() {
         .on_startup(
             move |()| async move { Ok::<_, Infallible>(MeasuredState { seen: state_seen }) },
         )
-        .with_broker(MemoryBroker::new(), |b| b.include(measured));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(measured);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -532,8 +537,9 @@ async fn tolerant(frame: &Frame<'_>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn workers_and_panic_policy_apply_to_raw() {
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(tolerant));
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(tolerant);
+    });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -602,7 +608,7 @@ async fn routed_relay(frame: &Frame<'_>) -> Export {
 async fn router_mounts_a_byte_reply_definition() {
     let router = Router::<MemoryBroker>::new()
         .include(routed_relay)
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .build();
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
@@ -702,8 +708,10 @@ mod asyncapi_listing {
 
     #[test]
     fn raw_channel_is_listed_without_a_schema() {
-        let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-            .with_broker(MemoryBroker::new(), |b| b.include(documented));
+        let app =
+            RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(documented);
+            });
 
         let spec = build_spec(&app);
         let json = spec.to_json().expect("serialize spec");

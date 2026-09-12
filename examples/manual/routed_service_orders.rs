@@ -128,7 +128,7 @@ impl Handle<Order, Confirmation, (), (), Repository> for Confirm {
 /// The mount, and the whole declaration the attribute's clauses carried: the broker's own
 /// descriptor as the source, `.to(..)` for the reply channel, and `.describe(..)` for the sentence
 /// the attribute lifts off the handler's doc comment. Who publishes the reply is wiring rather
-/// than declaration, so it lives on the mount chain on both paths: `.out(Reply, Publish)` names
+/// than declaration, so it lives on the mount chain on both paths: `.out_reply(Publish)` names
 /// the position the returned value leaves through and the policy that carries it, which pairs with
 /// the connected broker at startup and encodes with the default codec. The definition says what it
 /// replies with and where; the chain says who sends it.
@@ -141,7 +141,7 @@ fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
                 .describe("Confirms an order and replies on `confirmations`.")
                 .build(),
         )
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .build()
 }
 // --8<-- [end:descriptor]

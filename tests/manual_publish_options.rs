@@ -396,7 +396,7 @@ async fn the_reply_position_takes_the_policy_defaults() {
                     .to("options.reply.out")
                     .build(),
             )
-            .out(Reply, PriorityPublish::default().priority(4));
+            .out_reply(PriorityPublish::default().priority(4));
         },
     );
     // --8<-- [end:reply_mount]

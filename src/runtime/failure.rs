@@ -49,8 +49,8 @@ pub enum FailurePolicy {
     Retry,
     /// Requeue the message, but ask the broker to redeliver no sooner than the given delay:
     /// `nack_after(..)`. A broker without native delayed redelivery takes the runtime's deferred
-    /// re-publish instead, and degrades to an immediate requeue only with no
-    /// [`retry_via`](super::BrokerScope::retry_via) publisher wired - see
+    /// re-publish instead, and degrades to an immediate requeue only where the registration
+    /// bound no deferred-retry position ([`Retry`](super::Retry)) - see
     /// [`HandlerOutcome::retry_after`](super::HandlerOutcome::retry_after).
     RetryAfter(Duration),
     /// Acknowledge the failed message to move past it: `ack`. A deliberate poison-message escape

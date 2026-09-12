@@ -1,6 +1,6 @@
 //! Type-erased publisher, used by the broker-agnostic `retry_after` fallback.
 //!
-//! The deferred-redelivery fallback (see [`BrokerScope::retry_via`](super::BrokerScope::retry_via))
+//! The deferred-redelivery fallback (see [`Retry`](super::Retry), the mount chain's own position)
 //! re-publishes a message to the address its subscription reported, through a publisher whose
 //! concrete type does not matter to the runtime, so it is held erased behind
 //! [`ErasedPublisher`]. To share a publisher

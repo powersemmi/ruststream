@@ -17,7 +17,7 @@ use crate::orders::{Confirm, Receive};
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Receive).build());
-        // The definition names the reply's destination; with no `.out(Reply, ..)` at the mount
+        // The definition names the reply's destination; with no `.out_reply(..)` at the mount
         // site the reply leaves through the broker's default publisher.
         b.include(
             subscriber("orders", Confirm)

@@ -14,8 +14,9 @@
 //! [`SoloDeserialized`]; `Serialized` with [`MessageWire`] over [`SerializedWire`] for a typed
 //! publish and [`ReplyShape`] over [`SerializedReply`] for the reply position), the outgoing
 //! declaration ([`OutgoingDestination`] with its three forms, [`MessageHeaders`] with its two
-//! contracts), the mount-site publish vocabulary ([`Reply`] and [`DefaultSlot`], the two markers
-//! `.out(marker, policy)` binds, and [`MapPublisher`] for a broker's own publisher settings), the
+//! contracts), the mount-site publish vocabulary ([`Reply`], [`Retry`] and [`DefaultSlot`], the
+//! markers `.out(marker, policy)` binds, and [`MapPublisher`] for a broker's own publisher
+//! settings), the
 //! slot vocabulary ([`OutSlot`], [`PublishedThrough`], [`OutMessages`] with the
 //! [`OutgoingMessageMetadata`] a dictionary reports, and [`OutEntry`], the bound a manual body
 //! declares its arena with), the state projection ([`FromRef`]) and the extractor binding
@@ -39,7 +40,7 @@ pub use crate::runtime::{
     App, AppInfo, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
     FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome, Headers, Input,
     MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages, OutgoingMessageMetadata,
-    Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Router,
+    Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Retry, Router,
     RouterDef, RunningApp, RustStream, Serialized, SerializedReply, SerializedWire, Slot,
     SoloDeserialized, State, SubscriberSettings, Workers, subscriber,
 };

@@ -1,0 +1,18 @@
+error[E0277]: this registration has no open deferred-retry position
+  --> tests/ui/retry_bound_twice.rs:23:14
+   |
+23 |             .out(Retry, MemoryPublish);
+   |              ^^^ `.out(Retry, ..)` has nothing to bind here
+   |
+   = help: the trait `ruststream::runtime::RetryOpen` is not implemented for `runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker>`
+   = note: `.out(Retry, policy)` - or its sugar `.out_retry(policy)` - names the publish policy a deferred `retry_after` copy leaves through, once per registration
+   = help: the following other types implement trait `ruststream::runtime::RetryOpen`:
+             (Rep, Slots)
+             runtime::router::routes::BatchRoute<S, H, Cx>
+             runtime::router::routes::SubscribeRoute<S, H, Cx>
+             runtime::router::routes_inject::BatchInjectRoute<Source, Def, DecodeCodec, Extra>
+             runtime::router::routes_inject::InjectRoute<Source, Def, DecodeCodec, Extra>
+             runtime::router::routes_publish::BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
+             runtime::router::routes_publish::PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
+             runtime::router::routes_publish::RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker>, ())>` to implement `ruststream::runtime::AttachRetry<MemoryBroker>`

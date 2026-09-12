@@ -48,7 +48,9 @@ async fn extractor_resolves_from_state() {
     let state_hits = hits.clone();
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, Infallible>(AppState { hits: state_hits }) })
-        .with_broker(MemoryBroker::new(), |b| b.include(record));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(record);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -104,7 +106,9 @@ async fn extractor_rejection_short_circuits() {
     let state_ran = ran.clone();
     let app = RustStream::new(AppInfo::new("guard", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, Infallible>(GuardState { ran: state_ran }) })
-        .with_broker(MemoryBroker::new(), |b| b.include(guarded));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(guarded);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -154,7 +158,9 @@ async fn derive_from_ref_injects_fields() {
                 _label: "svc",
             })
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(derived));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(derived);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()

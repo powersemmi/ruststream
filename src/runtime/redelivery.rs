@@ -1,44 +1,89 @@
-//! Where a deferred `retry_after` copy is published, resolved once per subscription at startup.
+//! Where a deferred `retry_after` copy is published, resolved once per registration at startup.
 //!
 //! A broker without native delayed redelivery gets the delay honoured by a copy the runtime
 //! publishes after it. The copy needs a destination, and a subscription's own name is not one:
 //! where a subscription and a publish destination are separate resources (a Pub/Sub subscription
 //! and its topic), a copy published under the subscription's name reaches nothing. So the address
-//! comes from the subscription's [`SubscriptionSource`], and a scope that wired a publisher with
-//! [`retry_via`](crate::runtime::BrokerScope::retry_via) over a source that cannot report one
-//! refuses to start.
+//! comes from the subscription's [`SubscriptionSource`], and a registration that bound the
+//! deferred-retry position over a source that cannot report one refuses to start - on its own,
+//! leaving the other registrations of the scope untouched.
 
 use std::any::type_name;
+use std::fmt;
 use std::sync::Arc;
 
 use thiserror::Error;
 use tokio_util::task::TaskTracker;
 
 use crate::runtime::dispatch::Delivery;
-use crate::runtime::lifecycle::BoxError;
+use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::{Broker, Connected, SubscriptionSource};
+use crate::{Broker, Connected, PairError, PublishPolicy, Publisher, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
 
-/// The deferred `retry_after` fallback of one subscription: the publisher its scope wired,
+/// The deferred `retry_after` fallback of one subscription: the publisher its registration bound,
 /// paired with the address that subscription's source reported at startup.
 pub(crate) struct DeferredRetry {
     pub(crate) publisher: Arc<dyn ErasedPublisher>,
     pub(crate) address: Arc<str>,
 }
 
+/// The pairing one registration's `.out(Retry, policy)` owes: the policy, erased against the
+/// broker the mount site named, waiting for the connected form.
+///
+/// A policy is declaration and pairs only against a connected broker, which exists after the
+/// synchronous builder has run. Erasing it here is what keeps the retry position out of the
+/// attachment's type: a route carries this one type whatever policy the mount site named.
+#[doc(hidden)]
+pub struct RetryPairing<B: Broker>(PairRetry<B>);
+
+// The pairing is a closure over the bound policy, with nothing of its own to print.
+impl<B: Broker> fmt::Debug for RetryPairing<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RetryPairing").finish_non_exhaustive()
+    }
+}
+
+/// The erased pairing step: pairs the bound policy against the connected broker.
+type PairRetry<B> = Box<
+    dyn for<'a> FnOnce(
+            &'a Connected<B>,
+        ) -> BoxFuture<'a, Result<Arc<dyn ErasedPublisher>, PairError>>
+        + Send,
+>;
+
+impl<B: Broker + 'static> RetryPairing<B> {
+    /// The pairing `policy` owes against this broker's connected form.
+    pub(crate) fn new<Policy>(policy: Policy) -> Self
+    where
+        Policy: PublishPolicy<Connected<B>> + Send + 'static,
+        Policy::Live: Publisher + 'static,
+    {
+        Self(Box::new(move |connected| {
+            Box::pin(async move {
+                let live = policy.pair(connected).await?;
+                Ok(Arc::new(live) as Arc<dyn ErasedPublisher>)
+            })
+        }))
+    }
+
+    /// Takes the pairing, producing the publisher the deferred copy leaves through.
+    ///
+    /// # Errors
+    ///
+    /// Returns the policy's own [`PairError`].
+    async fn pair(self, connected: &Connected<B>) -> Result<Arc<dyn ErasedPublisher>, PairError> {
+        (self.0)(connected).await
+    }
+}
+
 /// What a broker scope hands every subscription it starts.
 ///
-/// The publisher is scope-wide, the address is not, so this is the half of a [`Delivery`] that is
-/// known before a subscription resolves: pairing the two is what
-/// [`open_subscription`] does.
+/// The deferred retry is a registration's own, so it is not here: this is what the whole scope
+/// shares with each of its subscriptions.
 pub(crate) struct ScopeDelivery {
-    /// The publisher wired with [`retry_via`](crate::runtime::BrokerScope::retry_via), or `None`
-    /// when the scope did not opt in - in which case a `retry_after` on a broker without native
-    /// delayed redelivery degrades to an immediate requeue.
-    retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     /// App-wide tracker for post-settle continuations, so a graceful shutdown drains them.
     tasks: TaskTracker,
     /// The harness's recording-and-quiescence hooks for this scope.
@@ -50,15 +95,13 @@ pub(crate) struct ScopeDelivery {
 }
 
 impl ScopeDelivery {
-    /// The scope context, with `retry_publisher` as its deferred-retry fallback.
+    /// The scope context every subscription of one broker dispatches under.
     pub(crate) fn new(
-        retry_publisher: Option<Arc<dyn ErasedPublisher>>,
         tasks: TaskTracker,
         #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
         #[cfg(feature = "testing")] scope_id: usize,
     ) -> Self {
         Self {
-            retry_publisher,
             tasks,
             #[cfg(feature = "testing")]
             hooks,
@@ -83,27 +126,23 @@ impl ScopeDelivery {
     pub(crate) fn scope_id(&self) -> usize {
         self.scope_id
     }
-
-    /// The publisher this scope defers retries through, if it wired one.
-    fn retry_publisher(&self) -> Option<&Arc<dyn ErasedPublisher>> {
-        self.retry_publisher.as_ref()
-    }
 }
 
-/// A scope wired a deferred-retry publisher over a subscription that cannot say where a
+/// A registration bound the deferred-retry position over a subscription that cannot say where a
 /// redelivery of it is published.
 ///
-/// Raised at startup, before the subscription opens. The alternative is a `retry_after` that
-/// publishes its copy into nothing under load, which is a lost message.
+/// Raised at startup, before that subscription opens, and only for the registration that bound
+/// the position. The alternative is a `retry_after` that publishes its copy into nothing under
+/// load, which is a lost message.
 #[derive(Debug, Error)]
 pub(crate) enum RetryAddressError {
     /// The subscription has a source, and the source reports no address.
     // The field is named away from `source` so `thiserror` does not read it as the error's cause.
     #[error(
-        "subscription `{subscription}`: the scope wires a deferred-retry publisher, but source \
-         `{source_type}` reports no redelivery address on broker `{broker}`. Mount it on a source \
-         that reports one, or drop `retry_via` from the scope and let `retry_after` requeue \
-         immediately"
+        "subscription `{subscription}`: the registration binds the deferred-retry position, but \
+         source `{source_type}` reports no redelivery address on broker `{broker}`. Mount it on a \
+         source that reports one, or drop `out_retry` from this registration and let `retry_after` \
+         requeue immediately"
     )]
     Unaddressed {
         /// The subscription as the registration names it.
@@ -115,10 +154,10 @@ pub(crate) enum RetryAddressError {
     },
     /// The subscription was mounted from an already-open subscriber, so there is no source to ask.
     #[error(
-        "subscription `{subscription}`: the scope wires a deferred-retry publisher, but the \
-         subscriber was mounted directly, so nothing reports a redelivery address for it. Mount \
-         it on a subscription source, or drop `retry_via` from the scope and let `retry_after` \
-         requeue immediately"
+        "subscription `{subscription}`: the registration binds the deferred-retry position, but \
+         the subscriber was mounted directly, so nothing reports a redelivery address for it. \
+         Mount it on a subscription source, or drop `out_retry` from this registration and let \
+         `retry_after` requeue immediately"
     )]
     Sourceless {
         /// The subscription as the registration names it.
@@ -126,31 +165,55 @@ pub(crate) enum RetryAddressError {
     },
 }
 
+/// The policy bound with `.out(Retry, policy)` could not be paired with the connected broker.
+///
+/// Raised at startup, before the subscription opens, the way a reply policy that fails to pair is.
+#[derive(Debug, Error)]
+#[error(
+    "subscription `{subscription}`: the deferred-retry policy bound with `out_retry` failed to \
+     pair: {source}"
+)]
+pub(crate) struct RetryPairError {
+    /// The subscription as the registration names it.
+    subscription: String,
+    #[source]
+    source: PairError,
+}
+
 /// Opens `source`'s subscription and builds the delivery context it dispatches under.
 ///
-/// The redelivery address is resolved first, against the live connection, because that is what
-/// may have to ask the broker (a Pub/Sub subscription is looked up to learn its topic) and
-/// because a scope that cannot answer must fail before it holds an open subscription. A scope
-/// with no deferred-retry publisher asks nothing: the address would have no use.
+/// The retry policy is paired and the redelivery address resolved first, against the live
+/// connection, because both may have to talk to the broker (a Pub/Sub subscription is looked up
+/// to learn its topic) and because a registration that cannot answer must fail before it holds an
+/// open subscription. A registration with no deferred-retry position asks nothing: the address
+/// would have no use.
 ///
 /// # Errors
 ///
-/// Returns the broker's error when the address lookup or the subscription fails, and
-/// [`RetryAddressError`] when the scope defers retries over a source that reports no address.
+/// Returns the broker's error when the address lookup or the subscription fails, [`RetryPairError`]
+/// when the bound retry policy fails to pair, and [`RetryAddressError`] when the registration
+/// defers retries over a source that reports no address.
 pub(crate) async fn open_subscription<B, Source>(
     source: Source,
     connected: &Connected<B>,
     scope: &ScopeDelivery,
     subscription: &str,
+    retry: Option<RetryPairing<B>>,
 ) -> Result<(Source::Subscriber, Arc<Delivery>), BoxError>
 where
-    B: Broker,
+    B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>>,
 {
     // The publisher and the address are read into the pair together, so a fallback that holds one
     // without the other is never built.
-    let retry = match scope.retry_publisher() {
-        Some(publisher) => {
+    let retry = match retry {
+        Some(pairing) => {
+            let publisher = pairing.pair(connected).await.map_err(|err| {
+                Box::new(RetryPairError {
+                    subscription: subscription.to_owned(),
+                    source: err,
+                }) as BoxError
+            })?;
             let reported = source
                 .redelivery_address(connected)
                 .await
@@ -161,7 +224,7 @@ where
                     broker: type_name::<Connected<B>>(),
                 })?;
             Some(DeferredRetry {
-                publisher: Arc::clone(publisher),
+                publisher,
                 address: Arc::from(reported.as_str()),
             })
         }
@@ -182,12 +245,17 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`RetryAddressError::Sourceless`] when the scope defers retries.
-pub(crate) fn open_mounted_subscriber(
+/// Returns [`RetryAddressError::Sourceless`] when the registration binds the deferred-retry
+/// position.
+// The pairing travels by value like it does to every other mount: this one cannot address it, so
+// this is where it is dropped. A borrow would leave the caller holding a pairing with no use.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn open_mounted_subscriber<B: Broker>(
     scope: &ScopeDelivery,
     subscription: &str,
+    retry: Option<RetryPairing<B>>,
 ) -> Result<Arc<Delivery>, BoxError> {
-    if scope.retry_publisher().is_some() {
+    if retry.is_some() {
         return Err(Box::new(RetryAddressError::Sourceless {
             subscription: subscription.to_owned(),
         }));
@@ -197,14 +265,17 @@ pub(crate) fn open_mounted_subscriber(
 
 #[cfg(all(test, feature = "memory"))]
 mod tests {
-    use super::*;
-    use crate::memory::MemoryBroker;
+    use std::pin::pin;
 
-    /// A scope carrying `retry_publisher`, with the harness pieces a scope holds under the
-    /// `testing` feature.
-    fn scope(retry_publisher: Option<Arc<dyn ErasedPublisher>>) -> ScopeDelivery {
+    use futures::StreamExt as _;
+
+    use super::*;
+    use crate::memory::{MemoryBroker, MemoryPublish};
+    use crate::{IncomingMessage, OutgoingMessage, Subscriber};
+
+    /// A scope with the harness pieces it holds under the `testing` feature.
+    fn scope() -> ScopeDelivery {
         ScopeDelivery::new(
-            retry_publisher,
             TaskTracker::new(),
             #[cfg(feature = "testing")]
             Arc::new(TestHooks::detached()),
@@ -213,24 +284,50 @@ mod tests {
         )
     }
 
-    /// A subscriber mounted without a source has nothing to ask, so a scope that defers retries
-    /// has no address for it. The startup error names the subscription and the way out, rather
-    /// than letting the subscription run and publish its deferred copies into nothing.
+    /// A subscriber mounted without a source has nothing to ask, so a registration that defers
+    /// retries has no address for it. The startup error names the subscription and the way out,
+    /// rather than letting the subscription run and publish its deferred copies into nothing.
     #[test]
-    fn a_sourceless_mount_under_a_retry_publisher_is_a_startup_error() {
-        let publisher: Arc<dyn ErasedPublisher> = Arc::new(MemoryBroker::new().publisher());
-        let refused = open_mounted_subscriber(&scope(Some(publisher)), "orders")
-            .expect_err("a scope that defers retries cannot address a sourceless mount");
+    fn a_sourceless_mount_under_a_retry_position_is_a_startup_error() {
+        let retry = RetryPairing::<MemoryBroker>::new(MemoryPublish);
+        let refused = open_mounted_subscriber(&scope(), "orders", Some(retry))
+            .expect_err("a registration that defers retries cannot address a sourceless mount");
         let message = refused.to_string();
         assert!(message.contains("orders"), "{message}");
-        assert!(message.contains("retry_via"), "{message}");
+        assert!(message.contains("out_retry"), "{message}");
     }
 
-    /// Without a retry publisher there is nothing to address, so the same mount starts.
+    /// Without the position there is nothing to address, so the same mount starts.
     #[test]
-    fn a_sourceless_mount_starts_when_the_scope_defers_nothing() {
-        let delivery = open_mounted_subscriber(&scope(None), "orders")
-            .expect("a scope with no retry publisher asks for no address");
+    fn a_sourceless_mount_starts_when_the_registration_defers_nothing() {
+        let delivery = open_mounted_subscriber::<MemoryBroker>(&scope(), "orders", None)
+            .expect("a registration with no retry position asks for no address");
         assert!(delivery.retry.is_none());
+    }
+
+    /// The bound policy pairs against the connected broker, and the publisher it yields reaches
+    /// that broker: what the deferred copy travels through.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_bound_policy_pairs_against_the_connected_broker() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("retry.fallback");
+        let connected = broker.connect().await.expect("connect");
+
+        let publisher = RetryPairing::<MemoryBroker>::new(MemoryPublish)
+            .pair(&connected)
+            .await
+            .expect("the bound policy pairs");
+        publisher
+            .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
+            .await
+            .expect("the erased publish failed");
+
+        let mut stream = pin!(subscriber.stream());
+        let msg = stream
+            .next()
+            .await
+            .expect("the publish must reach the broker")
+            .expect("delivery");
+        assert_eq!(msg.payload(), b"deferred");
     }
 }

@@ -260,8 +260,9 @@ fn build_spec_emits_payload_schema() {
         HandlerOutcome::ack()
     }
 
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle);
+    });
 
     let spec = build_spec(&app);
     let payload = spec.components.messages["Order"]
@@ -295,8 +296,9 @@ async fn handle_renamed(order: &RenamedOrder) -> HandlerOutcome {
 
 #[test]
 fn message_impl_names_and_describes_the_component() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_renamed));
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_renamed);
+    });
 
     let spec = build_spec(&app);
 
@@ -345,8 +347,9 @@ async fn handle_shipment(shipment: &Shipment) -> HandlerOutcome {
 
 #[test]
 fn schema_doc_comment_feeds_message_metadata() {
-    let app = RustStream::new(AppInfo::new("svc", "1.0.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_shipment));
+    let app = RustStream::new(AppInfo::new("svc", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_shipment);
+    });
 
     let spec = build_spec(&app);
 

@@ -79,9 +79,8 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// connection knows it (a Pub/Sub subscription has to be looked up to learn its topic).
     /// Called once per subscription at startup, never on the delivery path.
     ///
-    /// The default answers `None`, and a scope that wired a deferred-retry publisher with
-    /// [`retry_via`](crate::runtime::BrokerScope::retry_via) refuses to start over such a
-    /// subscription. A subscription's name is not an address: where a subscription and a publish
+    /// The default answers `None`, and a registration that bound the deferred-retry position
+    /// ([`Retry`](crate::runtime::Retry)) refuses to start over such a subscription. A subscription's name is not an address: where a subscription and a publish
     /// destination are separate resources, answering with it would publish the copy into nothing
     /// and lose the message under load.
     ///

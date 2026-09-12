@@ -6,20 +6,25 @@
 //! [`Out`](crate::runtime::Out) slots has nothing to commit until every slot is bound, so its
 //! terminal is a call ([`MountingSlots::build`]) and the type says so with `#[must_use]` - a
 //! forgotten `.build()` is then a warning at the mount site rather than a panic at startup.
+//!
+//! A form with nothing of the handler's own to attach still gets a [`Mounting`] guard, because
+//! every registration can bind the deferred-retry position ([`Retry`](crate::runtime::Retry)).
 
 use std::fmt;
 
 use crate::Broker;
 
+use crate::runtime::app::scope::BrokerScope;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
-use crate::runtime::router::{MapPublisher, Router, RouterCommit, RouterDef, RouterWith};
-use crate::runtime::slot::{
-    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, ReplyStep,
-    TransactionalLast, TransformLast,
+use crate::runtime::retry::{Retry, RetryPos, RoutePosition};
+use crate::runtime::router::{
+    MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith,
 };
-
-use crate::runtime::app::scope::BrokerScope;
+use crate::runtime::slot::{
+    AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, OutPosition, Reply,
+    ReplyLast, ReplyStep, TransactionalLast, TransformLast,
+};
 
 /// A mount chain that can be drained into a scope's sink. Machinery; never named directly.
 #[doc(hidden)]
@@ -63,7 +68,7 @@ where
 ///
 /// Every step forwards to the chain underneath, so the vocabulary, the typestate and the
 /// diagnostics are the router's. Dropping the guard at the end of the statement is what commits,
-/// which is why the type is not `#[must_use]`: `b.include(respond).out(Reply, Publish);` is a
+/// which is why the type is not `#[must_use]`: `b.include(respond).out_reply(Publish);` is a
 /// whole registration. A registration whose [`Out`](crate::runtime::Out) slots have to be bound
 /// first gets [`MountingSlots`] instead.
 pub struct Mounting<'s, B, Layers, C, State, Pipeline, Chain>
@@ -130,7 +135,8 @@ where
     RouterWith<Mount, R, Def, Attach, Last>: ScopeCommit<B, Layers, C, State, Pipeline>,
 {
     /// See [`RouterWith::out`]: names the publish policy of one position, the reply's
-    /// ([`Reply`](crate::runtime::Reply)) or one slot's.
+    /// ([`Reply`](crate::runtime::Reply)), one slot's, or the deferred retry's
+    /// ([`Retry`](crate::runtime::Retry)).
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out<M, Policy, Index>(
         self,
@@ -146,15 +152,85 @@ where
         Mount,
         R,
         Def,
-        <Attach as BindAt<Mount, M, Policy, Index>>::Out,
+        <M as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
         Index,
     >
     where
-        Attach: BindAt<Mount, M, Policy, Index>,
-        SteppedChain<Mount, R, Def, <Attach as BindAt<Mount, M, Policy, Index>>::Out, Index>:
-            ScopeCommit<B, Layers, C, State, Pipeline>,
+        R: RouterBroker,
+        M: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
+        SteppedChain<
+            Mount,
+            R,
+            Def,
+            <M as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+            Index,
+        >: ScopeCommit<B, Layers, C, State, Pipeline>,
     {
         self.map_chain(|chain| chain.out(marker, policy))
+    }
+
+    /// See [`RouterWith::out_reply`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_reply<Policy>(
+        self,
+        policy: Policy,
+    ) -> Stepped<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Reply as OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>>::Out,
+        ReplyLast,
+    >
+    where
+        R: RouterBroker,
+        Reply: OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>,
+        SteppedChain<
+            Mount,
+            R,
+            Def,
+            <Reply as OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>>::Out,
+            ReplyLast,
+        >: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.out(Reply, policy)
+    }
+
+    /// See [`RouterWith::out_retry`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_retry<Policy>(
+        self,
+        policy: Policy,
+    ) -> Stepped<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
+        RetryPos,
+    >
+    where
+        R: RouterBroker,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>,
+        SteppedChain<
+            Mount,
+            R,
+            Def,
+            <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
+            RetryPos,
+        >: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.out(Retry, policy)
     }
 
     /// See [`RouterWith::codec`].
@@ -258,6 +334,96 @@ where
             ScopeCommit<B, Layers, C, State, Pipeline>,
     {
         self.map_chain(RouterWith::transactional)
+    }
+}
+
+/// The chain a form with nothing to attach hands the guard: its registration, already grown into
+/// a router of one.
+type EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe> =
+    Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>;
+
+// A form that attaches nothing has its registration finished the moment `include` returns, so its
+// chain is a router rather than a `RouterWith`. The one position such a registration can still
+// bind is the deferred retry, which belongs to the registration and not to a publish the handler
+// makes - hence this impl, on the guard over a finished router.
+impl<'s, B, Layers, C, State, Pipeline, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+    Mounting<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+    >
+where
+    B: Broker + 'static,
+    EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>:
+        ScopeCommit<B, Layers, C, State, Pipeline>,
+{
+    /// Names the publish policy of one position. A registration whose handler publishes nothing
+    /// of its own has exactly one, the deferred retry: see [`Retry`](crate::runtime::Retry), and
+    /// it binds once.
+    // The unit marker drives inference, so it travels by value to keep the call site
+    // `.out(Retry, ..)`, like every other position's.
+    #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+    pub fn out<M, Policy>(
+        self,
+        marker: M,
+        policy: Policy,
+    ) -> Mounting<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        <M as RoutePosition<
+            B,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            Policy,
+        >>::Out,
+    >
+    where
+        M: RoutePosition<B, EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>, Policy>,
+        <M as RoutePosition<
+            B,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            Policy,
+        >>::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        let _ = marker;
+        self.map_chain(|chain| M::bind(chain, policy))
+    }
+
+    /// The same call with the marker spelled out: `.out(Retry, policy)`.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_retry<Policy>(
+        self,
+        policy: Policy,
+    ) -> Mounting<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        <Retry as RoutePosition<
+            B,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            Policy,
+        >>::Out,
+    >
+    where
+        Retry:
+            RoutePosition<B, EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>, Policy>,
+        <Retry as RoutePosition<
+            B,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            Policy,
+        >>::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.out(Retry, policy)
     }
 }
 
@@ -393,7 +559,8 @@ where
     B: Broker + 'static,
 {
     /// See [`RouterWith::out`]: names the publish policy of one position, the reply's
-    /// ([`Reply`](crate::runtime::Reply)) or one slot's.
+    /// ([`Reply`](crate::runtime::Reply)), one slot's, or the deferred retry's
+    /// ([`Retry`](crate::runtime::Retry)).
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out<M, Policy, Index>(
         self,
@@ -409,13 +576,64 @@ where
         Mount,
         R,
         Def,
-        <Attach as BindAt<Mount, M, Policy, Index>>::Out,
+        <M as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
         Index,
     >
     where
-        Attach: BindAt<Mount, M, Policy, Index>,
+        R: RouterBroker,
+        M: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         self.map_chain(|chain| chain.out(marker, policy))
+    }
+
+    /// See [`RouterWith::out_reply`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_reply<Policy>(
+        self,
+        policy: Policy,
+    ) -> SteppedSlots<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Reply as OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>>::Out,
+        ReplyLast,
+    >
+    where
+        R: RouterBroker,
+        Reply: OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>,
+    {
+        self.out(Reply, policy)
+    }
+
+    /// See [`RouterWith::out_retry`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_retry<Policy>(
+        self,
+        policy: Policy,
+    ) -> SteppedSlots<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
+        RetryPos,
+    >
+    where
+        R: RouterBroker,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>,
+    {
+        self.out(Retry, policy)
     }
 
     /// See [`RouterWith::codec`].

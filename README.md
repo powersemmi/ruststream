@@ -104,7 +104,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+        .with_broker(MemoryBroker::new(), |b| { b.include(handle); })
 }
 ```
 

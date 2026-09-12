@@ -2,7 +2,7 @@
 
 use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
 
-use crate::{Broker, Connected, Publisher, Subscriber};
+use crate::{Broker, Connected, Subscriber};
 
 use crate::PublishPolicy;
 use crate::runtime::failure::FailurePolicies;
@@ -11,7 +11,6 @@ use crate::runtime::lifecycle::ConnectedSlot;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity};
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
-use crate::runtime::publisher_registry::ErasedPublisher;
 use crate::runtime::router::{RouterDef, RouterSink};
 
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
@@ -34,7 +33,6 @@ pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipelin
     pub(super) startup_hooks: Vec<LifecycleHook<State>>,
     pub(super) sink: RouterSink<B, State>,
     pub(super) pipeline: Pipeline,
-    pub(super) retry_publisher: Option<Arc<dyn ErasedPublisher>>,
     pub(super) global: Layers,
     pub(super) codec: C,
 }
@@ -89,52 +87,6 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
             ));
     }
 
-    /// Wires a publisher for the broker-agnostic `retry_after` fallback on this scope.
-    ///
-    /// When a handler returns [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after)
-    /// (or a delivery is `nack_after`-ed) on a broker that does not natively support delayed
-    /// redelivery, the runtime re-publishes the message after the delay through `publisher`, with
-    /// the [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) incremented. Pass a
-    /// publisher bound to the same broker (`b.broker().publisher()`).
-    ///
-    /// Where that copy goes is the subscription's own answer, read once at startup from
-    /// [`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address).
-    /// A subscription name and a publish destination are one string on a subject or a topic, and
-    /// separate resources on Google Pub/Sub. So a scope wired here whose subscriptions cannot
-    /// report an address fails to start, naming the subscription and its source, instead of
-    /// publishing copies into nothing once a handler asks for a delay.
-    ///
-    /// Brokers with native delayed redelivery do not need this: the runtime uses their
-    /// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a
-    /// non-native broker degrades to an immediate requeue (with a warning).
-    ///
-    /// # Cancel safety
-    ///
-    /// The fallback's deferred re-publish is at-most-once over the delay window: see
-    /// [`HandlerOutcome::retry_after`](crate::runtime::HandlerOutcome::retry_after).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::runtime::BrokerScope;
-    /// use ruststream::{Broker, Publisher};
-    ///
-    /// // Wire a deferred-retry publisher bound to the same broker as the scope.
-    /// fn configure<B, P>(scope: &mut BrokerScope<B>, retry_publisher: P)
-    /// where
-    ///     B: Broker + 'static,
-    ///     P: Publisher + 'static,
-    /// {
-    ///     scope.retry_via(retry_publisher);
-    /// }
-    /// ```
-    pub fn retry_via<P>(&mut self, publisher: P)
-    where
-        P: Publisher + 'static,
-    {
-        self.retry_publisher = Some(Arc::new(publisher));
-    }
-
     /// Attaches `handler` (wrapped with the app's global stack) to an already-created
     /// `subscriber`.
     ///
@@ -150,8 +102,10 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Layers: BlanketLayer + Clone + Send + Sync + 'static,
     {
         let handler = self.global.apply::<S::Message, Cx, State, H>(handler);
+        // A directly mounted subscriber names no source, so no deferred-retry position can be
+        // bound on it: nothing reports where a redelivery of it would be published.
         self.sink
-            .push_handle(subscriber, handler, meta, FailurePolicies::default());
+            .push_handle(subscriber, handler, meta, FailurePolicies::default(), None);
     }
 
     /// Mounts every registration from `router` onto this broker, wrapping each handler with the
@@ -183,50 +137,8 @@ impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
 
 #[cfg(all(test, feature = "memory"))]
 mod tests {
-    use std::pin::pin;
-
-    use futures::StreamExt as _;
-
     use crate::memory::MemoryBroker;
-    use crate::runtime::publisher_registry::ErasedPublisher;
     use crate::runtime::{AppInfo, RustStream};
-    use crate::{IncomingMessage, OutgoingMessage, Subscriber};
-
-    use super::Arc;
-
-    /// The deferred-retry fallback is only reachable through a broker without native delayed
-    /// redelivery (the in-memory one has it), so what the scope owes is the wiring: the publisher
-    /// handed to `retry_via` is held erased and still reaches the broker.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn retry_via_holds_a_live_erased_publisher() {
-        let broker = MemoryBroker::new();
-        let mut subscriber = broker.subscribe("retry.fallback");
-        let publisher = broker.publisher();
-
-        let mut fallback: Option<Arc<dyn ErasedPublisher>> = None;
-        let _app = RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(broker, |b| {
-            assert!(
-                b.retry_publisher.is_none(),
-                "a fresh scope has no fallback publisher",
-            );
-            b.retry_via(publisher);
-            fallback = b.retry_publisher.clone();
-        });
-
-        let fallback = fallback.expect("retry_via must wire the deferred-retry publisher");
-        fallback
-            .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
-            .await
-            .expect("the erased fallback publish failed");
-
-        let mut stream = pin!(subscriber.stream());
-        let msg = stream
-            .next()
-            .await
-            .expect("the fallback publish must reach the broker")
-            .expect("delivery");
-        assert_eq!(msg.payload(), b"deferred");
-    }
 
     #[test]
     fn scope_debug_reports_its_registrations() {

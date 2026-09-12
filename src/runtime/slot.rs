@@ -714,8 +714,60 @@ pub struct ReplyLast;
 
 impl NamedStep for ReplyLast {}
 
+/// One `.out(marker, policy)` call, keyed by the marker: what the position it names becomes.
+///
+/// The dispatch is on the marker rather than on the attachment so that the call site's own
+/// argument settles which position is meant, and the error names that marker when the position is
+/// not there to bind. [`Reply`] and the slot markers grow the attachment through [`BindAt`]; the
+/// deferred retry rides beside it, so [`Retry`](crate::runtime::Retry) has an impl of its own.
+///
+/// Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration has no unbound publish position marked `{Self}`",
+    label = "`.out({Self}, ..)` has no position to bind here",
+    note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
+            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
+            and that it was not bound twice"
+)]
+pub trait OutPosition<Mount, B, Attach, Policy, Index> {
+    /// What the chain carries after the call: the grown attachment, or the attachment with the
+    /// retry beside it.
+    type Out;
+
+    /// Binds the position.
+    fn bind(attach: Attach, policy: Policy) -> Self::Out;
+}
+
+// The reply and the slots are positions of the attachment itself, so both delegate. The broker
+// takes no part: a policy for one of these positions pairs where the registration mounts.
+impl<Mount, B, Attach, Policy> OutPosition<Mount, B, Attach, Policy, ReplyLast> for Reply
+where
+    Attach: BindAt<Mount, Self, Policy, ReplyLast>,
+{
+    type Out = <Attach as BindAt<Mount, Self, Policy, ReplyLast>>::Out;
+
+    fn bind(attach: Attach, policy: Policy) -> Self::Out {
+        attach.bind_at(policy)
+    }
+}
+
+impl<Mount, B, M, Attach, Policy, Index> OutPosition<Mount, B, Attach, Policy, Index> for M
+where
+    M: OutSlot,
+    Attach: BindAt<Mount, M, Policy, Index>,
+{
+    type Out = <Attach as BindAt<Mount, M, Policy, Index>>::Out;
+
+    fn bind(attach: Attach, policy: Policy) -> Self::Out {
+        attach.bind_at(policy)
+    }
+}
+
 /// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
-/// [`Reply`], one [`Out`](super::Out) slot for a slot marker.
+/// [`Reply`], one [`Out`](super::Out) slot for a slot marker. The deferred-retry position rides
+/// beside the attachment instead, so it is bound by [`OutPosition`] directly.
 ///
 /// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot - which is
 /// what makes the calls order-independent and what the steps after the call ride. Machinery;
