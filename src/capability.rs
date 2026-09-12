@@ -244,10 +244,11 @@ pub trait Transaction: Send {
     /// The error type returned by transaction operations.
     type Error: StdError + Send + Sync + 'static;
 
-    /// The broker's per-message settings, the same type its [`Publisher`] names: a message
-    /// carries the same settings inside a transaction as outside one.
+    /// The broker's per-message settings inside this transaction: a type of its own, because a
+    /// transaction is a publish surface of its own and may honour a different set of settings
+    /// than the publisher it was opened from. Most brokers name the publisher's type here.
     ///
-    /// See [`Publisher::Options`]. A broker with no per-message setting writes
+    /// See [`Publisher::Options`]. A transaction with no per-message setting writes
     /// `type Options = ();`.
     ///
     /// [`Publisher::Options`]: crate::Publisher::Options

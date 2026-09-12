@@ -208,9 +208,10 @@ every message of this handle carries. The builder starts the outgoing headers fr
 writes the call site's headers over it key by key, so on a shared key the call site's value stays
 (see [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
 
-`Transaction` names the same `Options` and carries the same defaulted `base_headers`, so a message
-inside a transaction takes the settings a message outside one takes. A publisher with nothing to
-add overrides neither.
+`Transaction` names an `Options` of its own and carries the same defaulted `base_headers`. A
+transaction is a publish surface of its own, so it may honour a different set of settings than the
+publisher it was opened from; most brokers name the publisher's type there. A publisher with
+nothing to add overrides neither.
 
 ### `PublishPolicy`
 

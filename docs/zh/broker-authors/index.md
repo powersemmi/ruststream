@@ -189,8 +189,9 @@ pub trait Publisher: Send + Sync {
 这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
 （参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
 
-`Transaction` 指定同一个 `Options`，也带同样的默认 `base_headers`，因此事务里的消息和事务外的消息带
-着同样的设置离开。没有东西要补的发布者两个都不必实现。
+`Transaction` 指定自己的 `Options`，也带同样的默认 `base_headers`。事务是一个独立的发布面，所以它
+认可的设置可以和开启它的发布者不同；多数 Broker 在这里写的就是发布者的类型。没有东西要补的发布者两
+个都不必实现。
 
 ### `PublishPolicy`
 
