@@ -184,7 +184,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// `b.include(handle);` and `b.include(respond).out_reply(Publish);` are both complete; a
     /// handler carrying [`Out`](crate::runtime::Out) slots binds each with `.out(marker, policy)`
     /// and finishes with `.build()`. Every form takes `.out_retry(policy)`, the deferred
-    /// `retry_after` publisher of that one registration.
+    /// `retry_after` slot of that one registration, which takes the slot steps like any other.
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the

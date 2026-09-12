@@ -872,7 +872,7 @@ async fn a_slot_entry_is_a_publisher_in_its_own_right() {
         .connect()
         .await
         .expect("the memory broker connects");
-    let entry = AnalyticsEntry::test_entry(connected.publisher(), JsonCodec, PublishIdentity);
+    let entry = AnalyticsEntry::wired(connected.publisher(), JsonCodec, PublishIdentity);
 
     assert!(format!("{entry:?}").contains("Slot"));
     assert!(Publisher::base_headers(&entry).is_none());

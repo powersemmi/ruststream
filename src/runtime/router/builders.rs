@@ -23,7 +23,7 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::runtime::retry::{Retry, RetryPos};
+use crate::runtime::retry::Retry;
 use crate::runtime::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
     Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
@@ -88,8 +88,9 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// omitting `.out(Retry, ..)` leaves a `retry_after` to requeue immediately on a broker with
     /// no delayed redelivery of its own.
     ///
-    /// The steps after the call fill the rest of that position's wiring - the retry position has
-    /// none, so nothing follows it.
+    /// The steps after the call fill the rest of that position's wiring, whichever position it
+    /// is: the deferred-retry copy is a slot publish like any other, so it takes the slot steps
+    /// too.
     ///
     /// [`out_reply`](Self::out_reply) and [`out_retry`](Self::out_retry) are this call with the
     /// marker spelled out.
@@ -137,21 +138,25 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Names the publish policy a deferred `retry_after` copy leaves through: [`out`](Self::out)
-    /// with the [`Retry`] marker, and the same chain afterwards - which takes no further steps.
+    /// with the [`Retry`] marker, and the same chain afterwards.
+    ///
+    /// The position is an `Out` slot like any other, so the steps after it are the slot steps:
+    /// [`codec`](Self::codec), [`transform`](Self::transform) and a broker's own
+    /// [`map_publisher`](MapPublisher::map_publisher) settings.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn out_retry<Policy>(
+    pub fn out_retry<Policy, Index>(
         self,
         policy: Policy,
     ) -> RouterWith<
         Mount,
         R,
         Def,
-        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
-        RetryPos,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+        Index,
     >
     where
         R: RouterBroker,
-        Retry: OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         self.out(Retry, policy)
     }

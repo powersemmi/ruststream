@@ -174,9 +174,11 @@ impl<Offer: NamingOffered<By>, Taken: NamingUntaken, By> FitsOffer<Offer, Taken,
     label = "the transform on this step declares `Destination = Names`",
     note = "the destination is already declared and the generated document reports it: a reply \
             type carrying `#[outgoing(name = \"..\")]` is published there, a batch's replies \
-            answer many deliveries and carry none of their headers, and a slot marker offers the \
+            answer many deliveries and carry none of their headers, a slot marker offers the \
             right only when every type in its `#[publishes(..)]` dictionary leaves its destination \
-            open - one with no dictionary, `DefaultSlot` among them, never offers it"
+            open - one with no dictionary, `DefaultSlot` among them, never offers it - and the \
+            `Retry` slot publishes to the subscription's own redelivery address, which no mount \
+            site chooses"
 )]
 pub trait NamingOffered<By> {}
 

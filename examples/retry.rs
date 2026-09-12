@@ -7,7 +7,12 @@
 
 use std::time::Duration;
 
+use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
+// The derive and the pipeline's message type share the name in different namespaces: the derive
+// is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
+// `ruststream::runtime::Outgoing`.
+use ruststream::runtime::{Outgoing, SlotContext};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +53,20 @@ async fn reconcile_batch(payments: &[Payment]) -> Vec<HandlerOutcome> {
 // --8<-- [end:batch_retry_after]
 
 // --8<-- [start:mount]
+/// A transform on the retry position: it stamps every deferred copy with the slot it left
+/// through, so a redelivery is recognisable downstream. The position is an `Out` slot, so its
+/// transforms read a `SlotContext` like any other slot's.
+struct DeferredStamp;
+
+impl PublishTransform<ForSlot> for DeferredStamp {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
+        out.headers_mut()
+            .insert("x-left-through", cx.slot().to_owned());
+    }
+}
+
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -55,8 +74,13 @@ fn app() -> RustStream {
         // in-memory broker honours the delay itself, so nothing here defers; a broker without
         // delayed redelivery of its own does, and then this position is what carries the delay.
         b.include(reconcile).out_retry(Publish);
+        // The position is an `Out` slot, so it takes the slot steps. The deferred copy carries
+        // the delivery's own bytes, so the codec named here resolves the position and encodes
+        // nothing, while the transforms run on the copy.
         b.include(reconcile_batch.batch(nonzero!(64)))
-            .out_retry(Publish);
+            .out_retry(Publish)
+            .codec(JsonCodec)
+            .transform(DeferredStamp);
     })
 }
 // --8<-- [end:mount]

@@ -8,7 +8,8 @@
 //! forgotten `.build()` is then a warning at the mount site rather than a panic at startup.
 //!
 //! A form with nothing of the handler's own to attach still gets a [`Mounting`] guard, because
-//! every registration can bind the deferred-retry position ([`Retry`](crate::runtime::Retry)).
+//! every registration can bind the deferred-retry slot ([`Retry`](crate::runtime::Retry)), and
+//! binding it opens a mount chain over the finished route so the slot steps follow.
 
 use std::fmt;
 
@@ -17,7 +18,7 @@ use crate::Broker;
 use crate::runtime::app::scope::BrokerScope;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
-use crate::runtime::retry::{Retry, RetryPos, RoutePosition};
+use crate::runtime::retry::{Retry, RoutePosition};
 use crate::runtime::router::{
     MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith,
 };
@@ -203,7 +204,7 @@ where
 
     /// See [`RouterWith::out_retry`].
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn out_retry<Policy>(
+    pub fn out_retry<Policy, Index>(
         self,
         policy: Policy,
     ) -> Stepped<
@@ -216,18 +217,18 @@ where
         Mount,
         R,
         Def,
-        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
-        RetryPos,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+        Index,
     >
     where
         R: RouterBroker,
-        Retry: OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
         SteppedChain<
             Mount,
             R,
             Def,
-            <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
-            RetryPos,
+            <Retry as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+            Index,
         >: ScopeCommit<B, Layers, C, State, Pipeline>,
     {
         self.out(Retry, policy)
@@ -363,7 +364,8 @@ where
 {
     /// Names the publish policy of one position. A registration whose handler publishes nothing
     /// of its own has exactly one, the deferred retry: see [`Retry`](crate::runtime::Retry), and
-    /// it binds once.
+    /// it binds once. The call opens a mount chain over the finished route, so the steps after it
+    /// are the slot steps.
     // The unit marker drives inference, so it travels by value to keep the call site
     // `.out(Retry, ..)`, like every other position's.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
@@ -396,7 +398,8 @@ where
         self.map_chain(|chain| M::bind(chain, policy))
     }
 
-    /// The same call with the marker spelled out: `.out(Retry, policy)`.
+    /// The same call with the marker spelled out: `.out(Retry, policy)`, and the same chain
+    /// afterwards.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out_retry<Policy>(
         self,
@@ -613,7 +616,7 @@ where
 
     /// See [`RouterWith::out_retry`].
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn out_retry<Policy>(
+    pub fn out_retry<Policy, Index>(
         self,
         policy: Policy,
     ) -> SteppedSlots<
@@ -626,12 +629,12 @@ where
         Mount,
         R,
         Def,
-        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>>::Out,
-        RetryPos,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+        Index,
     >
     where
         R: RouterBroker,
-        Retry: OutPosition<Mount, R::Broker, Attach, Policy, RetryPos>,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         self.out(Retry, policy)
     }

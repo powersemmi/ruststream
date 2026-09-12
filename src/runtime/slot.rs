@@ -718,8 +718,9 @@ impl NamedStep for ReplyLast {}
 ///
 /// The dispatch is on the marker rather than on the attachment so that the call site's own
 /// argument settles which position is meant, and the error names that marker when the position is
-/// not there to bind. [`Reply`] and the slot markers grow the attachment through [`BindAt`]; the
-/// deferred retry rides beside it, so [`Retry`](crate::runtime::Retry) has an impl of its own.
+/// not there to bind. Every marker grows the attachment through [`BindAt`]: [`Reply`], the
+/// handler's own slot markers, and [`Retry`](crate::runtime::Retry), which is the slot the
+/// runtime publishes a deferred `retry_after` copy through.
 ///
 /// Machinery; never named directly.
 #[doc(hidden)]
@@ -732,8 +733,7 @@ impl NamedStep for ReplyLast {}
             and that it was not bound twice"
 )]
 pub trait OutPosition<Mount, B, Attach, Policy, Index> {
-    /// What the chain carries after the call: the grown attachment, or the attachment with the
-    /// retry beside it.
+    /// The grown attachment the chain carries after the call.
     type Out;
 
     /// Binds the position.
@@ -766,19 +766,20 @@ where
 }
 
 /// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
-/// [`Reply`], one [`Out`](super::Out) slot for a slot marker. The deferred-retry position rides
-/// beside the attachment instead, so it is bound by [`OutPosition`] directly.
+/// [`Reply`], one [`Out`](super::Out) slot for a slot marker, the deferred-retry slot for
+/// [`Retry`](crate::runtime::Retry).
 ///
-/// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot - which is
-/// what makes the calls order-independent and what the steps after the call ride. Machinery;
-/// never named directly.
+/// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot,
+/// [`RetryPos`](crate::runtime::RetryPos) for the deferred retry - which is what makes the calls
+/// order-independent and what the steps after the call ride. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "this handler has no unbound publish position marked `{M}`",
+    message = "this registration has no unbound publish position marked `{M}`",
     label = "`.out({M}, ..)` has no position to bind here",
     note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
-            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot. Check the \
-            marker, that the handler declares it, and that it was not bound twice"
+            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
+            and that it was not bound twice"
 )]
 pub trait BindAt<Mount, M, Policy, Index> {
     /// The attachment with that position bound.

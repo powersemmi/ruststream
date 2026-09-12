@@ -160,10 +160,14 @@ The runtime honours the delay as follows:
   is incremented by one, and a handler can read it to cap redeliveries.
 
   The copy needs a publisher, and the mount site names it: `.out_retry(policy)` binds the
-  deferred-retry position of that one registration, with the broker's own publish policy. It takes
-  a policy and nothing else, and binds once. Without it the delay is dropped and the message is
-  requeued immediately. The deferred re-publish is **at-most-once** over the delay window: if the
-  process exits before the timer fires, the copy is lost.
+  deferred-retry position of that one registration, with the broker's own publish policy. It binds
+  once. Without it the delay is dropped and the message is requeued immediately. The deferred
+  re-publish is **at-most-once** over the delay window: if the process exits before the timer
+  fires, the copy is lost.
+
+  The position is an `Out` slot, so the steps after it are the slot steps: `.codec(..)` names the
+  position's codec and `.transform(..)` composes a publish transform the copy travels through. The
+  copy carries the delivery's own bytes, so the codec resolves the position and encodes nothing.
 
   ```rust
   --8<-- "examples/retry.rs:mount"

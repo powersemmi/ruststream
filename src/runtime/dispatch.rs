@@ -826,8 +826,11 @@ pub(crate) async fn settle_outcome<M: IncomingMessage>(
 /// schedules a deferred re-publish of the captured copy to the subscription's redelivery address
 /// with the [`RETRY_COUNT_HEADER`] incremented. That address is what the subscription's source
 /// reported at startup, not the subscription's name: the two differ wherever a subscription is a
-/// resource of its own. Where the registration bound no deferred-retry position, this falls back
-/// to an immediate requeue and warns.
+/// resource of its own. The copy leaves through the registration's retry slot, so the mount
+/// site's transforms and the publisher's own headers reach it as they reach any slot publish; it
+/// carries bytes already, so no codec encodes it and the call adjusts no per-message settings.
+/// Where the registration bound no deferred-retry position, this falls back to an immediate
+/// requeue and warns.
 ///
 /// A transport with no settlement at all ([`AckError::Unsupported`] from `nack`, as on MQTT at
 /// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the deferred re-publish: there is no original to

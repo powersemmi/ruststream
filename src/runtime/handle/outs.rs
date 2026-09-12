@@ -474,11 +474,13 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline, Body> Reque
     }
 }
 
-#[cfg(test)]
 impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
-    /// Builds an entry directly for the crate's own unit tests; production entries are only
-    /// ever paired by the runtime at startup.
-    pub(crate) fn test_entry(wired: W, codec: E, pipeline: Pipe) -> Self {
+    /// Builds an entry over an already-paired live value.
+    ///
+    /// The injected path pairs through [`FromStartup`] instead; this is for the one slot the
+    /// runtime owns rather than the handler - the deferred-retry slot, which the starter pairs
+    /// and then erases - and for the crate's own unit tests.
+    pub(crate) fn wired(wired: W, codec: E, pipeline: Pipe) -> Self {
         Self {
             wired: SlotPublisher::new(wired),
             codec,

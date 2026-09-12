@@ -1,18 +1,57 @@
-error[E0277]: this registration has no open deferred-retry position
+error[E0277]: this registration has no unbound publish position marked `ruststream::prelude::Retry`
   --> tests/ui/retry_bound_twice.rs:23:14
    |
 23 |             .out(Retry, MemoryPublish);
-   |              ^^^ `.out(Retry, ..)` has nothing to bind here
+   |              ^^^ `.out(ruststream::prelude::Retry, ..)` has no position to bind here
    |
-   = help: the trait `ruststream::runtime::RetryOpen` is not implemented for `runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker>`
-   = note: `.out(Retry, policy)` - or its sugar `.out_retry(policy)` - names the publish policy a deferred `retry_after` copy leaves through, once per registration
-   = help: the following other types implement trait `ruststream::runtime::RetryOpen`:
-             (Rep, Slots)
-             runtime::router::routes::BatchRoute<S, H, Cx>
-             runtime::router::routes::SubscribeRoute<S, H, Cx>
-             runtime::router::routes_inject::BatchInjectRoute<Source, Def, DecodeCodec, Extra>
-             runtime::router::routes_inject::InjectRoute<Source, Def, DecodeCodec, Extra>
-             runtime::router::routes_publish::BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
-             runtime::router::routes_publish::PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
-             runtime::router::routes_publish::RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
-   = note: required for `Router<MemoryBroker, (runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker>, ())>` to implement `ruststream::runtime::AttachRetry<MemoryBroker>`
+   = help: the trait `ruststream::runtime::BindAt<ruststream::runtime::RetryMount, ruststream::prelude::Retry, _, _>` is not implemented for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>`
+   = note: `.out(marker, policy)` binds one position: `Reply` for the value a `publish("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
+help: `ruststream::runtime::Retried<Under, Attachment>` implements trait `ruststream::runtime::BindAt<Mount, M, Policy, Index>`
+  --> src/runtime/retry.rs
+   |
+   | / impl<Mount, Policy, Under, Attachment> BindAt<Mount, Reply, Policy, ReplyLast>
+   | |     for Retried<Under, Attachment>
+   | | where
+   | |     Under: BindAt<Mount, Reply, Policy, ReplyLast>,
+   | |___________________________________________________^ `ruststream::runtime::BindAt<Mount, Reply, Policy, ruststream::runtime::ReplyLast>`
+...
+   | / impl<Mount, M, Policy, Under, Attachment, const POS: usize> BindAt<Mount, M, Policy, SlotPos<POS>>
+   | |     for Retried<Under, Attachment>
+   | | where
+   | |     Under: BindAt<Mount, M, Policy, SlotPos<POS>>,
+   | |__________________________________________________^ `ruststream::runtime::BindAt<Mount, M, Policy, ruststream::runtime::SlotPos<POS>>`
+   = note: required for `ruststream::prelude::Retry` to implement `ruststream::runtime::OutPosition<ruststream::runtime::RetryMount, MemoryBroker, ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>, _, _>`
+
+error[E0277]: this registration has no unbound publish position marked `ruststream::prelude::Retry`
+  --> tests/ui/retry_bound_twice.rs:23:18
+   |
+23 |             .out(Retry, MemoryPublish);
+   |              --- ^^^^^ `.out(ruststream::prelude::Retry, ..)` has no position to bind here
+   |              |
+   |              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream::runtime::BindAt<ruststream::runtime::RetryMount, ruststream::prelude::Retry, _, _>` is not implemented for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>`
+   = note: `.out(marker, policy)` binds one position: `Reply` for the value a `publish("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
+help: `ruststream::runtime::Retried<Under, Attachment>` implements trait `ruststream::runtime::BindAt<Mount, M, Policy, Index>`
+  --> src/runtime/retry.rs
+   |
+   | / impl<Mount, Policy, Under, Attachment> BindAt<Mount, Reply, Policy, ReplyLast>
+   | |     for Retried<Under, Attachment>
+   | | where
+   | |     Under: BindAt<Mount, Reply, Policy, ReplyLast>,
+   | |___________________________________________________^ `ruststream::runtime::BindAt<Mount, Reply, Policy, ruststream::runtime::ReplyLast>`
+...
+   | / impl<Mount, M, Policy, Under, Attachment, const POS: usize> BindAt<Mount, M, Policy, SlotPos<POS>>
+   | |     for Retried<Under, Attachment>
+   | | where
+   | |     Under: BindAt<Mount, M, Policy, SlotPos<POS>>,
+   | |__________________________________________________^ `ruststream::runtime::BindAt<Mount, M, Policy, ruststream::runtime::SlotPos<POS>>`
+   = note: required for `ruststream::prelude::Retry` to implement `ruststream::runtime::OutPosition<ruststream::runtime::RetryMount, MemoryBroker, ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>, _, _>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::out`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn out<M, Policy, Index>(
+   |            --- required by a bound in this associated function
+...
+   |         M: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::out`

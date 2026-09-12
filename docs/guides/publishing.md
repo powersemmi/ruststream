@@ -68,8 +68,8 @@ A handler definition never names a publisher: it declares what the handler repli
 it goes. A publish policy belongs to a broker, so you specify it where the broker is named, at the
 mount site. Every position takes its policy from one call, `.out(marker, policy)`: an `Out` slot
 from its own marker, the reply from the `Reply` marker, the deferred `retry_after` copy from the
-`Retry` marker (see [delayed redelivery](subscribers.md#delayed-redelivery)). The two positions
-that are not slots have that call spelled out: `.out_reply(policy)` is `.out(Reply, policy)`, and
+`Retry` marker (see [delayed redelivery](subscribers.md#delayed-redelivery)). The reply and the
+deferred retry also have that call spelled out: `.out_reply(policy)` is `.out(Reply, policy)`, and
 `.out_retry(policy)` is `.out(Retry, policy)`.
 
 === "Macros"

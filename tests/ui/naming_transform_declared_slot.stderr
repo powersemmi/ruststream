@@ -7,7 +7,7 @@ error[E0277]: `Audit` does not let a transform name the destination
    |              required by a bound introduced by this call
    |
    = help: the trait `ruststream::runtime::NamingOffered<Audit>` is not implemented for `Reads`
-   = note: the destination is already declared and the generated document reports it: a reply type carrying `#[outgoing(name = "..")]` is published there, a batch's replies answer many deliveries and carry none of their headers, and a slot marker offers the right only when every type in its `#[publishes(..)]` dictionary leaves its destination open - one with no dictionary, `DefaultSlot` among them, never offers it
+   = note: the destination is already declared and the generated document reports it: a reply type carrying `#[outgoing(name = "..")]` is published there, a batch's replies answer many deliveries and carry none of their headers, a slot marker offers the right only when every type in its `#[publishes(..)]` dictionary leaves its destination open - one with no dictionary, `DefaultSlot` among them, never offers it - and the `Retry` slot publishes to the subscription's own redelivery address, which no mount site chooses
 help: the trait `ruststream::runtime::NamingOffered<By>` is implemented for `Names`
   --> src/runtime/publish/transform.rs
    |

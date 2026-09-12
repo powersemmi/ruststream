@@ -127,7 +127,7 @@ pub use publisher_registry::ErasedPublisher;
 pub use redelivery::RetryPairing;
 pub use retry::Retry;
 #[doc(hidden)]
-pub use retry::{Retried, RetryOpen, RetryPos};
+pub use retry::{Retried, RetryChain, RetryMount, RetryOpen, RetryPos, RoutePosition};
 #[doc(hidden)]
 pub use router::{
     AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount,

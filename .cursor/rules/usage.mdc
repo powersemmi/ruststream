@@ -123,7 +123,9 @@ The broker status inside is not a public enum: read an outcome with the predicat
 `is_retry()`, `is_drop()` and `retry_delay()`. On a broker without native delayed redelivery the
 runtime honours `retry_after` by publishing a copy after the delay, through the policy the mount
 site bound with `.out_retry(policy)` (`.out(Retry, policy)` spelled out); a registration that binds
-none falls back to an immediate requeue.
+none falls back to an immediate requeue. The position is an `Out` slot, so `.codec(..)` and
+`.transform(..)` after it apply to the copy - which carries the delivery's own bytes, so nothing
+re-encodes it.
 
 ## Post-settle work (`and_after`)
 

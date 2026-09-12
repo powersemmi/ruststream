@@ -59,7 +59,10 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 
 处理器的定义不指定发布者，它声明处理器回复什么、发往哪里。发布策略属于 Broker，因此在点名 Broker
 的地方指定它，也就是挂载点。这一步用的正是绑定 `Out` 槽位的那个 `.out(marker, policy)` 调用。
-`Reply` 是一个位置标记，处理器返回的值经由这个位置发布。
+`Reply` 是一个位置标记，处理器返回的值经由这个位置发布；`Retry` 是另一个，`retry_after` 的延后
+副本经由它发出（参见[延后重新投递](subscribers.md#delayed-redelivery)）。这两个位置的调用还有
+更短的写法：`.out_reply(policy)` 就是 `.out(Reply, policy)`，`.out_retry(policy)` 就是
+`.out(Retry, policy)`。
 
 === "宏"
 

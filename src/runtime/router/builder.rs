@@ -3,7 +3,9 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
+};
 
 use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch, batch_metadata};
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
@@ -15,11 +17,15 @@ use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
-use crate::runtime::publish::{PublishIdentity, PublishPipeline};
+use crate::runtime::publish::{
+    ForSlot, LowerOutTransforms, NarrowToUse, OutPipeline, PublishIdentity, PublishPipeline,
+    PublishTransform,
+};
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::redelivery::RetryPairing;
 use crate::runtime::retry::{Retry, RetryOpen, RoutePosition};
 use crate::runtime::settings::BatchSized;
+use crate::runtime::slot::{OutAttachment, SlotCodec, SlotPolicy};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
@@ -779,11 +785,10 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     /// Names the publish policy of one position of the registration just added (the preceding
     /// `include` call).
     ///
-    /// A form that publishes nothing of its own hands back the grown router rather than a mount
-    /// chain, and the one position such a registration still has is the deferred retry - see
-    /// [`Retry`](crate::runtime::Retry). The forms that do publish carry the position on their
-    /// chain instead, next to the reply and the slots
-    /// ([`RouterWith::out`](crate::runtime::RouterWith::out)).
+    /// A form that publishes nothing of its own is a finished route by the time `include`
+    /// returns, and the one position such a registration still has is the deferred retry - see
+    /// [`Retry`](crate::runtime::Retry). Naming it opens a mount chain over that route, so the
+    /// steps after it are the slot steps and `.build()` hands the router back.
     ///
     /// Name it after that registration's other settings ([`workers`](Self::workers),
     /// [`layer`](Self::layer)): those read the route this call wraps.
@@ -807,7 +812,8 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// let router = Router::<MemoryBroker>::new()
     ///     .include(work)
-    ///     .out(Retry, MemoryPublish);
+    ///     .out(Retry, MemoryPublish)
+    ///     .build();
     /// # }
     /// ```
     // The unit marker drives inference, so it travels by value to keep the call site
@@ -826,6 +832,8 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     }
 
     /// The same call with the marker spelled out: `.out(Retry, policy)`.
+    ///
+    /// It opens the same mount chain, so the slot steps follow it and `.build()` finishes it.
     pub fn out_retry<Policy>(self, policy: Policy) -> <Retry as RoutePosition<B, Self, Policy>>::Out
     where
         Retry: RoutePosition<B, Self, Policy>,
@@ -862,30 +870,45 @@ impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
     type Broker = B;
 }
 
-/// Binds the deferred-retry position of the registration a router grew last: the tail of
+/// Wires the deferred-retry slot onto the registration a router grew last: the tail of
 /// `.out(Retry, policy)` on a mount chain, after the chain committed its registration.
 ///
-/// Machinery; never named directly.
+/// This is where the slot's attachment resolves into what one slot resolves from anywhere - the
+/// policy, the codec and the composed publish pipeline - and where the three are erased into the
+/// pairing the starter takes. Machinery; never named directly.
 #[doc(hidden)]
-pub trait AttachRetry<B: Broker>: Sized {
+pub trait AttachRetry<Attachment>: Sized {
     /// The router with that registration's retry position bound.
     type Out;
 
-    /// Binds it.
-    fn attach_retry(self, retry: RetryPairing<B>) -> Self::Out;
+    /// Wires it.
+    fn attach_retry(self, slot: Attachment) -> Self::Out;
 }
 
-impl<B, Head, Tail, C, Layers, Pipe> AttachRetry<B> for Router<B, (Head, Tail), C, Layers, Pipe>
+impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc>
+    AttachRetry<OutAttachment<Retry, Policy, Transforms, Enc>>
+    for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     B: Broker + 'static,
     Head: RetryOpen,
+    C: Clone,
+    Pipe: Clone,
+    Enc: SlotCodec<C, Codec: Send + Sync + 'static>,
+    Transforms: LowerOutTransforms<Pipe, Out: OutPipeline + 'static> + PublishTransform<ForSlot>,
+    <Transforms as PublishTransform<ForSlot>>::Destination: NarrowToUse<Policy>,
+    SlotPolicy<Transforms, Policy>:
+        PublishPolicy<Connected<B>, Live: Publisher + 'static> + Send + 'static,
 {
     type Out = Router<B, (RetriedRoute<Head, B>, Tail), C, Layers, Pipe>;
 
-    fn attach_retry(self, retry: RetryPairing<B>) -> Self::Out {
+    fn attach_retry(self, slot: OutAttachment<Retry, Policy, Transforms, Enc>) -> Self::Out {
+        let (policy, codec, pipeline) = slot.wire(self.codec.clone(), self.pipeline.clone());
         let (head, tail) = self.routes;
         Router {
-            routes: (RetriedRoute::new(head, retry), tail),
+            routes: (
+                RetriedRoute::new(head, RetryPairing::new(policy, codec, pipeline)),
+                tail,
+            ),
             codec: self.codec,
             layers: self.layers,
             pipeline: self.pipeline,

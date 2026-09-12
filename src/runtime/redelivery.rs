@@ -16,26 +16,32 @@ use thiserror::Error;
 use tokio_util::task::TaskTracker;
 
 use crate::runtime::dispatch::Delivery;
+use crate::runtime::handle::Slot;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
+use crate::runtime::publish::OutPipeline;
 use crate::runtime::publisher_registry::ErasedPublisher;
+use crate::runtime::retry::Retry;
 use crate::{Broker, Connected, PairError, PublishPolicy, Publisher, SubscriptionSource};
 
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
 
-/// The deferred `retry_after` fallback of one subscription: the publisher its registration bound,
-/// paired with the address that subscription's source reported at startup.
+/// The deferred `retry_after` fallback of one subscription: the retry slot its registration
+/// bound, paired with the address that subscription's source reported at startup.
 pub(crate) struct DeferredRetry {
+    /// The bound slot's entry, erased. A publish through it travels the slot's own transforms and
+    /// the app's publish pipeline, as a publish through any slot does.
     pub(crate) publisher: Arc<dyn ErasedPublisher>,
     pub(crate) address: Arc<str>,
 }
 
-/// The pairing one registration's `.out(Retry, policy)` owes: the policy, erased against the
+/// The pairing one registration's `.out(Retry, policy)` owes: the retry slot, erased against the
 /// broker the mount site named, waiting for the connected form.
 ///
 /// A policy is declaration and pairs only against a connected broker, which exists after the
-/// synchronous builder has run. Erasing it here is what keeps the retry position out of the
-/// attachment's type: a route carries this one type whatever policy the mount site named.
+/// synchronous builder has run. Erasing the whole slot here - the policy, the codec and the
+/// pipeline the mount composed - is what keeps the retry position out of the route's type: a
+/// route carries this one type whatever the mount site named.
 #[doc(hidden)]
 pub struct RetryPairing<B: Broker>(PairRetry<B>);
 
@@ -55,16 +61,26 @@ type PairRetry<B> = Box<
 >;
 
 impl<B: Broker + 'static> RetryPairing<B> {
-    /// The pairing `policy` owes against this broker's connected form.
-    pub(crate) fn new<Policy>(policy: Policy) -> Self
+    /// The pairing the retry slot owes against this broker's connected form.
+    ///
+    /// What the pairing yields is the slot entry itself, erased: a publish through it runs the
+    /// mount site's transforms and the app's publish pipeline before reaching the broker, which
+    /// is what makes the deferred copy travel the slot it was bound on rather than a path of its
+    /// own.
+    pub(crate) fn new<Policy, Enc, Pipe>(policy: Policy, codec: Enc, pipeline: Pipe) -> Self
     where
         Policy: PublishPolicy<Connected<B>> + Send + 'static,
         Policy::Live: Publisher + 'static,
+        Enc: Send + Sync + 'static,
+        Pipe: OutPipeline + 'static,
     {
         Self(Box::new(move |connected| {
             Box::pin(async move {
                 let live = policy.pair(connected).await?;
-                Ok(Arc::new(live) as Arc<dyn ErasedPublisher>)
+                Ok(
+                    Arc::new(Slot::<Retry, _, _, _>::wired(live, codec, pipeline))
+                        as Arc<dyn ErasedPublisher>,
+                )
             })
         }))
     }
@@ -271,7 +287,14 @@ mod tests {
 
     use super::*;
     use crate::memory::{MemoryBroker, MemoryPublish};
+    use crate::runtime::publish::PublishIdentity;
     use crate::{IncomingMessage, OutgoingMessage, Subscriber};
+
+    /// The retry slot of a mount that named neither a codec nor a transform: the surface's codec
+    /// position and the app's bare pipeline, which is what the wire produces there.
+    fn bare_slot() -> RetryPairing<MemoryBroker> {
+        RetryPairing::<MemoryBroker>::new(MemoryPublish, (), PublishIdentity)
+    }
 
     /// A scope with the harness pieces it holds under the `testing` feature.
     fn scope() -> ScopeDelivery {
@@ -289,8 +312,7 @@ mod tests {
     /// rather than letting the subscription run and publish its deferred copies into nothing.
     #[test]
     fn a_sourceless_mount_under_a_retry_position_is_a_startup_error() {
-        let retry = RetryPairing::<MemoryBroker>::new(MemoryPublish);
-        let refused = open_mounted_subscriber(&scope(), "orders", Some(retry))
+        let refused = open_mounted_subscriber(&scope(), "orders", Some(bare_slot()))
             .expect_err("a registration that defers retries cannot address a sourceless mount");
         let message = refused.to_string();
         assert!(message.contains("orders"), "{message}");
@@ -305,18 +327,18 @@ mod tests {
         assert!(delivery.retry.is_none());
     }
 
-    /// The bound policy pairs against the connected broker, and the publisher it yields reaches
-    /// that broker: what the deferred copy travels through.
+    /// The bound slot pairs against the connected broker, and the entry it yields reaches that
+    /// broker: what the deferred copy travels through.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_bound_policy_pairs_against_the_connected_broker() {
+    async fn the_bound_slot_pairs_against_the_connected_broker() {
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("retry.fallback");
         let connected = broker.connect().await.expect("connect");
 
-        let publisher = RetryPairing::<MemoryBroker>::new(MemoryPublish)
+        let publisher = bare_slot()
             .pair(&connected)
             .await
-            .expect("the bound policy pairs");
+            .expect("the bound slot pairs");
         publisher
             .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
             .await
