@@ -38,7 +38,7 @@ RustStream::new(info).with_broker(broker, |b| {
 有些处理器需要一个回复发布者，或者一个
 [`Out`](publishing.md#publishing-from-inside-a-handler) 槽位。这类处理器在路由器上的注册与在作用域上
 一样，区别只有一处：注册由显式的 `.build()` 提交。`.out(marker, policy)` 为一个位置指定发布策略：
-`Reply` 对应回复，槽位的标记对应 `Out` 槽位。没有写 `.out(Reply, ..)` 时，`.build()` 为回复采用
+`Reply` 对应回复，槽位的标记对应 `Out` 槽位。没有写 `.out_reply(..)` 时，`.build()` 为回复采用
 Broker 自带的默认发布策略。
 
 缺少 `.build()` 的链不会成为路由器，因此无法通过编译。这些策略仍然是纯粹的声明，所以带策略的

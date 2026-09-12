@@ -20,7 +20,7 @@ to derive `serde::Deserialize`, and a reply type also `Serialize`.
 
 `DefaultCodec` is an alias selected by the enabled features: `json` when it is enabled, otherwise
 `cbor`, otherwise `msgpack`. When nothing names a codec, `include(def)` and a reply chain that
-stops at `.out(Reply, policy)` take it. Neither of them takes a codec argument.
+stops at `.out_reply(policy)` take it. Neither of them takes a codec argument.
 
 With no codec feature enabled, there is nothing to encode or decode with. Anything that would need
 the default codec becomes a compile error, and the error lists the ways out: enable a codec
@@ -162,8 +162,8 @@ When no level above names a codec, `include` uses [`DefaultCodec`](#the-default-
 
 ## The publish side
 
-Publishers follow the same rules: `.out(Reply, policy)` encodes replies with the default codec, and
-`.out(Reply, policy).codec(codec)` names one explicitly, as does `.out(marker, policy).codec(codec)`
+Publishers follow the same rules: `.out_reply(policy)` encodes replies with the default codec, and
+`.out_reply(policy).codec(codec)` names one explicitly, as does `.out(marker, policy).codec(codec)`
 for a single `Out` slot.
 
 The incoming request decodes with the scope codec set through `with_broker_codec`, or with the

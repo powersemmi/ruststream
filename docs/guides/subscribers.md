@@ -159,18 +159,23 @@ The runtime honours the delay as follows:
   ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html))
   is incremented by one, and a handler can read it to cap redeliveries.
 
-  You can turn it on per scope with
-  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via);
-  the publisher must target the same broker. Without a publisher the delay is dropped and the
-  message is requeued immediately. The deferred re-publish is **at-most-once** over the delay
-  window: if the process exits before the timer fires, the copy is lost.
+  The copy needs a publisher, and the mount site names it: `.out_retry(policy)` binds the
+  deferred-retry position of that one registration, with the broker's own publish policy. It takes
+  a policy and nothing else, and binds once. Without it the delay is dropped and the message is
+  requeued immediately. The deferred re-publish is **at-most-once** over the delay window: if the
+  process exits before the timer fires, the copy is lost.
+
+  ```rust
+  --8<-- "examples/retry.rs:mount"
+  ```
 
   The copy goes to the address the subscription reports, which is not always its name. A NATS
   subject and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its
   own name and published to through its topic. Your broker crate answers for its own subscriptions,
-  and a scope whose subscriptions cannot answer does not start once `retry_via` is set, naming the
-  subscription and the fix. There the broker's own subscription descriptor is what answers:
-  `#[subscriber("name")]` answers only where a name is a publish destination.
+  and a registration that binds the position over a subscription which cannot answer does not
+  start, naming that subscription and the fix; the registrations beside it are untouched. There the
+  broker's own subscription descriptor is what answers: `#[subscriber("name")]` answers only where
+  a name is a publish destination.
 
   A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) takes the same
   path: there is nothing to drop, so the deferred copy is the whole retry. The other case is a
@@ -601,7 +606,7 @@ as the handler returned them. You can return the reply directly, or as
 `Result<Export, HandlerOutcome>` for the same explicit ack control the encoded form has.
 
 The policy you name at the `include` site constructs the publisher, and both wire forms name that
-policy the same way: `b.include(relay).out(Reply, Publish)`. With no `.out(..)` call, the broker's
+policy the same way: `b.include(relay).out_reply(Publish)`. With no `.out(..)` call, the broker's
 default publish policy constructs it.
 
 The chains diverge after that: an encoded reply takes `.codec(..)`, `.transform(..)` and

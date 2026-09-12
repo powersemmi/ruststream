@@ -127,5 +127,5 @@ use std::time::Duration;
 
 RustStream::new(info)
     .shutdown_timeout(Duration::from_secs(10))
-    .with_broker(broker, |b| b.include(handle));
+    .with_broker(broker, |b| { b.include(handle); });
 ```

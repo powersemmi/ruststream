@@ -53,7 +53,7 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
     ```
 
 用普通的 `include` 挂载这样的处理器。不作其他指定时，回复用默认编解码器编码，经由 Broker 的默认
-发布策略发出。`.out(Reply, Publish)` 指定 Broker 的 `prelude` 导出的策略，链上其后的步骤把回复的
+发布策略发出。`.out_reply(Publish)` 指定 Broker 的 `prelude` 导出的策略，链上其后的步骤把回复的
 接线补齐：`.codec(..)` 指定回复的编解码器，`.transform(..)` 加上静态发布变换，`.transactional()`
 让一个批次的回复共用同一个 Broker 事务。编解码器只指定一次，第二个 `.codec(..)` 是编译错误。
 
@@ -78,7 +78,7 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 
 同一个 `publish(..)` 服务于两种传输方式，选择由回复的类型决定。实现 `serde::Serialize` 的回复按上面
 的方式编码。带 `#[derive(Serialized)]` 的回复自己产出字节、按字节原样发出，因此它的
-`.out(Reply, ..)` 只接一个策略：这条路径上没有编解码器可指定，其后写 `.codec(..)` 无法通过编译。
+`.out_reply(..)` 只接一个策略：这条路径上没有编解码器可指定，其后写 `.codec(..)` 无法通过编译。
 参见[原始字节订阅者](subscribers.md#raw-subscribers)。
 
 ## 控制确认行为
@@ -161,7 +161,7 @@ Broker 重新投递它。让会发布的处理器对重新投递保持幂等。
 
 `.out(..)` 之后的 `.transform(..)` 作用在这次 `.out(..)` 点名的位置上（见[发布管线](#the-publish-pipeline)），
 因此既回复又分发副本的注册，在每个位置上各指定一次变换：
-`.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`。
+`.out_reply(Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`。
 
 === "宏"
 
@@ -314,7 +314,7 @@ trait（`Publisher`、`TransactionalPublisher`、`OwnedTransactions`、`RequestR
 
 令牌与生成它的 `Bindable` 包装器共享同一个槽位，因此要注册同一个包装器（`with_broker(bindable, ..)`），
 启动才会把已连接的 Broker 填进该槽位。令牌的 Broker 始终没有注册时，绑定就返回清晰的错误。同一套
-形态也用于回复发布（在 `publish("dest")` 处理器上写 `.out(Reply, token)`）和批量写法。
+形态也用于回复发布（在 `publish("dest")` 处理器上写 `.out_reply(token)`）和批量写法。
 
 在注册之外，启动连接了令牌的 Broker 之后，令牌自行完成绑定：`running.publisher(token)` 把活的
 发布者交给同级的任务，参见[与其他服务器并行运行](http.md)。启动时的第一次发布根本不需要令牌：
@@ -431,7 +431,7 @@ prelude 之外的东西，签名也就点明了该处理器绑在哪个 Broker �
 
 | 位置 | 种类 | 变换读到什么 |
 |---|---|---|
-| 回复，在 `.out(Reply, ..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
+| 回复，在 `.out_reply(..)` 之后 | `ForReply<C>` | `PublishContext<'_, C>`：正在作答的那次投递 |
 | `Out` 槽位，在 `.out(marker, policy)` 之后 | `ForSlot` | `SlotContext<'_>`：槽位自己的名字 |
 
 它可以做什么由 `type Destination` 声明：不动目的地的变换写 `Reads`，要写入目的地的写 `Names`。
@@ -519,7 +519,7 @@ Broker，因此索要其中任何一项的处理器无法通过编译。
 应用级的这一层包住处理器发出的每一次发布：`publish(..)` 写法的回复和从注入的 `Out` 槽位出去的
 每一条消息。
 
-挂载点上的变换作用在指定它的那个位置上：`.out(Reply, Publish).transform(StampSource)` 扩充回复的
+挂载点上的变换作用在指定它的那个位置上：`.out_reply(Publish).transform(StampSource)` 扩充回复的
 栈，`.out(Audit, Publish).transform(OutboxEnvelope)` 扩充这个槽位的栈。两个位置都用到时，注册就
 把两个调用都写上，而 `.transform(..)` 归属它前面点名的那个位置。管线的顺序是：一个位置的变换
 按链上写下的顺序运行，然后是应用级的中间件，最后是发送。
@@ -550,7 +550,7 @@ Broker，因此索要其中任何一项的处理器无法通过编译。
     --8<-- "examples/manual/publishing.rs:batch_publishing"
     ```
 
-用 `include` 挂载它，并在链上用 `.out(Reply, ..)` 添加回复的接线：
+用 `include` 挂载它，并在链上用 `.out_reply(..)` 添加回复的接线：
 
 === "宏"
 
@@ -567,7 +567,7 @@ Broker，因此索要其中任何一项的处理器无法通过编译。
 不写 `.transactional()` 时，每条回复各自独立发布。批次中途失败会让整个批次重新投递，因此先前那些
 回复可能再发一次（至少一次）。
 
-`.out(Reply, ..)` 之后的 `.transactional()` 步骤把这套接线切换成每个批次一个 Broker 事务：运行
+`.out_reply(..)` 之后的 `.transactional()` 步骤把这套接线切换成每个批次一个 Broker 事务：运行
 时开启事务，发布每一条回复，提交，然后才 ack 入站的这个批次。任何失败都会中止事务，因此回复绝不
 会只露出一半。
 

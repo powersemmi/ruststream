@@ -56,10 +56,12 @@ alwaysApply: false
 - Construct brokers synchronously (`MemoryBroker::new()`, `NatsBroker::new(url)`); the runtime
   connects them at startup. Never connect inside the builder.
 - `include` is the only mounting call. It takes the definition and returns a mount chain:
-  `.out(Reply, policy)` names the reply's publish policy, `.out(<marker>, policy)` one injected
-  publisher's (finish a slot chain with `.build()`), or chain nothing and the broker's default
-  publish policy is used. A definition never names a publisher: it declares what a handler replies
-  with and where, and a policy belongs to a broker, so it is named where a broker is.
+  `.out_reply(policy)` names the reply's publish policy, `.out(<marker>, policy)` one injected
+  publisher's (finish a slot chain with `.build()`), `.out_retry(policy)` the publisher a deferred
+  `retry_after` copy leaves through, or chain nothing and the broker's default publish policy is
+  used. A definition never names a publisher: it declares what a handler replies with and where,
+  and a policy belongs to a broker, so it is named where a broker is. The chain is a statement:
+  `with_broker(broker, |b| { b.include(handle); })`, not `|b| b.include(handle)`.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
   codec argument. With no codec feature at all, anything that would need to encode or decode is a
   compile error naming the fix; the `Deserialized`/`Serialized` byte lanes never need a codec.
@@ -99,7 +101,7 @@ Swapping the broker is swapping the glob; the handlers do not change (NATS conne
 ```rust
 use ruststream_nats::prelude::*; // brings NatsBroker + the core prelude
 
-.with_broker(NatsBroker::new("nats://localhost:4222"), |b| b.include(handle))
+.with_broker(NatsBroker::new("nats://localhost:4222"), |b| { b.include(handle); })
 ```
 
 ## Handler outcomes
@@ -118,8 +120,10 @@ async fn handle(order: &Order) -> Result<(), MyError> { Ok(()) }
 ```
 
 The broker status inside is not a public enum: read an outcome with the predicates `is_ack()`,
-`is_retry()`, `is_drop()` and `retry_delay()`. `retry_after` is a hint - brokers without native
-delayed redelivery fall back to an immediate requeue.
+`is_retry()`, `is_drop()` and `retry_delay()`. On a broker without native delayed redelivery the
+runtime honours `retry_after` by publishing a copy after the delay, through the policy the mount
+site bound with `.out_retry(policy)` (`.out(Retry, policy)` spelled out); a registration that binds
+none falls back to an immediate requeue.
 
 ## Post-settle work (`and_after`)
 
@@ -223,7 +227,7 @@ retention bound already evicted reports `MemoryError::PositionEvicted`.
 Return the reply value and write `publish` on the subscriber. The reply type derives `Outgoing`,
 and its declaration decides where the answer goes: a type fixing its own name is published there
 and the clause names nothing, a type naming nothing takes the clause's name. The reply publisher is
-the broker's default policy unless the mount names one with `.out(Reply, ..)`.
+the broker's default policy unless the mount names one with `.out_reply(..)`.
 
 ```rust
 use ruststream::memory::prelude::*;
@@ -256,11 +260,11 @@ async fn confirm(order: &Order) -> Confirmation {
 // in with_broker(broker, |b| { ... }):
 b.include(issue_receipt);                              // the type carries the destination
 b.include(confirm);                                    // broker's default publish policy
-b.include(confirm).out(Reply, Publish);                // an explicit one
-b.include(confirm).out(Reply, Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
+b.include(confirm).out_reply(Publish);                 // an explicit one
+b.include(confirm).out_reply(Publish).codec(CborCodec).transform(Envelope);  // the whole wiring
 ```
 
-The steps after `.out(Reply, ..)` fill the reply wiring, each once: `.codec(..)` names the reply
+The steps after `.out_reply(..)` fill the reply wiring, each once: `.codec(..)` names the reply
 codec (the default codec applies without it), `.transform(..)` composes a static
 `PublishTransform`, `.batch_transform(..)` does the same on a batch's replies, and
 `.transactional()` publishes a batch's replies inside one broker transaction. A second `.codec(..)`,
@@ -326,7 +330,7 @@ async fn relay(frame: &Frame<'_>) -> Export {
 ```
 
 A `Serialized` reply names its publish policy at the include site the same way an encoded one does
-(`b.include(relay).out(Reply, Publish)`, or nothing for the broker's default); what it does not take
+(`b.include(relay).out_reply(Publish)`, or nothing for the broker's default); what it does not take
 is the wiring steps after it, since its bytes leave with no codec and no transform stack.
 
 A binary protocol (Protobuf, Cap'n Proto, FlatBuffers) is not a codec: the generated message *is*
@@ -416,7 +420,7 @@ b.include(route)
 `.transform(..)` composes a `PublishTransform` onto the position named right before it, and onto
 that one only; before any `.out(..)` the step has no position to ride. The step repeats, and the
 transforms run in the order the chain writes them. On a registration that also replies,
-`.transform(..)` after `.out(Reply, ..)` grows the reply's stack and after `.out(marker, ..)` the
+`.transform(..)` after `.out_reply(..)` grows the reply's stack and after `.out(marker, ..)` the
 slot's.
 
 The capability in the bound can be refined - `Out<impl OwnedTransactions, Ledger>` compiles only
@@ -561,7 +565,7 @@ impl<C> PublishTransform<ForReply<C>> for ReplyTo {
 
 // `Response` leaves its destination open, so this position offers the naming right;
 // "answers" is the declared fallback and what the document reports
-b.include(answer).out(Reply, Publish).transform(ReplyTo);
+b.include(answer).out_reply(Publish).transform(ReplyTo);
 ```
 
 A position offers that right only where nothing declared the destination, and elsewhere the
@@ -580,7 +584,7 @@ the mount site, and every message through that position is sent with them:
 
 ```rust
 b.include(record).out(Ledger, Publish::default().qos(1)).build();
-b.include(acknowledge).out(Reply, Publish::default().qos(1));  // a reply has no call site
+b.include(acknowledge).out_reply(Publish::default().qos(1));  // a reply has no call site
 ```
 
 The call adjusts one setting for one message, through a step the broker adds to the publish
@@ -638,7 +642,7 @@ async fn handle(order: &Order, State(db): State<Database>) -> HandlerOutcome {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { db: Database }))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+        .with_broker(MemoryBroker::new(), |b| { b.include(handle); })
 }
 ```
 
@@ -711,8 +715,8 @@ where
 ```
 
 A policy is named the same way wherever a publisher is attached, and the verb is one:
-`.out(Reply, ..)` for a reply handler, `.out(marker, ..)` for a slot, `after_startup(policy, hook)`
-for the first publish.
+`.out_reply(..)` for a reply handler, `.out(marker, ..)` for a slot, `.out_retry(..)` for the
+deferred `retry_after` copy, `after_startup(policy, hook)` for the first publish.
 
 ## Broker context fields (`Ctx<K>`)
 
@@ -818,7 +822,7 @@ b.include_router(orders().merge(shipping()));
 
 On a router every registration that carries an attachment (a reply publisher, an `Out` slot) ends
 with an explicit `.build()`: a chain without it never becomes a router, so it does not compile.
-With no `.out(Reply, ..)` named, `.build()` takes the broker's own default publish policy.
+With no `.out_reply(..)` named, `.build()` takes the broker's own default publish policy.
 
 ## Broker-specific subscriptions
 

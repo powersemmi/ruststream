@@ -94,7 +94,8 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 ```
 
 `redelivery_address` reports the address the runtime publishes a deferred retry to. Answering it is
-what makes `#[subscriber("orders")]` work with `BrokerScope::retry_via` on your broker.
+what makes `#[subscriber("orders")]` work with the mount site's deferred-retry position
+(`.out_retry(policy)`) on your broker.
 
 Keep the default where a subscribe name is not a publish destination. A Google Pub/Sub subscription
 is subscribed to by its own name and published to through its topic, so the descriptor answers
@@ -152,10 +153,10 @@ retry turns into a storm of redeliveries.
 
 A broker that overrides none of the three defaulted methods still works with every runtime feature.
 Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
-delivery and, after the delay, publishes a copy through the publisher the application wired with
-`BrokerScope::retry_via`, with an incremented retry-count header. That copy goes to the address
-[your subscription reports](#where-a-deferred-retry-is-published). Only with no such publisher does
-the delay degrade to an immediate requeue. Keyed worker lanes hand out keyless messages
+delivery and, after the delay, publishes a copy through the policy the mount site bound with
+`.out_retry(policy)`, with an incremented retry-count header. That copy goes to the address
+[your subscription reports](#where-a-deferred-retry-is-published). Only where a registration binds
+no such policy does the delay degrade to an immediate requeue. Keyed worker lanes hand out keyless messages
 round-robin.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
@@ -255,7 +256,7 @@ transforms over your policy before it constructs the publisher.
 
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
 the connected form and name the policy there. The runtime then instantiates the reply publisher
-itself when a `publish("dest")` handler is mounted without an explicit `.out(Reply, ..)`, and
+itself when a `publish("dest")` handler is mounted without an explicit `.out_reply(..)`, and
 `b.include(def)` compiles on its own. Brokers whose publishers always need explicit options do not
 implement it, and their users specify the policy at every handler registration.
 
@@ -440,7 +441,7 @@ In a service it reads like this:
 
 <!-- inline-rust: the call shape against the broker policy sketched above -->
 ```rust
-b.include(confirm).out(Reply, Publish).stream("ORDERS");
+b.include(confirm).out_reply(Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 ```
 
@@ -450,7 +451,7 @@ router and a broker scope alike.
 `map_publisher` replaces the policy with one of the same type, and a different policy type means a
 different publish mode, which belongs in the `.out(marker, policy)` call itself. An
 already-configured value can be passed there directly:
-`.out(Reply, Publish::default().stream("ORDERS"))`.
+`.out_reply(Publish::default().stream("ORDERS"))`.
 
 ### Per-message settings on the publish builder
 
