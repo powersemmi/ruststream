@@ -1,8 +1,8 @@
 """Normative-source banner on every translated page.
 
 Every page whose source file lives under a locale directory opens with a banner naming
-English as normative and linking to the original; the Chinese banner adds that the
-translation was produced by a model. A page served in a localized tree by
+English as normative, saying the translation was produced by a model, and linking to the
+original. A page served in a localized tree by
 `fallback_to_default` still carries its English text, so it gets no banner.
 
 The link is built as a relative URL and injected after markdown rendering, for two reasons:
@@ -17,7 +17,7 @@ DEFAULT_LOCALE = "en"
 BANNERS = {
     "ru": (
         "Нормативная версия документации - английская",
-        'Эта страница переведена с английского. При любом расхождении верен '
+        'Эта страница переведена с английского языковой моделью. При любом расхождении верен '
         '<a href="{original}">английский оригинал</a>.',
     ),
     "zh": (

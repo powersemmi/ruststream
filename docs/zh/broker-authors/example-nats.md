@@ -184,8 +184,6 @@ Core NATS 是发完即忘的，JetStream 会保存消息并要求确认投递。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use std::time::Duration;
-
 pub use async_nats::jetstream::consumer::DeliverPolicy;
 use ruststream::SubscriptionSource;
 
@@ -253,7 +251,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
     }
 
     async fn subscribe(self, connected: &ConnectedNatsBroker) -> Result<NatsSubscriber, NatsError> {
-        connected.subscribe(self).await
+        connected.subscribe_with(self).await
     }
 }
 ```
@@ -596,11 +594,11 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 ```rust
 pub use ruststream::prelude::*;
 
-pub use crate::{NatsBroker, NatsError, NatsSource};
+pub use crate::{NatsBroker, NatsError, SubscribeOptions};
 pub use crate::NatsPublish as Publish;
 
 // The capabilities this broker implements on its live values.
-pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
+pub use ruststream::RequestReply;
 ```
 
 ## 接入到应用里
