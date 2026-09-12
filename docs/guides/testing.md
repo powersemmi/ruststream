@@ -172,7 +172,7 @@ A handler's [`Out` slot](publishing.md#named-slots) identifies it in a test as w
 `tb.out::<Marker>()` returns exactly the messages published through that injected publisher,
 destinations and headers included, across every broker. The assertions are the same as on
 `published`: `assert_called_once`, `with_raw`, `messages`; for the typed `with`, chain
-`.decoded_as::<T>()`. The slot only adds attribution: the broker's per-channel publish log sees the
+`.decoded_as::<T>()`. The slot adds attribution: the broker's per-channel publish log sees the
 same messages.
 
 ```rust
@@ -182,11 +182,11 @@ same messages.
 Publishes that leave the handler task (a spawned sibling task, the buffer of a settled owned
 transaction) are not attributed to the slot: assert on the broker's publish log for those.
 
-The slot view also records what each publish carried as
-[broker settings](publishing.md#broker-settings-per-message), so a setting the broker maps to a
-protocol field rather than a header is still assertable. `with_options` names the broker's options
-type and compares the value; `assert_options_default` states that no builder step ran on that
-publish, so the mount site's policy was the whole answer:
+The slot view also records the per-message
+[broker settings](publishing.md#broker-settings-per-message) each publish carried, so you can
+assert on a setting the broker turns into a protocol field rather than a header. `with_options`
+names the broker's options type and compares the value; `assert_options_default` states that no
+step touched a setting on that publish, and the policy's defaults applied:
 
 === "Macros"
 
@@ -200,10 +200,10 @@ publish, so the mount site's policy was the whole answer:
     --8<-- "tests/manual_publish_options.rs:options_assert"
     ```
 
-Both read the most recent publish, the way `with_header` does. Options live on the slot view alone.
-The broker's publish log sees the message after the broker resolved them, so asking
-`published::<T>(name)` for options panics and points back here; and a bare publisher from a startup
-hook or the application state belongs to no slot, so nothing records its options at all.
+Both read the most recent publish, the way `with_header` does. Options are recorded on the slot
+view alone. The broker's publish log sees the message after the broker resolved them, so asking
+`published::<T>(name)` for options panics. A bare publisher from a startup hook or the application
+state belongs to no slot, and its options are recorded nowhere.
 
 ### Failure policy, panic, and shutdown
 
