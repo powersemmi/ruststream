@@ -35,13 +35,12 @@ use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in
 
 /// Header carrying the framework's own retry count.
 ///
-/// The runtime increments it on every copy of a delivery it publishes, and reads it back beside
-/// the transport's own count
-/// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)): the larger
-/// of the two is what a registration's [`max_attempts`](super::RouterWith::max_attempts) cap
-/// counts. A broker crate that honours a delay by publishing a copy of its own increments it
-/// there, so the cap follows a message the server counts nothing for. A handler can read it too,
-/// to tell a first delivery from a redelivery.
+/// The runtime increments it on every copy of a delivery it publishes, and reads it back where the
+/// transport counts nothing of its own
+/// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)): that is what
+/// a registration's [`max_attempts`](super::RouterWith::max_attempts) cap counts there, on the
+/// runtime's copy path and on a delay a broker crate honours by publishing a copy of its own
+/// alike. A handler can read it too, to tell a first delivery from a redelivery.
 ///
 /// # Examples
 ///
@@ -871,15 +870,13 @@ enum Redelivery<'a> {
 
 /// How many times this message has been delivered, counting this delivery.
 ///
-/// The larger of the two counts a delivery can carry, because they count different redeliveries:
-/// the broker's own, and the copies this process or the broker's own crate published. A transport
-/// that keeps no count of its own contributes nothing and the header decides; a crate that sends
-/// its delayed copies round a wait queue increments the header on a path the server counts
-/// nothing for. Taking the larger is what makes the answer the attempts the message has had,
-/// never fewer. The header starts absent, so the first delivery counts as one either way.
+/// The broker's own count where the transport keeps one, the framework's header otherwise, never
+/// both. A transport that counts its deliveries answers for all of them, the ones a delay or a
+/// requeue brought round included. The header starts absent and is incremented on every copy
+/// published for the delivery, so the first delivery counts as one either way.
 fn attempt_of<M: IncomingMessage>(msg: &M) -> u64 {
-    let published = current_retry_count(msg.headers()) + 1;
-    msg.redelivery_count().unwrap_or(0).max(published)
+    msg.redelivery_count()
+        .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
 }
 
 /// Reads the registration's declaration against this delivery.
@@ -974,10 +971,10 @@ where
 ///
 /// When the broker reports native support (`supports_nack_after`), this defers to
 /// [`IncomingMessage::nack_after`] and nothing is published - unless the delivery is already at
-/// the registration's cap. The cap is read first, against both counts the delivery can carry (see
-/// [`attempt_of`]): the broker's own where the transport keeps one, and the framework's header
-/// where the broker's crate honours the delay by publishing a copy of its own. A delivery at the
-/// cap goes to the declared dead-letter destination or is rejected, exactly as on the copy path.
+/// the registration's cap. The cap is read first, from the one count the transport has (see
+/// [`attempt_of`]): the broker's own where it keeps one, the framework's header otherwise, never
+/// both. A delivery at the cap goes to the declared dead-letter destination or is rejected,
+/// exactly as on the copy path.
 /// Where the broker moves a spent delivery itself the cap is not read here at all: the
 /// declaration is the subscription descriptor's to map onto the broker's own mechanism.
 ///
@@ -1023,8 +1020,10 @@ where
     if msg.supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
         // circle past a cap nothing in this process ever gets to apply. It is read wherever this
-        // process publishes the subscription's copies; a broker that moves a spent delivery itself
-        // applies the declaration itself.
+        // process publishes the subscription's copies, because a crate that honours the delay by
+        // republishing the delivery increments the header the cap counts with where the transport
+        // counts nothing; a broker that moves a spent delivery itself applies the declaration
+        // itself.
         if let Some(retry) = delivery.retry.as_ref()
             && delivery.declaration.max_attempts().is_some()
         {

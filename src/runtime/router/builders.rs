@@ -173,10 +173,9 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// A delivery that has used them up is not retried: it goes to the destination
     /// [`dead_letter`](Self::dead_letter) names, and where the registration names none it is
     /// rejected, which keeps the broker's own dead-letter policy in play where one is configured.
-    /// The count is the larger of the broker's own where the transport keeps one
+    /// The count is the broker's own where the transport keeps one
     /// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)) and the
-    /// framework's `x-ruststream-retry-count` header: the two count different redeliveries, the
-    /// broker's and the copies published for the message.
+    /// framework's `x-ruststream-retry-count` header otherwise, never both.
     ///
     /// Declared once per registration, before `out_retry(policy)` names the publisher the copies
     /// leave through. Where the broker applies a delivery limit itself, the subscription
@@ -184,8 +183,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     ///
     /// A broker with native delayed redelivery gets a `retry_after` delay only while the delivery
     /// is below the cap: the count is read first, and a delivery at the cap goes to the
-    /// dead-letter destination or is rejected rather than coming back. Both counts are read there,
-    /// so the cap holds where the broker holds the message back itself and where its crate
+    /// dead-letter destination or is rejected rather than coming back. The same one count is read
+    /// there, so the cap holds where the broker holds the message back itself and where its crate
     /// honours the delay by publishing a copy that carries the framework's header.
     ///
     /// An immediate [`retry`](crate::runtime::HandlerOutcome::retry) obeys the cap too. On a

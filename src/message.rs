@@ -205,11 +205,10 @@ pub trait IncomingMessage: Send + Sync {
     /// that a registration's `max_attempts(..)` cap counts the broker's own redeliveries rather
     /// than only the copies this process published. The first delivery of a message answers `1`.
     ///
-    /// Where a delivery carries both counts the cap reads the larger: a count the server keeps
-    /// for its own redeliveries misses the cycles a crate that republishes its delayed copies
-    /// performs, and the header those copies carry misses the server's. Increment the header on
-    /// every copy your crate publishes for a delivery, and the cap follows the message through
-    /// both.
+    /// Where the transport counts, this count is the only one a cap reads: the framework's header
+    /// is never mixed in, and a copy your crate republishes starts the transport's count afresh.
+    /// A delay or a requeue the count does not grow on is the broker's behaviour to document, not
+    /// something to work around by adding the header back.
     ///
     /// # Examples
     ///

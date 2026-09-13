@@ -168,14 +168,14 @@ incremented retry-count header. That copy goes to the address
 messages round-robin.
 
 Where `redelivery_count` stays `None`, that header is the only count there is, and a
-`max_attempts(..)` cap is read from it. Override the method and the cap counts the broker's own
-redeliveries too, which is what a user expects from a broker that has a delivery count of its own.
-Where a delivery carries both, the cap reads the larger: the two count different redeliveries, and
-neither one alone is how many attempts the message has had.
+`max_attempts(..)` cap is read from it. Override the method and the broker's count becomes the one
+count the cap reads: the framework's header is never added to it.
 
 Honour a delay by publishing a copy yourself - a wait queue behind a dead-letter exchange, a retry
-topic - and increment `RETRY_COUNT_HEADER` (exported from `ruststream::runtime`) on that copy. The
-server counts nothing for a cycle like that, so the header is what carries the cap through it.
+topic - and increment `RETRY_COUNT_HEADER` (exported from `ruststream::runtime`) on that copy, but
+only where the transport counts nothing. Where it counts, your copy is a new message and the broker
+counts it from one again, so a delivery that has been round the wait queue reaches the cap as a
+first attempt. That is the behaviour of your delay scheme: document it, and leave the header out.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:

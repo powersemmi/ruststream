@@ -56,8 +56,8 @@ struct Delivered {
     count: u64,
 }
 
-/// Both counts on one delivery: the broker's own, and the framework's own from the copies
-/// published for the message.
+/// Both counts on one delivery, so a test can show which of the two a cap reads: the broker's
+/// own, and the framework's own from the copies published for the message.
 #[derive(Debug, Serialize)]
 struct BothCounts {
     #[serde(rename = "x-delivery-count")]
@@ -826,12 +826,12 @@ async fn the_cap_applies_where_a_native_delay_counts_through_the_header() {
         .with(&Order { id: 14 });
 }
 
-/// Where a delivery carries both counts, the further one decides: a queue that counts its
-/// consumer's failed deliveries counts none of the delayed cycles, and the header counts exactly
-/// those. A delivery the broker calls its first, with three copies behind it, is at a cap of
-/// three.
+/// Where the transport counts, that count is the whole answer and the framework's header is not
+/// added to it. A delivery the broker calls its first carries a header worth three copies, and it
+/// is still one attempt against a cap of three: the delay is the broker's, and nothing is
+/// published.
 #[tokio::test(start_paused = true)]
-async fn the_larger_of_the_two_counts_holds_the_cap() {
+async fn a_native_count_is_the_only_count() {
     let app =
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(never_ready_natively)
@@ -851,18 +851,14 @@ async fn the_larger_of_the_two_counts_holds_the_cap() {
         )
         .await
         .expect("publish");
-    tb.settle().await.expect("settle");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Order>("parcels.dead")
-        .assert_called_once()
-        .with(&Order { id: 15 });
-
-    // The broker's own timer never got the delivery, so nothing comes back.
     tb.advance(RETRY_DELAY).await.expect("settle");
+
     tb.broker::<MemoryBroker>()
         .subscriber("parcels")
-        .assert_called_once();
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_not_called();
 }
 
 /// A subscription that reads many destinations and addresses none of them: a filter, a wildcard,
