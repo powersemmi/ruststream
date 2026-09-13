@@ -72,6 +72,11 @@ from its own marker, the reply from the `Reply` marker, the deferred `retry_afte
 deferred retry also have that call spelled out: `.out_reply(policy)` is `.out(Reply, policy)`, and
 `.out_retry(policy)` is `.out(Retry, policy)`.
 
+The retry position differs from the others in one way: it is filled already. Every registration
+whose copies the runtime publishes gets a publisher from the broker's own default policy, and
+`.out_retry(policy)` replaces it. It comes after the registration's
+[retry declaration](subscribers.md#capping-the-retries), `max_attempts(..)` and `dead_letter(..)`.
+
 === "Macros"
 
     ```rust

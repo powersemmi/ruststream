@@ -2,7 +2,8 @@
 //!
 //! A handler that asks for a delay ([`HandlerOutcome::retry_after`](super::HandlerOutcome::retry_after))
 //! on a broker without native delayed redelivery gets it from a copy the runtime publishes after
-//! the delay. [`Retry`] is the `Out` slot that copy leaves through, bound once per registration.
+//! the delay. [`Retry`] is the `Out` slot that copy leaves through; the position is filled from the
+//! broker's default publish policy and a mount site replaces it once per registration.
 //!
 //! The position is a slot in the full sense: the call attaches an [`OutAttachment`] like any
 //! `.out(marker, policy)`, the steps after it are the slot steps (`.codec(..)`, `.transform(..)`,
@@ -16,41 +17,62 @@
 //! that binds nothing carries nothing - and what makes a second `.out(Retry, ..)` a compile
 //! error: nothing binds the position on a wrapper that already holds one.
 
-use std::fmt;
+mod declare;
+mod destination;
 
-use crate::runtime::publish::{
-    CallCodec, FitsOffer, ForSlot, PublishTransform, PublishTransformStack, Reads, UnnamedCodec,
+use std::borrow::Cow;
+use std::fmt;
+use std::marker::PhantomData;
+
+pub use declare::{
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
+    Present, RouteDeclaring, StepOpen, StepTaken,
 };
+pub use destination::{
+    DestinationDeclared, DestinationLast, DestinationOpen, DestinationUndeclared, FixedDestination,
+    OpenDestination, RetryOffer, RetryStackUse, SettlesDestination,
+};
+
+use crate::Broker;
+use crate::runtime::publish::{CallCodec, PublishTransformStack, Reads, UnnamedCodec};
 use crate::runtime::router::{AttachRetry, Router, RouterCommit, RouterWith};
 use crate::runtime::slot::{
     AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoReply,
-    OutAttachment, OutSlot, PositionOptions, Reply, ReplyLast, SlotPos, TransactionalLast,
-    TransformLast,
+    OutAttachment, OutSlot, Reply, ReplyLast, SlotPos, TransactionalLast, TransformLast,
 };
-use crate::{Broker, Connected, PublishPolicy, Publisher};
 
 /// The marker of a registration's deferred-retry slot: `.out(Retry, policy)` names the publish
 /// policy a `retry_after` copy leaves through.
 ///
 /// The slot is an ordinary [`Out`](super::Out) position, so the chain after the call takes the
 /// steps every slot takes: `.codec(..)` names the position's codec, `.transform(..)` composes a
-/// [`PublishTransform`] the copy travels through, and a broker's own publisher settings reach the
+/// [`PublishTransform`](crate::runtime::PublishTransform) the copy travels through, and a
+/// broker's own publisher settings reach the
 /// policy through [`map_publisher`](super::MapPublisher::map_publisher). The deferred copy is
 /// already serialized - it is the delivery's own bytes with the retry count incremented - so it
 /// passes the codec by, the way a [`Serialized`](super::Serialized) value does on any slot.
 ///
-/// Where that copy goes is the subscription's own answer, read at startup from
-/// [`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address): a
+/// The position is filled before the call: every registration whose subscription declares
+/// [`AddressedCopies`](crate::AddressedCopies) or
+/// [`NamedCopies`](crate::NamedCopies) gets a publisher from the broker's own
+/// [`DefaultPublish`](crate::DefaultPublish) policy, and this call replaces it. On a descriptor
+/// that declares [`BrokerMoves`](crate::BrokerMoves) the call does not compile: the broker moves
+/// the delivery itself and there is nothing of this process's to publish. It comes after the
+/// registration's declaration, [`max_attempts`](super::RouterWith::max_attempts) and
+/// [`dead_letter`](super::RouterWith::dead_letter).
+///
+/// Where a copy goes is the subscription's own answer, read at startup from
+/// [`RedeliveryAddressed`](crate::RedeliveryAddressed): a
 /// subscription name and a publish destination are one string on a subject or a topic, and
-/// separate resources on Google Pub/Sub. A registration that binds this position over a
-/// subscription which reports no address refuses to start, naming the subscription and its source,
-/// instead of publishing copies into nothing once a handler asks for a delay. The slot therefore
-/// never lets a transform name the destination, and the generated `AsyncAPI` document ignores the
-/// position: the copy goes to the subscription's own address, not to a declared channel.
+/// separate resources on Google Pub/Sub. A registration over a subscription which publishes its
+/// copies here and reports no address refuses to start, naming the subscription and its
+/// descriptor, instead of publishing copies into nothing once a handler asks for a delay. The slot
+/// therefore never lets a transform name the destination, and the generated `AsyncAPI` document
+/// ignores the position: a copy goes to the subscription's own address, or to the declared
+/// dead-letter destination, and neither is this position's to name.
 ///
 /// Brokers with native delayed redelivery do not need the position: the runtime uses their
-/// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a
-/// non-native broker degrades to an immediate requeue (with a warning).
+/// [`nack_after`](crate::IncomingMessage::nack_after) instead, and no copy is published there.
 ///
 /// # Cancel safety
 ///
@@ -115,28 +137,42 @@ pub struct RetryMount;
 /// and what makes a second `.out(Retry, ..)` a compile error: nothing binds the position on a
 /// wrapper that already carries one.
 #[doc(hidden)]
-pub struct Retried<Under, Attachment> {
+pub struct Retried<Under, Attachment, Dest = OpenDestination> {
     under: Under,
     slot: Attachment,
+    destination: Option<Cow<'static, str>>,
+    _dest: PhantomData<fn() -> Dest>,
 }
 
 // The chain's own state, like `RouterWith`'s: what it carries is machinery, not data to print.
-impl<Under, Attachment> fmt::Debug for Retried<Under, Attachment> {
+impl<Under, Attachment, Dest> fmt::Debug for Retried<Under, Attachment, Dest> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Retried").finish_non_exhaustive()
+        f.debug_struct("Retried")
+            .field("destination", &self.destination)
+            .finish_non_exhaustive()
     }
 }
 
-impl<Under, Attachment> Retried<Under, Attachment> {
+impl<Under, Attachment, Dest> Retried<Under, Attachment, Dest> {
     pub(crate) fn new(under: Under, slot: Attachment) -> Self {
-        Self { under, slot }
+        Self {
+            under,
+            slot,
+            destination: None,
+            _dest: PhantomData,
+        }
     }
 
     /// Grows the wrapped attachment in place: how every step on another position reaches it.
-    fn map<NewUnder>(self, f: impl FnOnce(Under) -> NewUnder) -> Retried<NewUnder, Attachment> {
+    fn map<NewUnder>(
+        self,
+        f: impl FnOnce(Under) -> NewUnder,
+    ) -> Retried<NewUnder, Attachment, Dest> {
         Retried {
             under: f(self.under),
             slot: self.slot,
+            destination: self.destination,
+            _dest: PhantomData,
         }
     }
 
@@ -144,10 +180,25 @@ impl<Under, Attachment> Retried<Under, Attachment> {
     fn map_slot<NewAttachment>(
         self,
         f: impl FnOnce(Attachment) -> NewAttachment,
-    ) -> Retried<Under, NewAttachment> {
+    ) -> Retried<Under, NewAttachment, Dest> {
         Retried {
             under: self.under,
             slot: f(self.slot),
+            destination: self.destination,
+            _dest: PhantomData,
+        }
+    }
+
+    /// Fixes where the copies go: the `.to(name)` step.
+    fn name_destination(
+        self,
+        destination: Cow<'static, str>,
+    ) -> Retried<Under, Attachment, FixedDestination> {
+        Retried {
+            under: self.under,
+            slot: self.slot,
+            destination: Some(destination),
+            _dest: PhantomData,
         }
     }
 }
@@ -210,7 +261,7 @@ pub type RetryChain<Chain, Policy> = RouterWith<
     RetryMount,
     Chain,
     (),
-    Retried<(NoReply, ()), OutAttachment<Retry, Policy>>,
+    Retried<(NoReply, ()), OutAttachment<Retry, Policy>, OpenDestination>,
     RetryPos,
 >;
 
@@ -242,24 +293,24 @@ impl<R> RouterCommit<RetryMount, R, ()> for (NoReply, ()) {
 }
 
 // The reply and the handler's own slots keep binding after the retry, in any order.
-impl<Mount, Policy, Under, Attachment> BindAt<Mount, Reply, Policy, ReplyLast>
-    for Retried<Under, Attachment>
+impl<Mount, Policy, Under, Attachment, Dest> BindAt<Mount, Reply, Policy, ReplyLast>
+    for Retried<Under, Attachment, Dest>
 where
     Under: BindAt<Mount, Reply, Policy, ReplyLast>,
 {
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn bind_at(self, policy: Policy) -> Self::Out {
         self.map(|under| under.bind_at(policy))
     }
 }
 
-impl<Mount, M, Policy, Under, Attachment, const POS: usize> BindAt<Mount, M, Policy, SlotPos<POS>>
-    for Retried<Under, Attachment>
+impl<Mount, M, Policy, Under, Attachment, Dest, const POS: usize>
+    BindAt<Mount, M, Policy, SlotPos<POS>> for Retried<Under, Attachment, Dest>
 where
     Under: BindAt<Mount, M, Policy, SlotPos<POS>>,
 {
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn bind_at(self, policy: Policy) -> Self::Out {
         self.map(|under| under.bind_at(policy))
@@ -269,48 +320,40 @@ where
 // The steps on the retry position itself: each one is the slot attachment's own operation, the
 // same call the handler's slots make through the positional machinery.
 
-impl<Cd, Under, Policy, Layers> CodecLast<Cd, RetryPos>
-    for Retried<Under, OutAttachment<Retry, Policy, Layers, UnnamedCodec>>
+impl<Cd, Under, Policy, Layers, Dest> CodecLast<Cd, RetryPos>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, UnnamedCodec>, Dest>
 {
     type Step = RetryPos;
-    type Out = Retried<Under, OutAttachment<Retry, Policy, Layers, CallCodec<Cd>>>;
+    type Out = Retried<Under, OutAttachment<Retry, Policy, Layers, CallCodec<Cd>>, Dest>;
 
     fn codec_last(self, codec: Cd) -> Self::Out {
         self.map_slot(|slot| slot.name_codec(codec))
     }
 }
 
-impl<N, Under, Policy, Layers, Enc> TransformLast<N, RetryPos>
-    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>>
+impl<N, Under, Policy, Layers, Enc, Dest> TransformLast<N, RetryPos>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
 {
     type Step = RetryPos;
-    type Out = Retried<Under, OutAttachment<Retry, Policy, PublishTransformStack<Layers, N>, Enc>>;
+    type Out =
+        Retried<Under, OutAttachment<Retry, Policy, PublishTransformStack<Layers, N>, Enc>, Dest>;
 
     fn transform_last(self, transform: N) -> Self::Out {
         self.map_slot(|slot| slot.add_transform(transform))
     }
 }
 
-// What the slot offers a transform is the marker's own declaration, read the way a handler's slot
-// reads its `#[publishes(..)]` dictionary: `Retry` offers `Reads`, so a transform that names a
-// destination is refused here, naming the slot.
-impl<N, Under, Policy, Layers, Enc, Mount, Def, B> AdmitsAt<N, RetryPos, Mount, Def, B>
-    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>>
-where
-    B: Broker,
-    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
-    Layers: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
-    N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
-    <N as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination: FitsOffer<
-            <Retry as OutSlot>::Destination,
-            <Layers as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination,
-            Retry,
-        >,
+// What this position offers a transform depends on the subscription's descriptor, which the chain
+// does not know here: a route-level chain carries no definition at all, and no def trait exposes
+// the descriptor uniformly. The whole check therefore runs at the commit (see `AttachRetry`),
+// where the route is in hand, and this arm admits every transform so the commit is what speaks.
+impl<N, Under, Policy, Layers, Enc, Mount, Def, B, Dest> AdmitsAt<N, RetryPos, Mount, Def, B>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
 {
 }
 
-impl<Under, Policy, Layers, Enc> MapPolicyLast<RetryPos>
-    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>>
+impl<Under, Policy, Layers, Enc, Dest> MapPolicyLast<RetryPos>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
 {
     type Step = RetryPos;
     type Policy = Policy;
@@ -322,7 +365,9 @@ impl<Under, Policy, Layers, Enc> MapPolicyLast<RetryPos>
 
 // The two reply-only steps, as a slot carries them: the arm exists so the call resolves as a
 // method and fails on `Step: ReplyStep`, which is where the guidance lives. Neither ever runs.
-impl<N, Under, Attachment> BatchTransformLast<N, RetryPos> for Retried<Under, Attachment> {
+impl<N, Under, Attachment, Dest> BatchTransformLast<N, RetryPos>
+    for Retried<Under, Attachment, Dest>
+{
     type Step = RetryPos;
     type Out = Self;
 
@@ -331,7 +376,7 @@ impl<N, Under, Attachment> BatchTransformLast<N, RetryPos> for Retried<Under, At
     }
 }
 
-impl<Under, Attachment> TransactionalLast<RetryPos> for Retried<Under, Attachment> {
+impl<Under, Attachment, Dest> TransactionalLast<RetryPos> for Retried<Under, Attachment, Dest> {
     type Step = RetryPos;
     type Out = Self;
 
@@ -344,122 +389,123 @@ impl<Under, Attachment> TransactionalLast<RetryPos> for Retried<Under, Attachmen
 // position rather than over any `Last`, because the retry's own arms above are the ones that have
 // to win at `RetryPos`.
 
-impl<Cd, Under, Attachment> CodecLast<Cd, ReplyLast> for Retried<Under, Attachment>
+impl<Cd, Under, Attachment, Dest> CodecLast<Cd, ReplyLast> for Retried<Under, Attachment, Dest>
 where
     Under: CodecLast<Cd, ReplyLast>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn codec_last(self, codec: Cd) -> Self::Out {
         self.map(|under| under.codec_last(codec))
     }
 }
 
-impl<Cd, Under, Attachment, const POS: usize> CodecLast<Cd, SlotPos<POS>>
-    for Retried<Under, Attachment>
+impl<Cd, Under, Attachment, Dest, const POS: usize> CodecLast<Cd, SlotPos<POS>>
+    for Retried<Under, Attachment, Dest>
 where
     Under: CodecLast<Cd, SlotPos<POS>>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn codec_last(self, codec: Cd) -> Self::Out {
         self.map(|under| under.codec_last(codec))
     }
 }
 
-impl<N, Under, Attachment> TransformLast<N, ReplyLast> for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest> TransformLast<N, ReplyLast> for Retried<Under, Attachment, Dest>
 where
     Under: TransformLast<N, ReplyLast>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn transform_last(self, transform: N) -> Self::Out {
         self.map(|under| under.transform_last(transform))
     }
 }
 
-impl<N, Under, Attachment, const POS: usize> TransformLast<N, SlotPos<POS>>
-    for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest, const POS: usize> TransformLast<N, SlotPos<POS>>
+    for Retried<Under, Attachment, Dest>
 where
     Under: TransformLast<N, SlotPos<POS>>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn transform_last(self, transform: N) -> Self::Out {
         self.map(|under| under.transform_last(transform))
     }
 }
 
-impl<N, Under, Attachment, Mount, Def, B> AdmitsAt<N, ReplyLast, Mount, Def, B>
-    for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest, Mount, Def, B> AdmitsAt<N, ReplyLast, Mount, Def, B>
+    for Retried<Under, Attachment, Dest>
 where
     Under: AdmitsAt<N, ReplyLast, Mount, Def, B>,
 {
 }
 
-impl<N, Under, Attachment, Mount, Def, B, const POS: usize> AdmitsAt<N, SlotPos<POS>, Mount, Def, B>
-    for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest, Mount, Def, B, const POS: usize>
+    AdmitsAt<N, SlotPos<POS>, Mount, Def, B> for Retried<Under, Attachment, Dest>
 where
     Under: AdmitsAt<N, SlotPos<POS>, Mount, Def, B>,
 {
 }
 
-impl<N, Under, Attachment> BatchTransformLast<N, ReplyLast> for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest> BatchTransformLast<N, ReplyLast>
+    for Retried<Under, Attachment, Dest>
 where
     Under: BatchTransformLast<N, ReplyLast>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn batch_transform_last(self, transform: N) -> Self::Out {
         self.map(|under| under.batch_transform_last(transform))
     }
 }
 
-impl<N, Under, Attachment, const POS: usize> BatchTransformLast<N, SlotPos<POS>>
-    for Retried<Under, Attachment>
+impl<N, Under, Attachment, Dest, const POS: usize> BatchTransformLast<N, SlotPos<POS>>
+    for Retried<Under, Attachment, Dest>
 where
     Under: BatchTransformLast<N, SlotPos<POS>>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn batch_transform_last(self, transform: N) -> Self::Out {
         self.map(|under| under.batch_transform_last(transform))
     }
 }
 
-impl<Under, Attachment> TransactionalLast<ReplyLast> for Retried<Under, Attachment>
+impl<Under, Attachment, Dest> TransactionalLast<ReplyLast> for Retried<Under, Attachment, Dest>
 where
     Under: TransactionalLast<ReplyLast>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn transactional_last(self) -> Self::Out {
         self.map(TransactionalLast::transactional_last)
     }
 }
 
-impl<Under, Attachment, const POS: usize> TransactionalLast<SlotPos<POS>>
-    for Retried<Under, Attachment>
+impl<Under, Attachment, Dest, const POS: usize> TransactionalLast<SlotPos<POS>>
+    for Retried<Under, Attachment, Dest>
 where
     Under: TransactionalLast<SlotPos<POS>>,
 {
     type Step = Under::Step;
-    type Out = Retried<Under::Out, Attachment>;
+    type Out = Retried<Under::Out, Attachment, Dest>;
 
     fn transactional_last(self) -> Self::Out {
         self.map(TransactionalLast::transactional_last)
     }
 }
 
-impl<Under: MapPolicyLast<ReplyLast>, Attachment> MapPolicyLast<ReplyLast>
-    for Retried<Under, Attachment>
+impl<Under: MapPolicyLast<ReplyLast>, Attachment, Dest> MapPolicyLast<ReplyLast>
+    for Retried<Under, Attachment, Dest>
 {
     type Step = Under::Step;
     type Policy = Under::Policy;
@@ -469,7 +515,8 @@ impl<Under: MapPolicyLast<ReplyLast>, Attachment> MapPolicyLast<ReplyLast>
     }
 }
 
-impl<Under, Attachment, const POS: usize> MapPolicyLast<SlotPos<POS>> for Retried<Under, Attachment>
+impl<Under, Attachment, Dest, const POS: usize> MapPolicyLast<SlotPos<POS>>
+    for Retried<Under, Attachment, Dest>
 where
     Under: MapPolicyLast<SlotPos<POS>>,
 {
@@ -481,16 +528,64 @@ where
     }
 }
 
+// The `.to(name)` step: open on a registration that named the retry publisher and no destination,
+// closed everywhere else. The closed arms exist so the call resolves as a method and fails on
+// `Step: DestinationOpen`, which is where the guidance lives; neither ever runs.
+impl<Under, Attachment> DestinationLast<RetryPos> for Retried<Under, Attachment, OpenDestination> {
+    type Step = StepOpen;
+    type Out = Retried<Under, Attachment, FixedDestination>;
+
+    fn destination_last(self, destination: Cow<'static, str>) -> Self::Out {
+        self.name_destination(destination)
+    }
+}
+
+impl<Under, Attachment> DestinationLast<RetryPos> for Retried<Under, Attachment, FixedDestination> {
+    type Step = StepTaken;
+    type Out = Self;
+
+    fn destination_last(self, _destination: Cow<'static, str>) -> Self {
+        self
+    }
+}
+
+/// Implements the closed arm of [`DestinationLast`] for the positions that take no destination of
+/// their own: a reply names one through its type or the mount site, a slot through the type it
+/// publishes.
+macro_rules! no_destination_step {
+    ($([$($extra:tt)*] $index:ty => $attach:ty),+ $(,)?) => {$(
+        impl<$($extra)*> DestinationLast<$index> for $attach {
+            type Step = StepTaken;
+            type Out = Self;
+
+            fn destination_last(self, _destination: Cow<'static, str>) -> Self {
+                self
+            }
+        }
+    )+};
+}
+
+no_destination_step!(
+    [Rep, Slots] ReplyLast => (Rep, Slots),
+    [Rep, Slots, const POS: usize] SlotPos<POS> => (Rep, Slots),
+    [Under, Cap, Dead] ReplyLast => Declaring<Under, Cap, Dead>,
+    [Under, Cap, Dead, const POS: usize] SlotPos<POS> => Declaring<Under, Cap, Dead>,
+    [Under, Attachment, Dest] ReplyLast => Retried<Under, Attachment, Dest>,
+    [Under, Attachment, Dest, const POS: usize] SlotPos<POS> => Retried<Under, Attachment, Dest>,
+);
+
 // The commit is the attachment's own, with the slot wired onto the registration it grew into.
-impl<Mount, R, Def, Under, Policy, Layers, Enc> RouterCommit<Mount, R, Def>
-    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>>
+impl<Mount, R, Def, Under, Policy, Layers, Enc, Dest> RouterCommit<Mount, R, Def>
+    for Retried<Under, OutAttachment<Retry, Policy, Layers, Enc>, Dest>
 where
     Under: RouterCommit<Mount, R, Def>,
-    Under::Out: AttachRetry<OutAttachment<Retry, Policy, Layers, Enc>>,
+    Under::Out: AttachRetry<OutAttachment<Retry, Policy, Layers, Enc>, Dest>,
 {
-    type Out = <Under::Out as AttachRetry<OutAttachment<Retry, Policy, Layers, Enc>>>::Out;
+    type Out = <Under::Out as AttachRetry<OutAttachment<Retry, Policy, Layers, Enc>, Dest>>::Out;
 
     fn commit(self, def: Def, router: R) -> Self::Out {
-        self.under.commit(def, router).attach_retry(self.slot)
+        self.under
+            .commit(def, router)
+            .attach_retry(self.slot, self.destination)
     }
 }

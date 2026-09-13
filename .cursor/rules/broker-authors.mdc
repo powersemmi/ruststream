@@ -23,15 +23,29 @@ alwaysApply: false
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
   `FromName` when a name alone is enough to build it.
-- Both answer `redelivery_address`: the name a publisher on your broker uses to reach this
-  subscription again (a NATS subject, a Kafka topic, a Redis stream key). That is where the
-  runtime publishes the deferred copy when `retry_after` has no native delayed redelivery to ride.
-  Both default to "cannot say", which is the right answer wherever a subscribe name is not a
-  publish destination: a Google Pub/Sub subscription is read by its own name and published to
-  through its topic, so the descriptor asks the API. A registration that binds the deferred-retry
-  position (`.out_retry(policy)`) over a source that cannot say refuses to start, naming that
-  subscription - so a silent broker loses no message, it loses the fallback. `harness::lifecycle`
-  holds the answer to its promise.
+- Every descriptor declares `type Copies`, one of three. `AddressedCopies`: this process publishes
+  the copies a retry is made of and the descriptor knows where they go (a subject, a topic, a
+  stream, a queue); implement `RedeliveryAddressed` beside `SubscriptionSource`, which is what
+  makes the address a property of the type. `NamedCopies`: this process publishes them but the
+  descriptor addresses none (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of
+  topics), and the mount site names one with `.out_retry(policy).to(name)` or with a naming
+  transform. `BrokerMoves`:
+  the server or the client library moves the delivery itself (a delivery limit with a dead-letter
+  exchange, a Pub/Sub dead-letter policy, an SQS redrive policy), so `.out_retry(..)` is a compile
+  error at every mount site of that descriptor. The first two pair a retry publisher from
+  `DefaultPublish`, so either over a broker without it does not compile.
+- `Subscribe` carries the same `type Copies` for the by-name form: `AddressedCopies` where a
+  publish under a subscribe name reaches the subscription opened by it, and the name is then the
+  address; `NamedCopies` where it is not (a Pub/Sub subscription, an MQTT filter).
+  `harness::redelivery_address` holds an addressed descriptor to its answer, and
+  `harness::lifecycle` covers the rest of the ladder.
+- `declare_retry` hands the descriptor the registration's `max_attempts(..)` and `dead_letter(..)`
+  before it subscribes. Apply them to your own topology where the broker has a mechanism for them,
+  and only when both are declared; keep the default otherwise and the runtime applies them.
+- Override `IncomingMessage::redelivery_count` where the transport counts its own deliveries
+  (JetStream `num_delivered`, SQS `ApproximateReceiveCount`, Pub/Sub `delivery_attempt`), so a
+  registration's cap counts the broker's redeliveries and not only the copies the runtime
+  published. The first delivery answers 1.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
@@ -48,6 +62,14 @@ alwaysApply: false
   builds its `ServerSpec` with `ServerSpec::from_url` (several addresses: `host_from_url` each);
   trimming the scheme off the URL and passing the rest to `ServerSpec::new` keeps the userinfo, and
   that bug shipped in more than one broker crate.
+- Protocol bindings ride the descriptor: `channel_bindings`, `operation_bindings` and
+  `message_bindings` on `SubscriptionSource`, and `ServerSpec::bindings` for the server.
+  Build each with `Binding::new(protocol, version, &body)`, which writes `bindingVersion` and
+  checks the protocol against the specification's closed list, or with `Binding::extension("x-..")`
+  where the specification has no binding for the transport. They are computed from the descriptor
+  alone (the document is built before connect, so a live partition count or a queue ARN cannot
+  appear) and never carry a credential; `conformance::harness::describes_without_credentials`
+  checks that. All of it is gated on the core's `asyncapi` feature, which your crate forwards.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
   the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching
@@ -280,6 +302,10 @@ impl Subscribe for ConnectedMyBroker {
 
 impl SubscriptionSource<ConnectedMyBroker> for MySubscribeOptions {
     type Subscriber = MySubscriber;
+    /// This process publishes the copies a retry of this subscription is made of, and this
+    /// descriptor knows where they go.
+    type Copies = AddressedCopies;
+
     fn name(&self) -> &str {
         &self.subject
     }

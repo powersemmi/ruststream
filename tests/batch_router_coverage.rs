@@ -20,7 +20,9 @@ use ruststream::runtime::{
     HandlerMetadata, RouterHandlers, RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
-use ruststream::{PairError, SubscriptionSource};
+use ruststream::{
+    AddressedCopies, PairError, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+};
 
 #[subscriber("brc-in", publish("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
@@ -149,6 +151,7 @@ struct ClosedSource;
 
 impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {
     type Subscriber = MemorySubscriber;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &'static str {
         "brc-closed"
@@ -159,6 +162,16 @@ impl SubscriptionSource<ConnectedMemoryBroker> for ClosedSource {
         _connected: &ConnectedMemoryBroker,
     ) -> impl Future<Output = Result<MemorySubscriber, MemoryError>> {
         ready(Err(MemoryError::ShutDown))
+    }
+}
+
+// The descriptor addresses its own retry copies, and the subject it subscribes by is the address.
+impl RedeliveryAddressed<ConnectedMemoryBroker> for ClosedSource {
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+        ready(Ok(RedeliveryAddress::new("brc-closed")))
     }
 }
 

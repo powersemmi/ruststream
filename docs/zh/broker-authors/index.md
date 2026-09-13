@@ -70,11 +70,14 @@ Broker 还可以额外持有一个由 `connect` 填充的共享单元，或者�
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 
-    // 默认 None。按订阅名发布就能到达用这个名字打开的订阅时，把名字本身返回：
-    // subject、topic、流和队列名通常就是这样。
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
+    // 按名字订阅时，重试副本由谁发布、由谁说出它的地址。按订阅名发布就能到达用这个
+    // 名字打开的订阅时（subject、topic、流、队列名通常如此）答 AddressedCopies，
+    // 这时名字本身就是地址。不是这样就答 NamedCopies：MQTT 的过滤器读很多 topic，
+    // 一个也说不出来。
+    type Copies: CopyPath;
+
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
 ```
 
@@ -84,11 +87,12 @@ pub trait Subscribe: ConnectedBroker {
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` 报出的是运行时发布延后重试所用的地址。回答了它，`#[subscriber("orders")]`
-在你的 Broker 上才能和挂载处的延后重试位（`.out_retry(policy)`）一起用。
+`type Copies` 是按名字订阅的源在你的 Broker 上报出的答案，`#[subscriber("orders")]` 怎么重试由它
+决定：答 `AddressedCopies` 时名字本身就是地址，别的什么也不用写；答 `NamedCopies` 时副本发往哪里
+由挂载处说出来。
 
-订阅名不是发布地址的地方，保留默认值。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic，
-那里改由描述符回答。
+订阅名不是发布地址的地方，答 `NamedCopies`。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的
+topic；MQTT 的过滤器读很多 topic。更完整的答案由你自己的描述符给出。
 
 ### `Subscriber`
 
@@ -131,6 +135,13 @@ pub trait IncomingMessage: Send + Sync {
     // Defaulted: None. Override (with the Partitioned capability) to feed the
     // runtime's keyed worker lanes, workers(n, by_key).
     fn partition_key(&self) -> Option<&[u8]>;
+
+    // Defaulted: None. Override where the transport counts its own deliveries
+    // (JetStream num_delivered, SQS ApproximateReceiveCount, Pub/Sub
+    // delivery_attempt): a registration's max_attempts(..) cap then counts the
+    // broker's redeliveries and not only the copies the runtime published.
+    // The first delivery of a message answers 1.
+    fn redelivery_count(&self) -> Option<u64>;
 }
 ```
 
@@ -138,11 +149,15 @@ pub trait IncomingMessage: Send + Sync {
 `false`，运行时一次也不会调用这个覆盖。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是按
 一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
-这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
-方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后发布一份副本，用的是挂载处通过
-`.out_retry(policy)` 占位时给出的那个策略，同时把重试计数消息头加一。这份副本发往
-[你的订阅给出的地址](#where-a-deferred-retry-is-published)。只有在这条注册没有给出这个策略的时候，
-延迟才退化成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
+这四个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
+方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后经由这条注册的重试发布者发布一份副
+本，同时把重试计数消息头加一。这份副本发往[你的订阅给出的地址](#where-a-retry-copy-is-published)。
+按键分道的工作者池轮流分发没有键的消息。
+
+只要 `redelivery_count` 还返回 `None`，这个消息头就是唯一的计数，`max_attempts(..)` 的上限也按它来
+读。覆盖了这个方法，上限就连 Broker 自己的重新投递一起算上 - 有自己投递计数的 Broker，用户期待的正
+是这样。在原生路径上它还是上限唯一能读到的计数：延迟由你自己兑现时，框架的消息头不会增加，正是
+`redelivery_count` 让 `retry_after` 不会绕过上限一直转下去。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：
@@ -254,12 +269,24 @@ pub trait DefaultPublish: ConnectedBroker {
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
+
+    // 这条订阅的重试所用的副本由谁发布、由谁说出它的地址：AddressedCopies、
+    // NamedCopies 或 BrokerMoves。
+    type Copies: CopyPath;
+
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 
-    // 默认 Ok(None)。回答发布按哪个地址能重新到达这条订阅；只有活连接知道时，
-    // 就去问 Broker。
-    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
+    // 默认返回原样的描述符。在这里读出这条注册的 max_attempts(..) 和
+    // dead_letter(..)，如果 Broker 有对应的机制，就把它们用到即将打开的订阅上。
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
+
+}
+
+// AddressedCopies 的另一半：地址是类型的属性，而不是启动时才检查的答案。只有活连接
+// 知道时，就去问 Broker。
+pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies> {
+    async fn redelivery_address(&self, connected: &C) -> Result<RedeliveryAddress, C::Error>;
 }
 ```
 
@@ -275,10 +302,44 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 给描述符派生 `Clone`：它是配置，挂载点为每次注册重新构造它，所以同一个定义可以同时挂到两个
 Broker 上。
 
-### 延后重试发往哪里 { #where-a-deferred-retry-is-published }
+### 谁来发布重试副本 { #who-publishes-a-retry-copy }
 
-没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往哪
-里，由你的描述符说出来。
+每个描述符用 `type Copies` 在三者中声明一个。
+
+`AddressedCopies` 表示重试需要的副本由本进程发布，而且描述符知道它们发往哪里。它在
+`SubscriptionSource` 旁边再实现 `RedeliveryAddressed`，于是地址是类型的属性，而不是启动时才检查
+的答案。subject、topic、流和队列的答案都是它：一条订阅，一个服务自己能发布回去的地址。
+
+`NamedCopies` 表示副本由本进程发布，但描述符给不出地址：带通配符的 subject、MQTT 的过滤器、
+Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由挂载处说出一个 - 用
+`.out_retry(policy).to(name)` 固定下来，或者用发布变换为每次投递各自命名。
+
+`BrokerMoves` 表示投递由服务端或客户端库自己搬走：带 `x-delivery-limit` 和
+`x-dead-letter-exchange` 的 quorum 队列、带死信策略的 Pub/Sub 订阅、SQS 的 redrive 策略、带
+`DeadLetterPolicy` 的 Pulsar 消费者。这时服务本身什么也不发布，因此在这个描述符的任何挂载处写
+`.out_retry(..)` 都是编译错误，错误会报出这个描述符。
+
+前两者都会为每条注册从 Broker 的 `DefaultPublish` 策略绑定一个重试发布者，所以在没有
+`DefaultPublish` 的 Broker 上声明它们中的任何一个，代码都编译不过。
+
+`Subscribe` 为按名字订阅的形式声明同一件事：那里的 `type Copies` 就是
+`#[subscriber("orders")]` 在你的 Broker 上报出的答案。按订阅名发布就能到达用这个名字打开的订阅
+时答 `AddressedCopies` - subject、topic、流和队列名通常如此 - 这时名字本身就是地址，别的什么也不
+用写。
+
+原生与否取决于字段的取值而不是类型时 - 没有 `.delay(..)` 的 RabbitMQ 队列并没有自己的延迟投递 -
+把这条路径保持开放。
+
+### 注册声明了什么 { #what-the-registration-declares }
+
+`declare_retry` 把挂载处声明的上限和地址交给你，每条注册一次，并且在 `subscribe` 之前。自带机制的
+描述符在这里把它们变成拓扑，而且只在两者都声明时才这么做，因为原生的死信策略同时需要上限和地址。
+没有这种机制的描述符保留默认实现，声明改由运行时在重试路径上落实。
+
+### 重试副本发往哪里 { #where-a-retry-copy-is-published }
+
+没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
+哪里，由声明了 `AddressedCopies` 的描述符说出来。
 
 ```rust
 --8<-- "src/memory/mod.rs:source"
@@ -287,13 +348,12 @@ Broker 上。
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
 topic，Redis 上是流的键。
 
-在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API 问
-出来。运行时只在启动时问一次。
+在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API
+问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答案。
 
-发布根本到不了你的订阅时，保留默认值。这样，把重试发布者接到这种订阅上的应用就起不来，错误会指明是
-哪条订阅、来自哪个来源。
-
-`harness::lifecycle` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条订阅。
+`harness::redelivery_address` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条
+订阅。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由 `harness::lifecycle`
+覆盖。
 
 ### 用一个字符串命名一种订阅方式
 
@@ -680,6 +740,73 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 把这类集成放到异步边界上。入站载荷在订阅的投递路径上转码，在编解码器看到它们之前完成。出站的用
 核心的 `PublishLayer` 加上信封，通过 `RustStream::publish_layer` 添加到整个应用上。发布层是异步
 的，也可以返回错误，而 `Outgoing::payload_mut` 的存在正是为了包装信封。
+
+## 协议绑定
+
+生成的 AsyncAPI 文档留出了只有你的 Broker 才知道的那部分：RabbitMQ 队列是否持久、Kafka 的消费者组、
+MQTT 的 QoS。规范把这些叫做**绑定**，填写它们的是你的描述符。
+
+```rust
+--8<-- "tests/asyncapi.rs:descriptor_bindings"
+```
+
+`Binding::new(protocol, version, &body)` 把 body 序列化一次，并且自己写上 `bindingVersion`，所以你
+不会发布一个没有版本的绑定。协议键由内核对照规范的封闭列表检查，未列出的键会返回错误，而不是进入一份
+没有工具读得懂的文档。`Bindings` 默认为空：什么也不说的描述符不会改变任何文档。
+
+服务器这一层是字段而不是方法，因为一个 Broker 只描述一次服务器：在你的 `DescribeServer` 实现里写
+`ServerSpec::new(host, protocol).bindings(..)`。
+
+绑定里应该放什么，由三条规则限定。
+
+值只由描述符本身算出。文档在连接之前就生成，所以 Kafka 主题真实的分区数、Pub/Sub 订阅背后的主题、
+SQS 队列的 ARN，都不可能从这里报出来。
+
+凭据永远不进绑定，理由和 `DescribeServer` 一样。检查放在 `conformance::harness` 里：用一个已知的密码
+配置你的 Broker 和描述符，然后跑这个扫描。
+
+```rust
+--8<-- "tests/conformance_self.rs:credentials"
+```
+
+规范没有为之提供绑定的协议，走 `Binding::extension("x-kinesis", &body)`。协议键是一个封闭列表，
+所以 ZeroMQ、Kinesis 和文件传输都没有合法的键；`x-` 扩展位于同一层级，并且不带 `bindingVersion`。
+
+绑定来自描述符，所以按裸名字打开的订阅一个也没有：那里没有什么可描述的。想要绑定的 Broker，要提供一个
+`SubscriptionSource` 类型。
+
+另一侧的同样三个名字，由你的发布策略填写。回复、`Out` 槽位，以及死信投递所经过的发布者，都是
+`PublishPolicy`，各自描述自己发布到的通道。
+
+```rust
+--8<-- "tests/asyncapi.rs:policy_bindings"
+```
+
+那三条规则在这里原样成立。有一点不适用：回复没有自己的 `send` 操作，所以回复策略上的
+`operation_bindings` 到不了文档。槽位和死信目的地各有一个。
+
+第四个方法只属于回复。如果你的 Broker 通过 reply-to 头路由回复，`reply_address_location` 就说明
+客户端从哪里读这个地址：
+
+```rust
+--8<-- "tests/asyncapi.rs:reply_address"
+```
+
+这时文档把回复通道报成 `address: null`，并把该表达式放进 `receive` 操作的
+`reply.address.location`。只有挂载点组合了逐条投递指定目的地的转换时才会用到它；否则回复去往声明的
+名字，文档报出的也是这个名字。
+
+规范未列出的协议，在发布这一侧同样没有绑定可填。内存 Broker 就是这种情况：不存在 `memory` 这个键，
+所以 `MemoryPublish` 保持沉默，而不是自己造一个。
+
+这些钩子由内核的 `asyncapi` feature 控制。从你的 crate 里转发它：
+
+```toml
+[features]
+asyncapi = ["ruststream/asyncapi"]
+```
+
+并在你填写的每个方法上加 `#[cfg(feature = "asyncapi")]`。
 
 ## 配置与默认值
 

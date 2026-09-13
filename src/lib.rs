@@ -44,6 +44,7 @@
 mod broker;
 mod buffered;
 mod capability;
+mod describe;
 mod error;
 mod field;
 mod headers;
@@ -77,6 +78,7 @@ pub use capability::{
     Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe,
     Transaction, TransactionalPublisher,
 };
+pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use error::AckError;
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
@@ -87,7 +89,10 @@ pub use schema::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 pub use subscriber::Subscriber;
-pub use subscription::{FromName, Name, RedeliveryAddress, StartAt, SubscriptionSource, Unnamed};
+pub use subscription::{
+    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
+};
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 
 pub mod codec;
@@ -242,7 +247,7 @@ pub mod __private {
         /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
         #[must_use]
         pub fn schema_json(&self) -> Option<String> {
-            serde_json::to_string(&schemars::schema_for!(T)).ok()
+            crate::asyncapi::schema_json::<T>()
         }
     }
 
@@ -337,7 +342,7 @@ pub mod __private {
     #[cfg(feature = "asyncapi")]
     impl<H: schemars::JsonSchema> ContractSchema for crate::WithHeaders<H> {
         fn schema_json() -> Option<String> {
-            serde_json::to_string(&schemars::schema_for!(H)).ok()
+            crate::asyncapi::schema_json::<H>()
         }
     }
 

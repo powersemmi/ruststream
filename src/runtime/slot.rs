@@ -17,11 +17,13 @@
 //!   a registration commits only when no `MissingSlot` remains, so a forgotten binding is a
 //!   compile error naming the slot.
 
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::time::Duration;
 
+use crate::codec::Codec;
 use crate::runtime::handle::{DeclaresReply, ReplyShape};
-use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::metadata::{OutgoingMessageMetadata, PublishDescription};
 use crate::runtime::publish::{
     AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, DestinationUse, FitsOffer,
     ForReply, ForSlot, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, Names, NarrowToUse,
@@ -621,6 +623,40 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
             enc: self.enc,
             _marker: PhantomData,
         }
+    }
+
+    /// What this slot contributes to the generated document: the destinations its marker
+    /// declares, and what its policy and codec say about them.
+    ///
+    /// Read before [`wire`](Self::wire) consumes the attachment, because the slot's policy is
+    /// what answers and wiring moves it. Nothing here runs per message.
+    pub(crate) fn describe<C, Surface>(&self) -> (Vec<Cow<'static, str>>, PublishDescription)
+    where
+        M: OutSlot,
+        C: ConnectedBroker,
+        Policy: PublishPolicy<C>,
+        Enc: SlotCodec<Surface>,
+        <Enc as SlotCodec<Surface>>::Codec: Codec,
+    {
+        let channels = M::outgoing()
+            .into_iter()
+            .map(|entry| entry.channel)
+            .collect();
+        // A slot publishes where its dictionary says, so no transform on it names a reply
+        // address: that question belongs to the reply position.
+        let description = PublishDescription::of::<C, Policy>(
+            &self.policy,
+            Some(<<Enc as SlotCodec<Surface>>::Codec as Codec>::CONTENT_TYPE),
+            false,
+        );
+        (channels, description)
+    }
+
+    /// Hands back the pieces without folding them: what the deferred-retry position resolves
+    /// from, which keeps the mount site's transform stack out of the publish pipeline so it can
+    /// be run against the delivery being retried.
+    pub(crate) fn into_parts(self) -> (Policy, Layers, Enc) {
+        (self.policy, self.layers, self.enc)
     }
 
     /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
@@ -1261,6 +1297,11 @@ pub struct WithSource<Source>(Source);
 impl<Source> WithSource<Source> {
     pub(crate) fn new(source: Source) -> Self {
         Self(source)
+    }
+
+    /// Borrows the wrapped source, so a mount can read what it declares before consuming it.
+    pub(crate) const fn source(&self) -> &Source {
+        &self.0
     }
 
     /// Grows the wrapped source in place: how a mount site's reply chain adds one step to the

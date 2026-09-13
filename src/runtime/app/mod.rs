@@ -25,6 +25,7 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
 use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 
@@ -60,6 +61,24 @@ enum LifecyclePhase {
 }
 
 /// Service-level metadata, surfaced to the `AsyncAPI` generator as the spec `Info` object.
+///
+/// The title and the version are what a service must state; everything else is optional and
+/// reaches the document only when it is filled in.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::AppInfo;
+/// use ruststream::{Contact, License, Tag};
+///
+/// let info = AppInfo::new("orders", "1.4.0")
+///     .description("everything the order domain publishes")
+///     .contact(Contact::new().email("payments@example.com"))
+///     .license(License::new("Apache-2.0"))
+///     .tag(Tag::new("payments"));
+///
+/// assert_eq!(info.tags.len(), 1);
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct AppInfo {
@@ -69,23 +88,156 @@ pub struct AppInfo {
     pub version: String,
     /// Optional longer description.
     pub description: Option<String>,
+    /// The service's own identifier, a URI. Emitted as the document's root `id`.
+    pub id: Option<AppId>,
+    /// Where the terms of service are published.
+    pub terms_of_service: Option<String>,
+    /// Who to contact about the service.
+    pub contact: Contact,
+    /// The licence the service is published under.
+    pub license: Option<License>,
+    /// Labels grouping the service among its neighbours.
+    pub tags: Vec<Tag>,
+    /// Where the prose about this service lives.
+    pub external_docs: Option<ExternalDocs>,
 }
 
 impl AppInfo {
-    /// Creates info with a title and version and no description.
+    /// Creates info with a title and version and nothing else.
     #[must_use]
     pub fn new(title: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             title: title.into(),
             version: version.into(),
             description: None,
+            id: None,
+            terms_of_service: None,
+            contact: Contact::new(),
+            license: None,
+            tags: Vec::new(),
+            external_docs: None,
         }
     }
 
     /// Sets the description.
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Sets the service's own identifier.
+    ///
+    /// The identifier is a URI, which [`AppId`] checks on construction, so the document cannot
+    /// carry a title where a reader expects an identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::AppId;
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0").id("urn:example:orders".parse::<AppId>()?);
+    ///
+    /// assert_eq!(info.id.as_ref().map(AppId::as_str), Some("urn:example:orders"));
+    /// # Ok::<_, ruststream::AppIdError>(())
+    /// ```
+    #[must_use]
+    pub fn id(mut self, id: AppId) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Sets where the terms of service are published.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0").terms_of_service("https://example.com/tos");
+    ///
+    /// assert!(info.terms_of_service.is_some());
+    /// ```
+    #[must_use]
+    pub fn terms_of_service(mut self, url: impl Into<String>) -> Self {
+        self.terms_of_service = Some(url.into());
+        self
+    }
+
+    /// Sets who to contact about the service.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::Contact;
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0")
+    ///     .contact(Contact::new().name("Payments team"));
+    ///
+    /// assert_eq!(info.contact.name.as_deref(), Some("Payments team"));
+    /// ```
+    #[must_use]
+    pub fn contact(mut self, contact: Contact) -> Self {
+        self.contact = contact;
+        self
+    }
+
+    /// Sets the licence the service is published under.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::License;
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0").license(License::new("MIT"));
+    ///
+    /// assert_eq!(info.license.map(|license| license.name).as_deref(), Some("MIT"));
+    /// ```
+    #[must_use]
+    pub fn license(mut self, license: License) -> Self {
+        self.license = Some(license);
+        self
+    }
+
+    /// Adds one label to the service. Call repeatedly for several.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::Tag;
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0")
+    ///     .tag(Tag::new("payments"))
+    ///     .tag(Tag::new("public"));
+    ///
+    /// assert_eq!(info.tags.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn tag(mut self, tag: Tag) -> Self {
+        self.tags.push(tag);
+        self
+    }
+
+    /// Sets where the prose about this service lives.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ExternalDocs;
+    /// use ruststream::runtime::AppInfo;
+    ///
+    /// let info = AppInfo::new("orders", "1.0.0")
+    ///     .external_docs(ExternalDocs::new("https://example.com/orders"));
+    ///
+    /// assert!(info.external_docs.is_some());
+    /// ```
+    #[must_use]
+    pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
+        self.external_docs = Some(docs);
         self
     }
 }

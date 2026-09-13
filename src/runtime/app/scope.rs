@@ -97,15 +97,15 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         S: Subscriber + Send + 'static,
         S::Message: Send + Sync + 'static,
         State: Send + Sync + 'static,
-        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + Sync + 'static,
         H: Handler<S::Message, Cx, State> + 'static,
         Layers: BlanketLayer + Clone + Send + Sync + 'static,
     {
         let handler = self.global.apply::<S::Message, Cx, State, H>(handler);
-        // A directly mounted subscriber names no source, so no deferred-retry position can be
-        // bound on it: nothing reports where a redelivery of it would be published.
+        // A directly mounted subscriber names no descriptor, so no retry position can be bound
+        // on it: nothing reports where a copy of one of its deliveries would be published.
         self.sink
-            .push_handle(subscriber, handler, meta, FailurePolicies::default(), None);
+            .push_handle(subscriber, handler, meta, FailurePolicies::default());
     }
 
     /// Mounts every registration from `router` onto this broker, wrapping each handler with the
@@ -121,7 +121,14 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         Layers: BlanketLayer + Clone + Send + Sync + 'static,
         Pipeline: PublishPipeline + Clone + Send + 'static,
     {
-        router.mount(&self.global, &self.pipeline, &mut self.sink);
+        // A router hands its own publish path down, so what this scope names here is the
+        // fallback for a bare registration list mounted directly.
+        router.mount(
+            &self.global,
+            &self.pipeline,
+            &PublishIdentity,
+            &mut self.sink,
+        );
     }
 }
 

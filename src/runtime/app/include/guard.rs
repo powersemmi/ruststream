@@ -11,14 +11,19 @@
 //! every registration can bind the deferred-retry slot ([`Retry`](crate::runtime::Retry)), and
 //! binding it opens a mount chain over the finished route so the slot steps follow.
 
+use std::borrow::Cow;
 use std::fmt;
+use std::num::NonZeroU32;
 
 use crate::Broker;
 
 use crate::runtime::app::scope::BrokerScope;
 use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::PublishPipeline;
-use crate::runtime::retry::{Retry, RoutePosition};
+use crate::runtime::publish::{PublishIdentity, PublishPipeline};
+use crate::runtime::retry::{
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, DestinationLast,
+    DestinationOpen, Present, Retry, RetryOpen, RouteDeclaring, RoutePosition,
+};
 use crate::runtime::router::{
     MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith,
 };
@@ -39,14 +44,22 @@ impl<B, Layers, C, State, Pipeline, Routes, RC, RL, RP> ScopeCommit<B, Layers, C
     for Router<B, Routes, RC, RL, RP>
 where
     B: Broker + 'static,
-    Routes: RouterDef<B, State>,
+    Routes: RouterDef<B, State, RP>,
     RL: BlanketLayer + Clone + Send + Sync + 'static,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
     Pipeline: PublishPipeline + Clone + Send + 'static,
     State: Send + Sync + 'static,
 {
     fn commit_into(self, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        RouterDef::mount(self, &scope.global, &scope.pipeline, &mut scope.sink);
+        // The chain's router carries the scope's own publish path, so the fallback here is never
+        // the one a registration takes.
+        RouterDef::mount(
+            self,
+            &scope.global,
+            &scope.pipeline,
+            &PublishIdentity,
+            &mut scope.sink,
+        );
     }
 }
 
@@ -59,7 +72,9 @@ where
     Attach::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
 {
     fn commit_into(self, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        self.build().commit_into(scope);
+        // Not `build()`: see `RouterWith::commit_chain`, a scope's chain answers for its retry
+        // destinations at startup rather than here.
+        self.commit_chain().commit_into(scope);
     }
 }
 
@@ -234,6 +249,72 @@ where
         self.out(Retry, policy)
     }
 
+    /// See [`RouterWith::max_attempts`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn max_attempts(
+        self,
+        attempts: NonZeroU32,
+    ) -> Stepped<'s, B, Layers, C, State, Pipeline, Mount, R, Def, <Attach as DeclareCap>::Out, Last>
+    where
+        Attach: DeclareCap<Step: CapOpen>,
+        SteppedChain<Mount, R, Def, <Attach as DeclareCap>::Out, Last>:
+            ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.map_chain(|chain| chain.max_attempts(attempts))
+    }
+
+    /// See [`RouterWith::dead_letter`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn dead_letter(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> Stepped<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Attach as DeclareDeadLetter>::Out,
+        Last,
+    >
+    where
+        Attach: DeclareDeadLetter<Step: DeadLetterOpen>,
+        SteppedChain<Mount, R, Def, <Attach as DeclareDeadLetter>::Out, Last>:
+            ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.map_chain(|chain| chain.dead_letter(destination))
+    }
+
+    /// See [`RouterWith::to`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn to(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> Stepped<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Attach as DestinationLast<Last>>::Out,
+        Last,
+    >
+    where
+        Attach: DestinationLast<Last, Step: DestinationOpen>,
+        SteppedChain<Mount, R, Def, <Attach as DestinationLast<Last>>::Out, Last>:
+            ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.map_chain(|chain| chain.to(destination))
+    }
+
     /// See [`RouterWith::codec`].
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn codec<Cd>(
@@ -397,6 +478,70 @@ where
     {
         let _ = marker;
         self.map_chain(|chain| M::bind(chain, policy))
+    }
+
+    /// See [`RouterWith::max_attempts`]: the same declaration on a registration that was a
+    /// finished route the moment `include` returned. It opens a mount chain, so the steps after
+    /// it are the chain's.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn max_attempts(
+        self,
+        attempts: NonZeroU32,
+    ) -> Mounting<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        RouterWith<
+            DeclareMount,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            (),
+            RouteDeclaring<Present, Absent>,
+        >,
+    >
+    where
+        Head: RetryOpen,
+        RouterWith<
+            DeclareMount,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            (),
+            RouteDeclaring<Present, Absent>,
+        >: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.map_chain(|chain| chain.max_attempts(attempts))
+    }
+
+    /// See [`RouterWith::dead_letter`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn dead_letter(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> Mounting<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        RouterWith<
+            DeclareMount,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            (),
+            RouteDeclaring<Absent, Present>,
+        >,
+    >
+    where
+        Head: RetryOpen,
+        RouterWith<
+            DeclareMount,
+            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
+            (),
+            RouteDeclaring<Absent, Present>,
+        >: ScopeCommit<B, Layers, C, State, Pipeline>,
+    {
+        self.map_chain(|chain| chain.dead_letter(destination))
     }
 
     /// The same call with the marker spelled out: `.out(Retry, policy)`, and the same chain
@@ -638,6 +783,78 @@ where
         Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         self.out(Retry, policy)
+    }
+
+    /// See [`RouterWith::max_attempts`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn max_attempts(
+        self,
+        attempts: NonZeroU32,
+    ) -> SteppedSlots<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Attach as DeclareCap>::Out,
+        Last,
+    >
+    where
+        Attach: DeclareCap<Step: CapOpen>,
+    {
+        self.map_chain(|chain| chain.max_attempts(attempts))
+    }
+
+    /// See [`RouterWith::dead_letter`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn dead_letter(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> SteppedSlots<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Attach as DeclareDeadLetter>::Out,
+        Last,
+    >
+    where
+        Attach: DeclareDeadLetter<Step: DeadLetterOpen>,
+    {
+        self.map_chain(|chain| chain.dead_letter(destination))
+    }
+
+    /// See [`RouterWith::to`].
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn to(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> SteppedSlots<
+        's,
+        B,
+        Layers,
+        C,
+        State,
+        Pipeline,
+        Mount,
+        R,
+        Def,
+        <Attach as DestinationLast<Last>>::Out,
+        Last,
+    >
+    where
+        Attach: DestinationLast<Last, Step: DestinationOpen>,
+    {
+        self.map_chain(|chain| chain.to(destination))
     }
 
     /// See [`RouterWith::codec`].

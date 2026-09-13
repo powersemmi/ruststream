@@ -54,9 +54,9 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, HeaderMap,
-    IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
-    RedeliveryAddress, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName,
+    HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
+    RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -547,6 +547,10 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 /// [`PublishPolicy`] position where a richer broker carries real options (an exchange, a queue
 /// timeout, a transactional id).
 ///
+/// It adds nothing to the generated `AsyncAPI` document. The specification's protocol keys are a
+/// closed list and `memory` is not one of them, so there is no lawful binding to fill; an `x-`
+/// extension would describe a transport that never leaves the process.
+///
 /// # Examples
 ///
 /// ```
@@ -685,6 +689,9 @@ crate::register_testable_broker!(ConnectedMemoryBroker<Retaining>);
 // --8<-- [start:subscribe]
 impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     type Subscriber = MemorySubscriber<Log>;
+    // One subject is both ends of the bus here, so a publish under the name a subscription reads
+    // reaches that subscription, and the name is the address.
+    type Copies = AddressedCopies;
 
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -700,12 +707,6 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
             seek: Arc::new(SeekControl::default()),
             mode: PhantomData,
         }))
-    }
-
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
-        // One subject is both ends of the bus here, so a publish under the name a subscription
-        // reads reaches that subscription.
-        Some(RedeliveryAddress::new(name.to_owned()))
     }
 }
 
@@ -744,6 +745,9 @@ impl FromName for MemorySource {
 // --8<-- [start:source]
 impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
     type Subscriber = MemorySubscriber<Log>;
+    // The bus moves nothing on its own, and one subject is both ends of it, so a copy goes back
+    // to the subject the subscription reads.
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         &self.name
@@ -755,13 +759,15 @@ impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySour
     ) -> Result<Self::Subscriber, MemoryError> {
         Subscribe::subscribe(connected, &self.name).await
     }
+}
 
+impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySource {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, MemoryError>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
         // One subject is both ends of the bus, and no lookup is needed to say so.
-        ready(Ok(Some(RedeliveryAddress::new(self.name.clone()))))
+        ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
 // --8<-- [end:source]

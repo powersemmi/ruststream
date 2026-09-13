@@ -1,25 +1,26 @@
 error[E0277]: `ruststream::prelude::Retry` does not let a transform name the destination
-  --> tests/ui/naming_transform_retry_slot.rs:38:24
+  --> tests/ui/naming_transform_retry_slot.rs:41:24
    |
-38 |             .transform(ByTenant);
+41 |             .transform(ByTenant);
    |              --------- ^^^^^^^^ the transform on this step declares `Destination = Names`
    |              |
    |              required by a bound introduced by this call
    |
    = help: the trait `ruststream::runtime::NamingOffered<ruststream::prelude::Retry>` is not implemented for `Reads`
-   = note: the destination is already declared and the generated document reports it: a reply type carrying `#[outgoing(name = "..")]` is published there, a batch's replies answer many deliveries and carry none of their headers, a slot marker offers the right only when every type in its `#[publishes(..)]` dictionary leaves its destination open - one with no dictionary, `DefaultSlot` among them, never offers it - and the `Retry` slot publishes to the subscription's own redelivery address, which no mount site chooses
+   = note: the destination is already declared and the generated document reports it: a reply type carrying `#[outgoing(name = "..")]` is published there, a batch's replies answer many deliveries and carry none of their headers, a slot marker offers the right only when every type in its `#[publishes(..)]` dictionary leaves its destination open - one with no dictionary, `DefaultSlot` among them, never offers it - and the `Retry` position offers it only where the subscription's descriptor addresses no copies and no `.to(name)` has spoken
 help: the trait `ruststream::runtime::NamingOffered<By>` is implemented for `Names`
   --> src/runtime/publish/transform.rs
    |
    | impl<By> NamingOffered<By> for Names {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `Names` to implement `ruststream::runtime::FitsOffer<Reads, Reads, ruststream::prelude::Retry>`
-   = note: required for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>` to implement `ruststream::runtime::AdmitsAt<ByTenant, ruststream::runtime::RetryPos, ruststream::runtime::RetryMount, (), MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>` to implement `ruststream::runtime::AttachRetry<ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>, ruststream::runtime::OpenDestination>`
+   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>>, ruststream::runtime::RetryPos>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
   --> src/runtime/app/include/guard.rs
    |
    |     pub fn transform<N>(
    |            --------- required by a bound in this associated function
 ...
-   |         Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, B>,
-   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`
+   |             ScopeCommit<B, Layers, C, State, Pipeline>,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transform`

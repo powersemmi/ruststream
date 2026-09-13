@@ -1,0 +1,28 @@
+error[E0277]: subscription descriptor `ManagedQueue` publishes no retry copy in this process
+  --> tests/ui/retry_publisher_on_closed_descriptor.rs:38:40
+   |
+38 |         b.include(reconcile).out_retry(MemoryPublish);
+   |                              --------- ^^^^^^^^^^^^^ `out_retry(..)` has no publisher to name on this registration
+   |                              |
+   |                              required by a bound introduced by this call
+   |
+   = help: the trait `ruststream::runtime::PublishesCopiesHere<ManagedQueue>` is not implemented for `BrokerMoves`
+   = note: `ManagedQueue` declares `Copies = BrokerMoves`: the broker or its client library moves the delivery itself (a delivery limit with a dead-letter exchange, a subscription's dead-letter policy, a redrive policy), so nothing of this process's is published for it and a publish policy has nothing to shape
+   = note: declare the cap and the destination instead - `.max_attempts(n).dead_letter("dlq")` - and that descriptor maps them onto the broker's own mechanism
+help: the following other types implement trait `ruststream::runtime::PublishesCopiesHere<Source>`
+  --> src/runtime/redelivery.rs
+   |
+   | impl<Source> PublishesCopiesHere<Source> for AddressedCopies {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AddressedCopies`
+   | impl<Source> PublishesCopiesHere<Source> for NamedCopies {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NamedCopies`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<ManagedQueue, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>` to implement `ruststream::runtime::AttachRetry<ruststream::runtime::OutAttachment<ruststream::prelude::Retry, _>, ruststream::runtime::OpenDestination>`
+   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<ManagedQueue, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, _>>, ruststream::runtime::RetryPos>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>>::out_retry`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn out_retry<Policy>(
+   |            --------- required by a bound in this associated function
+...
+   |         >>::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>>::out_retry`

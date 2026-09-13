@@ -57,9 +57,9 @@ alwaysApply: false
   connects them at startup. Never connect inside the builder.
 - `include` is the only mounting call. It takes the definition and returns a mount chain:
   `.out_reply(policy)` names the reply's publish policy, `.out(<marker>, policy)` one injected
-  publisher's (finish a slot chain with `.build()`), `.out_retry(policy)` the publisher a deferred
-  `retry_after` copy leaves through, or chain nothing and the broker's default publish policy is
-  used. A definition never names a publisher: it declares what a handler replies with and where,
+  publisher's (finish a slot chain with `.build()`), `.out_retry(policy)` replaces the publisher a
+  `retry_after` copy leaves through, and `max_attempts(n)` / `dead_letter(name)` cap the
+  registration's retries; chain nothing and the broker's default publish policy is used. A definition never names a publisher: it declares what a handler replies with and where,
   and a policy belongs to a broker, so it is named where a broker is. The chain is a statement:
   `with_broker(broker, |b| { b.include(handle); })`, not `|b| b.include(handle)`.
 - The codec defaults to `codec::DefaultCodec` (`json` > `cbor` > `msgpack`), so `include` needs no
@@ -121,11 +121,25 @@ async fn handle(order: &Order) -> Result<(), MyError> { Ok(()) }
 
 The broker status inside is not a public enum: read an outcome with the predicates `is_ack()`,
 `is_retry()`, `is_drop()` and `retry_delay()`. On a broker without native delayed redelivery the
-runtime honours `retry_after` by publishing a copy after the delay, through the policy the mount
-site bound with `.out_retry(policy)` (`.out(Retry, policy)` spelled out); a registration that binds
-none falls back to an immediate requeue. The position is an `Out` slot, so `.codec(..)` and
-`.transform(..)` after it apply to the copy - which carries the delivery's own bytes, so nothing
-re-encodes it.
+runtime honours `retry_after` by publishing a copy after the delay. Every registration whose copies
+the runtime publishes already has a publisher for them, from the broker's default publish policy;
+`.out_retry(policy)` (`.out(Retry, policy)` spelled out) replaces it. The position is an `Out`
+slot, so `.codec(..)` and `.transform(..)` after it apply to the copy - which carries the delivery's
+own bytes, so nothing re-encodes it.
+
+A registration caps its retries at the mount site, right after `include` and before
+`out_retry(..)`: `b.include(reconcile).max_attempts(nonzero!(5)).dead_letter("orders.dead")`.
+Where the subscription's descriptor addresses no copies (a wildcard, an MQTT filter, a pattern),
+`.out_retry(policy).to(name)` names where they go, or a transform on the position names one per
+delivery; a registration that names neither is a compile error on a `Router` chain and refuses to
+start on a scope. Each step is declared once. Below the cap a copy goes back to the subscription; at the cap it goes to
+the dead-letter destination, or the delivery is rejected where none is named. A destination
+declared without a cap takes over every copy. The count is the broker's own where the transport
+keeps one (`IncomingMessage::redelivery_count`), the framework's `x-ruststream-retry-count` header
+otherwise, and an immediate `retry()` obeys the same cap. A broker with native delayed redelivery
+gets the delay only below the cap: the broker's own count is read first, and a delivery at the cap
+is carried away instead of coming back. The generated `AsyncAPI` document reports
+the dead-letter destination as a channel the registration publishes to.
 
 ## Post-settle work (`and_after`)
 

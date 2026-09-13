@@ -108,13 +108,15 @@ mod transaction;
 mod transform;
 mod wiring;
 
+pub(crate) use builder::message_of;
+#[cfg(test)]
+pub(crate) use builder::raw_of;
 pub use builder::{
     BoundSegment, EncodeOutcome, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
     MessageWire, MissingSegment, PayloadError, PublishAt, PublishBuilder, PublishError,
     PublishHeaders, ResolvedName, SatisfiesContract, SerializePayloadError, Serialized,
     SerializedWire, SuppliedName, TemplateAddress, TypedHeaders, WirePayload,
 };
-pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
 pub use out::{
     LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
@@ -132,9 +134,9 @@ pub use transaction::{
 };
 pub use transform::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, ContextKind,
-    DestinationUse, Either, FitsOffer, ForBatch, ForReply, ForSlot, Names, NamingOffered,
-    NamingUntaken, PublishContext, PublishTransform, PublishTransformIdentity,
-    PublishTransformStack, Reads, SlotContext, for_batch,
+    DestinationSettled, DestinationUse, Either, FitsOffer, FitsTaken, ForBatch, ForReply, ForSlot,
+    Names, NamesDestination, NamingOffered, NamingUntaken, PublishContext, PublishTransform,
+    PublishTransformIdentity, PublishTransformStack, Reads, SlotContext, for_batch,
 };
 pub use wiring::{
     AddBatchReplyTransform, AddReplyTransform, CodecSlotOpen, Direct, InTransaction,

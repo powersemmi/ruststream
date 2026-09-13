@@ -14,7 +14,7 @@ use ruststream::memory::prelude::*;
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
-use ruststream::runtime::{Outgoing, SlotContext};
+use ruststream::runtime::{Outgoing, PublishContext};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -71,37 +71,53 @@ impl Handle<[Payment]> for ReconcileBatch {
 // --8<-- [end:batch_retry_after]
 
 // --8<-- [start:mount]
-/// A transform on the retry position: it stamps every deferred copy with the slot it left
-/// through, so a redelivery is recognisable downstream. The position is an `Out` slot, so its
-/// transforms read a `SlotContext` like any other slot's.
+/// A transform on the retry position: it stamps every copy with the subscription the delivery
+/// came from, so a redelivery is recognisable downstream. Transforms here read the delivery being
+/// retried, the way a reply's do.
 struct DeferredStamp;
 
-impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for DeferredStamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
-            .insert("x-left-through", cx.slot().to_owned());
+            .insert("x-retried-from", cx.name().to_owned());
     }
 }
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // The publisher a deferred copy leaves through, named once per registration. The
-        // in-memory broker honours the delay itself, so nothing here defers; a broker without
-        // delayed redelivery of its own does, and then this position is what carries the delay.
+        // --8<-- [start:declaration]
+        // A poison message is one that never settles, and the cap is what ends it: after five
+        // deliveries the payment goes to the dead-letter subject instead of coming back.
         b.include(subscriber("payments", Reconcile).build())
-            .out_retry(Publish);
+            .max_attempts(nonzero!(5u32))
+            .dead_letter("payments.dead");
+        // --8<-- [end:declaration]
+        // --8<-- [start:named]
+        // Where a subscription's descriptor addresses nothing - a wildcard, a filter, a pattern -
+        // the mount site names where a copy goes, right after the publisher it belongs to.
+        b.include(subscriber("payments.settled", Reconcile).build())
+            .max_attempts(nonzero!(5u32))
+            .out_retry(Publish)
+            .to("payments.retry");
+        // --8<-- [end:named]
         // Batches dispatch per batch rather than per delivery, and the batch input is what says
-        // so; the batch size is the one parameter the mount owes the broker. The position is an
-        // `Out` slot, so it takes the slot steps: the deferred copy carries the delivery's own
-        // bytes, so the codec named here resolves the position and encodes nothing, while the
-        // transforms run on the copy.
+        // so; the batch size is the one parameter the mount owes the broker. Every registration
+        // already has a publisher for its copies, taken from the broker's default policy, and
+        // naming one replaces it: another policy, another codec, a transform.
         b.include(
             subscriber("payments", ReconcileBatch)
                 .batch(nonzero!(64))
                 .build(),
         )
+        .max_attempts(nonzero!(5u32))
+        .dead_letter("payments.dead")
         .out_retry(Publish)
         .codec(JsonCodec)
         .transform(DeferredStamp);

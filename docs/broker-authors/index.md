@@ -78,12 +78,14 @@ subject or a queue. `#[subscriber("name")]` subscribes through it.
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 
-    // Defaulted: None. Answer with the name itself where a publish to a subscribe name
-    // reaches the subscription opened under it, which is what a subject, a topic, a
-    // stream or a queue name usually is.
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
+    // Who publishes the retry copies of a by-name subscription, and who names where they
+    // go. AddressedCopies where a publish under a subscribe name reaches the subscription
+    // opened by it - a subject, a topic, a stream, a queue name - and the name is then the
+    // address. NamedCopies where it is not: an MQTT filter reads many topics and names none.
+    type Copies: CopyPath;
+
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
 ```
 
@@ -93,13 +95,13 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` reports the address the runtime publishes a deferred retry to. Answering it is
-what makes `#[subscriber("orders")]` work with the mount site's deferred-retry position
-(`.out_retry(policy)`) on your broker.
+`type Copies` is what the by-name source reports on your broker, so it decides how
+`#[subscriber("orders")]` retries here: with `AddressedCopies` the name is the address and nothing
+else is written, with `NamedCopies` the mount site names where a copy goes.
 
-Keep the default where a subscribe name is not a publish destination. A Google Pub/Sub subscription
-is subscribed to by its own name and published to through its topic, so the descriptor answers
-there instead.
+Answer `NamedCopies` where a subscribe name is not a publish destination. A Google Pub/Sub
+subscription is subscribed to by its own name and published to through its topic, and an MQTT
+filter reads many topics; a descriptor of your own then carries the richer answer.
 
 ### `Subscriber`
 
@@ -142,6 +144,13 @@ pub trait IncomingMessage: Send + Sync {
     // Defaulted: None. Override (with the Partitioned capability) to feed the
     // runtime's keyed worker lanes, workers(n, by_key).
     fn partition_key(&self) -> Option<&[u8]>;
+
+    // Defaulted: None. Override where the transport counts its own deliveries
+    // (JetStream num_delivered, SQS ApproximateReceiveCount, Pub/Sub
+    // delivery_attempt): a registration's max_attempts(..) cap then counts the
+    // broker's redeliveries and not only the copies the runtime published.
+    // The first delivery of a message answers 1.
+    fn redelivery_count(&self) -> Option<u64>;
 }
 ```
 
@@ -151,13 +160,19 @@ Delayed redelivery is two methods, and the runtime asks `supports_nack_after`. O
 `nack(true)`: a transport that cannot hold a message back has to say so, or the pause before a
 retry turns into a storm of redeliveries.
 
-A broker that overrides none of the three defaulted methods still works with every runtime feature.
+A broker that overrides none of the four defaulted methods still works with every runtime feature.
 Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
-delivery and, after the delay, publishes a copy through the policy the mount site bound with
-`.out_retry(policy)`, with an incremented retry-count header. That copy goes to the address
-[your subscription reports](#where-a-deferred-retry-is-published). Only where a registration binds
-no such policy does the delay degrade to an immediate requeue. Keyed worker lanes hand out keyless messages
-round-robin.
+delivery and, after the delay, publishes a copy through the registration's retry publisher, with an
+incremented retry-count header. That copy goes to the address
+[your subscription reports](#where-a-retry-copy-is-published). Keyed worker lanes hand out keyless
+messages round-robin.
+
+Where `redelivery_count` stays `None`, that header is the only count there is, and a
+`max_attempts(..)` cap is read from it. Override the method and the cap counts the broker's own
+redeliveries too, which is what a user expects from a broker that has a delivery count of its own.
+It is also the only count a cap can read on the native path: where you honour the delay yourself,
+the framework's header never increments, so `redelivery_count` is what stops a `retry_after` from
+circling past the cap.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:
@@ -283,12 +298,25 @@ implements `SubscriptionSource`:
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
+
+    // Who publishes the copies this subscription's retries are made of, and who names
+    // where they go: AddressedCopies, NamedCopies or BrokerMoves.
+    type Copies: CopyPath;
+
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 
-    // Defaulted: Ok(None). Answer where a publish reaches this subscription again,
-    // asking the broker when only the live connection knows.
-    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
+    // Defaulted: the descriptor unchanged. Read the registration's max_attempts(..)
+    // and dead_letter(..) here and apply them to the subscription you are about to
+    // open, where the broker has a mechanism for them.
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
+
+}
+
+// The other half of AddressedCopies: the destination is a property of the type, not an
+// answer checked at startup. Ask the broker where only the live connection knows.
+pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies> {
+    async fn redelivery_address(&self, connected: &C) -> Result<RedeliveryAddress, C::Error>;
 }
 ```
 
@@ -307,10 +335,49 @@ branches inside, as the [NATS example](example-nats.md) does.
 Derive `Clone` on the descriptor: the mount rebuilds the configuration per registration, so one
 definition can be mounted on two brokers at once.
 
-### Where a deferred retry is published
+### Who publishes a retry copy
+
+Every descriptor declares one of three things with `type Copies`.
+
+`AddressedCopies` says this process publishes the copies a retry needs, and the descriptor knows
+where they go. It implements `RedeliveryAddressed` beside `SubscriptionSource`, so the address is a
+property of the type rather than an answer checked at startup. This is the answer for a subject, a
+topic, a stream and a queue - one subscription, one destination the service can publish back to.
+
+`NamedCopies` says this process publishes them but the descriptor cannot address them: a wildcard
+subject, an MQTT filter, a Pulsar pattern, a list of topics. One such subscription reads many
+destinations, so the mount site names one, statically with `.out_retry(policy).to(name)` or per
+delivery with a publish transform.
+
+`BrokerMoves` says the server or the client library moves the delivery itself: a quorum queue with
+`x-delivery-limit` and an `x-dead-letter-exchange`, a Pub/Sub subscription with a dead-letter
+policy, an SQS redrive policy, a Pulsar consumer with a `DeadLetterPolicy`. Nothing is published
+from the service, so `.out_retry(..)` is a compile error at every mount site of that descriptor,
+and the error names it.
+
+The first two pair a retry publisher for every registration from the broker's `DefaultPublish`
+policy, so a descriptor declaring either over a broker with no `DefaultPublish` does not compile.
+
+`Subscribe` declares the same thing for the by-name form: `type Copies` there is what
+`#[subscriber("orders")]` reports on your broker. Answer `AddressedCopies` where a publish under a
+subscribe name reaches the subscription opened by it, which a subject, a topic, a stream and a
+queue name usually are - the name is then the address, and nothing else has to be written.
+
+Where the nativeness depends on a field's value rather than on the type - a RabbitMQ queue without
+`.delay(..)` has no native delayed redelivery of its own - keep the path open.
+
+### What the registration declares
+
+`declare_retry` hands you the cap and the destination the mount site declared, once per
+registration, before `subscribe` runs. A descriptor that has a mechanism of its own turns them into
+topology there, and only when both are declared, because a native dead-letter policy needs the
+limit and the address together. A descriptor without one keeps the default and the runtime applies
+the declaration on the retry path.
+
+### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
-message once the delay is over. Your descriptor says where that copy goes.
+message once the delay is over. An `AddressedCopies` descriptor says where that copy goes.
 
 ```rust
 --8<-- "src/memory/mod.rs:source"
@@ -321,14 +388,11 @@ subject on NATS, the topic on Kafka, the stream key on Redis.
 
 On Google Pub/Sub a subscription and a topic are separate resources, so the answer is the topic the
 subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
-startup.
+startup, and a `.to(name)` at the mount site overrides it.
 
-Keep the default where publishing cannot reach your subscription at all. An application that wires
-a retry publisher over such a subscription then does not start, and the error names the
-subscription and its source.
-
-`harness::lifecycle` checks the answer you give: a publish to the reported address must arrive at
-the subscription that reported it.
+`harness::redelivery_address` checks the answer you give: a publish to the reported address must
+arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and
+`harness::lifecycle` covers the rest of the ladder for both.
 
 ### Naming a kind by one string
 
@@ -759,6 +823,82 @@ Put them on the async edges instead. Transcode incoming payloads on the subscrip
 path, before the codec sees them, and frame outgoing ones with a core `PublishLayer` added app-wide
 via `RustStream::publish_layer`. The publish layer is async and can return an error, and
 `Outgoing::payload_mut` exists exactly for envelope wrapping.
+
+## Protocol bindings
+
+The generated AsyncAPI document has room for what only your broker knows: a RabbitMQ queue's
+durability, a Kafka consumer group, an MQTT QoS. The specification calls those **bindings**, and
+your descriptor fills them.
+
+```rust
+--8<-- "tests/asyncapi.rs:descriptor_bindings"
+```
+
+`Binding::new(protocol, version, &body)` serializes the body once and writes `bindingVersion`
+itself, so you cannot ship a binding without one. The protocol key is checked against the
+specification's closed list, and an unlisted key comes back as an error rather than reaching a
+document no tool can read. `Bindings` is empty by default: a descriptor that says nothing changes
+no document.
+
+The server level is a field rather than a method, because a server is described once per broker:
+`ServerSpec::new(host, protocol).bindings(..)` in your `DescribeServer` impl.
+
+Three rules bound what belongs in a binding.
+
+The value is computed from the descriptor alone. The document is built before anything connects, so
+a Kafka topic's real partition count, the topic behind a Pub/Sub subscription and an SQS queue's ARN
+cannot come from here.
+
+A credential never goes in, for the reason `DescribeServer` gives. `conformance::harness` has the
+check: configure your broker and your descriptor with a known password and run the scan.
+
+```rust
+--8<-- "tests/conformance_self.rs:credentials"
+```
+
+A protocol the specification has no binding for goes in `Binding::extension("x-kinesis", &body)`.
+The protocol keys are a closed list, so ZeroMQ, Kinesis and a file transport have no lawful key;
+an `x-` extension sits at the same level and carries no `bindingVersion`.
+
+Bindings come from a descriptor, so a subscription opened by bare name carries none: there is
+nothing bound to it to describe. A broker that wants bindings ships a `SubscriptionSource` type.
+
+Your publish policies fill the same three names on the other side. A reply, an `Out` slot and the
+publisher a dead-lettered delivery leaves through are each a `PublishPolicy`, and each describes
+the channel it publishes to.
+
+```rust
+--8<-- "tests/asyncapi.rs:policy_bindings"
+```
+
+The three rules hold unchanged here. One thing does not carry over: a reply has no `send` operation
+of its own, so `operation_bindings` on a reply's policy reaches no document. A slot and a
+dead-letter destination each have one.
+
+A fourth method belongs to the reply alone. `reply_address_location` is where a client reads the
+address of an answer your broker routes through a reply-to header:
+
+```rust
+--8<-- "tests/asyncapi.rs:reply_address"
+```
+
+The document then reports the reply channel with `address: null` and puts the expression in the
+`receive` operation's `reply.address.location`. It is read only where the mount site composes a
+transform that names the destination per delivery; otherwise the reply goes to the declared name,
+and that is what the document says.
+
+A protocol the specification does not list has no publish-side binding to fill either. The
+in-memory broker is the example: `memory` is not a key, so `MemoryPublish` stays silent rather than
+inventing one.
+
+The hooks are gated on the core's `asyncapi` feature. Forward it from your crate:
+
+```toml
+[features]
+asyncapi = ["ruststream/asyncapi"]
+```
+
+and put `#[cfg(feature = "asyncapi")]` on each method you fill in.
 
 ## Config and defaults
 

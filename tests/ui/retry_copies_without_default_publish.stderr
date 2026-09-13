@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `ConnectedBus: DefaultPublish` is not satisfied
+  --> tests/ui/retry_copies_without_default_publish.rs:91:11
+   |
+91 |         b.include(reconcile);
+   |           ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `DefaultPublish` is not implemented for `ConnectedBus`
+  --> tests/ui/retry_copies_without_default_publish.rs:29:1
+   |
+29 | struct ConnectedBus;
+   | ^^^^^^^^^^^^^^^^^^^
+help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
+  --> src/memory/mod.rs
+   |
+   | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `AddressedCopies` to implement `ruststream::runtime::CopyPathPairing<Bus, (), PublishIdentity>`
+   = note: required for `runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>` to implement `runtime::router::routes::MountRoute<Bus, (), PublishIdentity>`
+   = note: required for `(runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())` to implement `RouterDef<Bus>`
+   = note: required for `Router<Bus, (runtime::router::routes::SubscribeRoute<Name, Typed<BusMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>` to implement `ruststream::runtime::ScopeCommit<Bus, Identity, (), (), PublishIdentity>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, Bus, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), reconcile, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`

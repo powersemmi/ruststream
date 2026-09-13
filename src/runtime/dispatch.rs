@@ -17,25 +17,29 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
-use crate::{AckError, BatchSubscriber, HeaderMap, IncomingMessage, Subscriber};
+use crate::{
+    AckError, BatchSubscriber, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration,
+    Subscriber,
+};
 
 use super::batch::BatchHandler;
 use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
-use super::publish::raw_of;
+use super::publish::PublishContext;
 #[cfg(test)]
-use super::publisher_registry::ErasedPublisher;
-use super::publisher_registry::ErasedSink;
+use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
 
-/// Header carrying the framework's deferred-republish retry count.
+/// Header carrying the framework's own retry count.
 ///
-/// The broker-agnostic `retry_after` fallback increments this on each deferred re-publish, so a
-/// handler can read it to cap its own retries (a poison-message guard). It counts only the
-/// framework's own deferred republishes, not a broker's native redeliveries.
+/// The runtime increments it on every copy of a delivery it publishes, and reads it back where the
+/// transport counts nothing of its own
+/// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)): that is what
+/// a registration's [`max_attempts`](super::RouterWith::max_attempts) cap counts there. A handler
+/// can read it too, to tell a first delivery from a redelivery.
 ///
 /// # Examples
 ///
@@ -125,13 +129,15 @@ impl Default for Workers {
 /// broker-agnostic `retry_after` fallback of this registration and the app-wide tracker for
 /// post-settle continuations.
 /// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
-pub(crate) struct Delivery {
-    /// The deferred `retry_after` fallback for this subscription: the policy the registration
-    /// bound, paired with the address its source reported at startup. `None` when the
-    /// registration bound none, in which case a `NackAfter` on a non-native broker degrades to an
-    /// immediate requeue (with a warning). A publisher without an address never reaches here: the
-    /// subscription refuses to start instead.
-    pub(crate) retry: Option<DeferredRetry>,
+pub(crate) struct Delivery<C = ()> {
+    /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
+    /// with the destination the mount site or the descriptor named. `None` where the broker moves
+    /// the delivery itself, in which case a `NackAfter` on a transport with no native delayed
+    /// redelivery has nothing left to do but requeue.
+    pub(crate) retry: Option<DeferredRetry<C>>,
+    /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
+    /// where the runtime is the one moving the delivery.
+    pub(crate) declaration: RetryDeclaration,
     /// Per-scope task tracker for post-settle `and_after` continuations. The
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
@@ -145,12 +151,17 @@ pub(crate) struct Delivery {
     pub(crate) scope_id: usize,
 }
 
-impl Delivery {
-    /// The context one subscription dispatches under: its own deferred-retry fallback over what
-    /// the whole scope shares.
-    pub(crate) fn for_subscription(scope: &ScopeDelivery, retry: Option<DeferredRetry>) -> Self {
+impl<C> Delivery<C> {
+    /// The context one subscription dispatches under: its own retry path over what the whole
+    /// scope shares.
+    pub(crate) fn for_subscription(
+        scope: &ScopeDelivery,
+        retry: Option<DeferredRetry<C>>,
+        declaration: RetryDeclaration,
+    ) -> Self {
         Self {
             retry,
+            declaration,
             tasks: scope.tasks().clone(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
@@ -162,9 +173,10 @@ impl Delivery {
     /// A delivery context outside any scope, for tests that drive the dispatch functions
     /// directly.
     #[cfg(test)]
-    pub(crate) fn detached(retry: Option<DeferredRetry>, tasks: TaskTracker) -> Self {
+    pub(crate) fn detached(retry: Option<DeferredRetry<C>>, tasks: TaskTracker) -> Self {
         Self {
             retry,
+            declaration: RetryDeclaration::new(),
             tasks,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
@@ -173,20 +185,29 @@ impl Delivery {
         }
     }
 
-    /// A delivery context deferring retries to `publisher` at `address`. For tests.
+    /// A delivery context publishing its retry copies through `publisher` at `destination`. For
+    /// tests.
     #[cfg(test)]
     pub(crate) fn deferring_to(
-        publisher: Arc<dyn ErasedPublisher>,
-        address: &str,
+        publisher: Arc<dyn ErasedRetryPublisher<C>>,
+        destination: &str,
         tasks: TaskTracker,
     ) -> Self {
         Self::detached(
             Some(DeferredRetry {
                 publisher,
-                address: Arc::from(address),
+                destination: Some(Arc::from(destination)),
             }),
             tasks,
         )
+    }
+
+    /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
+    /// `dead_letter(..)` leave it. For tests.
+    #[cfg(test)]
+    pub(crate) fn declaring(mut self, declaration: RetryDeclaration) -> Self {
+        self.declaration = declaration;
+        self
     }
 
     /// An empty delivery context: no deferred retry, a fresh continuation tracker. For tests.
@@ -203,13 +224,14 @@ impl Delivery {
     }
 }
 
-impl fmt::Debug for Delivery {
+impl<C> fmt::Debug for Delivery<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
             .field(
-                "retry_address",
-                &self.retry.as_ref().map(|retry| &retry.address),
+                "retry_destination",
+                &self.retry.as_ref().map(|retry| &retry.destination),
             )
+            .field("declaration", &self.declaration)
             .field("pending_continuations", &self.tasks.len())
             .finish_non_exhaustive()
     }
@@ -224,13 +246,13 @@ pub(crate) fn spawn_dispatch<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -279,7 +301,7 @@ pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -287,7 +309,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     if workers.is_sequential() {
@@ -313,7 +335,7 @@ fn spawn_dispatch_pool<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -321,7 +343,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -376,7 +398,7 @@ fn spawn_dispatch_lanes<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -384,7 +406,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -491,7 +513,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
     batch_size: NonZeroUsize,
@@ -500,7 +522,7 @@ where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     H: BatchHandler<S::Message, C, St> + 'static,
-    C: crate::BuildBatchContext<S::Message> + Send + 'static,
+    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -568,11 +590,11 @@ async fn dispatch<H, M, C, St>(
     msg: M,
     name: &str,
     state: &St,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
     failure: &DispatchFailure,
 ) where
     H: Handler<M, C, St>,
-    C: crate::BuildContext<M>,
+    C: crate::BuildContext<M> + Send + Sync + 'static,
     M: IncomingMessage,
     // The dispatch future is awaited inside a spawned task, so it must be `Send`: the context
     // borrows `&St` across the handler await, which requires `St: Sync`.
@@ -663,7 +685,7 @@ async fn dispatch<H, M, C, St>(
     }
     drop(ctx);
     if let Some(mut s) = settle {
-        settle_outcome(msg, s.outcome(), name, delivery).await;
+        settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C).await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
@@ -693,12 +715,12 @@ async fn run_batch<H, M, C, St>(
     batch: Vec<M>,
     name: &str,
     state: &St,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
     failure: &DispatchFailure,
 ) where
     H: BatchHandler<M, C, St>,
     M: IncomingMessage,
-    C: crate::BuildBatchContext<M> + Send,
+    C: crate::BuildBatchContext<M> + Send + Sync + 'static,
     St: Send + Sync,
 {
     // A batch with no deliveries has nothing to settle and no first delivery to build a context
@@ -784,7 +806,7 @@ async fn run_batch<H, M, C, St>(
 /// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)
 /// is driving this app.
 #[cfg(feature = "testing")]
-fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
+fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
     delivery
         .hooks
         .coordinator()
@@ -796,17 +818,24 @@ fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
 ///
 /// The single place a settlement reaches the broker, single-message and batch paths alike: a
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
-/// the delay fallback below is exactly the part that is easy to leave out.
-pub(crate) async fn settle_outcome<M: IncomingMessage>(
+/// the retry path below is exactly the part that is easy to leave out.
+pub(crate) async fn settle_outcome<M, C>(
     msg: M,
     outcome: HandlerResult,
     name: &str,
-    delivery: &Delivery,
-) {
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
-        HandlerResult::Nack { requeue } => msg.nack(requeue).await,
-        HandlerResult::NackAfter { delay } => settle_nack_after(msg, name, delay, delivery).await,
+        HandlerResult::Nack { requeue: false } => msg.nack(false).await,
+        HandlerResult::Nack { requeue: true } => settle_retry(msg, name, delivery, build_cx).await,
+        HandlerResult::NackAfter { delay } => {
+            settle_nack_after(msg, name, delay, delivery, build_cx).await
+        }
     };
     if let Err(err) = ack_result {
         warn!(
@@ -818,47 +847,207 @@ pub(crate) async fn settle_outcome<M: IncomingMessage>(
     }
 }
 
+/// Where the next copy of one delivery goes, read off the registration's declaration and the
+/// count the delivery carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Redelivery<'a> {
+    /// Back to the subscription itself: the attempts are not spent and no destination has taken
+    /// the copies over.
+    Subscription,
+    /// To the declared destination.
+    DeadLetter {
+        /// Where the copy is published.
+        destination: &'a str,
+        /// Whether it goes there because the attempts are spent, rather than because the
+        /// registration named a destination and no cap.
+        at_cap: bool,
+    },
+    /// Rejected without a copy: the attempts are spent and the registration named nowhere to send
+    /// it. A rejection keeps the broker's own dead-letter policy in play where one is configured.
+    Reject,
+}
+
+/// How many times this message has been delivered, counting this delivery.
+///
+/// The broker's own count where the transport keeps one, the framework's header otherwise - which
+/// starts absent and is incremented on every copy the runtime publishes, so the first delivery
+/// counts as one either way.
+fn attempt_of<M: IncomingMessage>(msg: &M) -> u64 {
+    msg.redelivery_count()
+        .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
+}
+
+/// Reads the registration's declaration against this delivery.
+fn redelivery_of<'d, M: IncomingMessage>(
+    msg: &M,
+    declaration: &'d RetryDeclaration,
+) -> Redelivery<'d> {
+    match (declaration.max_attempts(), declaration.dead_letter()) {
+        (Some(cap), destination) if attempt_of(msg) >= u64::from(cap.get()) => {
+            destination.map_or(Redelivery::Reject, |destination| Redelivery::DeadLetter {
+                destination,
+                at_cap: true,
+            })
+        }
+        (None, Some(destination)) => Redelivery::DeadLetter {
+            destination,
+            at_cap: false,
+        },
+        _ => Redelivery::Subscription,
+    }
+}
+
+/// Settles an immediate retry ([`Nack { requeue: true }`](HandlerResult::Nack)).
+///
+/// A registration that declared neither a cap nor a destination gets the broker's own requeue,
+/// which is what an immediate retry has always been. Under a declaration the outcome obeys it:
+/// where the transport counts its own redeliveries the requeue stays the broker's and the count
+/// is read from the delivery, and where it counts none the runtime publishes the copy itself so
+/// that the framework's header carries the count forward and the cap applies to an immediate
+/// retry as it does to a delayed one.
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from settling the original delivery.
+async fn settle_retry<M, C>(
+    msg: M,
+    name: &str,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
+    if delivery.declaration.declares_nothing() {
+        return msg.nack(true).await;
+    }
+    match redelivery_of(&msg, &delivery.declaration) {
+        // The broker counts its own redeliveries, so its requeue carries the count forward and
+        // there is nothing for a copy to add.
+        Redelivery::Subscription if msg.redelivery_count().is_some() => msg.nack(true).await,
+        Redelivery::Subscription => match delivery.retry.as_ref() {
+            Some(retry) => {
+                let destination = retry.destination.clone();
+                publish_copy(msg, name, destination, None, retry, delivery, build_cx).await
+            }
+            // The broker moves this subscription's deliveries itself, so its requeue is what an
+            // immediate retry is, and the declaration is the broker's to apply.
+            None => msg.nack(true).await,
+        },
+        Redelivery::DeadLetter {
+            destination,
+            at_cap,
+        } => match delivery.retry.as_ref() {
+            Some(retry) => {
+                if at_cap {
+                    warn_at_cap(name, attempt_of(&msg), Some(destination));
+                }
+                let destination = Arc::from(destination);
+                publish_copy(
+                    msg,
+                    name,
+                    Some(destination),
+                    None,
+                    retry,
+                    delivery,
+                    build_cx,
+                )
+                .await
+            }
+            None => msg.nack(false).await,
+        },
+        Redelivery::Reject => {
+            warn_at_cap(name, attempt_of(&msg), None);
+            msg.nack(false).await
+        }
+    }
+}
+
 /// Settles a [`NackAfter`](HandlerResult::NackAfter) outcome, choosing native delayed redelivery
-/// or the broker-agnostic fallback.
+/// or the copy the runtime publishes.
 ///
 /// When the broker reports native support (`supports_nack_after`), this defers to
-/// [`IncomingMessage::nack_after`]. Otherwise it captures the message, drops the original, and
-/// schedules a deferred re-publish of the captured copy to the subscription's redelivery address
-/// with the [`RETRY_COUNT_HEADER`] incremented. That address is what the subscription's source
-/// reported at startup, not the subscription's name: the two differ wherever a subscription is a
-/// resource of its own. The copy leaves through the registration's retry slot, so the mount
-/// site's transforms and the publisher's own headers reach it as they reach any slot publish; it
-/// carries bytes already, so no codec encodes it and the call adjusts no per-message settings.
-/// Where the registration bound no deferred-retry position, this falls back to an immediate
-/// requeue and warns.
+/// [`IncomingMessage::nack_after`] and nothing is published - unless the delivery is already at
+/// the registration's cap. The cap is read first, from the broker's own delivery count
+/// ([`IncomingMessage::redelivery_count`]), because the framework's header never increments on a
+/// path where the broker holds the message itself; a delivery at the cap goes to the declared
+/// dead-letter destination or is rejected, exactly as on the copy path. Where the transport
+/// reports no count of its own there is nothing to read, and the declaration is the subscription
+/// descriptor's to map onto the broker's own mechanism.
+///
+/// Without native support this captures the message, drops the original, and schedules a copy of it
+/// after the delay, with the [`RETRY_COUNT_HEADER`] incremented. The copy goes to the address the
+/// subscription's descriptor reported at startup, not to the subscription's name: the two differ
+/// wherever a subscription is a resource of its own. It leaves through the registration's retry
+/// slot, so the mount site's transforms and the publisher's own headers reach it as they reach any
+/// slot publish; it carries bytes already, so no codec encodes it and the call adjusts no
+/// per-message settings.
+///
+/// Once the registration's attempts are spent the copy goes to the declared dead-letter
+/// destination instead, immediately, and with no destination declared the delivery is rejected.
 ///
 /// A transport with no settlement at all ([`AckError::Unsupported`] from `nack`, as on MQTT at
-/// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the deferred re-publish: there is no original to
-/// drop and no redelivery of the broker's own to fall back on, so the deferred copy is the only
-/// form the retry can take.
+/// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the copy: there is no original to drop and no
+/// redelivery of the broker's own to fall back on, so the copy is the only form the retry can
+/// take.
 ///
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original when the transport does settle but this
 /// settle failed. The delivery then stays with the broker, which redelivers it on its own timers,
-/// and a deferred copy on top of that would duplicate the message; the caller logs the error.
+/// and a copy on top of that would duplicate the message; the caller logs the error.
 ///
 /// # Cancel safety
 ///
-/// The deferred re-publish runs on a detached task that sleeps for `delay`. It is at-most-once over
+/// The deferred copy runs on a detached task that sleeps for `delay`. It is at-most-once over
 /// that window: if the process exits (or the runtime is dropped) before the timer fires, the
 /// deferred message is lost, since the original has already been dropped. Brokers that need
 /// at-least-once delayed redelivery across a crash must provide native support.
-async fn settle_nack_after<M>(
+async fn settle_nack_after<M, C>(
     msg: M,
     name: &str,
     delay: Duration,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: IncomingMessage,
+    C: Send + Sync + 'static,
 {
     if msg.supports_nack_after() {
+        // The cap is read before the delay reaches the broker: a native redelivery would otherwise
+        // circle past a cap nothing in this process ever gets to apply. It is read only where the
+        // delivery carries the broker's own count - the framework's header never increments on
+        // this path, so there is nothing else to count with - and only where this process
+        // publishes the subscription's copies: a broker that moves a spent delivery itself
+        // applies the declaration itself.
+        if let Some(retry) = delivery.retry.as_ref()
+            && delivery.declaration.max_attempts().is_some()
+            && msg.redelivery_count().is_some()
+        {
+            match redelivery_of(&msg, &delivery.declaration) {
+                Redelivery::DeadLetter { destination, .. } => {
+                    warn_at_cap(name, attempt_of(&msg), Some(destination));
+                    let destination = Arc::from(destination);
+                    return publish_copy(
+                        msg,
+                        name,
+                        Some(destination),
+                        None,
+                        retry,
+                        delivery,
+                        build_cx,
+                    )
+                    .await;
+                }
+                Redelivery::Reject => {
+                    warn_at_cap(name, attempt_of(&msg), None);
+                    return msg.nack(false).await;
+                }
+                Redelivery::Subscription => {}
+            }
+        }
         return msg.nack_after(delay).await;
     }
 
@@ -866,45 +1055,143 @@ where
         warn!(
             target: "ruststream::dispatch",
             subscription = %name,
-            "retry_after on a broker without native delayed redelivery, and this registration \
-             binds no deferred-retry position (.out_retry(policy)); requeuing immediately (the \
-             delay is dropped)",
+            "retry_after on a broker with neither native delayed redelivery nor a copy path of \
+             its own; requeuing immediately (the delay is dropped)",
         );
         return msg.nack(true).await;
     };
-    let publisher = Arc::clone(&retry.publisher);
-    let address = Arc::clone(&retry.address);
-    let subscription = name.to_owned();
 
-    // nack_after consumes self, so capture everything needed for the re-publish first.
+    match redelivery_of(&msg, &delivery.declaration) {
+        Redelivery::Subscription => {
+            let destination = retry.destination.clone();
+            publish_copy(
+                msg,
+                name,
+                destination,
+                Some(delay),
+                retry,
+                delivery,
+                build_cx,
+            )
+            .await
+        }
+        Redelivery::DeadLetter {
+            destination,
+            at_cap,
+        } => {
+            if at_cap {
+                warn_at_cap(name, attempt_of(&msg), Some(destination));
+            }
+            // A delivery that has run out of attempts is not retried, so the delay it asked for
+            // does not apply to the copy that carries it away.
+            let destination = Arc::from(destination);
+            publish_copy(
+                msg,
+                name,
+                Some(destination),
+                None,
+                retry,
+                delivery,
+                build_cx,
+            )
+            .await
+        }
+        Redelivery::Reject => {
+            warn_at_cap(name, attempt_of(&msg), None);
+            msg.nack(false).await
+        }
+    }
+}
+
+/// Says once per exhausted delivery where it went, because that is the point at which a message
+/// stops coming back and an operator has to know.
+fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
+    if let Some(destination) = destination {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            attempt,
+            dead_letter = %destination,
+            "retry attempts exhausted; publishing the delivery to the dead-letter destination",
+        );
+    } else {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            attempt,
+            "retry attempts exhausted and no dead-letter destination is declared; rejecting the \
+             delivery",
+        );
+    }
+}
+
+/// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`.
+///
+/// `destination` is `None` only where the registration's transforms name one per delivery; the
+/// copy then starts at the subscription's own name, which is what the transforms read as the
+/// delivery's channel, and one of them renames it.
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from dropping the original where that failed and the transport does
+/// settle: the delivery then stays with the broker, and a copy on top of it would duplicate the
+/// message.
+async fn publish_copy<M, C>(
+    msg: M,
+    name: &str,
+    destination: Option<Arc<str>>,
+    delay: Option<Duration>,
+    retry: &DeferredRetry<C>,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
+    let publisher = Arc::clone(&retry.publisher);
+    let subscription: Arc<str> = Arc::from(name);
+    let target = destination.unwrap_or_else(|| Arc::clone(&subscription));
+
+    // Settling consumes the message, so capture everything the copy needs first: its bytes, the
+    // headers the handler saw, and the broker's own per-delivery context, which is what a
+    // transform on this position reads.
     let payload = Bytes::copy_from_slice(msg.payload());
-    let mut headers = msg.headers().clone();
+    let delivered = msg.headers().clone();
+    let mut headers = delivered.clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
+    let context = build_cx(&msg);
 
-    // Drop the original so the broker does not also redeliver it; the deferred copy carries the
-    // retry forward. A transport with no settlement at all has nothing to drop and no redelivery
-    // of its own, so there the deferred copy is the only way the message survives: aborting on
-    // that error would lose it. Any other settle failure leaves the delivery with the broker,
-    // which will redeliver it on its own timers, so a deferred copy on top would duplicate it.
+    // Drop the original so the broker does not also redeliver it; the copy carries the retry
+    // forward. A transport with no settlement at all has nothing to drop and no redelivery of its
+    // own, so there the copy is the only way the message survives: aborting on that error would
+    // lose it. Any other settle failure leaves the delivery with the broker, which will redeliver
+    // it on its own timers, so a copy on top would duplicate it.
     match msg.nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(err) => return Err(err),
     }
 
     let republish = async move {
-        let deferred = raw_of(ErasedSink(publisher.as_ref()), &payload)
-            .with_headers(headers)
-            .to(address.as_ref());
-        if let Err(err) = deferred.publish().await {
+        let cx = PublishContext::new(&subscription, &delivered, &context);
+        let copy = OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
+        if let Err(err) = publisher.publish_copy(copy, &cx).await {
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %subscription,
-                address = %address,
+                destination = %target,
                 error = %err,
-                "deferred retry_after re-publish failed; message lost",
+                "publishing the retry copy failed; message lost",
             );
         }
+    };
+
+    let Some(delay) = delay else {
+        // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
+        // detached task would let the loop pull the next delivery before this one is back.
+        republish.await;
+        return Ok(());
     };
 
     // Under the harness the copy is scheduled through the coordinator, the way a broker schedules
@@ -915,6 +1202,8 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
+    #[cfg(not(feature = "testing"))]
+    let _ = delivery;
 
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;

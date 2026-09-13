@@ -47,7 +47,7 @@ pub trait Documentable {
 #[cfg(feature = "asyncapi")]
 impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
     fn schema_json() -> Option<String> {
-        serde_json::to_string(&schemars::schema_for!(T)).ok()
+        crate::asyncapi::schema_json::<T>()
     }
 }
 

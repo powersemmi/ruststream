@@ -70,7 +70,7 @@ pub struct Context<'a, C = (), S = ()> {
     modified: Option<HeaderMap>,
     state: &'a S,
     cx: C,
-    delivery: &'a Delivery,
+    delivery: &'a Delivery<C>,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
     /// The subscriber's materialization policy, set by the dispatcher from the definition's
@@ -103,7 +103,7 @@ impl<'a, C, S> Context<'a, C, S> {
         headers: &'a HeaderMap,
         state: &'a S,
         cx: C,
-        delivery: &'a Delivery,
+        delivery: &'a Delivery<C>,
     ) -> Self {
         Self {
             name,
@@ -468,7 +468,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Borrowed for the scope's lifetime rather than the context's, so the batch path can settle
     /// through it after handing `&mut self` to the handler - and so no borrow of the context is
     /// held across an await, which would demand `Context: Sync`.
-    pub(crate) fn delivery(&self) -> &'a Delivery {
+    pub(crate) fn delivery(&self) -> &'a Delivery<C> {
         self.delivery
     }
 }

@@ -144,33 +144,31 @@
 运行时这样兑现延迟：
 
 - 原生支持延迟重新投递的 Broker 直接拿到这个延迟。内存 Broker 就是这样，它用定时器重新投递；
-  NATS JetStream 上的 Broker 可以带延迟发 `NAK`。
-- 不原生支持的 Broker 得到的是**延后重新发布**：运行时等 `delay` 过去，把消息的副本重新发布回它
-  来的那个订阅，再丢弃原件。新副本里框架的重试计数消息头
-  （[`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)）
-  加了一，处理器可以按它给重新投递次数封顶。
+  NATS JetStream 上的 Broker 带延迟发 `NAK`。
+- 不原生支持的 Broker 得到的是一份**副本**：运行时等 `delay` 过去，把消息重新发布回它来的那个
+  订阅，再丢弃原件。副本带着框架的重试计数消息头
+  （[`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)），
+  值加了一。
 
-  副本需要一个发布者，由挂载处点名：`.out_retry(policy)` 用 Broker 自己的发布策略占住这条注册
-  的延后重试位。这个位置只占一次。不占它，运行时就丢弃延迟，消息立即重新入队。在延迟的这段时间
-  里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
+副本经过的发布者每条注册都已经有了，它来自 Broker 自己的默认发布策略，所以无论注册怎么挂载，
+`retry_after` 的行为都一样。在延迟的这段时间里，这份副本是**至多一次**的：如果进程在定时器触发
+之前退出，副本就丢了。
 
-  这个位置就是一个 `Out` 槽，所以它后面接的是槽的那几步：`.codec(..)` 点名这个位置的编解码器，
-  `.transform(..)` 叠一个发布变换，副本会经过它。副本带的是投递本身的字节，所以这里的编解码器
-  只是把位置解析出来，并不编码任何东西。
+想换一个发布者时用 `.out_retry(policy)` 把它替掉，每条注册只换一次。这个位置就是一个 `Out` 槽，
+所以它后面接的是槽的那几步：`.codec(..)` 点名这个位置的编解码器，`.transform(..)` 叠一个发布变
+换，副本会经过它。副本带的是投递本身的字节，所以这里的编解码器只是把位置解析出来，并不编码任何
+东西。
 
-  ```rust
-  --8<-- "examples/retry.rs:mount"
-  ```
+```rust
+--8<-- "examples/retry.rs:mount"
+```
 
-  副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
-  串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate，
-  在答不上来的订阅上占了这个位置的那条注册起不来，并报出是哪条订阅、该怎么改，旁边的注册不受
-  影响。那里由 Broker 自己的订阅描述符回答：`#[subscriber("name")]` 只在名字本身就是发布地址的
-  地方答得出来。
+副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
+串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate。
 
-  完全不能结算的传输（MQTT 的 QoS 0、ZeroMQ 和 Redis pub/sub）走同一条路径：没有原件可丢，重新
-  投递就只剩这份延后的副本。另一种情形是 Broker 拒绝了结算：这条消息仍归 Broker，由它自己重新
-  投递，因此运行时返回错误，不再叠加一份副本。
+完全不能结算的传输（MQTT 的 QoS 0、ZeroMQ 和 Redis pub/sub）走同一条路径：没有原件可丢，重新
+投递就只剩这份副本。另一种情形是 Broker 拒绝了结算：这条消息仍归 Broker，由它自己重新投递，因此
+运行时返回错误，不再叠加一份副本。
 
 `batch_retry_after` 这种写法可以和[选择性的批量结果](#selective-acknowledgement)组合：
 `Vec<HandlerOutcome>` 逐元素给出延迟，未就绪的条目各自等待，不拖住这个批次里的其余消息：
@@ -186,6 +184,63 @@
     ```rust
     --8<-- "examples/manual/retry.rs:batch_retry_after"
     ```
+
+### 重试副本发往哪里
+
+只读一个地址的订阅会说出副本按哪个地址能重新到达它，这由 Broker crate 回答。读很多地址的订阅 -
+带通配符的 subject、MQTT 的过滤器、Pulsar 的 pattern、一串 topic - 一个也说不出来，于是由挂载处
+说出来：
+
+```rust
+--8<-- "examples/retry.rs:named"
+```
+
+`.to(name)` 是一个普通地址，和回复的地址一样。它紧跟在 `out_retry(policy)` 之后：地址属于副本经
+过的那个发布者，所以这样的注册要先说出发布者。在以 `.build()` 结尾的链上 - `Router`、带 `Out` 槽
+的处理器 - 一个地址也没说出来的注册就在那里被拒绝。scope 上的注册在语句结束时提交，所以那里同样的
+拒绝改由订阅在启动时给出。
+
+另一种方式是用一个变换为每次投递各自命名，它读的是被重试的那次投递。带通配符的订阅正是这样把副
+本送回它收到消息的那个具体 topic：
+
+```rust
+--8<-- "examples/retry.rs:naming_transform"
+```
+
+这两种方式互斥，就像声明了目的地的回复和命名变换互斥一样。描述符自己给副本定址的地方，两者都不
+需要，命名变换也编译不过；那里的 `.to(name)` 覆盖描述符给出的地址。
+
+### 给重试封顶 { #capping-the-retries }
+
+一直回答 `retry_after` 的处理器会让自己的消息一直转下去，直到有人来处理。`include` 之后紧接的两
+步结束这件事，而且在任何 Broker 上读起来都一样：
+
+```rust
+--8<-- "examples/retry.rs:declaration"
+```
+
+`max_attempts(n)` 是一条消息一共能被投递几次，第一次也算在内。`dead_letter(name)` 是投递次数用
+完之后它去哪里：消息按原样发布到那里，消息体和消息头都在，重试计数加一。只封顶而不给地址，用完
+次数的那次投递会被拒绝，于是 Broker 自己配置的死信策略仍然生效。只给地址而不封顶，它接管每一份
+副本：处理器要求重试的那次投递被送走，而不是回到订阅。
+
+传输自己记投递次数时计数取自 Broker（JetStream 的 `num_delivered`、SQS 的
+`ApproximateReceiveCount`、Pub/Sub 的 `delivery_attempt`），其余情况取自框架的重试计数消息头。
+
+原生支持延迟重新投递的 Broker，只在这次投递还没到上限时才拿到延迟。计数先读出来，到了上限的那次投
+递会发往死信地址；没有声明地址时它被拒绝，而不是再回来一次。那里读的是 Broker 自己的计数：消息由
+Broker 自己留着的路径上，框架的消息头不会增加，因此不记次数的传输把这条路径留给它的订阅描述符。
+
+立即重试 `retry()` 也遵守同一个上限。在自己记次数的传输上它仍然是 Broker 的重新入队；在不记次数
+的传输上，运行时会立刻把这次投递重新发布，让计数跟着走，于是在上限之下，立即重试不再是 Broker
+的重新入队。
+
+两步各声明一次，而且都排在 `out_retry(policy)` 之前：声明说的是用完次数的投递怎么处理，发布者说
+的是副本怎么发出去。生成的 `AsyncAPI` 文档把死信地址记成这条注册发布到的一个通道。
+
+由 Broker 自己搬走投递的地方 - 带投递次数上限和死信交换机的队列、带死信策略的订阅、SQS 的
+redrive 策略 - 声明会送到订阅描述符，由 Broker 来落实。这时服务本身什么也不发布，`.out_retry(..)`
+也编译不过：错误会报出这个描述符，以及让发布者失去意义的那套机制。
 
 ## 选择订阅的来源
 

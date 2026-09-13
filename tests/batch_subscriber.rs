@@ -13,6 +13,7 @@
 
 mod common;
 
+use std::future::{Future, ready};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +25,8 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
-    BatchSubscriber, Buffered, BufferedSubscriber, Seekable, Subscribe, Subscriber,
-    SubscriptionSource,
+    AddressedCopies, BatchSubscriber, Buffered, BufferedSubscriber, RedeliveryAddress,
+    RedeliveryAddressed, Seekable, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -188,6 +189,7 @@ struct Trickle {
 
 impl SubscriptionSource<ConnectedMemoryBroker<Retaining>> for Trickle {
     type Subscriber = TrickleSubscriber;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.name
@@ -200,6 +202,17 @@ impl SubscriptionSource<ConnectedMemoryBroker<Retaining>> for Trickle {
         Ok(TrickleSubscriber::new(
             Subscribe::subscribe(connected, self.name).await?,
         ))
+    }
+}
+
+// A descriptor that addresses its own copies says where they go, and one in-memory subject is
+// both ends of the bus, so the name answers for itself with no lookup in between.
+impl RedeliveryAddressed<ConnectedMemoryBroker<Retaining>> for Trickle {
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker<Retaining>,
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
 // --8<-- [end:buffered_capability]

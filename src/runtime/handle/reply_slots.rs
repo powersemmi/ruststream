@@ -8,7 +8,7 @@ use crate::runtime::batch::BatchResult;
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
 use crate::runtime::publishing::{PublishingCall, PublishingDef};
 use crate::runtime::router::IncludeDef;
 use crate::runtime::slot::{BindSlots, HasSlots, OutSlot};
@@ -146,7 +146,8 @@ where
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
                 .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
                 .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
-                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED)
+                .with_kind(OutgoingKind::Answer),
         ];
         declared.extend(E::outgoing());
         declared
@@ -292,7 +293,8 @@ where
             OutgoingMessageMetadata::new(self.reply_name().to_owned(), type_name::<R::Body>())
                 .with_payload_schema(<R::Wire as WireDocs<R, Doc>>::payload_schema())
                 .with_headers_schema(<R::Wire as WireDocs<R, Doc>>::headers_schema())
-                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED),
+                .with_serialized(<R::Wire as WireDocs<R, Doc>>::SERIALIZED)
+                .with_kind(OutgoingKind::Answer),
         ];
         declared.extend(E::outgoing());
         declared

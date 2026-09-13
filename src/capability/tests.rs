@@ -1,10 +1,10 @@
 use super::*;
 
 #[test]
-fn with_security_accumulates_schemes_in_order() {
+fn security_accumulates_schemes_in_order() {
     let spec = ServerSpec::new("kafka.example.com:9093", "kafka")
-        .with_security(SecurityScheme::scram_sha512())
-        .with_security(SecurityScheme::x509());
+        .security(SecurityScheme::scram_sha512())
+        .security(SecurityScheme::x509());
     assert_eq!(spec.security.len(), 2);
     assert_eq!(spec.security[0].kind, SecuritySchemeKind::ScramSha512);
     assert_eq!(spec.security[1].kind, SecuritySchemeKind::X509);
@@ -129,8 +129,8 @@ fn json_backed_constructors_serialize_their_payload() {
 }
 
 #[test]
-fn with_description_sets_the_description() {
-    let scheme = SecurityScheme::plain().with_description("SASL over TLS");
+fn the_description_reaches_the_scheme() {
+    let scheme = SecurityScheme::plain().description("SASL over TLS");
     assert_eq!(scheme.description.as_deref(), Some("SASL over TLS"));
 }
 

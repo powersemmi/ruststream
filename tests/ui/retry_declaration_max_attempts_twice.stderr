@@ -1,0 +1,16 @@
+error[E0277]: `max_attempts(..)` has nothing to declare here
+  --> tests/ui/retry_declaration_max_attempts_twice.rs:22:14
+   |
+22 |             .max_attempts(nonzero!(5u32));
+   |              ^^^^^^^^^^^^ `ruststream::runtime::StepTaken`: the cap was declared already, or the chain has moved past the declaration
+   |
+   = help: the trait `ruststream::runtime::CapOpen` is not implemented for `ruststream::runtime::StepTaken`
+   = note: a registration declares `max_attempts(n)` once, right after `include(..)` and before `out_retry(policy)`: `b.include(reconcile).max_attempts(nonzero!(5)).dead_letter("orders.dead")`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::max_attempts`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn max_attempts(
+   |            ------------ required by a bound in this associated function
+...
+   |         Attach: DeclareCap<Step: CapOpen>,
+   |                                  ^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::max_attempts`

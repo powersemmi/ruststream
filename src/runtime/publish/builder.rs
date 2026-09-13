@@ -538,6 +538,10 @@ where
 }
 
 /// Starts a byte publish: the payload travels as it is, and the destination is named at the call.
+///
+/// Every runtime path carries a typed value or its own erased publisher, so this entry exists for
+/// the suite that drives the builder's own steps over bytes.
+#[cfg(test)]
 pub(crate) fn raw_of<Sink, B>(
     sink: Sink,
     payload: &B,

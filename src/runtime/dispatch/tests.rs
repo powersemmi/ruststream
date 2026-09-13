@@ -7,10 +7,16 @@ use std::sync::{
 use futures::StreamExt;
 
 use super::*;
+use crate::runtime::redelivery::bare_retry_publisher;
+
+/// The per-delivery context of a registration that reads none: what a test delivery's transforms
+/// would see.
+fn unit_cx<M>(_msg: &M) {}
 use crate::memory::MemoryBroker;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
-use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
+use crate::runtime::handler::HandlerResult;
+use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RetryDeclaration};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -251,6 +257,7 @@ async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
         HandlerResult::Ack,
         "orders",
         &Delivery::empty(),
+        unit_cx,
     )
     .await;
     settle_outcome(
@@ -258,20 +265,25 @@ async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
         HandlerResult::drop(),
         "orders",
         &Delivery::empty(),
+        unit_cx,
     )
     .await;
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
-    let delivery =
-        Delivery::deferring_to(Arc::new(RejectingPublisher), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(RejectingPublisher),
+        "orders",
+        TaskTracker::new(),
+    );
     let settled = Arc::new(AtomicU8::new(0));
     settle_nack_after(
         plain(&[], &settled),
         "orders",
         Duration::from_secs(1),
         &delivery,
+        unit_cx,
     )
     .await
     .unwrap();
@@ -294,12 +306,16 @@ fn the_default_worker_policy_is_sequential() {
 
 #[test]
 fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
-    let empty = format!("{:?}", Delivery::empty());
-    assert!(empty.contains("retry_address: None"), "{empty}");
+    let empty = format!("{:?}", Delivery::<()>::empty());
+    assert!(empty.contains("retry_destination: None"), "{empty}");
     assert!(empty.contains("pending_continuations: 0"), "{empty}");
 
-    let wired = Delivery::deferring_to(Arc::new(RejectingPublisher), "orders", TaskTracker::new());
-    assert!(format!("{wired:?}").contains("retry_address: Some(\"orders\")"));
+    let wired: Delivery = Delivery::deferring_to(
+        bare_retry_publisher(RejectingPublisher),
+        "orders",
+        TaskTracker::new(),
+    );
+    assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -317,14 +333,23 @@ async fn fallback_defers_republish_to_the_reported_address_with_incremented_retr
     let broker = MemoryBroker::new();
     // Subscribe before publishing: the in-memory broker does not buffer earlier messages.
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
-    settle_nack_after(msg, "orders-workers", Duration::from_secs(30), &delivery)
-        .await
-        .unwrap();
+    settle_nack_after(
+        msg,
+        "orders-workers",
+        Duration::from_secs(30),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .unwrap();
 
     // The original is dropped (nack(false)), not requeued, so the broker will not redeliver it.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
@@ -349,12 +374,15 @@ async fn fallback_defers_republish_to_the_reported_address_with_incremented_retr
 async fn fallback_defers_republish_when_the_transport_cannot_settle() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Unsupported);
-    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
         .await
         .expect("an unsettleable transport is not a settle failure");
     // The drop is still attempted; the transport just has nothing to drop it with.
@@ -377,12 +405,15 @@ async fn fallback_defers_republish_when_the_transport_cannot_settle() {
 async fn a_rejected_settle_aborts_the_fallback() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Rejected);
-    let failed = settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+    let failed = settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
         .await
         .expect_err("a broker that rejected the settle must be reported");
     assert!(matches!(failed, AckError::Timeout));
@@ -401,12 +432,15 @@ async fn a_rejected_settle_aborts_the_fallback() {
 async fn fallback_increments_an_existing_retry_count() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
-    settle_nack_after(msg, "orders", Duration::from_secs(1), &delivery)
+    settle_nack_after(msg, "orders", Duration::from_secs(1), &delivery, unit_cx)
         .await
         .unwrap();
 
@@ -419,15 +453,15 @@ async fn fallback_increments_an_existing_retry_count() {
 }
 
 #[tokio::test]
-async fn without_a_retry_position_the_fallback_requeues_immediately() {
+async fn without_a_copy_path_a_delay_falls_back_to_a_requeue() {
     let delivery = Delivery::empty();
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
-    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
+    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
         .await
         .unwrap();
-    // No deferred-retry position on this registration: degrade to an immediate requeue rather
-    // than dropping silently.
+    // The broker moves this subscription's deliveries itself and has no delayed redelivery to
+    // ride, so the requeue is all that is left - rather than dropping the message silently.
     assert_eq!(settled.load(Ordering::SeqCst), 2);
 }
 
@@ -445,15 +479,18 @@ async fn native_support_defers_to_the_broker_nack_after() {
     // A separate broker backs the retry publisher; if the fallback fired, the republish would
     // land here and never on `sub`.
     let other = MemoryBroker::new();
-    let delivery =
-        Delivery::deferring_to(Arc::new(other.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(other.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let msg = {
         let mut stream = std::pin::pin!(sub.stream());
         stream.next().await.unwrap().unwrap()
     };
     assert!(msg.supports_nack_after());
-    settle_nack_after(msg, "orders", Duration::from_secs(5), &delivery)
+    settle_nack_after(msg, "orders", Duration::from_secs(5), &delivery, unit_cx)
         .await
         .unwrap();
 
@@ -465,4 +502,65 @@ async fn native_support_defers_to_the_broker_nack_after() {
     // Native redelivery keeps the original payload and adds no retry-count header.
     assert_eq!(redelivered.payload(), b"native");
     assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), None);
+}
+
+/// A subscription whose deliveries the broker moves itself carries no retry path, so a
+/// declaration on it is the broker's to apply: an immediate retry stays the broker's requeue.
+#[tokio::test]
+async fn a_broker_moved_subscription_keeps_its_own_requeue_under_a_cap() {
+    let delivery = Delivery::empty()
+        .declaring(RetryDeclaration::new().with_max_attempts(crate::nonzero!(3u32)));
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+        unit_cx,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 2);
+}
+
+/// The same subscription at the cap: there is no publisher to carry the delivery to the declared
+/// destination, so it is rejected rather than requeued into a loop.
+#[tokio::test]
+async fn a_broker_moved_subscription_rejects_a_spent_delivery() {
+    let delivery = Delivery::empty().declaring(
+        RetryDeclaration::new()
+            .with_max_attempts(crate::nonzero!(1u32))
+            .with_dead_letter("orders.dead"),
+    );
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+        unit_cx,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 1);
+}
+
+/// A registration that declares nothing keeps the immediate retry it always had, whatever the
+/// transport: no copy, no count, the broker's own requeue.
+#[tokio::test]
+async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
+    let broker = MemoryBroker::new();
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+        unit_cx,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 2);
 }

@@ -193,6 +193,54 @@ pub trait IncomingMessage: Send + Sync {
         None
     }
 
+    /// How many times the broker has delivered this message, counting this delivery. `None`
+    /// where the transport counts nothing.
+    ///
+    /// Defaulted to `None`, which is the honest answer for a transport with no counter of its
+    /// own; the runtime then reads its own
+    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) instead. A broker whose
+    /// deliveries carry a count reports it here - `JetStream`'s `num_delivered`, a claimed Redis
+    /// stream entry's delivery count, Pulsar's `redelivery_count`, SQS's
+    /// `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt`, AMQP 1.0's `delivery-count` - so
+    /// that a registration's `max_attempts(..)` cap counts the broker's own redeliveries rather
+    /// than only the copies this process published. The first delivery of a message answers `1`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{AckError, HeaderMap, IncomingMessage};
+    ///
+    /// struct Delivered {
+    ///     payload: Vec<u8>,
+    ///     headers: HeaderMap,
+    ///     delivered: u64,
+    /// }
+    ///
+    /// impl IncomingMessage for Delivered {
+    ///     fn payload(&self) -> &[u8] {
+    ///         &self.payload
+    ///     }
+    ///     fn headers(&self) -> &HeaderMap {
+    ///         &self.headers
+    ///     }
+    ///     fn redelivery_count(&self) -> Option<u64> {
+    ///         Some(self.delivered)
+    ///     }
+    ///     async fn ack(self) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let msg = Delivered { payload: Vec::new(), headers: HeaderMap::new(), delivered: 3 };
+    /// assert_eq!(msg.redelivery_count(), Some(3));
+    /// ```
+    fn redelivery_count(&self) -> Option<u64> {
+        None
+    }
+
     /// Acknowledges successful processing. Consumes the message handle.
     ///
     /// # Errors
