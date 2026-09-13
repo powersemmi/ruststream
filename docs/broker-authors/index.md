@@ -86,6 +86,12 @@ pub trait Subscribe: ConnectedBroker {
     type Copies: CopyPath;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // Defaulted: what a registration mounted by this name declared about its retries.
+    // Map the cap and the destination onto the subscription the name opens, where the
+    // broker has a mechanism for them.
+    fn declare_retry(&self, name: &str, declaration: &RetryDeclaration)
+        -> Result<(), DeclareRetryError>;
 }
 ```
 
@@ -374,6 +380,19 @@ topology there, and only when both are declared, because a native dead-letter po
 limit and the address together. A descriptor without one keeps the default and the runtime applies
 the declaration on the retry path.
 
+A registration mounted by a bare name declares the same thing, and the descriptor it gets is the
+core's `Name`, which carries no topology to put it in. `Subscribe::declare_retry` is where your
+broker takes it instead, at the same point and for the name it is about to open. Map it there the
+way your descriptor does, and only when both halves are declared.
+
+The default accepts a registration that declared nothing. It accepts any declaration where your
+`type Copies` says this process publishes the copies, because the runtime applies the cap and the
+destination itself there. On a `BrokerMoves` broker it refuses a non-empty one at startup, naming
+the subscription and where the declaration belongs: nothing else would apply it, and a message
+whose cap silently went missing outlives its own dead-letter policy. Implement the method where
+the broker has a mechanism a bare name reaches - a Pub/Sub dead-letter policy, an SQS redrive
+policy, a Pulsar `DeadLetterPolicy` - and leave it alone everywhere else.
+
 ### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
@@ -386,9 +405,9 @@ message once the delay is over. An `AddressedCopies` descriptor says where that 
 Answer with the name a publisher bound to your broker uses to reach this subscription again: the
 subject on NATS, the topic on Kafka, the stream key on Redis.
 
-On Google Pub/Sub a subscription and a topic are separate resources, so the answer is the topic the
-subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
-startup, and a `.to(name)` at the mount site overrides it.
+On NATS `JetStream` a consumer is bound to a stream rather than to a subject, so the answer is a
+subject that stream is published on, and a descriptor built from the stream name asks the server
+for it. The runtime asks once, at startup, and a `.to(name)` at the mount site overrides it.
 
 `harness::redelivery_address` checks the answer you give: a publish to the reported address must
 arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and

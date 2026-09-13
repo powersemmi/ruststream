@@ -79,7 +79,7 @@ pub use capability::{
     Transaction, TransactionalPublisher,
 };
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
-pub use error::AckError;
+pub use error::{AckError, DeclareRetryError};
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};

@@ -19,8 +19,8 @@ use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
 use crate::{
-    AddressedCopies, BatchSubscriber, ConnectedBroker, RedeliveryAddress, RedeliveryAddressed,
-    RetryDeclaration, Seekable, Subscriber, SubscriptionSource,
+    AddressedCopies, BatchSubscriber, ConnectedBroker, DeclareRetryError, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, Seekable, Subscriber, SubscriptionSource,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -94,6 +94,15 @@ where
     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
         self.source = self.source.declare_retry(declaration);
         self
+    }
+
+    /// The same for the half of it the broker takes: batching is this process's business.
+    fn declare_retry_on(
+        &self,
+        connected: &C,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        self.source.declare_retry_on(connected, declaration)
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {

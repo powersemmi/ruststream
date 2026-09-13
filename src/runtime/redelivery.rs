@@ -27,9 +27,9 @@ use crate::runtime::publish::{
     ForReply, OutPipeline, Outgoing, PublishContext, PublishTransform, PublishTransformIdentity,
 };
 use crate::{
-    AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DefaultPublish, NamedCopies,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed,
-    RetryDeclaration, SubscriptionSource,
+    AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
+    DefaultPublish, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
 };
 
 #[cfg(feature = "testing")]
@@ -498,6 +498,20 @@ pub(crate) struct RetryDestinationError {
     source_type: &'static str,
 }
 
+/// The broker refused a declaration a registration mounted by a bare name made.
+///
+/// Raised at startup, before the subscription opens. A name is a string: nothing at the mount
+/// site says whether this broker maps a cap and a dead-letter destination onto the subscription
+/// it opens under that name, so the answer comes from the broker at resolve time.
+#[derive(Debug, Error)]
+#[error("subscription `{subscription}`: {source}")]
+pub(crate) struct RetryDeclareError {
+    /// The subscription as the registration names it.
+    subscription: String,
+    #[source]
+    source: DeclareRetryError,
+}
+
 /// The policy bound with `.out(Retry, policy)` could not be paired with the connected broker.
 ///
 /// Raised at startup, before the subscription opens, the way a reply policy that fails to pair is.
@@ -546,6 +560,16 @@ where
         named_per_delivery,
         declaration,
     } = setup;
+    // A descriptor takes the declaration into itself below; a bare name has nothing to take it
+    // into, so the broker answers for it here, before anything subscribes.
+    source
+        .declare_retry_on(connected, &declaration)
+        .map_err(|err| {
+            Box::new(RetryDeclareError {
+                subscription: subscription.to_owned(),
+                source: err,
+            }) as BoxError
+        })?;
     let retry = match publisher {
         Some(pairing) => {
             let publisher = pairing.pair(connected).await.map_err(|err| {
