@@ -14,6 +14,25 @@
 //!
 //! The standalone `ruststream` CLI drives these by shelling out to `cargo run -- <command>`, so the
 //! same dispatch serves both `cargo run` and `ruststream run`.
+//!
+//! # The `ruststream` command
+//!
+//! `cargo install ruststream --features cli` installs the standalone command. It drives
+//! `cargo run` for the target crate, so a service needs nothing beyond the attribute:
+//!
+//! ```text
+//! ruststream run                         # cargo run -- run, against ./Cargo.toml
+//! ruststream run -p ./my-service         # against another crate
+//! ruststream run --release               # release build
+//! ruststream asyncapi gen                # print the AsyncAPI document
+//! ruststream asyncapi gen -o spec.json   # write it to a file
+//! ruststream asyncapi gen --yaml         # YAML instead of JSON
+//! ```
+//!
+//! A new project is scaffolded with `cargo generate` from a template the broker crate ships,
+//! typically one per transport or topology. The starter template for the in-memory broker lives
+//! in this repository, and the quick start has the command:
+//! <https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/>.
 
 use std::process::ExitCode;
 
