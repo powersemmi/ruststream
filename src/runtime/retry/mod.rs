@@ -29,8 +29,8 @@ pub use declare::{
     Present, RouteDeclaring, StepOpen, StepTaken,
 };
 pub use destination::{
-    DeclaredDestination, DestinationLast, DestinationOpen, FixedDestination, OpenDestination,
-    RetryOffer, RetryStackUse,
+    DestinationDeclared, DestinationLast, DestinationOpen, DestinationUndeclared, FixedDestination,
+    OpenDestination, RetryOffer, RetryStackUse, SettlesDestination,
 };
 
 use crate::Broker;
@@ -223,10 +223,8 @@ impl<Rep, Slots> RetryOpen for (Rep, Slots) {}
 
 // The position itself. It is keyed by the marker like every slot, so `.out(Retry, policy)`
 // resolves through the same `OutPosition` blanket that carries a handler's own slots.
-impl<Mount, Policy, Attach: RetryOpen + DeclaredDestination> BindAt<Mount, Retry, Policy, RetryPos>
-    for Attach
-{
-    type Out = Retried<Self, OutAttachment<Retry, Policy>, Attach::Destination>;
+impl<Mount, Policy, Attach: RetryOpen> BindAt<Mount, Retry, Policy, RetryPos> for Attach {
+    type Out = Retried<Self, OutAttachment<Retry, Policy>>;
 
     fn bind_at(self, policy: Policy) -> Self::Out {
         Retried::new(self, OutAttachment::new(policy))
@@ -570,8 +568,8 @@ macro_rules! no_destination_step {
 no_destination_step!(
     [Rep, Slots] ReplyLast => (Rep, Slots),
     [Rep, Slots, const POS: usize] SlotPos<POS> => (Rep, Slots),
-    [Under, Cap, Dead, Dest] ReplyLast => Declaring<Under, Cap, Dead, Dest>,
-    [Under, Cap, Dead, Dest, const POS: usize] SlotPos<POS> => Declaring<Under, Cap, Dead, Dest>,
+    [Under, Cap, Dead] ReplyLast => Declaring<Under, Cap, Dead>,
+    [Under, Cap, Dead, const POS: usize] SlotPos<POS> => Declaring<Under, Cap, Dead>,
     [Under, Attachment, Dest] ReplyLast => Retried<Under, Attachment, Dest>,
     [Under, Attachment, Dest, const POS: usize] SlotPos<POS> => Retried<Under, Attachment, Dest>,
 );

@@ -6,6 +6,10 @@
 //! in-memory broker: the topic is the memory subject, the subscription name is what the
 //! registration is known by, and the delivery reports no native delayed redelivery, which is what
 //! puts the runtime's fallback on the retry path.
+//!
+//! The later suites take the same subject through the chain surfaces a registration
+//! reaches it from: the guard a handler with `Out` slots gets, a `Router` chain, and the
+//! declaration steps ahead of the publisher.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -23,14 +27,14 @@ use futures::{Stream, StreamExt};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, ForReply, HandlerOutcome, Out, Outgoing, PublishContext, PublishTransform,
-    RETRY_COUNT_HEADER, Reads, Router, RustStream,
+    AppInfo, ForReply, HandlerOutcome, MapPublisher, Out, Outgoing, PublishContext,
+    PublishTransform, RETRY_COUNT_HEADER, Reads, Router, RustStream,
 };
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
     AckError, AddressedCopies, ConnectedBroker, HeaderMap, IncomingMessage, NamedCopies, OutSlot,
     OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed,
-    Subscribe, Subscriber, SubscriptionSource, subscriber,
+    Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -684,8 +688,8 @@ async fn a_named_destination_sends_the_copies_where_the_mount_site_said() {
         MemoryBroker::new(),
         |b| {
             b.include(settle_later)
-                .to("payments")
-                .out_retry(MemoryPublish);
+                .out_retry(MemoryPublish)
+                .to("payments");
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -707,5 +711,238 @@ async fn a_named_destination_sends_the_copies_where_the_mount_site_said() {
             .outcomes(),
         [Outcome::Nack, Outcome::Ack],
         "the copy must reach the handler through the destination the mount site named",
+    );
+}
+
+/// Replies and audits: one registration carrying a reply, a slot of its own and the retry
+/// declaration beside them.
+#[subscriber(
+    BoundSubscription::new("ledger-workers", "ledger"),
+    publish("ledger.out")
+)]
+async fn ledger(
+    order: &Order,
+    Out(trail): Out<impl Publisher, Audit>,
+) -> Result<Receipt, HandlerOutcome> {
+    if trail
+        .message(&Receipt { id: order.id })
+        .to("ledger.audit")
+        .publish()
+        .await
+        .is_err()
+    {
+        return Err(HandlerOutcome::retry());
+    }
+    Ok(Receipt { id: order.id })
+}
+
+/// A registration that carries `Out` slots takes the declaration and the reply policy on the
+/// guard its slots gave it: the chain ends in `.build()`, and every position it named is wired.
+#[tokio::test(start_paused = true)]
+async fn a_slot_carrying_registration_declares_and_replies_on_one_chain() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(ledger)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("ledger.dead")
+                .out_reply(MemoryPublish)
+                .out(Audit, MemoryPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 11 })
+        .to("ledger")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("ledger.out")
+        .assert_called_once()
+        .with(&Receipt { id: 11 });
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("ledger.audit")
+        .assert_called_once()
+        .with(&Receipt { id: 11 });
+}
+
+/// Where the copies go is a step of the retry position, so a registration carrying slots of its
+/// own names it on the same guard, right after the publisher it belongs to.
+#[tokio::test(start_paused = true)]
+async fn a_slot_carrying_registration_names_where_its_copies_go() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(audit)
+                .out(Audit, MemoryPublish)
+                .out_retry(MemoryPublish)
+                .to("audits.retry")
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 12 })
+        .to("audits")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    // The copy went where the mount site said, so the subscription never saw it again and the
+    // handler's own slot published nothing.
+    tb.broker::<MemoryBroker>()
+        .subscriber("audits-workers")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("audits.retry")
+        .assert_called_once()
+        .with(&Order { id: 12 });
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_not_called();
+}
+
+/// The two declaration steps read in either order, and the publisher with its destination
+/// follows them: a cap of one leaves the first delivery no copy to come back as.
+#[tokio::test(start_paused = true)]
+async fn the_declaration_reads_in_either_order_ahead_of_the_publisher() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle_later)
+                .dead_letter("payments.dead")
+                .max_attempts(nonzero!(1u32))
+                .out_retry(MemoryPublish)
+                .to("payments");
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 13 })
+        .to("payments")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("payments")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("payments.dead")
+        .assert_called_once()
+        .with(&Order { id: 13 });
+}
+
+/// The `Router` surface takes the same chain in the same order, finished by `.build()`.
+#[tokio::test(start_paused = true)]
+async fn a_router_chain_declares_and_names_the_destination_the_same_way() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_router(
+                Router::<MemoryBroker>::new()
+                    .include(settle_later)
+                    .dead_letter("payments.dead")
+                    .max_attempts(nonzero!(1u32))
+                    .out_retry(MemoryPublish)
+                    .to("payments")
+                    .build(),
+            );
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 14 })
+        .to("payments")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("payments")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("payments.dead")
+        .assert_called_once()
+        .with(&Order { id: 14 });
+}
+
+/// A declaration and a retry publisher do not hide the registration from the router's listing,
+/// and the destination it dead-letters to is listed as a channel the service publishes to.
+#[test]
+fn a_router_lists_a_declared_registration_with_its_dead_letter_channel() {
+    let router = Router::<MemoryBroker>::new()
+        .include(settle_later)
+        .max_attempts(nonzero!(2u32))
+        .dead_letter("payments.dead")
+        .out_retry(MemoryPublish)
+        .to("payments")
+        .build();
+
+    let handlers = router.handlers();
+
+    assert_eq!(handlers.len(), 1);
+    assert_eq!(handlers[0].name, "payments");
+    assert!(
+        handlers[0]
+            .outgoing
+            .iter()
+            .any(|message| message.channel == "payments.dead"),
+        "the dead-letter destination must be listed: {:?}",
+        handlers[0].outgoing,
+    );
+}
+
+/// What a broker crate layers on the chain: its policy's own settings, bound to that policy so
+/// the method does not exist on a chain that named another broker's.
+trait PrioritySettings: Sized {
+    fn priority(self, priority: u8) -> Self;
+}
+
+impl<T: MapPublisher<Policy = PriorityPublish>> PrioritySettings for T {
+    fn priority(self, priority: u8) -> Self {
+        self.map_publisher(|mut policy| {
+            policy.priority = priority;
+            policy
+        })
+    }
+}
+
+/// The publisher of the copies is a policy like any other, so a broker's settings trait reaches
+/// it: the copies leave at the priority the mount site named, with no transform in the way.
+#[tokio::test(start_paused = true)]
+async fn a_brokers_settings_trait_reaches_the_retry_publisher() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile)
+                .out_retry(PriorityPublish::default())
+                .priority(4);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("priority", "4");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the copy the settings trait configured must still reach the handler",
     );
 }

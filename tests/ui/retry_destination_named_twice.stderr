@@ -5,7 +5,7 @@ error[E0277]: `.to(..)` has no destination to name here
    |              ^^ `ruststream::runtime::StepTaken`: the destination was named already, or this position takes none
    |
    = help: the trait `ruststream::runtime::DestinationOpen` is not implemented for `ruststream::runtime::StepTaken`
-   = note: `.to(name)` names where a registration's retry copies go, once, on either side of `out_retry(policy)`; a reply's destination comes from its own type or from the mount site's `publish("dest")`, and an `Out` slot's from the type it publishes
+   = note: `.to(name)` names where a registration's retry copies go, once, right after `out_retry(policy)`; a reply's destination comes from its own type or from the mount site's `publish("dest")`, and an `Out` slot's from the type it publishes
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::to`
   --> src/runtime/app/include/guard.rs
    |

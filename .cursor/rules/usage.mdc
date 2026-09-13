@@ -130,9 +130,9 @@ own bytes, so nothing re-encodes it.
 A registration caps its retries at the mount site, right after `include` and before
 `out_retry(..)`: `b.include(reconcile).max_attempts(nonzero!(5)).dead_letter("orders.dead")`.
 Where the subscription's descriptor addresses no copies (a wildcard, an MQTT filter, a pattern),
-`.to(name)` in the same block names where they go, or a transform on the position names one per
-delivery; a registration that names neither refuses to start. Each
-step is declared once. Below the cap a copy goes back to the subscription; at the cap it goes to
+`.out_retry(policy).to(name)` names where they go, or a transform on the position names one per
+delivery; a registration that names neither is a compile error on a `Router` chain and refuses to
+start on a scope. Each step is declared once. Below the cap a copy goes back to the subscription; at the cap it goes to
 the dead-letter destination, or the delivery is rejected where none is named. A destination
 declared without a cap takes over every copy. The count is the broker's own where the transport
 keeps one (`IncomingMessage::redelivery_count`), the framework's `x-ruststream-retry-count` header
