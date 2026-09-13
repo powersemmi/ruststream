@@ -23,7 +23,7 @@ async fn handle(_order: &Order) {}
 // The concrete return type would be `RustStream<Identity, (), PublishIdentity>` with a server and
 // a handler baked in; `impl App` hides it.
 fn build() -> impl App {
-    RustStream::new(AppInfo::new("svc", "0.2.0").with_description("demo"))
+    RustStream::new(AppInfo::new("svc", "0.2.0").description("demo"))
         .server("mem", ServerSpec::new("mem://local", "memory"))
         .with_broker_codec(MemoryBroker::new(), JsonCodec, |b| {
             b.include(handle);

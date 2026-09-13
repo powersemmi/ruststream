@@ -204,7 +204,7 @@ A broker crate may implement the `DescribeServer` capability. Then `broker.descr
 produces the server specification, and `with_broker_labeled` records it under the broker's label.
 Every shipped broker has this capability.
 
-`with_protocol_version` names the version of the protocol clients speak. It is worth filling in
+`protocol_version` names the version of the protocol clients speak. It is worth filling in
 wherever one protocol name covers incompatible versions: AMQP 0.9.1 and AMQP 1.0 are both `amqp`
 in the document and share nothing else.
 
@@ -216,17 +216,17 @@ The document's `info` section carries what the service is and who runs it. `AppI
 --8<-- "examples/asyncapi_http.rs:describe"
 ```
 
-`with_id` sets the service's own identifier. It is a URI, and `AppId` parses it on construction, so
+`id` sets the service's own identifier. It is a URI, and `AppId` parses it on construction, so
 a title typed into the wrong builder fails at the call site rather than in a published document:
 
 <!-- inline-rust: two lines of a fallible parse; putting a `?` or an unwrap in the compiled example would either add an error type to it or panic at startup -->
 ```rust
-let info = AppInfo::new("orders", "0.1.0").with_id("urn:example:orders".parse()?);
+let info = AppInfo::new("orders", "0.1.0").id("urn:example:orders".parse()?);
 ```
 
 ## Server security
 
-`ServerSpec::with_security` declares how clients authenticate. Each scheme goes into
+`ServerSpec::security` declares how clients authenticate. Each scheme goes into
 `components.securitySchemes`, and the server's `security` list references it:
 
 ```rust
@@ -240,7 +240,7 @@ among them is declared with `SecurityScheme::custom(json)`.
 
 Security is the service author's statement, not the broker's: `DescribeServer` never reports it. To
 secure a server the broker registered automatically (`with_broker_labeled`), declare that server
-explicitly: `.server(label, broker.describe_server().with_security(..))` with the same label.
+explicitly: `.server(label, broker.describe_server().security(..))` with the same label.
 
 ## Serving the document
 
@@ -259,7 +259,7 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 
 Serve that HTML and the specification JSON from two routes of your own server. By default the
 viewer loads its assets from a CDN. For an offline or locked-down deployment you can set another
-base URL with `ViewerOptions::with_cdn_base`, and `with_title` sets the page title.
+base URL with `ViewerOptions::cdn_base`, and `title` sets the page title.
 
 ## A complete server
 

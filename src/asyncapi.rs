@@ -31,7 +31,7 @@ pub struct Spec {
     /// The `AsyncAPI` specification version (always `"3.1.0"`).
     pub asyncapi: String,
     /// The service's own identifier, when it declared one
-    /// ([`AppInfo::with_id`](crate::runtime::AppInfo::with_id)).
+    /// ([`AppInfo::id`](method@crate::runtime::AppInfo::id)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<AppId>,
     /// Service metadata.
@@ -129,7 +129,7 @@ pub struct Server {
     pub description: Option<String>,
     /// References into `components.securitySchemes` describing how clients authenticate. Empty
     /// (and absent from the document) unless the service author attached schemes with
-    /// [`ServerSpec::with_security`](crate::ServerSpec::with_security).
+    /// [`ServerSpec::security`](method@crate::ServerSpec::security).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub security: Vec<Reference>,
 }
@@ -610,14 +610,14 @@ pub struct ViewerOptions<'a> {
 impl<'a> ViewerOptions<'a> {
     /// Sets the HTML page title.
     #[must_use]
-    pub const fn with_title(mut self, title: &'a str) -> Self {
+    pub const fn title(mut self, title: &'a str) -> Self {
         self.title = title;
         self
     }
 
     /// Sets the base URL the `AsyncAPI` React assets load from.
     #[must_use]
-    pub const fn with_cdn_base(mut self, cdn_base: &'a str) -> Self {
+    pub const fn cdn_base(mut self, cdn_base: &'a str) -> Self {
         self.cdn_base = cdn_base;
         self
     }
@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn description_lands_in_the_rendered_object() {
-        let object = security_scheme_object(&SecurityScheme::plain().with_description("over TLS"));
+        let object = security_scheme_object(&SecurityScheme::plain().description("over TLS"));
         assert_eq!(object["description"], "over TLS");
     }
 }

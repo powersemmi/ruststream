@@ -72,10 +72,10 @@ enum LifecyclePhase {
 /// use ruststream::{Contact, License, Tag};
 ///
 /// let info = AppInfo::new("orders", "1.4.0")
-///     .with_description("everything the order domain publishes")
-///     .with_contact(Contact::new().with_email("payments@example.com"))
-///     .with_license(License::new("Apache-2.0"))
-///     .with_tag(Tag::new("payments"));
+///     .description("everything the order domain publishes")
+///     .contact(Contact::new().email("payments@example.com"))
+///     .license(License::new("Apache-2.0"))
+///     .tag(Tag::new("payments"));
 ///
 /// assert_eq!(info.tags.len(), 1);
 /// ```
@@ -121,7 +121,7 @@ impl AppInfo {
 
     /// Sets the description.
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
@@ -137,13 +137,13 @@ impl AppInfo {
     /// use ruststream::AppId;
     /// use ruststream::runtime::AppInfo;
     ///
-    /// let info = AppInfo::new("orders", "1.0.0").with_id("urn:example:orders".parse::<AppId>()?);
+    /// let info = AppInfo::new("orders", "1.0.0").id("urn:example:orders".parse::<AppId>()?);
     ///
     /// assert_eq!(info.id.as_ref().map(AppId::as_str), Some("urn:example:orders"));
     /// # Ok::<_, ruststream::AppIdError>(())
     /// ```
     #[must_use]
-    pub fn with_id(mut self, id: AppId) -> Self {
+    pub fn id(mut self, id: AppId) -> Self {
         self.id = Some(id);
         self
     }
@@ -155,12 +155,12 @@ impl AppInfo {
     /// ```
     /// use ruststream::runtime::AppInfo;
     ///
-    /// let info = AppInfo::new("orders", "1.0.0").with_terms_of_service("https://example.com/tos");
+    /// let info = AppInfo::new("orders", "1.0.0").terms_of_service("https://example.com/tos");
     ///
     /// assert!(info.terms_of_service.is_some());
     /// ```
     #[must_use]
-    pub fn with_terms_of_service(mut self, url: impl Into<String>) -> Self {
+    pub fn terms_of_service(mut self, url: impl Into<String>) -> Self {
         self.terms_of_service = Some(url.into());
         self
     }
@@ -174,12 +174,12 @@ impl AppInfo {
     /// use ruststream::runtime::AppInfo;
     ///
     /// let info = AppInfo::new("orders", "1.0.0")
-    ///     .with_contact(Contact::new().with_name("Payments team"));
+    ///     .contact(Contact::new().name("Payments team"));
     ///
     /// assert_eq!(info.contact.name.as_deref(), Some("Payments team"));
     /// ```
     #[must_use]
-    pub fn with_contact(mut self, contact: Contact) -> Self {
+    pub fn contact(mut self, contact: Contact) -> Self {
         self.contact = contact;
         self
     }
@@ -192,12 +192,12 @@ impl AppInfo {
     /// use ruststream::License;
     /// use ruststream::runtime::AppInfo;
     ///
-    /// let info = AppInfo::new("orders", "1.0.0").with_license(License::new("MIT"));
+    /// let info = AppInfo::new("orders", "1.0.0").license(License::new("MIT"));
     ///
     /// assert_eq!(info.license.map(|license| license.name).as_deref(), Some("MIT"));
     /// ```
     #[must_use]
-    pub fn with_license(mut self, license: License) -> Self {
+    pub fn license(mut self, license: License) -> Self {
         self.license = Some(license);
         self
     }
@@ -211,13 +211,13 @@ impl AppInfo {
     /// use ruststream::runtime::AppInfo;
     ///
     /// let info = AppInfo::new("orders", "1.0.0")
-    ///     .with_tag(Tag::new("payments"))
-    ///     .with_tag(Tag::new("public"));
+    ///     .tag(Tag::new("payments"))
+    ///     .tag(Tag::new("public"));
     ///
     /// assert_eq!(info.tags.len(), 2);
     /// ```
     #[must_use]
-    pub fn with_tag(mut self, tag: Tag) -> Self {
+    pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.push(tag);
         self
     }
@@ -231,12 +231,12 @@ impl AppInfo {
     /// use ruststream::runtime::AppInfo;
     ///
     /// let info = AppInfo::new("orders", "1.0.0")
-    ///     .with_external_docs(ExternalDocs::new("https://example.com/orders"));
+    ///     .external_docs(ExternalDocs::new("https://example.com/orders"));
     ///
     /// assert!(info.external_docs.is_some());
     /// ```
     #[must_use]
-    pub fn with_external_docs(mut self, docs: ExternalDocs) -> Self {
+    pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
         self.external_docs = Some(docs);
         self
     }
