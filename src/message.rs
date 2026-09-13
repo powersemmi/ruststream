@@ -197,13 +197,19 @@ pub trait IncomingMessage: Send + Sync {
     /// where the transport counts nothing.
     ///
     /// Defaulted to `None`, which is the honest answer for a transport with no counter of its
-    /// own; the runtime then reads its own
-    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) instead. A broker whose
+    /// own; the runtime then counts with its own
+    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) alone. A broker whose
     /// deliveries carry a count reports it here - `JetStream`'s `num_delivered`, a claimed Redis
     /// stream entry's delivery count, Pulsar's `redelivery_count`, SQS's
     /// `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt`, AMQP 1.0's `delivery-count` - so
     /// that a registration's `max_attempts(..)` cap counts the broker's own redeliveries rather
     /// than only the copies this process published. The first delivery of a message answers `1`.
+    ///
+    /// Where a delivery carries both counts the cap reads the larger: a count the server keeps
+    /// for its own redeliveries misses the cycles a crate that republishes its delayed copies
+    /// performs, and the header those copies carry misses the server's. Increment the header on
+    /// every copy your crate publishes for a delivery, and the cap follows the message through
+    /// both.
     ///
     /// # Examples
     ///

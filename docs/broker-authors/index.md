@@ -170,9 +170,12 @@ messages round-robin.
 Where `redelivery_count` stays `None`, that header is the only count there is, and a
 `max_attempts(..)` cap is read from it. Override the method and the cap counts the broker's own
 redeliveries too, which is what a user expects from a broker that has a delivery count of its own.
-It is also the only count a cap can read on the native path: where you honour the delay yourself,
-the framework's header never increments, so `redelivery_count` is what stops a `retry_after` from
-circling past the cap.
+Where a delivery carries both, the cap reads the larger: the two count different redeliveries, and
+neither one alone is how many attempts the message has had.
+
+Honour a delay by publishing a copy yourself - a wait queue behind a dead-letter exchange, a retry
+topic - and increment `RETRY_COUNT_HEADER` (exported from `ruststream::runtime`) on that copy. The
+server counts nothing for a cycle like that, so the header is what carries the cap through it.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:

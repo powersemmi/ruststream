@@ -45,7 +45,9 @@ alwaysApply: false
 - Override `IncomingMessage::redelivery_count` where the transport counts its own deliveries
   (JetStream `num_delivered`, SQS `ApproximateReceiveCount`, Pub/Sub `delivery_attempt`), so a
   registration's cap counts the broker's redeliveries and not only the copies the runtime
-  published. The first delivery answers 1.
+  published. The first delivery answers 1. A cap reads the larger of that count and the framework's
+  header, so a crate that honours a delay by publishing a copy of its own (a wait queue, a retry
+  topic) increments `RETRY_COUNT_HEADER` on that copy.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
