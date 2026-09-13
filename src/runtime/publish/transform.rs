@@ -133,8 +133,11 @@ impl<'a> SlotContext<'a> {
 /// A position offers one of these as the most a transform mounted there may do, and a transform
 /// projects one as what it needs. They meet at the mount site: [`Names`] on a transform requires
 /// [`Names`] on the position, and [`Reads`] fits anywhere.
+///
+/// [`NamesDestination`] is a supertrait so the same answer reaches the runtime as a value: every
+/// projected destination use carries `NAMES`, and a mount reads it without a bound of its own.
 #[doc(hidden)]
-pub trait DestinationUse {}
+pub trait DestinationUse: NamesDestination {}
 
 /// The transform reads the destination and leaves it alone. What almost every transform declares,
 /// and what every position offers.

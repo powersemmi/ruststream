@@ -27,10 +27,10 @@ use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::inject::FromStartup;
 use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
-use crate::runtime::metadata::HandlerMetadata;
+use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::{
-    ForReply, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
+    ForReply, NamesDestination, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler};
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
@@ -39,6 +39,12 @@ use crate::runtime::retry::{OpenDestination, RetryOpen};
 use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta, RouteMetadata, RouteSubscription};
 use super::sink::RouterSink;
+
+/// What the reply position's transform stack does to the destination, projected against the
+/// publisher it runs over: [`Names`](crate::runtime::Names) where a transform decides where each
+/// reply goes, [`Reads`](crate::runtime::Reads) otherwise.
+type ReplyUse<Transforms, Cx, Options> =
+    <Transforms as PublishTransform<ForReply<Cx>, Options>>::Destination;
 
 /// One reply-publishing registration whose reply travels the encoded wiring: the stack naming
 /// the reply codec and transforms. An implementation detail of
@@ -236,7 +242,7 @@ where
             codec,
             publisher,
             extra,
-            meta,
+            mut meta,
             policies,
             workers,
         } = self;
@@ -246,7 +252,14 @@ where
         let global = global.clone();
         let pipeline = pipeline.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
+        // The reply's own description: the mount chain fixed the codec and the transforms, so
+        // what the document says about the reply channel is settled here, once.
+        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
+            &publisher,
+            Some(ReplyCodec::CONTENT_TYPE),
+            <ReplyUse<Transforms, Def::Context, Leaf::Options> as NamesDestination>::NAMES,
+        ));
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
@@ -338,7 +351,7 @@ where
             codec,
             publisher,
             extra,
-            meta,
+            mut meta,
             policies,
             workers,
         } = self;
@@ -347,7 +360,12 @@ where
         let global = global.clone();
         let pipeline = pipeline.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
+        // A byte-for-byte reply carries its own wire format and no transform stack, so the
+        // position names no media type and settles no destination of its own.
+        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
+            &publisher, None, false,
+        ));
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
@@ -443,11 +461,19 @@ where
             codec,
             publisher,
             extra,
-            meta,
+            mut meta,
             policies,
             workers,
             batch_size,
         } = self;
+        // A batch's replies answer many deliveries at once, so the position never offers a
+        // transform the right to name where one goes; what it does fix is the codec.
+        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
+            &publisher,
+            Some(<BatchReply as ReplyPublisher<Def::Context>>::Codec::CONTENT_TYPE),
+            false,
+        ));
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
@@ -472,7 +498,7 @@ where
             policies,
             workers,
             batch_size,
-            setup.resolve::<Source::Copies, _>(retry_pipeline),
+            setup,
         );
     }
 }

@@ -33,7 +33,7 @@ fn build_spec_describes_handlers() {
     assert_eq!(spec.info.version, "1.2.3");
     assert_eq!(spec.info.description.as_deref(), Some("Order processing"));
 
-    assert_eq!(spec.channels["orders"].address, "orders");
+    assert_eq!(spec.channels["orders"].address.as_deref(), Some("orders"));
     assert!(spec.channels.contains_key("alerts"));
     assert!(spec.operations.contains_key("receive_orders"));
     assert!(spec.operations.contains_key("receive_alerts"));
@@ -635,12 +635,15 @@ mod declared_destinations {
 
         // The fixed destination is a channel with no parameters.
         let confirmed = &spec.channels["orders.confirmed"];
-        assert_eq!(confirmed.address, "orders.confirmed");
+        assert_eq!(confirmed.address.as_deref(), Some("orders.confirmed"));
         assert!(confirmed.parameters.is_empty());
 
         // The templated one keeps its placeholders, and every one of them is declared.
         let placed = &spec.channels["orders.{tenant}.{region}.v1"];
-        assert_eq!(placed.address, "orders.{tenant}.{region}.v1");
+        assert_eq!(
+            placed.address.as_deref(),
+            Some("orders.{tenant}.{region}.v1")
+        );
         assert_eq!(
             placed.parameters.keys().collect::<Vec<_>>(),
             vec!["region", "tenant"],
@@ -764,7 +767,10 @@ mod dead_letter {
         );
         let spec = build_spec(&app);
 
-        assert_eq!(spec.channels["orders.dead"].address, "orders.dead");
+        assert_eq!(
+            spec.channels["orders.dead"].address.as_deref(),
+            Some("orders.dead")
+        );
         assert_eq!(spec.operations["send_orders_orders_dead"].action, "send");
     }
 
@@ -1424,5 +1430,503 @@ mod protocol_bindings {
         });
 
         assert!(leak.is_err(), "a password in a binding must fail the scan");
+    }
+}
+
+/// The publish side of the document: what the policy bound at a mount site says about the channel
+/// it publishes to, where a reply actually goes, and what media type leaves.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod publish_bindings {
+    use std::future::Future;
+
+    use ruststream::asyncapi::{Binding, Bindings};
+    use ruststream::memory::prelude::*;
+    use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
+    use ruststream::runtime::{
+        ForReply, Names, Outgoing, OutgoingKind, PublishContext, PublishTransform,
+    };
+    use ruststream::schemars::JsonSchema;
+    use ruststream::{Broker, PairError, PublishPolicy};
+    use serde::{Deserialize, Serialize};
+
+    use super::build_spec;
+
+    /// A request to answer.
+    #[derive(Deserialize, JsonSchema)]
+    struct Request {
+        #[allow(dead_code)]
+        id: u64,
+    }
+
+    /// The answer.
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    struct Response {
+        ok: bool,
+    }
+
+    /// One entry of the slot's dictionary.
+    #[derive(Outgoing, Serialize, JsonSchema)]
+    #[outgoing(name = "chunks.progress")]
+    struct Progress {
+        percent: u8,
+    }
+
+    #[derive(OutSlot)]
+    #[publishes(Progress)]
+    struct Events;
+
+    /// A self-carrying member of a dictionary: its bytes are their own wire format.
+    #[derive(Outgoing, Serialized)]
+    #[outgoing(name = "chunks.raw")]
+    struct RawChunk(Vec<u8>);
+
+    #[derive(OutSlot)]
+    #[publishes(RawChunk)]
+    struct Exports;
+
+    #[derive(Serialize)]
+    struct AmqpChannel {
+        exchange: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpOperation {
+        mandatory: bool,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpMessage {
+        #[serde(rename = "messageType")]
+        message_type: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct NatsChannel {
+        subject: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct SqsChannel {
+        queue: &'static str,
+    }
+
+    /// Builds one binding, or nothing: a policy never holds up a service over a description of
+    /// itself.
+    fn one<T: Serialize>(protocol: &'static str, version: &'static str, body: &T) -> Bindings {
+        Binding::new(protocol, version, body)
+            .map(|binding| Bindings::new().with(binding))
+            .unwrap_or_default()
+    }
+
+    /// What every policy in this module pairs into; the description is the part under test.
+    fn live(
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<MemoryPublisher, PairError>> {
+        <MemoryPublish as PublishPolicy<ConnectedMemoryBroker>>::pair(MemoryPublish, connected)
+    }
+
+    // --8<-- [start:policy_bindings]
+    /// A publish policy of the shape a broker crate ships: it reads its own private fields and
+    /// says what the protocol calls them.
+    #[derive(Clone, Copy, Default)]
+    struct ExchangePublish;
+
+    impl PublishPolicy<ConnectedMemoryBroker> for ExchangePublish {
+        type Live = MemoryPublisher;
+
+        fn pair(
+            self,
+            connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Self::Live, PairError>> {
+            live(connected)
+        }
+
+        fn channel_bindings(&self) -> Bindings {
+            one("amqp", "0.3.0", &AmqpChannel { exchange: "events" })
+        }
+
+        fn operation_bindings(&self) -> Bindings {
+            one("amqp", "0.3.0", &AmqpOperation { mandatory: true })
+        }
+
+        fn message_bindings(&self) -> Bindings {
+            let body = AmqpMessage {
+                message_type: "progress",
+            };
+            one("amqp", "0.3.0", &body)
+        }
+    }
+    // --8<-- [end:policy_bindings]
+
+    // --8<-- [start:reply_address]
+    /// The reply's own policy: it answers where a client reads the address of an answer.
+    #[derive(Clone, Copy, Default)]
+    struct ReplyToPublish;
+
+    impl PublishPolicy<ConnectedMemoryBroker> for ReplyToPublish {
+        type Live = MemoryPublisher;
+
+        fn pair(
+            self,
+            connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Self::Live, PairError>> {
+            live(connected)
+        }
+
+        fn channel_bindings(&self) -> Bindings {
+            one("nats", "0.1.0", &NatsChannel { subject: "replies" })
+        }
+
+        fn reply_address_location(&self) -> Option<&'static str> {
+            Some("$message.header#/reply-to")
+        }
+    }
+    // --8<-- [end:reply_address]
+
+    /// The publisher a dead-lettered delivery leaves through.
+    #[derive(Clone, Copy, Default)]
+    struct DeadLetterPublish;
+
+    impl PublishPolicy<ConnectedMemoryBroker> for DeadLetterPublish {
+        type Live = MemoryPublisher;
+
+        fn pair(
+            self,
+            connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Self::Live, PairError>> {
+            live(connected)
+        }
+
+        fn channel_bindings(&self) -> Bindings {
+            one(
+                "sqs",
+                "0.3.0",
+                &SqsChannel {
+                    queue: "orders-dlq",
+                },
+            )
+        }
+
+        fn operation_bindings(&self) -> Bindings {
+            one(
+                "sqs",
+                "0.3.0",
+                &SqsChannel {
+                    queue: "orders-dlq",
+                },
+            )
+        }
+    }
+
+    /// The reply-to pattern: the answer goes where the request asked to be answered.
+    struct ReplyTo;
+
+    impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
+        type Destination = Names;
+
+        fn apply(
+            &self,
+            out: &mut Outgoing<'_>,
+            _options: &mut Option<Options>,
+            cx: &PublishContext<'_, C>,
+        ) {
+            if let Some(to) = cx.headers().get("reply-to")
+                && let Ok(to) = std::str::from_utf8(to)
+            {
+                out.set_name(to.to_owned());
+            }
+        }
+    }
+
+    #[subscriber("requests", publish("responses"))]
+    async fn respond(
+        _req: &Request,
+        Out(_events): Out<impl Publisher, Events, (Progress,)>,
+    ) -> Response {
+        Response { ok: true }
+    }
+
+    #[subscriber("orders")]
+    async fn reconcile(_req: &Request) -> HandlerOutcome {
+        HandlerOutcome::retry()
+    }
+
+    #[subscriber("chunks.in")]
+    async fn export(_req: &Request, Out(_raw): Out<impl Publisher, Exports>) -> HandlerOutcome {
+        HandlerOutcome::ack()
+    }
+
+    fn document(app: &RustStream) -> serde_json::Value {
+        let json = build_spec(app)
+            .to_json()
+            .expect("the document must serialize");
+        serde_json::from_str(&json).expect("valid JSON")
+    }
+
+    /// The slot's policy describes the slot's channel, its `send` operation and its messages, and
+    /// the reply's policy describes the reply's: one mount site, two positions, two vocabularies.
+    #[test]
+    fn each_position_is_described_by_the_policy_bound_on_it() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond)
+                    .out(Reply, ReplyToPublish)
+                    .out(Events, ExchangePublish)
+                    .build();
+            },
+        );
+        let value = document(&app);
+
+        let slot = &value["channels"]["chunks.progress"]["bindings"]["amqp"];
+        assert_eq!(slot["exchange"], "events");
+        // The core writes the version, so a policy cannot ship a binding without one.
+        assert_eq!(slot["bindingVersion"], "0.3.0");
+        assert_eq!(
+            value["operations"]["send_requests_chunks_progress"]["bindings"]["amqp"]["mandatory"],
+            true,
+        );
+        assert_eq!(
+            value["components"]["messages"]["Progress"]["bindings"]["amqp"]["messageType"],
+            "progress",
+        );
+
+        // The reply is described by its own policy, and the slot's vocabulary stays off it.
+        assert_eq!(
+            value["channels"]["responses"]["bindings"]["nats"]["subject"],
+            "replies",
+        );
+        assert!(value["channels"]["responses"]["bindings"]["amqp"].is_null());
+        assert!(value["channels"]["chunks.progress"]["bindings"]["nats"].is_null());
+    }
+
+    /// A policy that says nothing leaves no empty objects behind.
+    #[test]
+    fn a_silent_policy_changes_no_document() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond).out(Events, Publish).build();
+            },
+        );
+        let json = build_spec(&app)
+            .to_json()
+            .expect("the document must serialize");
+
+        assert!(!json.contains("\"bindings\""));
+    }
+
+    /// A cross-broker token publishes on the broker it carries, so that broker's policy is what
+    /// describes the channel.
+    #[test]
+    fn a_bound_token_is_described_by_the_policy_it_carries() {
+        let other = MemoryBroker::new().bindable();
+        let token = other.bind(ExchangePublish);
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(respond).out(Events, token).build();
+            })
+            .with_broker(other, |_b| {});
+        let value = document(&app);
+
+        assert_eq!(
+            value["channels"]["chunks.progress"]["bindings"]["amqp"]["exchange"],
+            "events",
+        );
+        assert_eq!(
+            value["operations"]["send_requests_chunks_progress"]["bindings"]["amqp"]["mandatory"],
+            true,
+        );
+        assert_eq!(
+            value["components"]["messages"]["Progress"]["bindings"]["amqp"]["messageType"],
+            "progress",
+        );
+    }
+
+    /// The reply address is the token's broker's too: a token on the reply position answers with
+    /// the header that broker's clients read.
+    #[test]
+    fn a_bound_token_answers_where_its_brokers_replies_go() {
+        let other = MemoryBroker::new().bindable();
+        let token = other.bind(ReplyToPublish);
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(respond)
+                    .out(Reply, token)
+                    .transform(ReplyTo)
+                    .out(Events, Publish)
+                    .build();
+            })
+            .with_broker(other, |_b| {});
+        let value = document(&app);
+
+        assert_eq!(
+            value["operations"]["receive_requests"]["reply"]["address"]["location"],
+            "$message.header#/reply-to",
+        );
+    }
+
+    /// The dead-letter channel is a publish like any other, and the publisher named for it is
+    /// what describes it.
+    #[test]
+    fn the_dead_letter_channel_carries_the_retry_publishers_bindings() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile)
+                    .dead_letter("orders.dead")
+                    .out_retry(DeadLetterPublish);
+            },
+        );
+        let value = document(&app);
+
+        assert_eq!(
+            value["channels"]["orders.dead"]["bindings"]["sqs"]["queue"],
+            "orders-dlq",
+        );
+        assert_eq!(
+            value["operations"]["send_orders_orders_dead"]["bindings"]["sqs"]["queue"],
+            "orders-dlq",
+        );
+    }
+
+    /// A registration that names no retry publisher takes the broker's default, and that default
+    /// describes the dead-letter channel too: the copy carries the delivery's own bytes, so the
+    /// channel reports the media type the subscription decodes.
+    #[test]
+    fn the_default_retry_publisher_describes_the_dead_letter_channel() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile).dead_letter("orders.dead");
+            },
+        );
+        let value = document(&app);
+        assert_eq!(value["channels"]["orders.dead"]["address"], "orders.dead");
+
+        // The description travels with the pairing, so the entry is filled whether the mount
+        // site named a publisher or took the broker's own.
+        let entry = app.handlers()[0]
+            .outgoing
+            .iter()
+            .find(|entry| entry.kind == OutgoingKind::DeadLetter)
+            .expect("the declaration adds a dead-letter entry");
+        assert_eq!(entry.content_type, Some("application/json"));
+    }
+
+    /// A naming transform decides where each reply goes, so the channel has no address to report
+    /// and the operation says where a client reads one.
+    #[test]
+    fn a_naming_transform_moves_the_reply_address_onto_the_operation() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond)
+                    .out(Reply, ReplyToPublish)
+                    .transform(ReplyTo)
+                    .out(Events, Publish)
+                    .build();
+            },
+        );
+        let value = document(&app);
+
+        assert!(value["channels"]["responses"]["address"].is_null());
+        assert_eq!(
+            value["operations"]["receive_requests"]["reply"]["address"]["location"],
+            "$message.header#/reply-to",
+        );
+    }
+
+    /// Without the transform the reply goes where the mount site declared, and that is the
+    /// address the channel reports.
+    #[test]
+    fn a_declared_reply_keeps_the_channel_address() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond)
+                    .out(Reply, ReplyToPublish)
+                    .out(Events, Publish)
+                    .build();
+            },
+        );
+        let value = document(&app);
+
+        assert_eq!(value["channels"]["responses"]["address"], "responses");
+        assert!(value["operations"]["receive_requests"]["reply"]["address"].is_null());
+    }
+
+    /// The media type of an outgoing message is the one the mount site's codec encodes in, and
+    /// the root default stands only while every message agrees.
+    #[test]
+    fn an_outgoing_message_reports_the_mount_sites_media_type() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond).out(Events, Publish).build();
+            },
+        );
+        let value = document(&app);
+
+        assert_eq!(
+            value["components"]["messages"]["Response"]["contentType"],
+            "application/json",
+        );
+        assert_eq!(
+            value["components"]["messages"]["Progress"]["contentType"],
+            "application/json",
+        );
+        assert_eq!(value["defaultContentType"], "application/json");
+    }
+
+    /// A message riding the serialized wire carries no media type from the position's codec:
+    /// nothing encoded it, so naming a format would be a claim about bytes the service never
+    /// looked at.
+    #[test]
+    fn a_serialized_slot_member_reports_no_media_type() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(export).out(Exports, ExchangePublish).build();
+            },
+        );
+        let value = document(&app);
+
+        assert!(value["components"]["messages"]["RawChunk"]["contentType"].is_null());
+        // The policy still describes the channel it publishes to.
+        assert_eq!(
+            value["channels"]["chunks.raw"]["bindings"]["amqp"]["exchange"],
+            "events",
+        );
+    }
+
+    /// A reply encoded with another codec disagrees with the incoming one, and the root default
+    /// goes: a reader would take it for the whole document.
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn a_disagreeing_outgoing_codec_removes_the_root_default() {
+        use ruststream::codec::CborCodec;
+
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond)
+                    .out(Reply, Publish)
+                    .codec(CborCodec)
+                    .out(Events, Publish)
+                    .build();
+            },
+        );
+        let value = document(&app);
+
+        assert_eq!(
+            value["components"]["messages"]["Response"]["contentType"],
+            "application/cbor",
+        );
+        assert_eq!(
+            value["components"]["messages"]["Request"]["contentType"],
+            "application/json",
+        );
+        assert!(value["defaultContentType"].is_null());
     }
 }

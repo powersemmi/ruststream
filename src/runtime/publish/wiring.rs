@@ -14,6 +14,8 @@ use super::{
     BatchPublishTransformStack, BatchTransformIdentity, CallCodec, PublishCodec,
     PublishTransformIdentity, PublishTransformStack, Transactional, TypedPublisher, UnnamedCodec,
 };
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
 use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
 
 /// The publish policy of a byte-for-byte reply, as the mount chain carries it.
@@ -46,6 +48,26 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
 
     async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         self.0.pair(connected).await
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.0.channel_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn operation_bindings(&self) -> Bindings {
+        self.0.operation_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn message_bindings(&self) -> Bindings {
+        self.0.message_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        self.0.reply_address_location()
     }
 }
 
@@ -339,6 +361,26 @@ where
             self.batch_layers,
         ))
     }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.policy.channel_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn operation_bindings(&self) -> Bindings {
+        self.policy.operation_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn message_bindings(&self) -> Bindings {
+        self.policy.message_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        self.policy.reply_address_location()
+    }
 }
 
 // The transactional wiring pairs into the transactional reply sink, which is where the leaf's
@@ -363,5 +405,97 @@ where
             self.layers,
             self.batch_layers,
         )))
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.policy.channel_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn operation_bindings(&self) -> Bindings {
+        self.policy.operation_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn message_bindings(&self) -> Bindings {
+        self.policy.message_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        self.policy.reply_address_location()
+    }
+}
+
+#[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::future::Future;
+
+    use super::{RawReplyWiring, ReplyWiring, TransactionalReply};
+    use crate::asyncapi::{Binding, Bindings};
+    use crate::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
+    use crate::runtime::publish::{Names, NarrowToUse};
+    use crate::{PairError, PublishPolicy};
+
+    /// One binding under `protocol`, with an empty body: what it says does not matter here, only
+    /// which level it came back on.
+    fn one(protocol: &'static str) -> Bindings {
+        let body = BTreeMap::<String, String>::new();
+        Bindings::new().with(Binding::new(protocol, "0.1.0", &body).expect("a listed protocol"))
+    }
+
+    /// A policy that answers every document hook with a different protocol, so a wrapper that
+    /// crosses two levels or drops one is visible.
+    #[derive(Clone, Copy)]
+    struct Described;
+
+    impl PublishPolicy<ConnectedMemoryBroker> for Described {
+        type Live = MemoryPublisher;
+
+        fn pair(
+            self,
+            connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Self::Live, PairError>> {
+            <MemoryPublish as PublishPolicy<ConnectedMemoryBroker>>::pair(MemoryPublish, connected)
+        }
+
+        fn channel_bindings(&self) -> Bindings {
+            one("nats")
+        }
+
+        fn operation_bindings(&self) -> Bindings {
+            one("kafka")
+        }
+
+        fn message_bindings(&self) -> Bindings {
+            one("mqtt")
+        }
+
+        fn reply_address_location(&self) -> Option<&'static str> {
+            Some("$message.header#/reply-to")
+        }
+    }
+
+    fn assert_forwards<P: PublishPolicy<ConnectedMemoryBroker>>(wrapper: &P) {
+        assert_eq!(wrapper.channel_bindings(), one("nats"));
+        assert_eq!(wrapper.operation_bindings(), one("kafka"));
+        assert_eq!(wrapper.message_bindings(), one("mqtt"));
+        assert_eq!(
+            wrapper.reply_address_location(),
+            Some("$message.header#/reply-to"),
+        );
+    }
+
+    /// Every step a mount chain adds wraps the policy, and none of them may swallow what the
+    /// policy says about itself: the document is built from the wrapper the chain ended on.
+    #[test]
+    fn every_wrapper_forwards_what_the_leaf_policy_says() {
+        assert_forwards(&RawReplyWiring::new(Described));
+        assert_forwards(&ReplyWiring::new(Described));
+        assert_forwards(&ReplyWiring::new(Described).into_transactional());
+        // What a naming transform narrows the policy to, on a slot and on the retry position.
+        assert_forwards(&<Names as NarrowToUse<Described>>::narrow(Described));
     }
 }

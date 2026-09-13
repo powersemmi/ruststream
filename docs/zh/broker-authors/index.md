@@ -775,6 +775,30 @@ SQS 队列的 ARN，都不可能从这里报出来。
 绑定来自描述符，所以按裸名字打开的订阅一个也没有：那里没有什么可描述的。想要绑定的 Broker，要提供一个
 `SubscriptionSource` 类型。
 
+另一侧的同样三个名字，由你的发布策略填写。回复、`Out` 槽位，以及死信投递所经过的发布者，都是
+`PublishPolicy`，各自描述自己发布到的通道。
+
+```rust
+--8<-- "tests/asyncapi.rs:policy_bindings"
+```
+
+那三条规则在这里原样成立。有一点不适用：回复没有自己的 `send` 操作，所以回复策略上的
+`operation_bindings` 到不了文档。槽位和死信目的地各有一个。
+
+第四个方法只属于回复。如果你的 Broker 通过 reply-to 头路由回复，`reply_address_location` 就说明
+客户端从哪里读这个地址：
+
+```rust
+--8<-- "tests/asyncapi.rs:reply_address"
+```
+
+这时文档把回复通道报成 `address: null`，并把该表达式放进 `receive` 操作的
+`reply.address.location`。只有挂载点组合了逐条投递指定目的地的转换时才会用到它；否则回复去往声明的
+名字，文档报出的也是这个名字。
+
+规范未列出的协议，在发布这一侧同样没有绑定可填。内存 Broker 就是这种情况：不存在 `memory` 这个键，
+所以 `MemoryPublish` 保持沉默，而不是自己造一个。
+
 这些钩子由内核的 `asyncapi` feature 控制。从你的 crate 里转发它：
 
 ```toml

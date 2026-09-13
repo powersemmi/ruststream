@@ -19,8 +19,9 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
+use crate::runtime::metadata::{
+    HandlerMetadata, OutgoingKind, OutgoingMessageMetadata, PublishDescription,
+};
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
     DestinationSettled, FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline,
@@ -1055,6 +1056,27 @@ where
             pipeline: self.pipeline,
             _broker: PhantomData,
         }
+    }
+}
+
+/// What one bound slot contributes to the document: the destinations its marker declares, and
+/// what its policy and codec say about them. Produced by
+/// [`OutAttachment::describe`](crate::runtime::OutAttachment) at the commit, before wiring
+/// consumes the attachment.
+pub(super) type SlotDescription = (Vec<Cow<'static, str>>, PublishDescription);
+
+impl<B, Head, Tail, C, Layers, Pipe> Router<B, (Head, Tail), C, Layers, Pipe>
+where
+    Head: RouteMetadata,
+{
+    /// Writes what each bound slot says onto the entries its marker declared, on the route the
+    /// commit just added.
+    pub(super) fn describing_slots(mut self, slots: &[SlotDescription]) -> Self {
+        let meta = self.routes.0.metadata_mut();
+        for (channels, description) in slots {
+            meta.describe_slot(channels, description);
+        }
+        self
     }
 }
 

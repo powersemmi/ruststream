@@ -99,6 +99,28 @@ The reply channel is in the document like any other, because the traffic is real
 get is a `send` operation of its own: a reader pairing two unrelated operations by name is exactly
 what the `reply` field exists to prevent.
 
+Where the answer goes can be a per-delivery decision: a transform on the reply position reads the
+request's reply-to header and names the destination itself. The channel then has no fixed address
+to report, and the operation says where a client reads one.
+
+```json
+"channels": {
+  "responses": { "address": null }
+},
+"operations": {
+  "receive_requests": {
+    "reply": {
+      "address": { "location": "$message.header#/reply-to" },
+      "channel": { "$ref": "#/channels/responses" }
+    }
+  }
+}
+```
+
+The expression is the broker's: it names the header its own clients answer through. A broker that
+answers through no header leaves the field out, and the reply then keeps the name the mount site
+declared.
+
 ## Which server a channel lives on
 
 A channel says which servers it exists on, so a service on two brokers stops showing every channel
@@ -136,6 +158,14 @@ impl Codec for ProtobufCodec {
 
 Without the constant a codec reports `application/octet-stream`. A `Deserialized` input reports
 nothing at all: no codec runs on it, so there is no media type to report.
+
+What a service publishes states its media type the same way, taken from the codec the mount site
+bound on that position. A reply encoded with `.out_reply(policy).codec(CborCodec)` reports
+`application/cbor` while the request it answers stays `application/json`, and the root
+`defaultContentType` goes: the two disagree, and the root field claims one format for the whole
+document. A dead-lettered delivery carries the bytes it arrived as, so it reports the media type
+its subscription decodes. A `Serialized` reply or slot entry reports nothing, for the reason a
+`Deserialized` input does not: nothing encoded it.
 
 ## Retries and dead letters
 
