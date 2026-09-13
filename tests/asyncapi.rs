@@ -10,7 +10,7 @@ use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
 fn build_spec_describes_handlers() {
-    let info = AppInfo::new("orders-svc", "1.2.3").with_description("Order processing");
+    let info = AppInfo::new("orders-svc", "1.2.3").description("Order processing");
     let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
         let orders = b.broker().subscribe("orders");
         b.handle(
@@ -112,7 +112,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
 fn build_spec_includes_servers_and_yaml() {
     let app = RustStream::new(AppInfo::new("svc", "1.0.0")).server(
         "nats",
-        ServerSpec::new("nats.example.com:4222", "nats").with_description("primary"),
+        ServerSpec::new("nats.example.com:4222", "nats").description("primary"),
     );
 
     let spec = build_spec(&app);
@@ -159,7 +159,7 @@ impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
 
 impl ruststream::DescribeServer for DescribingBroker {
     fn describe_server(&self) -> ServerSpec {
-        ServerSpec::new(self.host.clone(), "nats").with_description("ingress")
+        ServerSpec::new(self.host.clone(), "nats").description("ingress")
     }
 }
 
@@ -233,8 +233,8 @@ fn viewer_html_embeds_spec_url_and_cdn() {
     let pinned = render_viewer_html(
         "/spec",
         &ViewerOptions::default()
-            .with_title("My API")
-            .with_cdn_base("https://example.test/assets/"),
+            .title("My API")
+            .cdn_base("https://example.test/assets/"),
     );
     assert!(pinned.contains("<title>My API</title>"));
     assert!(pinned.contains("https://example.test/assets/browser/standalone/index.js"));
@@ -385,8 +385,8 @@ fn server_security_lands_in_components_and_refs() {
         .server(
             "kafka",
             ServerSpec::new("kafka.example.com:9093", "kafka")
-                .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS"))
-                .with_security(SecurityScheme::custom(
+                .security(SecurityScheme::scram_sha512().description("SASL over TLS"))
+                .security(SecurityScheme::custom(
                     serde_json::json!({ "type": "gssapi" }),
                 )),
         )
@@ -1063,7 +1063,7 @@ mod document_surface {
     fn a_server_reports_the_version_of_its_protocol() {
         let app = RustStream::new(AppInfo::new("orders", "1.0.0")).server(
             "rabbit",
-            ServerSpec::new("rabbit.example.com:5672", "amqp").with_protocol_version("0.9.1"),
+            ServerSpec::new("rabbit.example.com:5672", "amqp").protocol_version("0.9.1"),
         );
         let spec = build_spec(&app);
 
@@ -1079,12 +1079,12 @@ mod document_surface {
     #[test]
     fn the_service_describes_its_owner_and_its_licence() {
         let info = AppInfo::new("orders", "1.0.0")
-            .with_id("urn:example:orders".parse().unwrap())
-            .with_terms_of_service("https://example.com/tos")
-            .with_contact(Contact::new().with_email("payments@example.com"))
-            .with_license(License::new("Apache-2.0"))
-            .with_tag(Tag::new("payments"))
-            .with_external_docs(ExternalDocs::new("https://example.com/orders"));
+            .id("urn:example:orders".parse().unwrap())
+            .terms_of_service("https://example.com/tos")
+            .contact(Contact::new().email("payments@example.com"))
+            .license(License::new("Apache-2.0"))
+            .tag(Tag::new("payments"))
+            .external_docs(ExternalDocs::new("https://example.com/orders"));
         let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
             b.include(confirm);
         });
@@ -1360,7 +1360,7 @@ mod protocol_bindings {
         let app = RustStream::new(AppInfo::new("orders", "1.0.0")).server(
             "mqtt",
             ServerSpec::new("mqtt.example.com:1883", "mqtt")
-                .with_bindings(Bindings::new().with(binding)),
+                .bindings(Bindings::new().with(binding)),
         );
         let json = build_spec(&app)
             .to_json()

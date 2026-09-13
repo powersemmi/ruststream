@@ -37,7 +37,7 @@ pub struct Spec {
     /// The `AsyncAPI` specification version (always `"3.1.0"`).
     pub asyncapi: String,
     /// The service's own identifier, when it declared one
-    /// ([`AppInfo::with_id`](crate::runtime::AppInfo::with_id)).
+    /// ([`AppInfo::id`](method@crate::runtime::AppInfo::id)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<AppId>,
     /// Service metadata.
@@ -135,7 +135,7 @@ pub struct Server {
     pub description: Option<String>,
     /// References into `components.securitySchemes` describing how clients authenticate. Empty
     /// (and absent from the document) unless the service author attached schemes with
-    /// [`ServerSpec::with_security`](crate::ServerSpec::with_security).
+    /// [`ServerSpec::security`](method@crate::ServerSpec::security).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub security: Vec<Reference>,
     /// What the broker says about this server in its own protocol's vocabulary.
@@ -1087,7 +1087,7 @@ mod tests {
 
     #[test]
     fn description_lands_in_the_rendered_object() {
-        let object = security_scheme_object(&SecurityScheme::plain().with_description("over TLS"));
+        let object = security_scheme_object(&SecurityScheme::plain().description("over TLS"));
         assert_eq!(object["description"], "over TLS");
     }
 }

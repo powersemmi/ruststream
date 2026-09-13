@@ -23,8 +23,8 @@ use thiserror::Error;
 /// use ruststream::Contact;
 ///
 /// let contact = Contact::new()
-///     .with_name("Payments team")
-///     .with_email("payments@example.com");
+///     .name("Payments team")
+///     .email("payments@example.com");
 ///
 /// assert_eq!(contact.name.as_deref(), Some("Payments team"));
 /// ```
@@ -68,10 +68,10 @@ impl Contact {
     /// ```
     /// use ruststream::Contact;
     ///
-    /// assert_eq!(Contact::new().with_name("Ops").name.as_deref(), Some("Ops"));
+    /// assert_eq!(Contact::new().name("Ops").name.as_deref(), Some("Ops"));
     /// ```
     #[must_use]
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+    pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
@@ -83,11 +83,11 @@ impl Contact {
     /// ```
     /// use ruststream::Contact;
     ///
-    /// let contact = Contact::new().with_url("https://example.com/support");
+    /// let contact = Contact::new().url("https://example.com/support");
     /// assert!(contact.url.is_some());
     /// ```
     #[must_use]
-    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+    pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
@@ -99,11 +99,11 @@ impl Contact {
     /// ```
     /// use ruststream::Contact;
     ///
-    /// let contact = Contact::new().with_email("ops@example.com");
+    /// let contact = Contact::new().email("ops@example.com");
     /// assert_eq!(contact.email.as_deref(), Some("ops@example.com"));
     /// ```
     #[must_use]
-    pub fn with_email(mut self, email: impl Into<String>) -> Self {
+    pub fn email(mut self, email: impl Into<String>) -> Self {
         self.email = Some(email.into());
         self
     }
@@ -123,7 +123,7 @@ impl Contact {
 /// ```
 /// use ruststream::License;
 ///
-/// let license = License::new("Apache-2.0").with_url("https://spdx.org/licenses/Apache-2.0.html");
+/// let license = License::new("Apache-2.0").url("https://spdx.org/licenses/Apache-2.0.html");
 ///
 /// assert_eq!(license.name, "Apache-2.0");
 /// ```
@@ -162,11 +162,11 @@ impl License {
     /// ```
     /// use ruststream::License;
     ///
-    /// let license = License::new("MIT").with_url("https://spdx.org/licenses/MIT.html");
+    /// let license = License::new("MIT").url("https://spdx.org/licenses/MIT.html");
     /// assert!(license.url.is_some());
     /// ```
     #[must_use]
-    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+    pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
@@ -179,7 +179,7 @@ impl License {
 /// ```
 /// use ruststream::ExternalDocs;
 ///
-/// let docs = ExternalDocs::new("https://example.com/orders").with_description("the order flow");
+/// let docs = ExternalDocs::new("https://example.com/orders").description("the order flow");
 ///
 /// assert_eq!(docs.url, "https://example.com/orders");
 /// ```
@@ -218,11 +218,11 @@ impl ExternalDocs {
     /// ```
     /// use ruststream::ExternalDocs;
     ///
-    /// let docs = ExternalDocs::new("https://example.com").with_description("the runbook");
+    /// let docs = ExternalDocs::new("https://example.com").description("the runbook");
     /// assert_eq!(docs.description.as_deref(), Some("the runbook"));
     /// ```
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
@@ -235,7 +235,7 @@ impl ExternalDocs {
 /// ```
 /// use ruststream::Tag;
 ///
-/// let tag = Tag::new("orders").with_description("everything the order domain emits");
+/// let tag = Tag::new("orders").description("everything the order domain emits");
 ///
 /// assert_eq!(tag.name, "orders");
 /// ```
@@ -278,11 +278,11 @@ impl Tag {
     /// ```
     /// use ruststream::Tag;
     ///
-    /// let tag = Tag::new("orders").with_description("the order domain");
+    /// let tag = Tag::new("orders").description("the order domain");
     /// assert_eq!(tag.description.as_deref(), Some("the order domain"));
     /// ```
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
@@ -294,11 +294,11 @@ impl Tag {
     /// ```
     /// use ruststream::{ExternalDocs, Tag};
     ///
-    /// let tag = Tag::new("orders").with_external_docs(ExternalDocs::new("https://example.com"));
+    /// let tag = Tag::new("orders").external_docs(ExternalDocs::new("https://example.com"));
     /// assert!(tag.external_docs.is_some());
     /// ```
     #[must_use]
-    pub fn with_external_docs(mut self, docs: ExternalDocs) -> Self {
+    pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
         self.external_docs = Some(docs);
         self
     }
@@ -417,6 +417,6 @@ mod tests {
     #[test]
     fn an_empty_contact_is_left_out_of_the_document() {
         assert!(Contact::new().is_empty());
-        assert!(!Contact::new().with_name("Ops").is_empty());
+        assert!(!Contact::new().name("Ops").is_empty());
     }
 }

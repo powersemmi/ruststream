@@ -512,7 +512,7 @@ pub struct ServerSpec {
     pub description: Option<String>,
     /// How clients authenticate to this server, emitted as the `AsyncAPI` server's `security`
     /// list. Empty by default: authentication is a property of the described deployment, so the
-    /// service author states it at registration ([`with_security`](Self::with_security)); brokers
+    /// service author states it at registration ([`security`](method@Self::security)); brokers
     /// never set it.
     pub security: Vec<SecurityScheme>,
     /// The server binding the broker contributes, emitted as the `AsyncAPI` server's `bindings`
@@ -620,7 +620,7 @@ impl ServerSpec {
 
     /// Builder-style setter for the server description.
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }
@@ -635,12 +635,12 @@ impl ServerSpec {
     /// ```
     /// use ruststream::ServerSpec;
     ///
-    /// let spec = ServerSpec::new("rabbit.example.com:5672", "amqp").with_protocol_version("0.9.1");
+    /// let spec = ServerSpec::new("rabbit.example.com:5672", "amqp").protocol_version("0.9.1");
     ///
     /// assert_eq!(spec.protocol_version.as_deref(), Some("0.9.1"));
     /// ```
     #[must_use]
-    pub fn with_protocol_version(mut self, version: impl Into<String>) -> Self {
+    pub fn protocol_version(mut self, version: impl Into<String>) -> Self {
         self.protocol_version = Some(version.into());
         self
     }
@@ -655,11 +655,11 @@ impl ServerSpec {
     /// use ruststream::{SecurityScheme, ServerSpec};
     ///
     /// let spec = ServerSpec::new("kafka.example.com:9093", "kafka")
-    ///     .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS"));
+    ///     .security(SecurityScheme::scram_sha512().description("SASL over TLS"));
     /// assert_eq!(spec.security.len(), 1);
     /// ```
     #[must_use]
-    pub fn with_security(mut self, scheme: SecurityScheme) -> Self {
+    pub fn security(mut self, scheme: SecurityScheme) -> Self {
         self.security.push(scheme);
         self
     }
@@ -687,7 +687,7 @@ impl ServerSpec {
     ///
     /// let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id: "orders".into() })?;
     /// let spec = ServerSpec::new("mqtt.example.com:1883", "mqtt")
-    ///     .with_bindings(Bindings::new().with(binding));
+    ///     .bindings(Bindings::new().with(binding));
     ///
     /// assert!(!spec.bindings.is_empty());
     /// # Ok(())
@@ -695,7 +695,7 @@ impl ServerSpec {
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    pub fn with_bindings(mut self, bindings: Bindings) -> Self {
+    pub fn bindings(mut self, bindings: Bindings) -> Self {
         self.bindings = bindings;
         self
     }
@@ -706,15 +706,15 @@ impl ServerSpec {
 ///
 /// Constructed with the per-kind constructors ([`scram_sha512`](Self::scram_sha512),
 /// [`user_password`](Self::user_password), ...) and attached to a server with
-/// [`ServerSpec::with_security`]. For a scheme shape the constructors do not model, use
-/// [`custom`](Self::custom) with the raw `AsyncAPI` security scheme object.
+/// [`ServerSpec::security`](method@ServerSpec::security). For a scheme shape the constructors do
+/// not model, use [`custom`](Self::custom) with the raw `AsyncAPI` security scheme object.
 ///
 /// # Examples
 ///
 /// ```
 /// use ruststream::SecurityScheme;
 ///
-/// let scheme = SecurityScheme::user_password().with_description("service credentials");
+/// let scheme = SecurityScheme::user_password().description("service credentials");
 /// # let _ = scheme;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1007,11 +1007,11 @@ impl SecurityScheme {
     ///
     /// ```
     /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::plain().with_description("SASL over TLS");
+    /// let scheme = SecurityScheme::plain().description("SASL over TLS");
     /// # let _ = scheme;
     /// ```
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }

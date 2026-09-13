@@ -55,14 +55,14 @@ pub struct ViewerOptions<'a> {
 impl<'a> ViewerOptions<'a> {
     /// Sets the HTML page title.
     #[must_use]
-    pub const fn with_title(mut self, title: &'a str) -> Self {
+    pub const fn title(mut self, title: &'a str) -> Self {
         self.title = title;
         self
     }
 
     /// Sets the base URL the `AsyncAPI` React assets load from.
     #[must_use]
-    pub const fn with_cdn_base(mut self, cdn_base: &'a str) -> Self {
+    pub const fn cdn_base(mut self, cdn_base: &'a str) -> Self {
         self.cdn_base = cdn_base;
         self
     }
