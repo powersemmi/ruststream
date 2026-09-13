@@ -204,11 +204,11 @@ pub trait Publisher: Send + Sync {
 `Clone` 和 `'static` 是测试套件对这个类型的要求：它把经由 `Out` 槽位的一次发布所带的设置复制一份，
 再以这个类型交回给测试。于是，测试你这个 Broker 的服务断言的是你的 `publish` 收到的值，而不是它
 变成的那个协议字段。再派生 `Debug` 和 `PartialEq`，断言就写成 `with_options(&YourOptions { .. })`
-（见[对 Out 槽位做断言](../guides/testing.md#asserting-on-out-slots)）。
+（见[对 Out 槽位做断言](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)）。
 
 `base_headers` 留给发布者自身的常量：租户、producer 名字、这个句柄每条消息都带的 schema id。构建器以
 这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
-（参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
+（参见[消息头从哪里来](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)）。
 
 `Transaction` 指定自己的 `Options`，也带同样的默认 `base_headers`。事务是一个独立的发布面，所以它
 认可的设置可以和开启它的发布者不同。多数 Broker 在这里写的就是发布者的设置类型。自身没有常量的句
@@ -687,7 +687,7 @@ fn _q() {
 
 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号）时，把它作为类型化的单条投递上下文
 暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型。处理器
-按键用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是空
+按键用 [`Ctx<K>` 提取器](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state)把单个字段绑定成参数。键是空
 结构体，投递路径上既没有 type-map，也没有堆分配。
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
@@ -843,7 +843,7 @@ asyncapi = ["ruststream/asyncapi"]
 `Coordinator::schedule_redelivery` 去路由。
 
 同一个类型既适用于 `TestApp`，也适用于 conformance 校验套件。面向用户的那一侧参见
-[测试](../guides/testing.md)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
+[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
 转移链检查证明你的实现。
 
 ### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }

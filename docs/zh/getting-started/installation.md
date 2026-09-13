@@ -31,13 +31,13 @@ serde = { version = "1", features = ["derive"] }
 | `macros` | ruststream-macros | `#[subscriber]`、`#[ruststream::app]`，以及各个 derive（`Outgoing`、`OutSlot`、`OutMessages`、`Deserialized`、`Serialized`、`FromRef`、`MessageInfo`） |
 | `asyncapi` | schemars, serde_norway | AsyncAPI 生成与 HTML 查看器 |
 | `metrics` | prometheus | Prometheus 中间件与导出器 |
-| `logging` | tracing-subscriber | `ruststream::logging`，彩色的控制台日志记录器（[日志](../guides/logging.md)） |
-| `otel` | opentelemetry, opentelemetry-otlp | 通过 OTLP 导出链路与指标，并按 W3C 规范传递 trace-context（[OpenTelemetry](../guides/opentelemetry.md)） |
-| `testing` | inventory | `TestApp` 与断言构建器（[测试](../guides/testing.md)） |
+| `logging` | tracing-subscriber | `ruststream::logging`，彩色的控制台日志记录器（[日志](https://docs.rs/ruststream/latest/ruststream/logging/index.html)） |
+| `otel` | opentelemetry, opentelemetry-otlp | 通过 OTLP 导出链路与指标，并按 W3C 规范传递 trace-context（[OpenTelemetry](https://docs.rs/ruststream/latest/ruststream/otel/index.html)） |
+| `testing` | inventory | `TestApp` 与断言构建器（[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)） |
 | `conformance` | inventory | 面向 Broker 作者的 conformance 校验套件 |
 | `cli` | clap, anyhow | `ruststream` 二进制程序 |
 
-一个服务里可以同时启用多个编解码器（参见[编解码器](../guides/codecs.md)）。要去掉内置的 JSON
+一个服务里可以同时启用多个编解码器（参见[编解码器](https://docs.rs/ruststream/latest/ruststream/codec/index.html)）。要去掉内置的 JSON
 编解码器（例如在只需要 trait 和运行时的 Broker crate 里），关掉默认 feature：
 
 ```toml
@@ -48,7 +48,7 @@ ruststream = { version = "0.7", default-features = false }
 ## CLI
 
 `ruststream` 二进制程序随 crate 一起发布，由 cargo feature `cli` 控制。它用框架的子命令（`run`、
-`asyncapi gen`）驱动 `cargo`；安装方式和各个命令见 [CLI 指南](../guides/cli.md)。新项目的骨架由
+`asyncapi gen`）驱动 `cargo`；安装方式和各个命令见 [`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html) 模块。新项目的骨架由
 `cargo generate` 按模板生成，参见[快速上手](quickstart.md)。
 
 ## 具体的 Broker

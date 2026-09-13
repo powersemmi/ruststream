@@ -38,7 +38,7 @@ serde = { version = "1", features = ["derive"] }
     --8<-- "examples/manual/tutorial/orders.rs:order"
     ```
 
-处理器返回 [`HandlerOutcome`](../guides/subscribers.md#acking)：要么是 `ack`，要么是 `nack`。
+处理器返回 [`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers)：要么是 `ack`，要么是 `nack`。
 `nack` 丢弃消息，或者把它重新入队。处理器也可以返回 `()` 或 `Result<(), E>`，其中 `Ok` 表示
 ack，`Err` 表示丢弃。
 
@@ -63,7 +63,7 @@ ack，`Err` 表示丢弃。
     `include` 用默认编解码器解码，因此不需要编解码器参数。默认编解码器由 `json`、`cbor`、
     `msgpack` 中第一个启用的 feature 选出。要让该 Broker 下的所有处理器换用另一个编解码器，
     可以用 `with_broker_codec(broker, codec, |b| ...)` 设定一次。
-    完整的选取规则参见[编解码器](../guides/codecs.md)。
+    完整的选取规则参见[编解码器](https://docs.rs/ruststream/latest/ruststream/codec/index.html)。
 
 运行它：
 
@@ -103,11 +103,11 @@ cargo run -- run
     --8<-- "examples/manual/tutorial/reply_app.rs:reply"
     ```
 
-在处理器内部发布以及其余的发布方式，参见[发布与回复](../guides/publishing.md)。
+在处理器内部发布以及其余的发布方式，参见[发布与回复](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing)。
 
 ## 5. 用路由器组织代码
 
-处理器多起来以后，把它们放进各自的模块，再汇总到 [`Router`](../guides/routing.md) 里：
+处理器多起来以后，把它们放进各自的模块，再汇总到 [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing) 里：
 
 === "宏"
 
@@ -123,7 +123,7 @@ cargo run -- run
 
 带回复的处理器用链式调用挂到路由器上：`.out_reply(..)` 指定回复的发布策略，`.build()` 提交这次
 注册。不写 `.out_reply(..)` 时，`.build()` 采用 Broker 的默认发布策略，也就是第 4 步里 `include`
-用的那一个。路由器的其余用法参见[路由](../guides/routing.md)。
+用的那一个。路由器的其余用法参见[路由](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing)。
 
 === "宏"
 
@@ -147,7 +147,7 @@ cargo run -- asyncapi gen
 通道，但各自有一个操作：两者的订阅是分开的。回复在 `confirmations` 上添加一个 `send` 操作。
 
 载荷的 schema 放在文档的 `components.messages` 下。输出参数（`-o`、`--yaml`）和文档本身参见
-[AsyncAPI](../guides/asyncapi.md)。
+[AsyncAPI](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html)。
 
 ## 7. 换成真正的 Broker
 
@@ -165,7 +165,7 @@ Broker crate 加进依赖，在那里构造它，例如用 `NatsBroker::new("nat
 
 ## 下一步
 
-- [中间件](../guides/middleware.md)：围绕处理器的横切逻辑。
-- [生命周期](../guides/lifespan.md)：共享状态与启动/关闭钩子。
-- [测试](../guides/testing.md)：在进程内测试你刚写好的处理器。
-- [指标](../guides/metrics.md)：Prometheus 计数器与直方图。
+- [中间件](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware)：围绕处理器的横切逻辑。
+- [生命周期](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle)：共享状态与启动/关闭钩子。
+- [测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)：在进程内测试你刚写好的处理器。
+- [指标](https://docs.rs/ruststream/latest/ruststream/metrics/index.html)：Prometheus 计数器与直方图。

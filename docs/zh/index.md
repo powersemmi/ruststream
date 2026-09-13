@@ -43,8 +43,8 @@
 - :material-download: **[安装](getting-started/installation.md)** - 各项 feature 和 crate 的引入方式。
 - :material-rocket-launch: **[快速上手](getting-started/quickstart.md)** - 用 `cargo generate` 生成服务骨架。
 - :material-school: **[教程](getting-started/tutorial.md)** - 一步步构建一个服务。
-- :material-test-tube: **[测试](guides/testing.md)** - 在进程内测试处理器，不需要服务器。
-- :material-web: **[HTTP 框架](guides/http.md)** - 与 axum 并行运行，配合事务性 outbox。
+- :material-test-tube: **[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)** - 在进程内测试处理器，不需要服务器。
+- :material-web: **[HTTP 框架](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server)** - 与 axum 并行运行，配合事务性 outbox。
 - :material-transit-connection-variant: **[Broker](brokers/index.md)** - 内存 Broker 和各个 Broker crate。
 - :material-server-network: **[Broker 作者](broker-authors/index.md)** - 实现契约，并通过 `conformance` 校验。
 

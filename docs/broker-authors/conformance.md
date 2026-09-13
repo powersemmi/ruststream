@@ -16,7 +16,7 @@ ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
 The `conformance` feature enables `testing`, so the single `TestableBroker` your crate ships serves
-`run_suite` here and the [`TestApp`](../guides/testing.md) harness users write.
+`run_suite` here and the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) harness users write.
 
 ## The routing suite
 

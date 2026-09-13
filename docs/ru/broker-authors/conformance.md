@@ -19,7 +19,7 @@ ruststream = { version = "0.7", features = ["conformance"] }
 
 Фича `conformance` включает `testing`, поэтому один-единственный `TestableBroker`, который
 поставляет ваш крейт, годится и для `run_suite` здесь, и для обвязки
-[`TestApp`](../guides/testing.md), которую пишут пользователи.
+[`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html), которую пишут пользователи.
 
 ## Набор проверок маршрутизации
 

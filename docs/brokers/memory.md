@@ -113,7 +113,7 @@ Every capability trait is implemented over this broker's own in-process semantic
   position left. A seek acts on one subscriber instance. Through a handle to a bus that has already
   shut down it returns `MemoryError::ShutDown`. Inside an application, `MemoryContext` holds the position
   of the message and the `MemorySeeker`, and a handler reads them under the `Position` and
-  `SeekHandle` keys (see [Seeking](../guides/subscribers.md#seeking)). A batch handler reads
+  `SeekHandle` keys (see [Seeking](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking)). A batch handler reads
   `MemoryBatchContext`: it holds `SeekHandle` but no `Position`, because a batch spans many
   deliveries.
 - **Shutdown.** `MemoryBroker::connect(self)` gives `ConnectedMemoryBroker`, and its `shutdown`
@@ -146,9 +146,9 @@ example:
 
 ## For testing
 
-You test an application built on `MemoryBroker` with the [`TestApp`](../guides/testing.md) harness:
+You test an application built on `MemoryBroker` with the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) harness:
 build the app, hand it to `TestApp::start`, publish messages, and assert on what the handlers
-received and published. [Testing](../guides/testing.md#unit-testing-a-service-with-testapp) walks
+received and published. [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples) walks
 through the full pattern.
 
 The harness records what the service publishes for the length of a run, so `published::<T>(..)`

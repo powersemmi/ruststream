@@ -225,13 +225,13 @@ pub trait Publisher: Send + Sync {
 и отдаёт их тесту этим же типом. Поэтому сервис, который тестирует ваш брокер, проверяет значение,
 полученное вашим `publish`, а не поле протокола, в которое оно превратилось. Выведите ещё `Debug` и
 `PartialEq`, и проверка запишется как `with_options(&YourOptions { .. })`
-([проверки по слотам `Out`](../guides/testing.md#asserting-on-out-slots)).
+([проверки по слотам `Out`](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)).
 
 `base_headers` - для постоянной величины самого издателя: арендатор, имя продюсера, идентификатор
 схемы, который этот издатель добавляет к каждому сообщению. Билдер начинает исходящие заголовки
 с этой основы и кладёт поверх, ключ за ключом, заголовки места вызова, поэтому на общем ключе
 остаётся значение места вызова
-(см. [откуда берутся заголовки](../guides/publishing.md#where-the-headers-come-from)).
+(см. [откуда берутся заголовки](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)).
 
 `Transaction` называет собственный `Options` и объявляет тот же `base_headers` с реализацией по
 умолчанию. Транзакция - отдельная поверхность публикации, поэтому она может учитывать настройки,
@@ -773,7 +773,7 @@ fn _q() {
 Брокер с нативными метаданными доставки (партиция, смещение, номер в стриме) отдаёт их
 типизированным контекстом доставки: это структура с `#[non_exhaustive]`, которую называет
 подписчик, плюс типы-ключи `ContextField`. По ключу обработчик привязывает отдельное поле
-параметром через [экстрактор `Ctx<K>`](../guides/context.md#per-delivery-context). Ключи - пустые
+параметром через [экстрактор `Ctx<K>`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state). Ключи - пустые
 структуры, а на пути доставки нет ни type-map, ни выделений в куче.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
@@ -953,7 +953,7 @@ asyncapi = ["ruststream/asyncapi"]
 `Coordinator::schedule_redelivery`.
 
 Один такой тип работает и с `TestApp`, и с набором conformance. Пользовательская сторона описана в
-разделе [Тестирование](../guides/testing.md), а [Conformance](conformance.md) показывает, как
+разделе [Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html), а [Conformance](conformance.md) показывает, как
 подтвердить реализацию через `run_suite` и проверку жизненного цикла `lifecycle`.
 
 ### Как написать транспорт, которому можно верить {#writing-one-you-can-trust}

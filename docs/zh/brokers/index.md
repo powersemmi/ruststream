@@ -113,4 +113,4 @@
 
 每个 Broker crate 在自己的文档里说明连接选项。订阅需要 Broker 专有的选项时（消费者组、
 durable 名称），你可以在 `#[subscriber(..)]` 属性里给出该 Broker 的描述符；参见
-[Broker 专有的描述符](../guides/subscribers.md#broker-specific-descriptors)。
+[Broker 专有的描述符](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#the-subscription-source)。

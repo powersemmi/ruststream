@@ -97,7 +97,7 @@ use ruststream::memory::prelude::*;
   `MemoryError::PositionEvicted` 错误，并报告仍然保留的最旧位置。定位作用在单个订阅者实例上。通过
   已停止总线的句柄定位，返回 `MemoryError::ShutDown`
   错误。在应用内部，`MemoryContext` 里有消息的位置和 `MemorySeeker`，处理器按 `Position` 和
-  `SeekHandle` 两个键读取（参见[定位](../guides/subscribers.md#seeking)）。批量处理器读的是
+  `SeekHandle` 两个键读取（参见[定位](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking)）。批量处理器读的是
   `MemoryBatchContext`：那里有 `SeekHandle`，但没有 `Position`，因为一个批横跨多次投递。
 - **关闭。** `MemoryBroker::connect(self)` 给出 `ConnectedMemoryBroker`。它的 `shutdown` 消费自身
   并返回 `ClosedMemoryBroker`，报告这次关闭丢弃了多少个订阅者注册。关闭之后，通过先前发出的句柄
@@ -127,9 +127,9 @@ use ruststream::memory::prelude::*;
 
 ## 用于测试
 
-`MemoryBroker` 上的应用，你用 [`TestApp`](../guides/testing.md) 套件来测试：构建应用，交给
+`MemoryBroker` 上的应用，你用 [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) 套件来测试：构建应用，交给
 `TestApp::start`，发布消息，然后断言处理器收到了什么、发布了什么。完整用法参见
-[测试](../guides/testing.md#unit-testing-a-service-with-testapp)。
+[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples)。
 
 在一次测试运行期间，套件会记录服务发布的每一条消息，因此无论应用建立在哪一种形态的 Broker 之上，
 `published::<T>(..)` 断言读到的都是同一份列表。在套件之外，通过 `TestableBroker::published` 读回
