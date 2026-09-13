@@ -13,8 +13,11 @@
 
 mod common;
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use common::Order;
@@ -22,11 +25,11 @@ use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
     AppInfo, ForReply, HandlerOutcome, Names, Outgoing, PublishContext, PublishTransform,
-    RETRY_COUNT_HEADER, Reads, Router, RustStream,
+    RETRY_COUNT_HEADER, Reads, Router, RustStream, State,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    AckError, AddressedCopies, BrokerMoves, HeaderMap, IncomingMessage, NamedCopies,
+    AckError, AddressedCopies, BrokerMoves, FromRef, HeaderMap, IncomingMessage, NamedCopies,
     RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, Subscribe, Subscriber,
     SubscriptionSource, nonzero, subscriber,
 };
@@ -559,6 +562,89 @@ async fn the_declaration_reaches_the_descriptor_before_it_subscribes() {
     tb.broker::<MemoryBroker>()
         .subscriber("managed")
         .assert_called_once();
+}
+
+/// What a handler of a broker-moved subscription counts its own deliveries with, so that the
+/// second one settles and a delivery that comes back is visible without retrying forever.
+#[derive(Clone, FromRef)]
+struct Deliveries {
+    seen: Arc<AtomicU32>,
+}
+
+/// Asks for an immediate retry on its first delivery and settles on the next one.
+#[subscriber(ManagedQueue { name: "managed" })]
+async fn moved_retry(order: &Order, State(seen): State<Arc<AtomicU32>>) -> HandlerOutcome {
+    let _ = order.id;
+    if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+        HandlerOutcome::retry()
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// An immediate retry on a subscription the broker moves itself is the broker's own requeue, cap
+/// or no cap: the declaration went to the descriptor at startup, and the runtime reading it again
+/// here would drop a delivery the broker was about to move.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_moved_immediate_retry_is_never_capped() {
+    let seen = Arc::new(AtomicU32::new(0));
+    let deliveries = Deliveries {
+        seen: Arc::clone(&seen),
+    };
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(deliveries))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(moved_retry)
+                .max_attempts(nonzero!(1u32))
+                .dead_letter("managed.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    // The first delivery is already at the declared cap, and it still comes back.
+    tb.message(&Order { id: 14 })
+        .to("managed.capped")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("managed")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("managed.dead")
+        .assert_not_called();
+}
+
+/// The same without a destination declared: a cap alone does not turn an immediate retry into a
+/// rejection, which on a queue that deletes a rejected delivery would lose the message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_moved_immediate_retry_is_not_rejected_at_the_cap() {
+    let seen = Arc::new(AtomicU32::new(0));
+    let deliveries = Deliveries {
+        seen: Arc::clone(&seen),
+    };
+    let app = RustStream::new(AppInfo::new("declared", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(deliveries))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(moved_retry).max_attempts(nonzero!(1u32));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    // A cap with no destination beside it leaves the descriptor's own name in place.
+    tb.message(&Order { id: 15 })
+        .to("managed")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("managed")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("managed.dead")
+        .assert_not_called();
 }
 
 /// A subscription of a broker that holds a delivery back itself and counts its own deliveries.
