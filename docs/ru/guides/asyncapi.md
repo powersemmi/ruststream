@@ -204,7 +204,7 @@ struct Order {
 долговечность очереди, группа потребителей, QoS. Эти **биндинги** попадают в документ сами, а что
 именно заполняет конкретный брокер, написано в его документации.
 
-Версию протокола, на которой говорят клиенты, называет `with_protocol_version`. Заполнять её стоит
+Версию протокола, на которой говорят клиенты, называет `protocol_version`. Заполнять её стоит
 там, где одно имя протокола покрывает несовместимые версии: AMQP 0.9.1 и AMQP 1.0 в документе оба
 `amqp`, а общего у них больше ничего нет.
 
@@ -216,18 +216,18 @@ struct Order {
 --8<-- "examples/asyncapi_http.rs:describe"
 ```
 
-Собственный идентификатор сервиса задаёт `with_id`. Это URI, и `AppId` разбирает его при
+Собственный идентификатор сервиса задаёт `id`. Это URI, и `AppId` разбирает его при
 конструировании, поэтому заголовок, набранный не в тот билдер, падает на месте вызова, а не в уже
 опубликованном документе:
 
 <!-- inline-rust: two lines of a fallible parse; putting a `?` or an unwrap in the compiled example would either add an error type to it or panic at startup -->
 ```rust
-let info = AppInfo::new("orders", "0.1.0").with_id("urn:example:orders".parse()?);
+let info = AppInfo::new("orders", "0.1.0").id("urn:example:orders".parse()?);
 ```
 
 ## Безопасность сервера
 
-Как аутентифицируются клиенты, объявляет `ServerSpec::with_security`. Каждая схема попадает в
+Как аутентифицируются клиенты, объявляет `ServerSpec::security`. Каждая схема попадает в
 `components.securitySchemes`, а список `security` сервера на неё ссылается:
 
 ```rust
@@ -241,7 +241,7 @@ let info = AppInfo::new("orders", "0.1.0").with_id("urn:example:orders".parse()?
 
 Безопасность объявляет автор сервиса, а не брокер: `DescribeServer` о ней не сообщает. Чтобы закрыть
 сервер, зарегистрированный брокером автоматически (`with_broker_labeled`), объявите его явно:
-`.server(label, broker.describe_server().with_security(..))` с той же меткой.
+`.server(label, broker.describe_server().security(..))` с той же меткой.
 
 ## Как отдавать документ
 
@@ -260,7 +260,7 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 
 Отдавайте этот HTML и JSON спецификации двумя маршрутами своего сервера. По умолчанию просмотрщик
 загружает ресурсы с CDN. Для офлайна или закрытого контура вы можете задать другой базовый адрес
-через `ViewerOptions::with_cdn_base`, а `with_title` задаёт заголовок страницы.
+через `ViewerOptions::cdn_base`, а `title` задаёт заголовок страницы.
 
 ## Полноценный сервер
 

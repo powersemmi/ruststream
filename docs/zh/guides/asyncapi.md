@@ -189,7 +189,7 @@ Broker crate 也可以实现 `DescribeServer` 能力。这时 `broker.describe_s
 Broker 还会用自己协议的词汇描述它的通道、操作和消息：队列是否持久、消费者组、QoS。这些**绑定**会自动
 出现在文档里，具体某个 Broker 填了哪些，见它自己的文档。
 
-客户端说的协议版本由 `with_protocol_version` 给出。一个协议名覆盖了互不兼容的几个版本时，值得把它填上：
+客户端说的协议版本由 `protocol_version` 给出。一个协议名覆盖了互不兼容的几个版本时，值得把它填上：
 AMQP 0.9.1 和 AMQP 1.0 在文档里都是 `amqp`，除此之外毫无共同之处。
 
 ## 描述这个服务
@@ -200,17 +200,17 @@ AMQP 0.9.1 和 AMQP 1.0 在文档里都是 `amqp`，除此之外毫无共同之�
 --8<-- "examples/asyncapi_http.rs:describe"
 ```
 
-服务自己的标识符由 `with_id` 给出。它是一个 URI，`AppId` 在构造时就把它解析出来，所以填错了 builder
+服务自己的标识符由 `id` 给出。它是一个 URI，`AppId` 在构造时就把它解析出来，所以填错了 builder
 的标题会在调用处失败，而不是出现在已经发布的文档里：
 
 <!-- inline-rust: two lines of a fallible parse; putting a `?` or an unwrap in the compiled example would either add an error type to it or panic at startup -->
 ```rust
-let info = AppInfo::new("orders", "0.1.0").with_id("urn:example:orders".parse()?);
+let info = AppInfo::new("orders", "0.1.0").id("urn:example:orders".parse()?);
 ```
 
 ## 服务器安全
 
-`ServerSpec::with_security` 声明客户端如何认证。每个方案落进 `components.securitySchemes`，
+`ServerSpec::security` 声明客户端如何认证。每个方案落进 `components.securitySchemes`，
 服务器的 `security` 列表引用它：
 
 ```rust
@@ -224,7 +224,7 @@ let info = AppInfo::new("orders", "0.1.0").with_id("urn:example:orders".parse()?
 
 安全由服务作者声明，而不是由 Broker 声明：`DescribeServer` 不报告安全。
 要给自动注册的服务器（`with_broker_labeled`）加上安全声明，就用同一个标签显式写出
-`.server(label, broker.describe_server().with_security(..))`。
+`.server(label, broker.describe_server().security(..))`。
 
 ## 把文档提供出去
 
@@ -242,7 +242,7 @@ let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
 ```
 
 把该 HTML 和 spec 的 JSON 放在你自己服务器的两条路由上。查看器默认从 CDN 加载资源。离线或者
-封闭网络下，你可以用 `ViewerOptions::with_cdn_base` 换掉基础 URL，`with_title` 设置页面标题。
+封闭网络下，你可以用 `ViewerOptions::cdn_base` 换掉基础 URL，`title` 设置页面标题。
 
 ## 一个完整的服务器
 
