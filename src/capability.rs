@@ -8,6 +8,9 @@ use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Dur
 
 use futures::Stream;
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
+
 use crate::{
     Broker, ConnectedBroker, CopyPath, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
     Subscriber,
@@ -501,13 +504,25 @@ pub struct ServerSpec {
     /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`, or `"memory"` for the in-process
     /// broker.
     pub protocol: String,
+    /// The version of that protocol, when the protocol has versions a client has to match:
+    /// `"0.9.1"` against `"1.0"` for AMQP, `"5"` for MQTT. `None` where the protocol name already
+    /// says everything, which is the usual case.
+    pub protocol_version: Option<String>,
     /// An optional human description of this server.
     pub description: Option<String>,
     /// How clients authenticate to this server, emitted as the `AsyncAPI` server's `security`
     /// list. Empty by default: authentication is a property of the described deployment, so the
-    /// service author states it at registration ([`with_security`](Self::with_security)); brokers
+    /// service author states it at registration ([`security`](method@Self::security)); brokers
     /// never set it.
     pub security: Vec<SecurityScheme>,
+    /// The server binding the broker contributes, emitted as the `AsyncAPI` server's `bindings`
+    /// object. Empty by default.
+    ///
+    /// This is the broker's own vocabulary, which the core never names: a `MQTT` client id and
+    /// keep-alive, a Kafka schema-registry URL. A credential has no place here for the same
+    /// reason it has none in [`host`](Self::host): the document is published.
+    #[cfg(feature = "asyncapi")]
+    pub bindings: Bindings,
 }
 
 impl ServerSpec {
@@ -517,8 +532,11 @@ impl ServerSpec {
         Self {
             host: Some(host.into()),
             protocol: protocol.into(),
+            protocol_version: None,
             description: None,
             security: Vec::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: Bindings::new(),
         }
     }
 
@@ -592,15 +610,38 @@ impl ServerSpec {
         Self {
             host: None,
             protocol: protocol.into(),
+            protocol_version: None,
             description: None,
             security: Vec::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: Bindings::new(),
         }
     }
 
     /// Builder-style setter for the server description.
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Names the version of the protocol clients speak to this server.
+    ///
+    /// Worth filling in wherever one protocol name covers incompatible versions: a reader cannot
+    /// tell AMQP 0.9.1 from AMQP 1.0 by the server's host.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ServerSpec;
+    ///
+    /// let spec = ServerSpec::new("rabbit.example.com:5672", "amqp").protocol_version("0.9.1");
+    ///
+    /// assert_eq!(spec.protocol_version.as_deref(), Some("0.9.1"));
+    /// ```
+    #[must_use]
+    pub fn protocol_version(mut self, version: impl Into<String>) -> Self {
+        self.protocol_version = Some(version.into());
         self
     }
 
@@ -614,30 +655,66 @@ impl ServerSpec {
     /// use ruststream::{SecurityScheme, ServerSpec};
     ///
     /// let spec = ServerSpec::new("kafka.example.com:9093", "kafka")
-    ///     .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS"));
+    ///     .security(SecurityScheme::scram_sha512().description("SASL over TLS"));
     /// assert_eq!(spec.security.len(), 1);
     /// ```
     #[must_use]
-    pub fn with_security(mut self, scheme: SecurityScheme) -> Self {
+    pub fn security(mut self, scheme: SecurityScheme) -> Self {
         self.security.push(scheme);
+        self
+    }
+
+    /// Sets the server binding this broker contributes (see [`bindings`](Self::bindings)).
+    ///
+    /// Computed from the broker's configuration alone: the document is built before anything
+    /// connects, so a value only the live connection knows has no place in it. A credential has
+    /// no place in it either.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::ServerSpec;
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct MqttServer {
+    ///     #[serde(rename = "clientId")]
+    ///     client_id: String,
+    /// }
+    ///
+    /// let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id: "orders".into() })?;
+    /// let spec = ServerSpec::new("mqtt.example.com:1883", "mqtt")
+    ///     .bindings(Bindings::new().with(binding));
+    ///
+    /// assert!(!spec.bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    pub fn bindings(mut self, bindings: Bindings) -> Self {
+        self.bindings = bindings;
         self
     }
 }
 
-/// How clients authenticate to an [`AsyncAPI` server](ServerSpec), per the `AsyncAPI` 3.0
+/// How clients authenticate to an [`AsyncAPI` server](ServerSpec), per the `AsyncAPI`
 /// security scheme types.
 ///
 /// Constructed with the per-kind constructors ([`scram_sha512`](Self::scram_sha512),
 /// [`user_password`](Self::user_password), ...) and attached to a server with
-/// [`ServerSpec::with_security`]. For a scheme shape the constructors do not model, use
-/// [`custom`](Self::custom) with the raw `AsyncAPI` security scheme object.
+/// [`ServerSpec::security`](method@ServerSpec::security). For a scheme shape the constructors do
+/// not model, use [`custom`](Self::custom) with the raw `AsyncAPI` security scheme object.
 ///
 /// # Examples
 ///
 /// ```
 /// use ruststream::SecurityScheme;
 ///
-/// let scheme = SecurityScheme::user_password().with_description("service credentials");
+/// let scheme = SecurityScheme::user_password().description("service credentials");
 /// # let _ = scheme;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -680,7 +757,7 @@ pub(crate) enum SecuritySchemeKind {
     },
 }
 
-/// Where an `apiKey` scheme carries the key, per `AsyncAPI` 3.0.
+/// Where an `apiKey` scheme carries the key, per `AsyncAPI`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiKeyLocation {
     /// The key rides in the user field of the transport's credentials.
@@ -700,7 +777,7 @@ impl ApiKeyLocation {
     }
 }
 
-/// Where an `httpApiKey` scheme carries the key, per `AsyncAPI` 3.0.
+/// Where an `httpApiKey` scheme carries the key, per `AsyncAPI`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpApiKeyLocation {
     /// A query parameter.
@@ -930,11 +1007,11 @@ impl SecurityScheme {
     ///
     /// ```
     /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::plain().with_description("SASL over TLS");
+    /// let scheme = SecurityScheme::plain().description("SASL over TLS");
     /// # let _ = scheme;
     /// ```
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+    pub fn description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
         self
     }

@@ -62,7 +62,7 @@ block, so the guarantee cannot regress.
 - **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
   scaffolds projects, runs them, and generates the AsyncAPI document. Console logging ships
   behind the `logging` feature, installed on `run` with verbosity driven by `RUST_LOG`.
-- **AsyncAPI 3.0, Prometheus metrics, and a health probe,** served from your own HTTP stack.
+- **AsyncAPI 3.1, Prometheus metrics, and a health probe,** served from your own HTTP stack.
 - **OpenTelemetry** behind the `otel` feature: OTLP export for traces and metrics, per-handler
   dispatch metrics following the messaging semantic conventions, and W3C trace-context
   propagation across the consume-transform-produce chain.

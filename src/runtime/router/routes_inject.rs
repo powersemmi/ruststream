@@ -177,7 +177,7 @@ where
             def,
             codec,
             extra,
-            meta,
+            mut meta,
             policies,
             workers,
         } = self;
@@ -186,7 +186,7 @@ where
         // cannot be returned out of a factory closure; apply and spawn stay in one block.
         let global = global.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
@@ -266,11 +266,12 @@ where
             def,
             codec,
             extra,
-            meta,
+            mut meta,
             policies,
             workers,
             batch_size,
         } = self;
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
@@ -289,7 +290,7 @@ where
             policies,
             workers,
             batch_size,
-            setup.resolve::<Source::Copies, _>(retry_pipeline),
+            setup,
         );
     }
 }

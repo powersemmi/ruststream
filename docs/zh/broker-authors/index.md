@@ -741,6 +741,73 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 核心的 `PublishLayer` 加上信封，通过 `RustStream::publish_layer` 添加到整个应用上。发布层是异步
 的，也可以返回错误，而 `Outgoing::payload_mut` 的存在正是为了包装信封。
 
+## 协议绑定
+
+生成的 AsyncAPI 文档留出了只有你的 Broker 才知道的那部分：RabbitMQ 队列是否持久、Kafka 的消费者组、
+MQTT 的 QoS。规范把这些叫做**绑定**，填写它们的是你的描述符。
+
+```rust
+--8<-- "tests/asyncapi.rs:descriptor_bindings"
+```
+
+`Binding::new(protocol, version, &body)` 把 body 序列化一次，并且自己写上 `bindingVersion`，所以你
+不会发布一个没有版本的绑定。协议键由内核对照规范的封闭列表检查，未列出的键会返回错误，而不是进入一份
+没有工具读得懂的文档。`Bindings` 默认为空：什么也不说的描述符不会改变任何文档。
+
+服务器这一层是字段而不是方法，因为一个 Broker 只描述一次服务器：在你的 `DescribeServer` 实现里写
+`ServerSpec::new(host, protocol).bindings(..)`。
+
+绑定里应该放什么，由三条规则限定。
+
+值只由描述符本身算出。文档在连接之前就生成，所以 Kafka 主题真实的分区数、Pub/Sub 订阅背后的主题、
+SQS 队列的 ARN，都不可能从这里报出来。
+
+凭据永远不进绑定，理由和 `DescribeServer` 一样。检查放在 `conformance::harness` 里：用一个已知的密码
+配置你的 Broker 和描述符，然后跑这个扫描。
+
+```rust
+--8<-- "tests/conformance_self.rs:credentials"
+```
+
+规范没有为之提供绑定的协议，走 `Binding::extension("x-kinesis", &body)`。协议键是一个封闭列表，
+所以 ZeroMQ、Kinesis 和文件传输都没有合法的键；`x-` 扩展位于同一层级，并且不带 `bindingVersion`。
+
+绑定来自描述符，所以按裸名字打开的订阅一个也没有：那里没有什么可描述的。想要绑定的 Broker，要提供一个
+`SubscriptionSource` 类型。
+
+另一侧的同样三个名字，由你的发布策略填写。回复、`Out` 槽位，以及死信投递所经过的发布者，都是
+`PublishPolicy`，各自描述自己发布到的通道。
+
+```rust
+--8<-- "tests/asyncapi.rs:policy_bindings"
+```
+
+那三条规则在这里原样成立。有一点不适用：回复没有自己的 `send` 操作，所以回复策略上的
+`operation_bindings` 到不了文档。槽位和死信目的地各有一个。
+
+第四个方法只属于回复。如果你的 Broker 通过 reply-to 头路由回复，`reply_address_location` 就说明
+客户端从哪里读这个地址：
+
+```rust
+--8<-- "tests/asyncapi.rs:reply_address"
+```
+
+这时文档把回复通道报成 `address: null`，并把该表达式放进 `receive` 操作的
+`reply.address.location`。只有挂载点组合了逐条投递指定目的地的转换时才会用到它；否则回复去往声明的
+名字，文档报出的也是这个名字。
+
+规范未列出的协议，在发布这一侧同样没有绑定可填。内存 Broker 就是这种情况：不存在 `memory` 这个键，
+所以 `MemoryPublish` 保持沉默，而不是自己造一个。
+
+这些钩子由内核的 `asyncapi` feature 控制。从你的 crate 里转发它：
+
+```toml
+[features]
+asyncapi = ["ruststream/asyncapi"]
+```
+
+并在你填写的每个方法上加 `#[cfg(feature = "asyncapi")]`。
+
 ## 配置与默认值
 
 `Config` 归你的 crate 所有，核心不带任何 Broker 专有的配置。某个字段没有合理的默认值时，就不要实现

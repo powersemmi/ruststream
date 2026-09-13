@@ -22,6 +22,12 @@
 use std::{fmt, time::Duration};
 
 use super::helpers::unique_subject;
+#[cfg(feature = "asyncapi")]
+use crate::DescribeServer;
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::build_spec;
+#[cfg(feature = "asyncapi")]
+use crate::runtime::{AppInfo, RustStream};
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
@@ -279,6 +285,74 @@ pub async fn redelivery_address<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .shutdown()
         .await
         .expect("broker must shut down cleanly");
+}
+
+/// Fails when anything the broker contributes to the generated document carries `secret`.
+///
+/// A broker describes itself twice: once as a server coordinate
+/// ([`DescribeServer`]) and once as a set of protocol bindings on its
+/// subscription descriptor. Both are published, so a password that reaches either has left the
+/// service. The mistake is easy to make from a configuration URL and has shipped in more than one
+/// broker crate, which is why it is checked rather than only written down.
+///
+/// Configure `broker` and `source` the way a deployment would, with a password you pass as
+/// `secret`, and this builds the document those two produce and scans it.
+///
+/// # Panics
+///
+/// Panics when `secret` appears in the server description or in any binding of the descriptor,
+/// and when `secret` is empty (a scan for nothing passes for the wrong reason).
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "conformance", feature = "asyncapi", feature = "memory"))]
+/// # fn demo() {
+/// use ruststream::conformance::harness;
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+///
+/// harness::describes_without_credentials(
+///     &MemoryBroker::new(),
+///     &MemorySource::new("orders"),
+///     "hunter2",
+/// );
+/// # }
+/// ```
+#[cfg(feature = "asyncapi")]
+pub fn describes_without_credentials<B, Src>(broker: &B, source: &Src, secret: &str)
+where
+    B: DescribeServer,
+    Src: SubscriptionSource<Connected<B>>,
+{
+    assert!(
+        !secret.is_empty(),
+        "pass the password the broker was configured with; scanning for an empty string passes \
+         whatever the broker does",
+    );
+
+    let app = RustStream::new(AppInfo::new("conformance", "0.0.0"))
+        .server("broker", broker.describe_server());
+    let document = build_spec(&app)
+        .to_json()
+        .expect("the generated document must serialize");
+    let bindings = serde_json::to_string(&serde_json::json!({
+        "channel": source.channel_bindings(),
+        "operation": source.operation_bindings(),
+        "message": source.message_bindings(),
+    }))
+    .expect("a binding body is serialized once at construction, so it serializes again here");
+
+    for (what, text) in [
+        ("the server description", &document),
+        ("the subscription bindings", &bindings),
+    ] {
+        assert!(
+            !text.contains(secret),
+            "{what} carries the broker's password. A published document is shared: describe the \
+             host with ServerSpec::from_url, which drops the userinfo, and keep credentials out \
+             of every binding body. Got: {text}",
+        );
+    }
 }
 
 async fn ordering<C: TestableBroker + Subscribe>(broker: C) {

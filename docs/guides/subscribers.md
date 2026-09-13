@@ -226,7 +226,7 @@ The two are mutually exclusive, as a declared reply and a naming transform are. 
 descriptor addresses its own copies, neither is needed and a naming transform is a compile error;
 `.to(name)` there overrides the address.
 
-### Capping the retries
+### Capping the retries { #capping-the-retries }
 
 A handler that keeps answering `retry_after` circulates its message until an operator intervenes.
 Two steps right after `include` end that, and they read the same on every broker:

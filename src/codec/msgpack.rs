@@ -10,6 +10,8 @@ use crate::codec::{Codec, CodecError};
 pub struct MsgpackCodec;
 
 impl Codec for MsgpackCodec {
+    const CONTENT_TYPE: &'static str = "application/msgpack";
+
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
         // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
         let mut buf = BytesMut::new();

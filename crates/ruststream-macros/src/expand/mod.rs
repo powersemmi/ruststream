@@ -432,7 +432,7 @@ fn headers_schema_expr(
         )
 }
 
-/// One `outgoing()` entry: the message type's metadata probed at the call site (schema,
+/// The reply's `outgoing()` entry: the message type's metadata probed at the call site (schema,
 /// `MessageInfo` name / description, headers contract), published to `channel`. The explicit
 /// &'static str binding keeps a wrongly-typed destination expression a plain type error
 /// instead of a trait-bound failure inside the metadata builder.
@@ -467,7 +467,8 @@ fn outgoing_entry(channel: &TokenStream2, message_ty: &TokenStream2) -> TokenStr
                 #[allow(unused_imports)]
                 use ::ruststream::__private::NoSerializedProbe as _;
                 ::ruststream::__private::Probe::<#message_ty>::new().serialized_wire()
-            }),
+            })
+            .with_kind(::ruststream::runtime::OutgoingKind::Answer),
         );
     }
 }

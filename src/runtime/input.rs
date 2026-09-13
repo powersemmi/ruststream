@@ -55,6 +55,14 @@ pub trait InputKind: Send + Sync + 'static {
             with any codec (it never calls one)"
 )]
 pub trait DecodeWith<DecodeCodec>: InputKind {
+    /// The media type this input arrives in, when a codec decodes it at all: the codec's own
+    /// [`CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE). `None` on the self-deserializing
+    /// lane, whose bytes are their own wire format and never reach a codec.
+    ///
+    /// It rides here rather than on a `Codec` bound at the mount site, because a byte input
+    /// mounts with no codec at all: the kind that uses one is the kind that can name it.
+    const CONTENT_TYPE: Option<&'static str> = None;
+
     /// Decodes one delivery's payload (and, for a pair input, its headers).
     ///
     /// # Errors
@@ -93,6 +101,8 @@ impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
 impl<DecodeCodec: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith<DecodeCodec>
     for Decoded<T>
 {
+    const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
+
     fn decode(codec: &DecodeCodec, payload: &[u8], _headers: &HeaderMap) -> Result<T, CodecError> {
         codec.decode(payload)
     }
@@ -169,6 +179,8 @@ where
     H: DeserializeOwned + Send + Sync + 'static,
     P: DeserializeOwned + Send + Sync + 'static,
 {
+    const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
+
     fn decode(
         codec: &DecodeCodec,
         payload: &[u8],

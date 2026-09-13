@@ -22,6 +22,7 @@ use crate::{
     BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, SubscriptionSource,
 };
 
+use crate::codec::Codec;
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_inject::BatchInjectDef;
 use crate::runtime::batch_publishing::BatchPublishingDef;
@@ -123,7 +124,7 @@ macro_rules! impl_inject_out_commit {
             RoutePipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec>,
+                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
                 $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
@@ -164,11 +165,16 @@ macro_rules! impl_inject_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                let slots = [$($attach
+                    .source()
+                    .describe::<Connected<B>, RouteCodec::Codec>(),)+];
                 let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router.mount_inject(source, def, decode, extra)
+                router
+                    .mount_inject(source, def, decode, extra)
+                    .describing_slots(&slots)
             }
         }
 
@@ -186,7 +192,7 @@ macro_rules! impl_inject_out_commit {
             RoutePipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec>,
+                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
                 $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
@@ -228,11 +234,16 @@ macro_rules! impl_inject_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                let slots = [$($attach
+                    .source()
+                    .describe::<Connected<B>, RouteCodec::Codec>(),)+];
                 let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router.mount_batch_inject(source, def, decode, extra)
+                router
+                    .mount_batch_inject(source, def, decode, extra)
+                    .describing_slots(&slots)
             }
         }
     )+};
@@ -263,7 +274,7 @@ macro_rules! impl_publishing_out_commit {
             RoutePipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec>,
+                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
                 $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
@@ -307,11 +318,16 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                let slots = [$($attach
+                    .source()
+                    .describe::<Connected<B>, RouteCodec::Codec>(),)+];
                 let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router.mount_publishing_source(source, def, decode, reply.into_source(), extra)
+                router
+                    .mount_publishing_source(source, def, decode, reply.into_source(), extra)
+                    .describing_slots(&slots)
             }
         }
 
@@ -332,7 +348,7 @@ macro_rules! impl_publishing_out_commit {
             RoutePipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec>,
+                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
                 $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
@@ -376,11 +392,16 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                let slots = [$($attach
+                    .source()
+                    .describe::<Connected<B>, RouteCodec::Codec>(),)+];
                 let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router.mount_raw_reply_source(source, def, decode, reply.into_source(), extra)
+                router
+                    .mount_raw_reply_source(source, def, decode, reply.into_source(), extra)
+                    .describing_slots(&slots)
             }
         }
 
@@ -401,7 +422,7 @@ macro_rules! impl_publishing_out_commit {
             RoutePipe: Clone,
             $(
                 $marker: OutSlot,
-                $enc: SlotCodec<RouteCodec::Codec>,
+                $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,
                 $attach: PublishPolicy<Connected<B>>,
                 $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
                 <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
@@ -445,17 +466,22 @@ macro_rules! impl_publishing_out_commit {
                 let codec = router.codec.mount_codec();
                 let pipeline = router.pipeline.clone();
                 let decode = def.mounted_codec(&router.codec);
+                let slots = [$($attach
+                    .source()
+                    .describe::<Connected<B>, RouteCodec::Codec>(),)+];
                 let (def, extra) = def.bind(($(
                     $attach.into_source().wire(codec.clone(), pipeline.clone()),
                 )+));
                 let source = def.source();
-                router.mount_batch_publishing_source(
-                    source,
-                    def,
-                    decode,
-                    reply.into_source(),
-                    extra,
-                )
+                router
+                    .mount_batch_publishing_source(
+                        source,
+                        def,
+                        decode,
+                        reply.into_source(),
+                        extra,
+                    )
+                    .describing_slots(&slots)
             }
         }
     )+};
