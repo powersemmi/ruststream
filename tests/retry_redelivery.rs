@@ -684,8 +684,8 @@ async fn a_named_destination_sends_the_copies_where_the_mount_site_said() {
         MemoryBroker::new(),
         |b| {
             b.include(settle_later)
-                .to("payments")
-                .out_retry(MemoryPublish);
+                .out_retry(MemoryPublish)
+                .to("payments");
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");

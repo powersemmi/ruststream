@@ -1,5 +1,5 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
+use ruststream::runtime::{HandlerOutcome, Router};
 use ruststream::{NamedCopies, Subscribe, SubscriptionSource, subscriber};
 use serde::Deserialize;
 
@@ -31,10 +31,11 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// The descriptor addresses no copies, so the registration owes a destination: neither `.to(..)`
-// nor a naming transform names one here.
+// A router chain ends in `.build()`, so that is where a registration owing a destination is
+// refused: the descriptor addresses no copies and nothing here names one.
 fn main() {
-    RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(reconcile).out_retry(MemoryPublish);
-    });
+    let _ = Router::<MemoryBroker>::new()
+        .include(reconcile)
+        .out_retry(MemoryPublish)
+        .build();
 }

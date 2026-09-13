@@ -130,16 +130,17 @@ pub use redelivery::{
 pub use retry::Retry;
 #[doc(hidden)]
 pub use retry::{
-    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount,
-    DeclaredDestination, Declaring, DestinationLast, DestinationOpen, FixedDestination,
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
+    DestinationDeclared, DestinationLast, DestinationOpen, DestinationUndeclared, FixedDestination,
     OpenDestination, Present, Retried, RetryChain, RetryMount, RetryOffer, RetryOpen, RetryPos,
-    RetryStackUse, RouteDeclaring, RoutePosition, StepOpen, StepTaken,
+    RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination, StepOpen, StepTaken,
 };
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
-    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount,
+    RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
+    RouterMount,
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,

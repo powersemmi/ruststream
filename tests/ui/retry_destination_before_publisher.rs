@@ -1,4 +1,4 @@
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::subscriber;
 use serde::Deserialize;
@@ -14,13 +14,10 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// A registration names one destination for its retry copies: the second `.to(..)` has nothing to
-// name.
+// `.to(name)` names the destination of the retry copies, so it follows the publisher they leave
+// through: there is no destination to name before `out_retry(policy)`.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(reconcile)
-            .out_retry(MemoryPublish)
-            .to("orders.retry")
-            .to("orders.other");
+        b.include(reconcile).to("orders.retry");
     });
 }

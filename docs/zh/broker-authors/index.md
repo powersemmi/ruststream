@@ -311,8 +311,8 @@ Broker 上。
 的答案。subject、topic、流和队列的答案都是它：一条订阅，一个服务自己能发布回去的地址。
 
 `NamedCopies` 表示副本由本进程发布，但描述符给不出地址：带通配符的 subject、MQTT 的过滤器、
-Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由挂载处说出一个 - 用 `.to(name)` 固定
-下来，或者用发布变换为每次投递各自命名。
+Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由挂载处说出一个 - 用
+`.out_retry(policy).to(name)` 固定下来，或者用发布变换为每次投递各自命名。
 
 `BrokerMoves` 表示投递由服务端或客户端库自己搬走：带 `x-delivery-limit` 和
 `x-dead-letter-exchange` 的 quorum 队列、带死信策略的 Pub/Sub 订阅、SQS 的 redrive 策略、带
