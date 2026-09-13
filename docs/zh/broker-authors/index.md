@@ -96,8 +96,9 @@ pub trait Subscribe: ConnectedBroker {
 决定：答 `AddressedCopies` 时名字本身就是地址，别的什么也不用写；答 `NamedCopies` 时副本发往哪里
 由挂载处说出来。
 
-订阅名不是发布地址的地方，答 `NamedCopies`。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的
-topic；MQTT 的过滤器读很多 topic。更完整的答案由你自己的描述符给出。
+订阅名不是发布地址的地方，答 `NamedCopies`。MQTT 的主题过滤器就是这样：`devices/+/telemetry` 读每
+台设备的 topic，却一个也没有说出来，于是副本发往哪里由挂载处说出 - 用 `.out_retry(policy).to(name)`
+固定下来，或者用发布变换为每次投递各自命名。只有一个名字还不够的订阅，要用你自己的描述符。
 
 ### `Subscriber`
 

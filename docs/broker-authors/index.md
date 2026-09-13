@@ -105,9 +105,11 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 `#[subscriber("orders")]` retries here: with `AddressedCopies` the name is the address and nothing
 else is written, with `NamedCopies` the mount site names where a copy goes.
 
-Answer `NamedCopies` where a subscribe name is not a publish destination. A Google Pub/Sub
-subscription is subscribed to by its own name and published to through its topic, and an MQTT
-filter reads many topics; a descriptor of your own then carries the richer answer.
+Answer `NamedCopies` where a subscribe name is not a publish destination. An MQTT topic filter is
+one: `devices/+/telemetry` reads every device's topic and names none of them, so the mount site
+names where a copy goes, with `.out_retry(policy).to(name)` or a publish transform that names one
+per delivery. A subscription that needs more than a name to exist takes a descriptor of your own
+instead.
 
 ### `Subscriber`
 
