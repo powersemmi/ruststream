@@ -2,8 +2,10 @@
 
 use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
-use crate::RetryDeclaration;
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::{PublishBindings, SubscriptionBindings};
 use crate::runtime::input::DecodeWith;
+use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.
 ///
@@ -75,6 +77,21 @@ pub struct OutgoingMessageMetadata {
     /// What this entry is to its registration: a slot publish, a reply, or a dead-letter
     /// destination.
     pub kind: OutgoingKind,
+    /// The media type the codec bound at the mount site encodes this message in
+    /// ([`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE)). `None` where nothing
+    /// encodes: a [`Serialized`](crate::runtime::Serialized) reply and a dead-lettered delivery
+    /// both carry bytes that are their own wire format.
+    pub content_type: Option<&'static str>,
+    /// The runtime expression naming where a reply of this entry actually goes, when the
+    /// registration answers per delivery: the publish policy's
+    /// [`reply_address_location`](crate::PublishPolicy::reply_address_location), carried only
+    /// where a transform on the reply position names the destination. The document then reports
+    /// the channel with `address: null` and puts the expression in the operation's reply.
+    pub reply_address_location: Option<&'static str>,
+    /// What the publish policy bound on this position adds to the generated document at each
+    /// level. Empty unless the broker's policy fills it in.
+    #[cfg(feature = "asyncapi")]
+    pub bindings: PublishBindings,
 }
 
 impl OutgoingMessageMetadata {
@@ -91,6 +108,10 @@ impl OutgoingMessageMetadata {
             parameters: &[],
             serialized: false,
             kind: OutgoingKind::SlotEntry,
+            content_type: None,
+            reply_address_location: None,
+            #[cfg(feature = "asyncapi")]
+            bindings: PublishBindings::default(),
         }
     }
 
@@ -142,6 +163,92 @@ impl OutgoingMessageMetadata {
     pub fn with_serialized(mut self, serialized: bool) -> Self {
         self.serialized = serialized;
         self
+    }
+
+    /// Builder-style setter for the media type this message leaves in (see
+    /// [`content_type`](Self::content_type)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::OutgoingMessageMetadata;
+    ///
+    /// let entry = OutgoingMessageMetadata::new("events.progress", "Progress")
+    ///     .with_content_type(Some("application/json"));
+    ///
+    /// assert_eq!(entry.content_type, Some("application/json"));
+    /// ```
+    #[must_use]
+    pub const fn with_content_type(mut self, content_type: Option<&'static str>) -> Self {
+        self.content_type = content_type;
+        self
+    }
+}
+
+/// What one bound publish position says about itself, read off its policy at mount time.
+///
+/// The three publish positions - a reply, an [`Out`](crate::runtime::Out) slot, the publisher a
+/// dead-lettered delivery leaves through - each resolve one of these and write it onto the
+/// [`OutgoingMessageMetadata`] entries they own. Nothing here runs per message.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PublishDescription {
+    /// The media type the position's codec encodes in, where one does.
+    pub(crate) content_type: Option<&'static str>,
+    /// The policy's reply address expression, carried only where a transform on the position
+    /// names the destination per delivery.
+    pub(crate) reply_address_location: Option<&'static str>,
+    /// What the policy adds to the document at each level.
+    #[cfg(feature = "asyncapi")]
+    pub(crate) bindings: PublishBindings,
+}
+
+impl PublishDescription {
+    /// Reads the description off `policy`, against the broker it pairs with.
+    ///
+    /// `names_destination` is what the mount site's transform stack declared: only a position
+    /// that names the destination per delivery has a reply address to report, because every
+    /// other one publishes to the name the document already carries.
+    pub(crate) fn of<C, P>(
+        policy: &P,
+        content_type: Option<&'static str>,
+        names_destination: bool,
+    ) -> Self
+    where
+        C: ConnectedBroker,
+        P: PublishPolicy<C> + ?Sized,
+    {
+        let _ = (policy, names_destination);
+        #[cfg(not(feature = "asyncapi"))]
+        let description = Self {
+            content_type,
+            reply_address_location: None,
+        };
+        #[cfg(feature = "asyncapi")]
+        let description = Self {
+            content_type,
+            reply_address_location: names_destination
+                .then(|| policy.reply_address_location())
+                .flatten(),
+            bindings: PublishBindings {
+                channel: policy.channel_bindings(),
+                operation: policy.operation_bindings(),
+                message: policy.message_bindings(),
+            },
+        };
+        description
+    }
+
+    /// Writes what the position says onto one entry.
+    ///
+    /// A message riding the serialized wire carries bytes that are their own wire format, so it
+    /// takes no media type from the position's codec: nothing encoded it.
+    fn apply(&self, entry: &mut OutgoingMessageMetadata) {
+        entry.content_type = (!entry.serialized).then_some(self.content_type).flatten();
+        entry.reply_address_location = self.reply_address_location;
+        #[cfg(feature = "asyncapi")]
+        {
+            entry.bindings = self.bindings.clone();
+        }
     }
 }
 
@@ -201,6 +308,10 @@ pub struct HandlerMetadata {
     /// What the registration declared about retrying a failed delivery: the attempt cap and the
     /// dead-letter destination. Empty unless the mount site declared one.
     pub retry: RetryDeclaration,
+    /// What the subscription descriptor adds to the generated document at each level. Empty
+    /// unless the broker's descriptor fills it in.
+    #[cfg(feature = "asyncapi")]
+    pub bindings: SubscriptionBindings,
 }
 
 impl HandlerMetadata {
@@ -222,6 +333,8 @@ impl HandlerMetadata {
             server: None,
             content_type: None,
             retry: RetryDeclaration::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: SubscriptionBindings::default(),
         }
     }
 
@@ -245,6 +358,8 @@ impl HandlerMetadata {
             server: None,
             content_type: None,
             retry: RetryDeclaration::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: SubscriptionBindings::default(),
         }
     }
 
@@ -306,6 +421,68 @@ impl HandlerMetadata {
     {
         self.content_type = <Input as DecodeWith<DecodeCodec>>::CONTENT_TYPE;
         self
+    }
+
+    /// Writes what the reply position's policy says onto the entry the reply declared.
+    pub(crate) fn describe_reply(&mut self, description: &PublishDescription) {
+        for entry in &mut self.outgoing {
+            if entry.kind == OutgoingKind::Answer {
+                description.apply(entry);
+            }
+        }
+    }
+
+    /// Writes what one slot's policy says onto the entries its marker declared, matched by the
+    /// destination each entry names.
+    pub(crate) fn describe_slot(
+        &mut self,
+        channels: &[Cow<'static, str>],
+        description: &PublishDescription,
+    ) {
+        for entry in &mut self.outgoing {
+            if entry.kind == OutgoingKind::SlotEntry && channels.contains(&entry.channel) {
+                description.apply(entry);
+            }
+        }
+    }
+
+    /// Writes what the retry publisher's policy says onto the dead-letter entry.
+    ///
+    /// The copy carries the delivery's own bytes, so the media type stays the one the
+    /// subscription decodes rather than anything the retry publisher would encode.
+    pub(crate) fn describe_dead_letter(&mut self, description: &PublishDescription) {
+        let content_type = self.content_type;
+        for entry in &mut self.outgoing {
+            if entry.kind == OutgoingKind::DeadLetter {
+                description.apply(entry);
+                entry.content_type = content_type;
+            }
+        }
+    }
+
+    /// Records what the subscription descriptor adds to the generated document.
+    ///
+    /// Without the `asyncapi` feature there is no document and no descriptor to ask, so the call
+    /// carries the metadata through unchanged.
+    #[must_use]
+    pub(crate) fn describing<C, S>(self, source: &S) -> Self
+    where
+        C: ConnectedBroker,
+        S: SubscriptionSource<C>,
+    {
+        let _ = source;
+        #[cfg(not(feature = "asyncapi"))]
+        let this = self;
+        #[cfg(feature = "asyncapi")]
+        let this = Self {
+            bindings: SubscriptionBindings {
+                channel: source.channel_bindings(),
+                operation: source.operation_bindings(),
+                message: source.message_bindings(),
+            },
+            ..self
+        };
+        this
     }
 
     /// Attaches the optional descriptive fields that every generated definition trait exposes
@@ -370,5 +547,19 @@ mod tests {
         assert!(plain.description.is_none());
         assert!(plain.payload_schema.is_none());
         assert!(plain.headers_schema.is_none());
+    }
+
+    /// A hand-written definition states the media type of what it publishes the same way the
+    /// mount chain does.
+    #[test]
+    fn an_outgoing_entry_takes_a_media_type_from_its_builder() {
+        let entry = OutgoingMessageMetadata::new("events.progress", "Progress")
+            .with_content_type(Some("application/json"));
+
+        assert_eq!(entry.content_type, Some("application/json"));
+        assert_eq!(
+            OutgoingMessageMetadata::new("events.progress", "Progress").content_type,
+            None,
+        );
     }
 }

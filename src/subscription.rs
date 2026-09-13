@@ -18,6 +18,8 @@ use std::{
     num::NonZeroU32,
 };
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 
 /// Who publishes the copies a subscription's retries are made of, and who names where they go.
@@ -366,6 +368,134 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     {
         let _ = declaration;
         self
+    }
+
+    /// What this subscription adds to its channel in the generated `AsyncAPI` document.
+    ///
+    /// This is where a broker's own vocabulary reaches the document: a `RabbitMQ` queue's
+    /// durability and its exchange, a Kafka topic's name where it differs from the channel id, a
+    /// Pulsar namespace. The core never names a field of yours - it carries what you build with
+    /// [`Binding`](crate::asyncapi::Binding) and writes `bindingVersion` for you.
+    ///
+    /// Three rules bound what belongs here. The value is computed from this descriptor alone,
+    /// because the document is built before anything connects: a Kafka topic's real partition
+    /// count, the topic behind a Pub/Sub subscription and an SQS queue's ARN cannot be reported
+    /// from here at all. A credential never goes in, for the reason
+    /// [`DescribeServer`](crate::DescribeServer) gives: the document is published and shared. And
+    /// a protocol the specification has no binding for goes in
+    /// [`Binding::extension`](crate::asyncapi::Binding::extension), because the protocol keys are
+    /// a closed list.
+    ///
+    /// The default says nothing, and a broker that says nothing changes no document.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "asyncapi", feature = "memory"))]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::{Connected, SubscriptionSource};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct AmqpChannel {
+    ///     queue: Queue,
+    /// }
+    ///
+    /// #[derive(Serialize)]
+    /// struct Queue {
+    ///     name: String,
+    ///     durable: bool,
+    /// }
+    ///
+    /// # struct RabbitQueue { name: String, durable: bool }
+    /// # impl RabbitQueue {
+    /// fn channel_bindings(&self) -> Bindings {
+    ///     let body = AmqpChannel {
+    ///         queue: Queue { name: self.name.clone(), durable: self.durable },
+    ///     };
+    ///     // A binding that fails to build is a binding the document goes without: a broker
+    ///     // never holds up a service over a description of itself.
+    ///     match Binding::new("amqp", "0.3.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # let queue = RabbitQueue { name: "orders".into(), durable: true };
+    /// # assert!(!queue.channel_bindings().is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn channel_bindings(&self) -> Bindings {
+        Bindings::new()
+    }
+
+    /// What this subscription adds to its `receive` operation in the document.
+    ///
+    /// The consumer's own settings live here rather than on the channel: a NATS queue group, a
+    /// Kafka consumer group, an MQTT `QoS`. The rules of
+    /// [`channel_bindings`](Self::channel_bindings) apply unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct NatsOperation {
+    ///     queue: String,
+    /// }
+    ///
+    /// let body = NatsOperation { queue: "workers".into() };
+    /// let bindings = Bindings::new().with(Binding::new("nats", "0.1.0", &body)?);
+    ///
+    /// assert!(!bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn operation_bindings(&self) -> Bindings {
+        Bindings::new()
+    }
+
+    /// What this subscription adds to the messages that arrive on it.
+    ///
+    /// A Kafka record's key schema and where its schema id sits, a Pub/Sub ordering key. The
+    /// rules of [`channel_bindings`](Self::channel_bindings) apply unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct KafkaMessage {
+    ///     #[serde(rename = "schemaIdLocation")]
+    ///     schema_id_location: &'static str,
+    /// }
+    ///
+    /// let body = KafkaMessage { schema_id_location: "payload" };
+    /// let bindings = Bindings::new().with(Binding::new("kafka", "0.5.0", &body)?);
+    ///
+    /// assert!(!bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn message_bindings(&self) -> Bindings {
+        Bindings::new()
     }
 }
 

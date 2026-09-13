@@ -108,3 +108,17 @@ async fn memory_broker_passes_seeking_suite() {
     )
     .await;
 }
+
+// --8<-- [start:credentials]
+/// The in-memory broker has no network address and no binding, so nothing it describes can leak a
+/// password. A broker configured from a URL runs this with the password it was configured with.
+#[cfg(feature = "asyncapi")]
+#[test]
+fn memory_broker_describes_without_credentials() {
+    harness::describes_without_credentials(
+        &MemoryBroker::new(),
+        &MemorySource::new("orders"),
+        "hunter2",
+    );
+}
+// --8<-- [end:credentials]

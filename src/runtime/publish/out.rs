@@ -28,6 +28,8 @@ use super::{
     PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
     SlotContext,
 };
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
 use crate::runtime::lifecycle::BoxError;
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Publisher};
 
@@ -150,6 +152,26 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
 
     async fn pair(self, connected: &CB) -> Result<Self::Live, PairError> {
         Ok(NamedDestinationSend(self.0.pair(connected).await?))
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        self.0.channel_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn operation_bindings(&self) -> Bindings {
+        self.0.operation_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn message_bindings(&self) -> Bindings {
+        self.0.message_bindings()
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        self.0.reply_address_location()
     }
 }
 

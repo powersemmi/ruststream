@@ -4,6 +4,8 @@ use std::{error::Error as StdError, future::Future};
 
 use thiserror::Error;
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 
 /// A producer that sends messages into the broker.
@@ -201,6 +203,176 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// Returns [`PairError`] when bringing the publisher alive requires broker work and that
     /// work fails (most policies pair infallibly).
     fn pair(self, connected: &C) -> impl Future<Output = Result<Self::Live, PairError>> + Send;
+
+    /// What a publish through this policy adds to its channel in the generated `AsyncAPI`
+    /// document.
+    ///
+    /// The publish-side mirror of
+    /// [`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings), and
+    /// the same three rules bound it. The value is computed from this policy alone, because the
+    /// document is built before anything connects. A credential never goes in, for the reason
+    /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
+    /// binding for goes in [`Binding::extension`](crate::asyncapi::Binding::extension).
+    ///
+    /// The policy answers for every position it is bound on: the reply of a `publish(..)`
+    /// registration, an [`Out`](crate::runtime::Out) slot, and the publisher a dead-lettered
+    /// delivery leaves through. A [`Bound`](crate::runtime::Bound) token answers with the policy
+    /// it carries, so a cross-broker publish is described by the broker it reaches. The channel's
+    /// `servers` list does not follow it: that comes from the label the registration's own broker
+    /// was registered under, which is the only broker the runtime can name for a channel.
+    ///
+    /// The default says nothing, and a policy that says nothing changes no document.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct AmqpChannel {
+    ///     exchange: Exchange,
+    /// }
+    ///
+    /// #[derive(Serialize)]
+    /// struct Exchange {
+    ///     name: String,
+    ///     durable: bool,
+    /// }
+    ///
+    /// # struct RabbitPublish { exchange: String }
+    /// # impl RabbitPublish {
+    /// fn channel_bindings(&self) -> Bindings {
+    ///     let body = AmqpChannel {
+    ///         exchange: Exchange { name: self.exchange.clone(), durable: true },
+    ///     };
+    ///     // A binding that fails to build is a binding the document goes without: a broker
+    ///     // never holds up a service over a description of itself.
+    ///     match Binding::new("amqp", "0.3.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # let policy = RabbitPublish { exchange: "orders".into() };
+    /// # assert!(!policy.channel_bindings().is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn channel_bindings(&self) -> Bindings {
+        Bindings::new()
+    }
+
+    /// What a publish through this policy adds to its `send` operation in the document.
+    ///
+    /// The producer's own settings live here rather than on the channel: a Kafka client id, an
+    /// MQTT `QoS`, an SQS delay. The rules of [`channel_bindings`](Self::channel_bindings) apply
+    /// unchanged.
+    ///
+    /// A reply has no `send` operation - it is the `reply` of the operation it answers, and the
+    /// specification gives that object no bindings - so what this returns reaches the document
+    /// from a slot and from a dead-letter destination only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct KafkaOperation {
+    ///     #[serde(rename = "clientId")]
+    ///     client_id: String,
+    /// }
+    ///
+    /// let body = KafkaOperation { client_id: "billing".into() };
+    /// let bindings = Bindings::new().with(Binding::new("kafka", "0.5.0", &body)?);
+    ///
+    /// assert!(!bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn operation_bindings(&self) -> Bindings {
+        Bindings::new()
+    }
+
+    /// What a publish through this policy adds to the messages that leave through it.
+    ///
+    /// A Kafka record's key schema, a Pub/Sub ordering key. The rules of
+    /// [`channel_bindings`](Self::channel_bindings) apply unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct GooglePubSubMessage {
+    ///     #[serde(rename = "orderingKey")]
+    ///     ordering_key: &'static str,
+    /// }
+    ///
+    /// let body = GooglePubSubMessage { ordering_key: "tenant" };
+    /// let bindings = Bindings::new().with(Binding::new("googlepubsub", "0.2.0", &body)?);
+    ///
+    /// assert!(!bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn message_bindings(&self) -> Bindings {
+        Bindings::new()
+    }
+
+    /// Where a client finds the address of a reply this policy publishes, as a runtime
+    /// expression.
+    ///
+    /// A broker that answers a request through a reply-to header names that header here:
+    /// `"$message.header#/reply-to"` is the specification's form, and the part after the `#` is
+    /// a JSON Pointer into the request's headers. The document then reports the reply channel
+    /// with `address: null` and puts the expression in the operation's `reply.address.location`,
+    /// so a reader knows the destination is decided per delivery and where to read it.
+    ///
+    /// It reaches the document only where a [`PublishTransform`](crate::runtime::PublishTransform)
+    /// on the reply position declares
+    /// [`Destination = Names`](crate::runtime::PublishTransform::Destination): that transform is
+    /// what actually redirects the reply, and without it the reply goes to the name the mount
+    /// site declared, which is what the document reports.
+    ///
+    /// The default is `None`: a broker whose replies carry no such address says nothing, and the
+    /// document keeps the declared name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # {
+    /// # struct NatsPublish;
+    /// # impl NatsPublish {
+    /// fn reply_address_location(&self) -> Option<&'static str> {
+    ///     Some("$message.header#/reply-to")
+    /// }
+    /// # }
+    /// assert_eq!(NatsPublish.reply_address_location(), Some("$message.header#/reply-to"));
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// The error of [`PublishPolicy::pair`]: whatever the broker reported while bringing a publisher

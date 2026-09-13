@@ -8,6 +8,9 @@ use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Dur
 
 use futures::Stream;
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
+
 use crate::{
     Broker, ConnectedBroker, CopyPath, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
     Subscriber,
@@ -512,6 +515,14 @@ pub struct ServerSpec {
     /// service author states it at registration ([`security`](method@Self::security)); brokers
     /// never set it.
     pub security: Vec<SecurityScheme>,
+    /// The server binding the broker contributes, emitted as the `AsyncAPI` server's `bindings`
+    /// object. Empty by default.
+    ///
+    /// This is the broker's own vocabulary, which the core never names: a `MQTT` client id and
+    /// keep-alive, a Kafka schema-registry URL. A credential has no place here for the same
+    /// reason it has none in [`host`](Self::host): the document is published.
+    #[cfg(feature = "asyncapi")]
+    pub bindings: Bindings,
 }
 
 impl ServerSpec {
@@ -524,6 +535,8 @@ impl ServerSpec {
             protocol_version: None,
             description: None,
             security: Vec::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: Bindings::new(),
         }
     }
 
@@ -600,6 +613,8 @@ impl ServerSpec {
             protocol_version: None,
             description: None,
             security: Vec::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: Bindings::new(),
         }
     }
 
@@ -646,6 +661,42 @@ impl ServerSpec {
     #[must_use]
     pub fn security(mut self, scheme: SecurityScheme) -> Self {
         self.security.push(scheme);
+        self
+    }
+
+    /// Sets the server binding this broker contributes (see [`bindings`](Self::bindings)).
+    ///
+    /// Computed from the broker's configuration alone: the document is built before anything
+    /// connects, so a value only the live connection knows has no place in it. A credential has
+    /// no place in it either.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "asyncapi")]
+    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// use ruststream::ServerSpec;
+    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct MqttServer {
+    ///     #[serde(rename = "clientId")]
+    ///     client_id: String,
+    /// }
+    ///
+    /// let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id: "orders".into() })?;
+    /// let spec = ServerSpec::new("mqtt.example.com:1883", "mqtt")
+    ///     .bindings(Bindings::new().with(binding));
+    ///
+    /// assert!(!spec.bindings.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "asyncapi")]
+    #[must_use]
+    pub fn bindings(mut self, bindings: Bindings) -> Self {
+        self.bindings = bindings;
         self
     }
 }

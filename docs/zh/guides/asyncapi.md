@@ -90,6 +90,26 @@ schema。生成器为每一处这样的缺口写一条 `WARN`：每个处理器�
 回复通道和别的通道一样留在文档里，因为那里的流量是真实的。它没有自己的 `send` 操作。`reply` 这个字段
 正是为此而存在：否则读者只能靠名字去配对两个互不相干的操作。
 
+回复去哪里，也可以逐条投递来定：回复位置上的转换读取请求的 reply-to 头，自己指定目的地。这时通道没有
+固定地址可报，改由操作说明客户端从哪里读这个地址。
+
+```json
+"channels": {
+  "responses": { "address": null }
+},
+"operations": {
+  "receive_requests": {
+    "reply": {
+      "address": { "location": "$message.header#/reply-to" },
+      "channel": { "$ref": "#/channels/responses" }
+    }
+  }
+}
+```
+
+这个表达式属于 Broker：它指出自己的客户端通过哪个头回复。不靠头回复的 Broker 会省略该字段，回复就留在
+挂载点声明的名字上。
+
 ## 通道在哪个服务器上
 
 通道会说明自己存在于哪些服务器上，跨两个 Broker 的服务不再把每个通道都显示在两边。名字取自注册
@@ -124,6 +144,12 @@ impl Codec for ProtobufCodec {
 
 没有这个常量，编解码器报出 `application/octet-stream`。`Deserialized` 输入什么也不报：没有编解码器
 处理它，也就没有 media type 可言。
+
+服务发布出去的东西，同样写明自己的 media type，取自挂载点为该位置绑定的编解码器。用
+`.out_reply(policy).codec(CborCodec)` 编码的回复报出 `application/cbor`，而它回答的请求仍是
+`application/json`，根上的 `defaultContentType` 随之消失：两者不一致，而根字段是在替整份文档声明
+一种格式。死信投递带的是它到达时的字节，因此报出自己订阅解析出的 media type。走 `Serialized` 的回复
+或者槽条目什么也不报，理由和 `Deserialized` 输入一样：没有谁对它编码。
 
 ## 重试与死信
 
@@ -185,6 +211,9 @@ struct Order {
 
 Broker crate 也可以实现 `DescribeServer` 能力。这时 `broker.describe_server()` 给出这份 spec，
 `with_broker_labeled` 把它记在该 Broker 的标签之下。随框架发布的 Broker 都有该能力。
+
+Broker 还会用自己协议的词汇描述它的通道、操作和消息：队列是否持久、消费者组、QoS。这些**绑定**会自动
+出现在文档里，具体某个 Broker 填了哪些，见它自己的文档。
 
 客户端说的协议版本由 `protocol_version` 给出。一个协议名覆盖了互不兼容的几个版本时，值得把它填上：
 AMQP 0.9.1 和 AMQP 1.0 在文档里都是 `amqp`，除此之外毫无共同之处。

@@ -18,6 +18,12 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::warn;
 
+mod bindings;
+mod viewer;
+
+pub use bindings::{Binding, BindingError, Bindings, PublishBindings, SubscriptionBindings};
+pub use viewer::{ViewerOptions, render_viewer_html};
+
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
 use crate::runtime::{App, OutgoingKind};
 
@@ -132,6 +138,9 @@ pub struct Server {
     /// [`ServerSpec::security`](method@crate::ServerSpec::security).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub security: Vec<Reference>,
+    /// What the broker says about this server in its own protocol's vocabulary.
+    #[serde(skip_serializing_if = "Bindings::is_empty")]
+    pub bindings: Bindings,
 }
 
 /// `AsyncAPI` `Info` object: what the service is, who owns it, and under what terms it runs.
@@ -169,7 +178,11 @@ pub struct Channel {
     /// The channel address (the broker name / subject). A templated address keeps its
     /// `{placeholder}` segments, and every one of them is declared in
     /// [`parameters`](Self::parameters).
-    pub address: String,
+    ///
+    /// `None` - rendered as `null`, which the specification reads as "decided at runtime" - on
+    /// the reply channel of a registration whose transform names the destination per delivery.
+    /// The operation's `reply.address.location` then says where a client reads it.
+    pub address: Option<String>,
     /// Messages on this channel, keyed by message name, referencing component definitions.
     pub messages: BTreeMap<String, Reference>,
     /// The address's parameters, one per `{placeholder}` segment; empty (and omitted) for a
@@ -187,6 +200,9 @@ pub struct Channel {
     /// publish reaches the token's own broker rather than the registration's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub servers: Vec<Reference>,
+    /// What the broker says about this channel in its own protocol's vocabulary.
+    #[serde(skip_serializing_if = "Bindings::is_empty")]
+    pub bindings: Bindings,
 }
 
 /// An `AsyncAPI` channel parameter: one `{placeholder}` segment of a templated address.
@@ -229,16 +245,68 @@ pub struct Operation {
     /// queue only for `sqs` and `sns`, and nothing at all for the attempt cap.
     #[serde(rename = "x-ruststream-retry", skip_serializing_if = "Option::is_none")]
     pub retry: Option<RetryExtension>,
+    /// What the broker says about this operation in its own protocol's vocabulary.
+    #[serde(skip_serializing_if = "Bindings::is_empty")]
+    pub bindings: Bindings,
 }
 
 /// What answers a `receive` operation: the `reply` of an `AsyncAPI` operation.
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct OperationReply {
+    /// Where the reply goes when the registration decides that per delivery, as a runtime
+    /// expression. Absent where the reply goes to the channel's own address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<ReplyAddress>,
     /// Reference to the channel the reply is published to.
     pub channel: Reference,
     /// The messages the reply carries.
     pub messages: Vec<Reference>,
+}
+
+/// Where a client finds the address a reply is published to: the `AsyncAPI` operation reply
+/// address object.
+///
+/// Filled from the publish policy's
+/// [`reply_address_location`](crate::PublishPolicy::reply_address_location), which a broker
+/// answers with the header carrying the address (`$message.header#/reply-to`).
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::asyncapi::ReplyAddress;
+///
+/// let address = ReplyAddress::new("$message.header#/reply-to");
+/// let json = serde_json::to_string(&address)?;
+///
+/// assert_eq!(json, r#"{"location":"$message.header#/reply-to"}"#);
+/// # Ok::<_, serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub struct ReplyAddress {
+    /// The runtime expression naming the address, per the specification's grammar.
+    pub location: String,
+}
+
+impl ReplyAddress {
+    /// The address a reply is published to, as a runtime expression.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::asyncapi::ReplyAddress;
+    ///
+    /// let address = ReplyAddress::new("$message.header#/reply-to");
+    ///
+    /// assert_eq!(address.location, "$message.header#/reply-to");
+    /// ```
+    #[must_use]
+    pub fn new(location: impl Into<String>) -> Self {
+        Self {
+            location: location.into(),
+        }
+    }
 }
 
 /// What a registration declared about retrying a failed delivery, rendered under
@@ -300,6 +368,9 @@ pub struct MessageObject {
     /// rendered document.
     #[serde(skip)]
     pub schemaless: bool,
+    /// What the broker says about this message in its own protocol's vocabulary.
+    #[serde(skip_serializing_if = "Bindings::is_empty")]
+    pub bindings: Bindings,
 }
 
 /// A JSON `$ref` pointer.
@@ -391,6 +462,7 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
             .map(|outgoing| {
                 let refs = add_outgoing(outgoing, &on_servers, &mut channels, &mut messages);
                 OperationReply {
+                    address: outgoing.reply_address_location.map(ReplyAddress::new),
                     channel: refs.channel_ref(),
                     messages: vec![refs.message_ref()],
                 }
@@ -425,6 +497,7 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
                     reply: None,
                     tags: tags.clone(),
                     retry: None,
+                    bindings: outgoing.bindings.operation.clone(),
                 },
             );
         }
@@ -477,6 +550,7 @@ fn build_servers<A: App>(app: &A) -> (BTreeMap<String, Server>, BTreeMap<String,
                     protocol_version: spec.protocol_version.clone(),
                     description: spec.description.clone(),
                     security,
+                    bindings: spec.bindings.clone(),
                 },
             )
         })
@@ -555,83 +629,6 @@ fn security_scheme_object(scheme: &crate::SecurityScheme) -> Value {
     object
 }
 
-/// Renders a self-contained HTML page that displays `spec_url` using the `AsyncAPI` React component.
-///
-/// The component and its styles load from a CDN (jsDelivr) by default; override
-/// [`cdn_base`](ViewerOptions::cdn_base) to pin a version or self-host for offline / locked-down
-/// deployments. Serve the returned HTML from your own HTTP stack alongside the spec document.
-///
-/// # Examples
-///
-/// ```
-/// use ruststream::asyncapi::{render_viewer_html, ViewerOptions};
-///
-/// let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
-/// assert!(html.contains("/asyncapi.json"));
-/// ```
-#[must_use]
-pub fn render_viewer_html(spec_url: &str, opts: &ViewerOptions<'_>) -> String {
-    let title = opts.title;
-    let cdn = opts.cdn_base.trim_end_matches('/');
-    let spec = spec_url.replace('"', "&quot;");
-    format!(
-        "<!DOCTYPE html>\n\
-<html lang=\"en\">\n\
-<head>\n\
-  <meta charset=\"utf-8\" />\n\
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\
-  <title>{title}</title>\n\
-  <link rel=\"stylesheet\" href=\"{cdn}/styles/default.min.css\" />\n\
-</head>\n\
-<body>\n\
-  <div id=\"asyncapi\"></div>\n\
-  <script src=\"{cdn}/browser/standalone/index.js\"></script>\n\
-  <script>\n\
-    AsyncApiStandalone.render(\n\
-      {{ schema: {{ url: \"{spec}\" }}, config: {{ show: {{ sidebar: true }} }} }},\n\
-      document.getElementById(\"asyncapi\"),\n\
-    );\n\
-  </script>\n\
-</body>\n\
-</html>\n"
-    )
-}
-
-/// Options for [`render_viewer_html`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ViewerOptions<'a> {
-    /// The HTML page title.
-    pub title: &'a str,
-    /// Base URL the `AsyncAPI` React assets load from (no trailing slash required).
-    pub cdn_base: &'a str,
-}
-
-impl<'a> ViewerOptions<'a> {
-    /// Sets the HTML page title.
-    #[must_use]
-    pub const fn title(mut self, title: &'a str) -> Self {
-        self.title = title;
-        self
-    }
-
-    /// Sets the base URL the `AsyncAPI` React assets load from.
-    #[must_use]
-    pub const fn cdn_base(mut self, cdn_base: &'a str) -> Self {
-        self.cdn_base = cdn_base;
-        self
-    }
-}
-
-impl Default for ViewerOptions<'_> {
-    fn default() -> Self {
-        Self {
-            title: "AsyncAPI",
-            cdn_base: "https://cdn.jsdelivr.net/npm/@asyncapi/react-component@3.1.8",
-        }
-    }
-}
-
 /// Serializes the JSON Schema of `T` in the draft the document's Schema Object is a superset of.
 ///
 /// The `AsyncAPI` Schema Object extends JSON Schema Draft 07, while `schemars` generates
@@ -704,11 +701,18 @@ fn add_receive(
         .unwrap_or_else(|| message_name(handler.input_type));
 
     let channel = channels.entry(name.to_owned()).or_insert_with(|| Channel {
-        address: name.to_owned(),
+        address: Some(name.to_owned()),
         messages: BTreeMap::new(),
         parameters: BTreeMap::new(),
         servers: on_servers.to_vec(),
+        bindings: Bindings::new(),
     });
+    // A subscription reads a real address, whatever a publish that reached this channel first
+    // said about its own destination.
+    channel.address = Some(name.to_owned());
+    // A channel a publish created first carries no binding: the descriptor that reads it is what
+    // describes it, and it may reach the channel second.
+    channel.bindings.fill_from(&handler.bindings.channel);
     channel.messages.insert(
         message_name.clone(),
         Reference::new(format!("#/components/messages/{message_name}")),
@@ -726,6 +730,7 @@ fn add_receive(
             reply,
             tags: tags.to_vec(),
             retry: retry_extension(&handler.retry),
+            bindings: handler.bindings.operation.clone(),
         },
     );
 
@@ -748,6 +753,7 @@ fn add_receive(
             payload,
             headers,
             schemaless: handler.deserialized,
+            bindings: handler.bindings.message.clone(),
         },
         name,
     );
@@ -774,6 +780,7 @@ struct MessageContribution {
     payload: Option<Value>,
     headers: Option<Value>,
     schemaless: bool,
+    bindings: Bindings,
 }
 
 /// Merges one contribution into a shared message component: an absent title, description,
@@ -795,6 +802,7 @@ fn merge_message(
         payload,
         headers,
         schemaless,
+        bindings,
     } = contribution;
     let entry = messages
         .entry(name.clone())
@@ -806,7 +814,9 @@ fn merge_message(
             payload: None,
             headers: None,
             schemaless: false,
+            bindings: Bindings::new(),
         });
+    entry.bindings.fill_from(&bindings);
     // A title repeating the machine name says nothing the reader does not already see.
     if entry.title.is_none() && title.as_deref().is_some_and(|title| title != entry.name) {
         entry.title = title;
@@ -909,10 +919,15 @@ fn add_outgoing(
     });
     let channel = outgoing.channel.as_ref();
 
-    channels
+    let entry = channels
         .entry(channel.to_owned())
         .or_insert_with(|| Channel {
-            address: channel.to_owned(),
+            // A destination named per delivery has no address to report: the operation's reply
+            // says where a client reads it instead.
+            address: outgoing
+                .reply_address_location
+                .is_none()
+                .then(|| channel.to_owned()),
             messages: BTreeMap::new(),
             // A templated address declares its placeholders, so the document says what the
             // segments are instead of showing an address nothing describes.
@@ -922,12 +937,13 @@ fn add_outgoing(
                 .map(|segment| ((*segment).to_owned(), Parameter::default()))
                 .collect(),
             servers: on_servers.to_vec(),
-        })
-        .messages
-        .insert(
-            name.clone(),
-            Reference::new(format!("#/components/messages/{name}")),
-        );
+            bindings: Bindings::new(),
+        });
+    entry.bindings.fill_from(&outgoing.bindings.channel);
+    entry.messages.insert(
+        name.clone(),
+        Reference::new(format!("#/components/messages/{name}")),
+    );
 
     merge_message(
         messages,
@@ -935,13 +951,14 @@ fn add_outgoing(
             name: name.clone(),
             title,
             description,
-            // The media type of what leaves through a publish position is named on the mount
-            // chain, not in the declaration; a message also received somewhere takes it from
-            // the receiving side.
-            content_type: None,
+            // The media type comes from the codec the mount chain bound on this position; a
+            // message also received somewhere contributes the receiving side's too, and the
+            // first contributor wins.
+            content_type: outgoing.content_type.map(str::to_owned),
             payload,
             headers,
             schemaless: outgoing.serialized,
+            bindings: outgoing.bindings.message.clone(),
         },
         channel,
     );

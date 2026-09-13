@@ -19,8 +19,9 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
+use crate::runtime::metadata::{
+    HandlerMetadata, OutgoingKind, OutgoingMessageMetadata, PublishDescription,
+};
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
     FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline, PublishIdentity,
@@ -273,7 +274,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
@@ -313,7 +315,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -356,7 +359,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     {
         // The self-deserializing batch mounts with no codec, so the media type it would report
         // is the one nothing produced.
-        let meta = batch_metadata(source.name().to_owned(), &def);
+        let meta =
+            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -410,7 +414,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = inject_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -460,7 +465,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -516,7 +522,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -581,7 +588,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -638,7 +646,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -1050,6 +1059,27 @@ where
             pipeline: self.pipeline,
             _broker: PhantomData,
         }
+    }
+}
+
+/// What one bound slot contributes to the document: the destinations its marker declares, and
+/// what its policy and codec say about them. Produced by
+/// [`OutAttachment::describe`](crate::runtime::OutAttachment) at the commit, before wiring
+/// consumes the attachment.
+pub(super) type SlotDescription = (Vec<Cow<'static, str>>, PublishDescription);
+
+impl<B, Head, Tail, C, Layers, Pipe> Router<B, (Head, Tail), C, Layers, Pipe>
+where
+    Head: RouteMetadata,
+{
+    /// Writes what each bound slot says onto the entries its marker declared, on the route the
+    /// commit just added.
+    pub(super) fn describing_slots(mut self, slots: &[SlotDescription]) -> Self {
+        let meta = self.routes.0.metadata_mut();
+        for (channels, description) in slots {
+            meta.describe_slot(channels, description);
+        }
+        self
     }
 }
 
