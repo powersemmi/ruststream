@@ -266,7 +266,8 @@ Where the broker moves the delivery itself - a queue with a delivery limit and a
 exchange, a subscription with a dead-letter policy, an SQS redrive policy - the declaration reaches
 the subscription descriptor and the broker applies it. Nothing is published from the service there,
 and `.out_retry(..)` does not compile: the error names the descriptor and the mechanism that makes
-a publisher pointless.
+a publisher pointless. A `retry()` on such a subscription is the broker's own requeue, cap or no
+cap: the runtime does not settle a delivery the broker is about to move.
 
 ## Choosing the subscription source
 

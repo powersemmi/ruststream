@@ -908,6 +908,12 @@ fn redelivery_of<'d, M: IncomingMessage>(
 /// that the framework's header carries the count forward and the cap applies to an immediate
 /// retry as it does to a delayed one.
 ///
+/// A registration whose copies the broker moves itself is never capped here, exactly as on the
+/// native delayed path: the broker's requeue is the immediate retry, and the declaration reached
+/// the subscription descriptor at startup for the broker to apply. Reading the cap here would
+/// settle a spent delivery with a plain rejection, and on a queue that deletes a rejected
+/// delivery (SQS) that loses the message instead of leaving it to the redrive policy.
+///
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original delivery.
@@ -924,41 +930,39 @@ where
     if delivery.declaration.declares_nothing() {
         return msg.nack(true).await;
     }
+    // The broker moves this subscription's deliveries itself: its requeue is what an immediate
+    // retry is, and the declaration is the broker's to apply, so no cap is read here, as on the
+    // native delayed path.
+    let Some(retry) = delivery.retry.as_ref() else {
+        return msg.nack(true).await;
+    };
     match redelivery_of(&msg, &delivery.declaration) {
         // The broker counts its own redeliveries, so its requeue carries the count forward and
         // there is nothing for a copy to add.
         Redelivery::Subscription if msg.redelivery_count().is_some() => msg.nack(true).await,
-        Redelivery::Subscription => match delivery.retry.as_ref() {
-            Some(retry) => {
-                let destination = retry.destination.clone();
-                publish_copy(msg, name, destination, None, retry, delivery, build_cx).await
-            }
-            // The broker moves this subscription's deliveries itself, so its requeue is what an
-            // immediate retry is, and the declaration is the broker's to apply.
-            None => msg.nack(true).await,
-        },
+        Redelivery::Subscription => {
+            let destination = retry.destination.clone();
+            publish_copy(msg, name, destination, None, retry, delivery, build_cx).await
+        }
         Redelivery::DeadLetter {
             destination,
             at_cap,
-        } => match delivery.retry.as_ref() {
-            Some(retry) => {
-                if at_cap {
-                    warn_at_cap(name, attempt_of(&msg), Some(destination));
-                }
-                let destination = Arc::from(destination);
-                publish_copy(
-                    msg,
-                    name,
-                    Some(destination),
-                    None,
-                    retry,
-                    delivery,
-                    build_cx,
-                )
-                .await
+        } => {
+            if at_cap {
+                warn_at_cap(name, attempt_of(&msg), Some(destination));
             }
-            None => msg.nack(false).await,
-        },
+            let destination = Arc::from(destination);
+            publish_copy(
+                msg,
+                name,
+                Some(destination),
+                None,
+                retry,
+                delivery,
+                build_cx,
+            )
+            .await
+        }
         Redelivery::Reject => {
             warn_at_cap(name, attempt_of(&msg), None);
             msg.nack(false).await
