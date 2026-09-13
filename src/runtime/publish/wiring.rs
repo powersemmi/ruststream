@@ -51,18 +51,18 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
     }
 
     #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        self.0.channel_bindings()
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        self.0.channel_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn operation_bindings(&self) -> Bindings {
-        self.0.operation_bindings()
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        self.0.operation_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn message_bindings(&self) -> Bindings {
-        self.0.message_bindings()
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        self.0.message_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
@@ -363,18 +363,18 @@ where
     }
 
     #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        self.policy.channel_bindings()
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        self.policy.channel_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn operation_bindings(&self) -> Bindings {
-        self.policy.operation_bindings()
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        self.policy.operation_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn message_bindings(&self) -> Bindings {
-        self.policy.message_bindings()
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        self.policy.message_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
@@ -408,18 +408,18 @@ where
     }
 
     #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        self.policy.channel_bindings()
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        self.policy.channel_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn operation_bindings(&self) -> Bindings {
-        self.policy.operation_bindings()
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        self.policy.operation_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn message_bindings(&self) -> Bindings {
-        self.policy.message_bindings()
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        self.policy.message_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
@@ -439,10 +439,10 @@ mod tests {
     use crate::runtime::publish::{Names, NarrowToUse};
     use crate::{PairError, PublishPolicy};
 
-    /// One binding under `protocol`, with an empty body: what it says does not matter here, only
-    /// which level it came back on.
-    fn one(protocol: &'static str) -> Bindings {
-        let body = BTreeMap::<String, String>::new();
+    /// One binding under `protocol` whose body is the channel the hook was asked about, so a
+    /// wrapper that drops a level or passes a name of its own is visible.
+    fn one(protocol: &'static str, channel: &str) -> Bindings {
+        let body = BTreeMap::from([("channel".to_owned(), channel.to_owned())]);
         Bindings::new().with(Binding::new(protocol, "0.1.0", &body).expect("a listed protocol"))
     }
 
@@ -461,16 +461,16 @@ mod tests {
             <MemoryPublish as PublishPolicy<ConnectedMemoryBroker>>::pair(MemoryPublish, connected)
         }
 
-        fn channel_bindings(&self) -> Bindings {
-            one("nats")
+        fn channel_bindings(&self, channel: &str) -> Bindings {
+            one("nats", channel)
         }
 
-        fn operation_bindings(&self) -> Bindings {
-            one("kafka")
+        fn operation_bindings(&self, channel: &str) -> Bindings {
+            one("kafka", channel)
         }
 
-        fn message_bindings(&self) -> Bindings {
-            one("mqtt")
+        fn message_bindings(&self, channel: &str) -> Bindings {
+            one("mqtt", channel)
         }
 
         fn reply_address_location(&self) -> Option<&'static str> {
@@ -479,9 +479,9 @@ mod tests {
     }
 
     fn assert_forwards<P: PublishPolicy<ConnectedMemoryBroker>>(wrapper: &P) {
-        assert_eq!(wrapper.channel_bindings(), one("nats"));
-        assert_eq!(wrapper.operation_bindings(), one("kafka"));
-        assert_eq!(wrapper.message_bindings(), one("mqtt"));
+        assert_eq!(wrapper.channel_bindings("orders"), one("nats", "orders"));
+        assert_eq!(wrapper.operation_bindings("orders"), one("kafka", "orders"));
+        assert_eq!(wrapper.message_bindings("orders"), one("mqtt", "orders"));
         assert_eq!(
             wrapper.reply_address_location(),
             Some("$message.header#/reply-to"),
@@ -489,7 +489,8 @@ mod tests {
     }
 
     /// Every step a mount chain adds wraps the policy, and none of them may swallow what the
-    /// policy says about itself: the document is built from the wrapper the chain ended on.
+    /// policy says about itself: the document is built from the wrapper the chain ended on. The
+    /// resolved destination travels the same way, unchanged by any step.
     #[test]
     fn every_wrapper_forwards_what_the_leaf_policy_says() {
         assert_forwards(&RawReplyWiring::new(Described));

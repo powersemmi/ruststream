@@ -626,11 +626,14 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
     }
 
     /// What this slot contributes to the generated document: the destinations its marker
-    /// declares, and what its policy and codec say about them.
+    /// declares, and what its policy and codec say about each of them.
+    ///
+    /// The policy answers once per destination, because a binding may carry the channel's own
+    /// name and a dictionary names several.
     ///
     /// Read before [`wire`](Self::wire) consumes the attachment, because the slot's policy is
     /// what answers and wiring moves it. Nothing here runs per message.
-    pub(crate) fn describe<C, Surface>(&self) -> (Vec<Cow<'static, str>>, PublishDescription)
+    pub(crate) fn describe<C, Surface>(&self) -> Vec<(Cow<'static, str>, PublishDescription)>
     where
         M: OutSlot,
         C: ConnectedBroker,
@@ -638,18 +641,20 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
         Enc: SlotCodec<Surface>,
         <Enc as SlotCodec<Surface>>::Codec: Codec,
     {
-        let channels = M::outgoing()
+        M::outgoing()
             .into_iter()
-            .map(|entry| entry.channel)
-            .collect();
-        // A slot publishes where its dictionary says, so no transform on it names a reply
-        // address: that question belongs to the reply position.
-        let description = PublishDescription::of::<C, Policy>(
-            &self.policy,
-            Some(<<Enc as SlotCodec<Surface>>::Codec as Codec>::CONTENT_TYPE),
-            false,
-        );
-        (channels, description)
+            .map(|entry| {
+                // A slot publishes where its dictionary says, so no transform on it names a reply
+                // address: that question belongs to the reply position.
+                let description = PublishDescription::of::<C, Policy>(
+                    &self.policy,
+                    Some(<<Enc as SlotCodec<Surface>>::Codec as Codec>::CONTENT_TYPE),
+                    false,
+                    entry.channel.as_ref(),
+                );
+                (entry.channel, description)
+            })
+            .collect()
     }
 
     /// Hands back the pieces without folding them: what the deferred-retry position resolves

@@ -1485,29 +1485,29 @@ mod publish_bindings {
     struct Exports;
 
     #[derive(Serialize)]
-    struct AmqpChannel {
-        exchange: &'static str,
+    struct SnsChannel {
+        name: String,
     }
 
     #[derive(Serialize)]
-    struct AmqpOperation {
-        mandatory: bool,
+    struct SnsOperation {
+        topic: SnsChannel,
     }
 
     #[derive(Serialize)]
-    struct AmqpMessage {
+    struct SnsMessage {
         #[serde(rename = "messageType")]
         message_type: &'static str,
     }
 
     #[derive(Serialize)]
     struct NatsChannel {
-        subject: &'static str,
+        subject: String,
     }
 
     #[derive(Serialize)]
     struct SqsChannel {
-        queue: &'static str,
+        queue: String,
     }
 
     /// Builds one binding, or nothing: a policy never holds up a service over a description of
@@ -1526,12 +1526,12 @@ mod publish_bindings {
     }
 
     // --8<-- [start:policy_bindings]
-    /// A publish policy of the shape a broker crate ships: it reads its own private fields and
-    /// says what the protocol calls them.
+    /// A publish policy of the shape a broker crate ships: an SNS topic is named by its binding's
+    /// required `name`, and the hook is handed the destination the mount site resolved.
     #[derive(Clone, Copy, Default)]
-    struct ExchangePublish;
+    struct TopicPublish;
 
-    impl PublishPolicy<ConnectedMemoryBroker> for ExchangePublish {
+    impl PublishPolicy<ConnectedMemoryBroker> for TopicPublish {
         type Live = MemoryPublisher;
 
         fn pair(
@@ -1541,19 +1541,27 @@ mod publish_bindings {
             live(connected)
         }
 
-        fn channel_bindings(&self) -> Bindings {
-            one("amqp", "0.3.0", &AmqpChannel { exchange: "events" })
+        fn channel_bindings(&self, channel: &str) -> Bindings {
+            let body = SnsChannel {
+                name: channel.to_owned(),
+            };
+            one("sns", "0.1.0", &body)
         }
 
-        fn operation_bindings(&self) -> Bindings {
-            one("amqp", "0.3.0", &AmqpOperation { mandatory: true })
+        fn operation_bindings(&self, channel: &str) -> Bindings {
+            let body = SnsOperation {
+                topic: SnsChannel {
+                    name: channel.to_owned(),
+                },
+            };
+            one("sns", "0.1.0", &body)
         }
 
-        fn message_bindings(&self) -> Bindings {
-            let body = AmqpMessage {
+        fn message_bindings(&self, _channel: &str) -> Bindings {
+            let body = SnsMessage {
                 message_type: "progress",
             };
-            one("amqp", "0.3.0", &body)
+            one("sns", "0.1.0", &body)
         }
     }
     // --8<-- [end:policy_bindings]
@@ -1573,8 +1581,11 @@ mod publish_bindings {
             live(connected)
         }
 
-        fn channel_bindings(&self) -> Bindings {
-            one("nats", "0.1.0", &NatsChannel { subject: "replies" })
+        fn channel_bindings(&self, channel: &str) -> Bindings {
+            let body = NatsChannel {
+                subject: channel.to_owned(),
+            };
+            one("nats", "0.1.0", &body)
         }
 
         fn reply_address_location(&self) -> Option<&'static str> {
@@ -1597,24 +1608,18 @@ mod publish_bindings {
             live(connected)
         }
 
-        fn channel_bindings(&self) -> Bindings {
-            one(
-                "sqs",
-                "0.3.0",
-                &SqsChannel {
-                    queue: "orders-dlq",
-                },
-            )
+        fn channel_bindings(&self, channel: &str) -> Bindings {
+            let body = SqsChannel {
+                queue: channel.to_owned(),
+            };
+            one("sqs", "0.3.0", &body)
         }
 
-        fn operation_bindings(&self) -> Bindings {
-            one(
-                "sqs",
-                "0.3.0",
-                &SqsChannel {
-                    queue: "orders-dlq",
-                },
-            )
+        fn operation_bindings(&self, channel: &str) -> Bindings {
+            let body = SqsChannel {
+                queue: channel.to_owned(),
+            };
+            one("sqs", "0.3.0", &body)
         }
     }
 
@@ -1665,6 +1670,10 @@ mod publish_bindings {
 
     /// The slot's policy describes the slot's channel, its `send` operation and its messages, and
     /// the reply's policy describes the reply's: one mount site, two positions, two vocabularies.
+    ///
+    /// Each position hands its policy the destination the mount site resolved - the slot entry's
+    /// own name, the `publish("dest")` clause of the registration - so a binding whose required
+    /// field is that name can be filled.
     #[test]
     fn each_position_is_described_by_the_policy_bound_on_it() {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
@@ -1672,32 +1681,66 @@ mod publish_bindings {
             |b| {
                 b.include(respond)
                     .out(Reply, ReplyToPublish)
-                    .out(Events, ExchangePublish)
+                    .out(Events, TopicPublish)
                     .build();
             },
         );
         let value = document(&app);
 
-        let slot = &value["channels"]["chunks.progress"]["bindings"]["amqp"];
-        assert_eq!(slot["exchange"], "events");
+        let slot = &value["channels"]["chunks.progress"]["bindings"]["sns"];
+        assert_eq!(slot["name"], "chunks.progress");
         // The core writes the version, so a policy cannot ship a binding without one.
-        assert_eq!(slot["bindingVersion"], "0.3.0");
+        assert_eq!(slot["bindingVersion"], "0.1.0");
         assert_eq!(
-            value["operations"]["send_requests_chunks_progress"]["bindings"]["amqp"]["mandatory"],
-            true,
+            value["operations"]["send_requests_chunks_progress"]["bindings"]["sns"]["topic"]["name"],
+            "chunks.progress",
         );
         assert_eq!(
-            value["components"]["messages"]["Progress"]["bindings"]["amqp"]["messageType"],
+            value["components"]["messages"]["Progress"]["bindings"]["sns"]["messageType"],
             "progress",
         );
 
-        // The reply is described by its own policy, and the slot's vocabulary stays off it.
+        // The reply is described by its own policy, on the name the registration published to,
+        // and the slot's vocabulary stays off it.
         assert_eq!(
             value["channels"]["responses"]["bindings"]["nats"]["subject"],
-            "replies",
+            "responses",
         );
-        assert!(value["channels"]["responses"]["bindings"]["amqp"].is_null());
+        assert!(value["channels"]["responses"]["bindings"]["sns"].is_null());
         assert!(value["channels"]["chunks.progress"]["bindings"]["nats"].is_null());
+    }
+
+    /// One policy on all three publish positions, each handing it the destination the mount site
+    /// resolved: the registration's `publish("dest")` clause, the slot entry's own name, the
+    /// `dead_letter(..)` declaration. A binding whose required field is that name (an SNS topic,
+    /// an SQS queue) is fillable from any of them.
+    #[test]
+    fn every_position_hands_its_policy_the_destination_it_publishes_to() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(respond)
+                    .out(Reply, TopicPublish)
+                    .out(Events, TopicPublish)
+                    .dead_letter("requests.dead")
+                    .out_retry(TopicPublish)
+                    .build();
+            },
+        );
+        let value = document(&app);
+
+        assert_eq!(
+            value["channels"]["responses"]["bindings"]["sns"]["name"],
+            "responses",
+        );
+        assert_eq!(
+            value["channels"]["chunks.progress"]["bindings"]["sns"]["name"],
+            "chunks.progress",
+        );
+        assert_eq!(
+            value["channels"]["requests.dead"]["bindings"]["sns"]["name"],
+            "requests.dead",
+        );
     }
 
     /// A policy that says nothing leaves no empty objects behind.
@@ -1721,7 +1764,7 @@ mod publish_bindings {
     #[test]
     fn a_bound_token_is_described_by_the_policy_it_carries() {
         let other = MemoryBroker::new().bindable();
-        let token = other.bind(ExchangePublish);
+        let token = other.bind(TopicPublish);
         let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
             .with_broker(MemoryBroker::new(), |b| {
                 b.include(respond).out(Events, token).build();
@@ -1730,15 +1773,15 @@ mod publish_bindings {
         let value = document(&app);
 
         assert_eq!(
-            value["channels"]["chunks.progress"]["bindings"]["amqp"]["exchange"],
-            "events",
+            value["channels"]["chunks.progress"]["bindings"]["sns"]["name"],
+            "chunks.progress",
         );
         assert_eq!(
-            value["operations"]["send_requests_chunks_progress"]["bindings"]["amqp"]["mandatory"],
-            true,
+            value["operations"]["send_requests_chunks_progress"]["bindings"]["sns"]["topic"]["name"],
+            "chunks.progress",
         );
         assert_eq!(
-            value["components"]["messages"]["Progress"]["bindings"]["amqp"]["messageType"],
+            value["components"]["messages"]["Progress"]["bindings"]["sns"]["messageType"],
             "progress",
         );
     }
@@ -1767,7 +1810,7 @@ mod publish_bindings {
     }
 
     /// The dead-letter channel is a publish like any other, and the publisher named for it is
-    /// what describes it.
+    /// what describes it - on the destination the `dead_letter(..)` declaration named.
     #[test]
     fn the_dead_letter_channel_carries_the_retry_publishers_bindings() {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
@@ -1782,11 +1825,11 @@ mod publish_bindings {
 
         assert_eq!(
             value["channels"]["orders.dead"]["bindings"]["sqs"]["queue"],
-            "orders-dlq",
+            "orders.dead",
         );
         assert_eq!(
             value["operations"]["send_orders_orders_dead"]["bindings"]["sqs"]["queue"],
-            "orders-dlq",
+            "orders.dead",
         );
     }
 
@@ -1815,7 +1858,8 @@ mod publish_bindings {
     }
 
     /// A naming transform decides where each reply goes, so the channel has no address to report
-    /// and the operation says where a client reads one.
+    /// and the operation says where a client reads one. The policy is still asked about the mount
+    /// site's fallback name: that is where a delivery the transform leaves alone is answered.
     #[test]
     fn a_naming_transform_moves_the_reply_address_onto_the_operation() {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
@@ -1834,6 +1878,10 @@ mod publish_bindings {
         assert_eq!(
             value["operations"]["receive_requests"]["reply"]["address"]["location"],
             "$message.header#/reply-to",
+        );
+        assert_eq!(
+            value["channels"]["responses"]["bindings"]["nats"]["subject"],
+            "responses",
         );
     }
 
@@ -1887,7 +1935,7 @@ mod publish_bindings {
         let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
             MemoryBroker::new(),
             |b| {
-                b.include(export).out(Exports, ExchangePublish).build();
+                b.include(export).out(Exports, TopicPublish).build();
             },
         );
         let value = document(&app);
@@ -1895,8 +1943,8 @@ mod publish_bindings {
         assert!(value["components"]["messages"]["RawChunk"]["contentType"].is_null());
         // The policy still describes the channel it publishes to.
         assert_eq!(
-            value["channels"]["chunks.raw"]["bindings"]["amqp"]["exchange"],
-            "events",
+            value["channels"]["chunks.raw"]["bindings"]["sns"]["name"],
+            "chunks.raw",
         );
     }
 

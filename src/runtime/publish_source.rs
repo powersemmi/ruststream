@@ -230,18 +230,18 @@ where
     // is the one thing that does not follow: it names the scope's server, because the
     // registration's label is what the runtime knows.
     #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        <S as PublishPolicy<Connected<B2>>>::channel_bindings(&self.source)
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::channel_bindings(&self.source, channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn operation_bindings(&self) -> Bindings {
-        <S as PublishPolicy<Connected<B2>>>::operation_bindings(&self.source)
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::operation_bindings(&self.source, channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn message_bindings(&self) -> Bindings {
-        <S as PublishPolicy<Connected<B2>>>::message_bindings(&self.source)
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::message_bindings(&self.source, channel)
     }
 
     #[cfg(feature = "asyncapi")]

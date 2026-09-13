@@ -871,6 +871,16 @@ the channel it publishes to.
 --8<-- "tests/asyncapi.rs:policy_bindings"
 ```
 
+Each hook is handed the destination the mount site resolved. For a reply that is the reply type's
+own name or the registration's `publish("dest")` clause, for a slot entry its own name, for a
+dead-lettered delivery the `dead_letter("dlq")` declaration. An SNS topic and an SQS queue are
+named by the required `name` of their binding, and that name comes from here: a policy holds your
+broker's settings and never a destination. Where a transform names the destination per delivery
+the channel reports no address, and the hook is handed the mount site's fallback name instead.
+
+A descriptor's hooks take no such parameter: a subscription source knows the subscription it
+describes.
+
 The three rules hold unchanged here. One thing does not carry over: a reply has no `send` operation
 of its own, so `operation_bindings` on a reply's policy reaches no document. A slot and a
 dead-letter destination each have one.
