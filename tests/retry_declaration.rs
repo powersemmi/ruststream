@@ -690,7 +690,7 @@ async fn filtered(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 async fn a_named_destination_carries_the_copies_of_an_unaddressed_subscription() {
     let app =
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(filtered).to("sensors");
+            b.include(filtered).out_retry(MemoryPublish).to("sensors");
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -713,8 +713,8 @@ async fn a_named_destination_is_not_the_subscriptions_own_name() {
     let app =
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(filtered)
-                .to("sensors.retry")
-                .out_retry(MemoryPublish);
+                .out_retry(MemoryPublish)
+                .to("sensors.retry");
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -740,7 +740,9 @@ async fn a_named_destination_is_not_the_subscriptions_own_name() {
 async fn a_named_destination_overrides_an_addressed_descriptor() {
     let app =
         RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_on_the_copy).to("invoices.retry");
+            b.include(settle_on_the_copy)
+                .out_retry(MemoryPublish)
+                .to("invoices.retry");
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

@@ -1,0 +1,26 @@
+error[E0277]: this registration does not say where its retry copies go
+  --> tests/ui/retry_named_copies_router_without_destination.rs:40:10
+   |
+40 |         .build();
+   |          ^^^^^ the subscription descriptor of `runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>` addresses none, and nothing here names a destination
+   |
+   = help: the trait `ruststream::runtime::RetryDestinationsDeclared` is not implemented for `runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>`
+   = note: one such subscription reads many destinations (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of topics), so the descriptor names none of them
+   = note: name one with `.out_retry(policy).to("orders")`, or compose a publish transform declaring `Destination = Names`, which reads the delivery being retried and names one per delivery
+help: the trait `ruststream::runtime::RetryDestinationsDeclared` is implemented for `runtime::router::routes::RetriedRoute<Route, B, Cx>`
+  --> src/runtime/router/routes.rs
+   |
+   | / impl<Route, B: Broker, Cx> RetryDestinationsDeclared
+   | |     for RetriedRoute<Route, B, Cx, DestinationDeclared>
+   | |_______________________________________________________^
+   = note: required for `(runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>, ())` to implement `ruststream::runtime::RetryDestinationsDeclared`
+   = note: 1 redundant requirement hidden
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::RetriedRoute<runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, MemoryBroker, (), ruststream::runtime::DestinationUndeclared>, ())>` to implement `ruststream::runtime::RetryDestinationsDeclared`
+note: required by a bound in `RouterWith::<Mount, R, Def, Attach, Last>::build`
+  --> src/runtime/router/builders.rs
+   |
+   |     pub fn build(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
+   |            ----- required by a bound in this associated function
+   |     where
+   |         Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RouterWith::<Mount, R, Def, Attach, Last>::build`

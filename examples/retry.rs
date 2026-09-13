@@ -139,12 +139,13 @@ fn app() -> RustStream {
         // --8<-- [end:declaration]
         // --8<-- [start:named]
         // The descriptor of this subscription addresses nothing, so the mount site names where a
-        // copy goes. `.to(name)` comes before the publisher: a scope's registration commits when
-        // the statement ends, so the chain has to say it before it can pass through.
+        // copy goes: `.to(name)` follows the publisher it belongs to, and naming the publisher is
+        // what such a registration owes.
         b.include(reconcile_filtered)
-            .to("payments.retry")
             .max_attempts(nonzero!(5u32))
-            .dead_letter("payments.dead");
+            .dead_letter("payments.dead")
+            .out_retry(Publish)
+            .to("payments.retry");
         // --8<-- [end:named]
         // Every registration already has a publisher for its copies, taken from the broker's
         // default policy. Naming one replaces it: another policy, another codec, a transform.

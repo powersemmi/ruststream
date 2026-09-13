@@ -34,6 +34,7 @@ use crate::runtime::slot::{
 };
 
 use super::builder::RouterBroker;
+use super::routes::RetryDestinationsDeclared;
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
 /// it grew on. Machinery; never named directly.
@@ -289,12 +290,17 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// Names where the copies of the position named last go: a plain destination, as a reply's
     /// is, and a name template does not resolve here because nothing binds its placeholders.
     ///
-    /// Only the deferred-retry position takes one. A descriptor that addresses its own
-    /// subscription already answers, and this overrides that answer; a descriptor that addresses
-    /// nothing - a wildcard subject, an MQTT filter, a pattern, a list of topics - has no answer,
-    /// and then either this call or a transform that names the destination per delivery has to
-    /// give one, or the registration does not compile. The two are mutually exclusive, as a
-    /// declared reply and a naming transform are.
+    /// Only the deferred-retry position takes one, and only right after `out_retry(policy)`
+    /// named it, so a reader sees what the destination belongs to. A descriptor that addresses
+    /// its own subscription already answers, and this overrides that answer; a descriptor that
+    /// addresses nothing - a wildcard subject, an MQTT filter, a pattern, a list of topics - has
+    /// no answer, so naming the publisher and then the destination is what such a registration
+    /// owes. The other way is a transform that names the destination per delivery, and the two
+    /// are mutually exclusive, as a declared reply and a naming transform are.
+    ///
+    /// A `Router` chain refuses a registration that names neither at `.build()`. A scope's
+    /// registration commits when the statement ends, so there the refusal is the subscription's
+    /// at startup.
     ///
     /// # Examples
     ///
@@ -421,8 +427,25 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
 
     /// Adds the registration to the router, with whatever the chain attached - the broker's own
     /// [`DefaultPublish`](crate::DefaultPublish) policy for a reply no `.out(Reply, ..)` named.
+    ///
+    /// This is also where a registration that bound the deferred-retry position over a
+    /// subscription which addresses nothing, and then named no destination for the copies, is
+    /// refused.
     #[allow(clippy::type_complexity)] // the commit's own output; an alias would hide the router
     pub fn build(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
+    where
+        Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+    {
+        self.commit_chain()
+    }
+
+    /// Commits the chain without asking whether every registration named a destination.
+    ///
+    /// A scope's guard commits when the statement ends, so the chain there passes through no
+    /// state that could carry the question: `.to(name)` is written after `out_retry(policy)`, and
+    /// by then the guard would already have had to be committable. That surface takes the startup
+    /// refusal instead, and this is the commit it uses.
+    pub(crate) fn commit_chain(self) -> <Attach as RouterCommit<Mount, R, Def>>::Out
     where
         Attach: RouterCommit<Mount, R, Def>,
     {

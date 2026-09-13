@@ -101,10 +101,11 @@ fn app() -> RustStream {
         // --8<-- [end:declaration]
         // --8<-- [start:named]
         // Where a subscription's descriptor addresses nothing - a wildcard, a filter, a pattern -
-        // the mount site names where a copy goes, before the publisher.
+        // the mount site names where a copy goes, right after the publisher it belongs to.
         b.include(subscriber("payments.settled", Reconcile).build())
-            .to("payments.retry")
-            .max_attempts(nonzero!(5u32));
+            .max_attempts(nonzero!(5u32))
+            .out_retry(Publish)
+            .to("payments.retry");
         // --8<-- [end:named]
         // Batches dispatch per batch rather than per delivery, and the batch input is what says
         // so; the batch size is the one parameter the mount owes the broker. Every registration

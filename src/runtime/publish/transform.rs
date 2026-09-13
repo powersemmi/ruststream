@@ -239,9 +239,9 @@ impl<Taken: NamingUntaken> FitsTaken<Taken> for Names {}
              destination",
     note = "one such subscription reads many destinations (a wildcard subject, an MQTT filter, a \
             Pulsar pattern, a list of topics), so the descriptor names none of them",
-    note = "name a fixed destination - `.to(\"orders\")`, which a scope's chain takes before \
-            `out_retry(policy)` - or compose a publish transform declaring `Destination = Names`, \
-            which reads the delivery being retried and names one per delivery"
+    note = "name a fixed destination - `.out_retry(policy).to(\"orders\")` - or compose a publish \
+            transform declaring `Destination = Names`, which reads the delivery being retried and \
+            names one per delivery"
 )]
 pub trait DestinationSettled<Stack> {}
 
