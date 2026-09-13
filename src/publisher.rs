@@ -209,8 +209,9 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     ///
     /// The publish-side mirror of
     /// [`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings), and
-    /// the same three rules bound it. The value is computed from this policy alone, because the
-    /// document is built before anything connects. A credential never goes in, for the reason
+    /// the same three rules bound it. The value is computed from the policy and the name it is
+    /// handed, because the document is built before anything connects, so a Kafka topic's real
+    /// partition count cannot come from here. A credential never goes in, for the reason
     /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
     /// binding for goes in [`Binding::extension`](crate::asyncapi::Binding::extension).
     ///
