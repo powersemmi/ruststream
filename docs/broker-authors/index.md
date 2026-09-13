@@ -841,7 +841,7 @@ document no tool can read. `Bindings` is empty by default: a descriptor that say
 no document.
 
 The server level is a field rather than a method, because a server is described once per broker:
-`ServerSpec::new(host, protocol).with_bindings(..)` in your `DescribeServer` impl.
+`ServerSpec::new(host, protocol).bindings(..)` in your `DescribeServer` impl.
 
 Three rules bound what belongs in a binding.
 

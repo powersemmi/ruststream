@@ -755,7 +755,7 @@ MQTT 的 QoS。规范把这些叫做**绑定**，填写它们的是你的描述�
 没有工具读得懂的文档。`Bindings` 默认为空：什么也不说的描述符不会改变任何文档。
 
 服务器这一层是字段而不是方法，因为一个 Broker 只描述一次服务器：在你的 `DescribeServer` 实现里写
-`ServerSpec::new(host, protocol).with_bindings(..)`。
+`ServerSpec::new(host, protocol).bindings(..)`。
 
 绑定里应该放什么，由三条规则限定。
 

@@ -852,7 +852,7 @@ impl ContextField for Partition {
 ничего в документе не меняет.
 
 Уровень сервера - это поле, а не метод: сервер описывается один раз на брокера.
-`ServerSpec::new(host, protocol).with_bindings(..)` в вашей реализации `DescribeServer`.
+`ServerSpec::new(host, protocol).bindings(..)` в вашей реализации `DescribeServer`.
 
 Что уместно в биндинге, ограничивают три правила.
 

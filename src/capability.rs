@@ -687,7 +687,7 @@ impl ServerSpec {
     ///
     /// let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id: "orders".into() })?;
     /// let spec = ServerSpec::new("mqtt.example.com:1883", "mqtt")
-    ///     .with_bindings(Bindings::new().with(binding));
+    ///     .bindings(Bindings::new().with(binding));
     ///
     /// assert!(!spec.bindings.is_empty());
     /// # Ok(())
@@ -695,7 +695,7 @@ impl ServerSpec {
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    pub fn with_bindings(mut self, bindings: Bindings) -> Self {
+    pub fn bindings(mut self, bindings: Bindings) -> Self {
         self.bindings = bindings;
         self
     }

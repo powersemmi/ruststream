@@ -1354,7 +1354,7 @@ mod protocol_bindings {
         let app = RustStream::new(AppInfo::new("orders", "1.0.0")).server(
             "mqtt",
             ServerSpec::new("mqtt.example.com:1883", "mqtt")
-                .with_bindings(Bindings::new().with(binding)),
+                .bindings(Bindings::new().with(binding)),
         );
         let json = build_spec(&app)
             .to_json()
