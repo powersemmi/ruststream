@@ -34,6 +34,10 @@ concurrency:
 jobs:
   build:
     name: Build site
+    # A pull request against `main` runs on its own; one against another branch runs under the
+    # `run-ci` label, as in the CI workflow.
+    if: >-
+      github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -63,6 +67,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && !contains(github.event.pull_request.labels.*.name, 'docs-single-language')
+      && (github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
