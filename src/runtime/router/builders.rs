@@ -25,7 +25,9 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 
-use crate::runtime::retry::{CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, Retry};
+use crate::runtime::retry::{
+    CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DestinationLast, DestinationOpen, Retry,
+};
 use crate::runtime::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
     Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
@@ -280,6 +282,57 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         RouterWith::new(
             self.def,
             self.attach.declare_dead_letter(destination.into()),
+            self.router,
+        )
+    }
+
+    /// Names where the copies of the position named last go: a plain destination, as a reply's
+    /// is, and a name template does not resolve here because nothing binds its placeholders.
+    ///
+    /// Only the deferred-retry position takes one. A descriptor that addresses its own
+    /// subscription already answers, and this overrides that answer; a descriptor that addresses
+    /// nothing - a wildcard subject, an MQTT filter, a pattern, a list of topics - has no answer,
+    /// and then either this call or a transform that names the destination per delivery has to
+    /// give one, or the registration does not compile. The two are mutually exclusive, as a
+    /// declared reply and a naming transform are.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
+    /// use ruststream::subscriber;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn reconcile(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::retry()
+    /// }
+    ///
+    /// fn routes() -> impl RouterDef<MemoryBroker> {
+    ///     Router::<MemoryBroker>::new()
+    ///         .include(reconcile)
+    ///         .out_retry(MemoryPublish)
+    ///         .to("orders.retry")
+    ///         .build()
+    /// }
+    /// # }
+    /// ```
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn to(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> RouterWith<Mount, R, Def, <Attach as DestinationLast<Last>>::Out, Last>
+    where
+        Attach: DestinationLast<Last, Step: DestinationOpen>,
+    {
+        RouterWith::new(
+            self.def,
+            self.attach.destination_last(destination.into()),
             self.router,
         )
     }

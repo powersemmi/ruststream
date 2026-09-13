@@ -177,8 +177,8 @@ impl<Offer: NamingOffered<By>, Taken: NamingUntaken, By> FitsOffer<Offer, Taken,
             answer many deliveries and carry none of their headers, a slot marker offers the \
             right only when every type in its `#[publishes(..)]` dictionary leaves its destination \
             open - one with no dictionary, `DefaultSlot` among them, never offers it - and the \
-            `Retry` slot publishes to the subscription's own redelivery address, which no mount \
-            site chooses"
+            `Retry` position offers it only where the subscription's descriptor addresses no \
+            copies and no `.to(name)` has spoken"
 )]
 pub trait NamingOffered<By> {}
 
@@ -195,6 +195,59 @@ impl<By> NamingOffered<By> for Names {}
 pub trait NamingUntaken {}
 
 impl NamingUntaken for Reads {}
+
+/// Whether a destination use names the destination, as a value the runtime can read.
+///
+/// The type-level answer is what the mount site is checked against; this is the same answer
+/// carried to startup, where a position that names per delivery needs no destination of its own.
+#[doc(hidden)]
+pub trait NamesDestination {
+    /// Whether a transform stack declaring this use names the destination.
+    const NAMES: bool;
+}
+
+impl NamesDestination for Reads {
+    const NAMES: bool = false;
+}
+
+impl NamesDestination for Names {
+    const NAMES: bool = true;
+}
+
+/// Whether one transform may still name the destination, given what the transforms before it on
+/// the same position did.
+///
+/// The half of [`FitsOffer`] that does not need the position's offer, for a stack checked in one
+/// piece at the mount rather than element by element as it is composed.
+#[doc(hidden)]
+pub trait FitsTaken<Taken> {}
+
+impl<Taken> FitsTaken<Taken> for Reads {}
+
+impl<Taken: NamingUntaken> FitsTaken<Taken> for Names {}
+
+/// Whether a registration says where its copies go, read off what the position offers and what
+/// the transforms on it declared.
+///
+/// A position that offers nothing has the destination declared already, so any stack settles it;
+/// one that offers the naming right has nothing else to fall back on, so a stack that only reads
+/// leaves the destination unsaid. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration does not say where its retry copies go",
+    label = "its subscription descriptor cannot address them, and nothing here names a \
+             destination",
+    note = "one such subscription reads many destinations (a wildcard subject, an MQTT filter, a \
+            Pulsar pattern, a list of topics), so the descriptor names none of them",
+    note = "name a fixed destination - `.to(\"orders\")`, which a scope's chain takes before \
+            `out_retry(policy)` - or compose a publish transform declaring `Destination = Names`, \
+            which reads the delivery being retried and names one per delivery"
+)]
+pub trait DestinationSettled<Stack> {}
+
+impl<Stack> DestinationSettled<Stack> for Reads {}
+
+impl DestinationSettled<Self> for Names {}
 
 /// The destination use of a whole transform stack: [`Names`] as soon as one element names.
 /// Machinery behind the `.transform(..)` step's own check.

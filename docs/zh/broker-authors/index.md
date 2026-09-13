@@ -70,11 +70,14 @@ Broker 还可以额外持有一个由 `connect` 填充的共享单元，或者�
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 
-    // 默认 None。按订阅名发布就能到达用这个名字打开的订阅时，把名字本身返回：
-    // subject、topic、流和队列名通常就是这样。
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
+    // 按名字订阅时，重试副本由谁发布、由谁说出它的地址。按订阅名发布就能到达用这个
+    // 名字打开的订阅时（subject、topic、流、队列名通常如此）答 AddressedCopies，
+    // 这时名字本身就是地址。不是这样就答 NamedCopies：MQTT 的过滤器读很多 topic，
+    // 一个也说不出来。
+    type Copies: CopyPath;
+
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
 ```
 
@@ -84,12 +87,12 @@ pub trait Subscribe: ConnectedBroker {
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` 报出的是运行时发布重试副本所用的地址。按名字订阅的源声明了它的副本由运行时
-发布，因此这个回答决定 `#[subscriber("orders")]` 在你的 Broker 上能不能起来：订阅说不出副本按哪个
-地址能到达它，这条注册就起不来，并报出是哪条订阅、以及这个方法。
+`type Copies` 是按名字订阅的源在你的 Broker 上报出的答案，`#[subscriber("orders")]` 怎么重试由它
+决定：答 `AddressedCopies` 时名字本身就是地址，别的什么也不用写；答 `NamedCopies` 时副本发往哪里
+由挂载处说出来。
 
-订阅名不是发布地址的地方，保留默认值。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic，
-那里改由描述符回答。
+订阅名不是发布地址的地方，答 `NamedCopies`。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的
+topic；MQTT 的过滤器读很多 topic。更完整的答案由你自己的描述符给出。
 
 ### `Subscriber`
 
@@ -267,8 +270,8 @@ pub trait DefaultPublish: ConnectedBroker {
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
 
-    // 这条订阅的重试所用的副本由谁发布：RuntimeCopies 表示由本进程发布，
-    // BrokerMoves 表示由服务端或客户端库自己搬走投递。
+    // 这条订阅的重试所用的副本由谁发布、由谁说出它的地址：AddressedCopies、
+    // NamedCopies 或 BrokerMoves。
     type Copies: CopyPath;
 
     fn name(&self) -> &str;
@@ -278,9 +281,12 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     // dead_letter(..)，如果 Broker 有对应的机制，就把它们用到即将打开的订阅上。
     fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
 
-    // 默认 Ok(None)。回答发布按哪个地址能重新到达这条订阅；只有活连接知道时，
-    // 就去问 Broker。声明了 RuntimeCopies 的描述符必须给出答案。
-    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
+}
+
+// AddressedCopies 的另一半：地址是类型的属性，而不是启动时才检查的答案。只有活连接
+// 知道时，就去问 Broker。
+pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies> {
+    async fn redelivery_address(&self, connected: &C) -> Result<RedeliveryAddress, C::Error>;
 }
 ```
 
@@ -298,17 +304,28 @@ Broker 上。
 
 ### 谁来发布重试副本 { #who-publishes-a-retry-copy }
 
-每个描述符用 `type Copies` 在两者中声明一个。
+每个描述符用 `type Copies` 在三者中声明一个。
 
-`RuntimeCopies` 表示重试需要的副本由本进程发布。运行时为这种描述符上的每条注册，从 Broker 的
-`DefaultPublish` 策略绑定一个重试发布者，挂载处可以用 `.out_retry(policy)` 把它替掉。subject、
-topic、流和队列 - 凡是服务自己能发布回去的东西，答案都是它。在没有 `DefaultPublish` 的 Broker 上
-声明它，代码编译不过。
+`AddressedCopies` 表示重试需要的副本由本进程发布，而且描述符知道它们发往哪里。它在
+`SubscriptionSource` 旁边再实现 `RedeliveryAddressed`，于是地址是类型的属性，而不是启动时才检查
+的答案。subject、topic、流和队列的答案都是它：一条订阅，一个服务自己能发布回去的地址。
 
-`BrokerMoves` 表示投递由服务端或客户端库自己搬走：带 `x-delivery-limit` 和 `x-dead-letter-exchange`
-的 quorum 队列、带死信策略的 Pub/Sub 订阅、SQS 的 redrive 策略、带 `DeadLetterPolicy` 的 Pulsar
-消费者。这时服务本身什么也不发布，因此在这个描述符的任何挂载处写 `.out_retry(..)` 都是编译错误，
-错误会报出这个描述符。
+`NamedCopies` 表示副本由本进程发布，但描述符给不出地址：带通配符的 subject、MQTT 的过滤器、
+Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由挂载处说出一个 - 用 `.to(name)` 固定
+下来，或者用发布变换为每次投递各自命名。
+
+`BrokerMoves` 表示投递由服务端或客户端库自己搬走：带 `x-delivery-limit` 和
+`x-dead-letter-exchange` 的 quorum 队列、带死信策略的 Pub/Sub 订阅、SQS 的 redrive 策略、带
+`DeadLetterPolicy` 的 Pulsar 消费者。这时服务本身什么也不发布，因此在这个描述符的任何挂载处写
+`.out_retry(..)` 都是编译错误，错误会报出这个描述符。
+
+前两者都会为每条注册从 Broker 的 `DefaultPublish` 策略绑定一个重试发布者，所以在没有
+`DefaultPublish` 的 Broker 上声明它们中的任何一个，代码都编译不过。
+
+`Subscribe` 为按名字订阅的形式声明同一件事：那里的 `type Copies` 就是
+`#[subscriber("orders")]` 在你的 Broker 上报出的答案。按订阅名发布就能到达用这个名字打开的订阅
+时答 `AddressedCopies` - subject、topic、流和队列名通常如此 - 这时名字本身就是地址，别的什么也不
+用写。
 
 原生与否取决于字段的取值而不是类型时 - 没有 `.delay(..)` 的 RabbitMQ 队列并没有自己的延迟投递 -
 把这条路径保持开放。
@@ -321,8 +338,8 @@ topic、流和队列 - 凡是服务自己能发布回去的东西，答案都是
 
 ### 重试副本发往哪里 { #where-a-retry-copy-is-published }
 
-没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往哪
-里，由你的描述符说出来。
+没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
+哪里，由声明了 `AddressedCopies` 的描述符说出来。
 
 ```rust
 --8<-- "src/memory/mod.rs:source"
@@ -331,14 +348,12 @@ topic、流和队列 - 凡是服务自己能发布回去的东西，答案都是
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
 topic，Redis 上是流的键。
 
-在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API 问
-出来。运行时只在启动时问一次。
+在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API
+问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答案。
 
-声明了 `RuntimeCopies` 的描述符必须给出答案：描述符返回 `None` 时，它上面的注册起不来，并报出是哪
-条订阅、哪个描述符，以及这个方法。否则 `retry_after` 在压力下就发布到虚无，那是一条丢失的消息。发布
-根本到不了你的订阅时，声明 `BrokerMoves`。
-
-`harness::lifecycle` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条订阅。
+`harness::redelivery_address` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条
+订阅。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由 `harness::lifecycle`
+覆盖。
 
 ### 用一个字符串命名一种订阅方式
 

@@ -88,8 +88,8 @@ pub use schema::{
 };
 pub use subscriber::Subscriber;
 pub use subscription::{
-    BrokerMoves, CopyPath, FromName, Name, RedeliveryAddress, RetryDeclaration, RuntimeCopies,
-    StartAt, SubscriptionSource, Unnamed,
+    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 

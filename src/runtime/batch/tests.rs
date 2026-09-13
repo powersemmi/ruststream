@@ -14,6 +14,7 @@ use super::super::input::Decoded;
 use super::*;
 use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
+use crate::runtime::redelivery::bare_retry_publisher;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
@@ -374,7 +375,7 @@ async fn a_refused_ack_does_not_abort_the_batch() {
         batch,
         BatchResult::Uniform(HandlerOutcome::ack()),
         "refusing",
-        &Delivery::empty(),
+        &Delivery::<()>::empty(),
     )
     .await;
 
@@ -398,7 +399,7 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
         batch,
         BatchResult::PerElement(vec![HandlerOutcome::ack()]),
         "short-batch",
-        &Delivery::empty(),
+        &Delivery::<()>::empty(),
     )
     .await;
     drop(guard);
@@ -440,7 +441,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
         vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
         BatchResult::Uniform(HandlerOutcome::ack()),
         "diag-batch",
-        &Delivery::empty(),
+        &Delivery::<()>::empty(),
     )
     .await;
     drop(guard);
@@ -647,8 +648,11 @@ async fn deferred_copies(
 async fn a_uniform_batch_retry_after_defers_a_republish() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
         HandlerOutcome::retry_after(DEFER)
@@ -677,8 +681,11 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
 async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
         vec![HandlerOutcome::retry_after(DEFER), HandlerOutcome::ack()]
@@ -705,8 +712,11 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
 async fn a_deferred_decode_rejection_is_republished() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
         HandlerOutcome::ack()
@@ -756,8 +766,11 @@ impl<'p> SliceHandler<Frame<'p>> for DeferFrames {
 async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
     let broker = MemoryBroker::new();
     let mut sub = broker.subscribe("orders");
-    let delivery =
-        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(broker.publisher()),
+        "orders",
+        TaskTracker::new(),
+    );
 
     // The middle element is empty, which `Frame` refuses to construct from.
     let handler = DeserializedBatch::<_, Frame<'static>, _>::over(DeferFrames)

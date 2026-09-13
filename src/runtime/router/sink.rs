@@ -16,7 +16,7 @@ use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::redelivery::{
-    RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
+    CopyPathAddress, RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
 };
 
 use super::SourceMessage;
@@ -74,7 +74,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
     ) where
         S: Subscriber + Send + 'static,
-        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + Sync + 'static,
         H: Handler<S::Message, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
@@ -110,12 +110,13 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
-        setup: RetrySetup<B>,
+        setup: RetrySetup<B, Cx>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
+        S::Copies: CopyPathAddress<Connected<B>, S>,
         SourceMessage<B, S>: Send + 'static,
-        Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + 'static,
+        Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
         H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
@@ -123,9 +124,14 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.starters.push(Box::new(
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
-                            .await?;
+                    let (subscriber, delivery) = open_subscription::<B, _, _>(
+                        source,
+                        connected.as_ref(),
+                        &scope,
+                        &name,
+                        setup,
+                    )
+                    .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     // Turbofish: the adapter handlers are generic over the batch context, so
                     // the pushed definition's own context names it.
@@ -148,12 +154,13 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
-        setup: RetrySetup<B>,
+        setup: RetrySetup<B, Cx>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
+        S::Copies: CopyPathAddress<Connected<B>, S>,
         SourceMessage<B, S>: Send + Sync + 'static,
-        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + 'static,
+        Cx: crate::BuildContext<SourceMessage<B, S>> + Send + Sync + 'static,
         H: Handler<SourceMessage<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
@@ -161,9 +168,14 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.starters.push(Box::new(
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
-                            .await?;
+                    let (subscriber, delivery) = open_subscription::<B, _, _>(
+                        source,
+                        connected.as_ref(),
+                        &scope,
+                        &name,
+                        setup,
+                    )
+                    .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch_workers(
                         subscriber, handler, token, name, state, delivery, failure, workers,
@@ -196,23 +208,29 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
-        setup: RetrySetup<B>,
+        setup: RetrySetup<B, HandlerCx>,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
+        Source::Copies: CopyPathAddress<Connected<B>, Source>,
         SourceMessage<B, Source>: Send + 'static,
         MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
         HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
-        HandlerCx: crate::BuildBatchContext<SourceMessage<B, Source>> + Send + 'static,
+        HandlerCx: crate::BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
         NewHandler: BatchHandler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
-                            .await?;
+                    let (subscriber, delivery) = open_subscription::<B, _, _>(
+                        source,
+                        connected.as_ref(),
+                        &scope,
+                        &name,
+                        setup,
+                    )
+                    .await?;
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;
                     let failure = DispatchFailure::new(policies, shutdown);

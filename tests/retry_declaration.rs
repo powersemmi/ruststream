@@ -21,13 +21,14 @@ use common::Order;
 use futures::{Stream, StreamExt};
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, ForSlot, HandlerOutcome, Outgoing, PublishTransform, RETRY_COUNT_HEADER, Reads,
-    RustStream, SlotContext,
+    AppInfo, ForReply, HandlerOutcome, Names, Outgoing, PublishContext, PublishTransform,
+    RETRY_COUNT_HEADER, Reads, Router, RustStream,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    AckError, BrokerMoves, HeaderMap, IncomingMessage, RedeliveryAddress, RetryDeclaration,
-    RuntimeCopies, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
+    AckError, AddressedCopies, BrokerMoves, HeaderMap, IncomingMessage, NamedCopies,
+    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, Subscribe, Subscriber,
+    SubscriptionSource, nonzero, subscriber,
 };
 use serde::Serialize;
 
@@ -36,6 +37,14 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 /// The header a [`Counted`] delivery reports its broker-side delivery count from, so a test can
 /// hand a delivery the count a real transport would have given it.
 const DELIVERY_COUNT: &str = "x-delivery-count";
+
+/// The concrete topic a delivery came in on, as a header contract, for a wildcard subscription's
+/// naming transform to read back.
+#[derive(Debug, Serialize)]
+struct Routed {
+    #[serde(rename = "x-topic")]
+    topic: &'static str,
+}
 
 /// The same count as a header contract, for the harness publish that plants it.
 #[derive(Debug, Serialize)]
@@ -114,7 +123,7 @@ impl<Mode> Queue<Mode> {
 
 impl<C: Subscribe, Mode: DeliveryShape> SubscriptionSource<C> for Queue<Mode> {
     type Subscriber = ShapedSubscriber<C::Subscriber, Mode>;
-    type Copies = RuntimeCopies;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.name
@@ -126,14 +135,16 @@ impl<C: Subscribe, Mode: DeliveryShape> SubscriptionSource<C> for Queue<Mode> {
             _mode: PhantomData,
         })
     }
+}
 
+impl<C: Subscribe, Mode: DeliveryShape> RedeliveryAddressed<C> for Queue<Mode> {
     // One subject is both ends of the bus, so no lookup stands between the descriptor and the
     // answer.
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
-        ready(Ok(Some(RedeliveryAddress::new(self.name))))
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
 
@@ -229,16 +240,21 @@ async fn never_ready_counted(order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-/// Stamps every message leaving the slot it is mounted on with that slot's name.
+/// Stamps every copy with the subscription the delivery it copies came from.
 #[derive(Debug, Clone, Copy)]
-struct StampSlot;
+struct StampSource;
 
-impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
-            .insert("x-left-through", cx.slot().to_owned());
+            .insert("x-retried-from", cx.name().to_owned());
     }
 }
 
@@ -408,7 +424,7 @@ async fn the_declaration_composes_with_the_named_publisher() {
                 .max_attempts(nonzero!(2u32))
                 .dead_letter("orders.dead")
                 .out_retry(MemoryPublish)
-                .transform(StampSlot);
+                .transform(StampSource);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -425,7 +441,7 @@ async fn the_declaration_composes_with_the_named_publisher() {
     tb.broker::<MemoryBroker>()
         .published::<Order>("orders.dead")
         .assert_called_once()
-        .with_header("x-left-through", "Retry");
+        .with_header("x-retried-from", "orders");
 }
 
 /// Where the transport counts its own deliveries, that count is what the cap reads: a delivery
@@ -632,4 +648,196 @@ async fn a_native_delayed_redelivery_stands_below_the_cap() {
     tb.broker::<MemoryBroker>()
         .published::<Order>("parcels.dead")
         .assert_not_called();
+}
+
+/// A subscription that reads many destinations and addresses none of them: a filter, a wildcard,
+/// a pattern. The mount site is what names where a copy goes.
+#[derive(Debug, Clone)]
+struct Filter {
+    name: &'static str,
+}
+
+impl<C: Subscribe> SubscriptionSource<C> for Filter {
+    type Subscriber = ShapedSubscriber<C::Subscriber, Uncounted>;
+    type Copies = NamedCopies;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+        Ok(ShapedSubscriber {
+            inner: connected.subscribe(self.name).await?,
+            _mode: PhantomData,
+        })
+    }
+}
+
+/// Asks to come back once, then settles.
+#[subscriber(Filter { name: "sensors" })]
+async fn filtered(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let _ = order.id;
+    if ctx.headers().get_str(RETRY_COUNT_HEADER).is_none() {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// The destination the mount site names is where the copies go, and the handler reads them back
+/// from it.
+#[tokio::test(start_paused = true)]
+async fn a_named_destination_carries_the_copies_of_an_unaddressed_subscription() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(filtered).to("sensors");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 20 })
+        .to("sensors")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("sensors")
+        .assert_called(2);
+}
+
+/// The destination names where the copies go, not where the subscription reads: a copy of a
+/// delivery on the filter goes to the one subject the mount site named.
+#[tokio::test(start_paused = true)]
+async fn a_named_destination_is_not_the_subscriptions_own_name() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(filtered)
+                .to("sensors.retry")
+                .out_retry(MemoryPublish);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 21 })
+        .to("sensors")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("sensors")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("sensors.retry")
+        .assert_called_once()
+        .with(&Order { id: 21 });
+}
+
+/// A descriptor that addresses its own subscription answers for the copies, and `.to(name)`
+/// overrides that answer.
+#[tokio::test(start_paused = true)]
+async fn a_named_destination_overrides_an_addressed_descriptor() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(settle_on_the_copy).to("invoices.retry");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 22 })
+        .to("invoices")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    // The copy went to the override, so the subscription never saw it again.
+    tb.broker::<MemoryBroker>()
+        .subscriber("invoices")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("invoices.retry")
+        .assert_called_once()
+        .with(&Order { id: 22 });
+}
+
+/// Names the destination per delivery, from a header the delivery carries: what a wildcard
+/// subscription needs, and what only a transform reading the delivery can do.
+#[derive(Debug, Clone, Copy)]
+struct ToOriginalTopic;
+
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ToOriginalTopic {
+    type Destination = Names;
+
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
+        let topic = cx
+            .headers()
+            .get_str("x-topic")
+            .unwrap_or_else(|| cx.name())
+            .to_owned();
+        out.set_name(topic);
+    }
+}
+
+/// A transform on the position names where each copy goes, reading the delivery it is a copy of.
+/// A router chain carries it, because its terminal is `.build()`.
+#[tokio::test(start_paused = true)]
+async fn a_naming_transform_sends_each_copy_to_the_delivery_s_own_topic() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include_router(
+                Router::<MemoryBroker>::new()
+                    .include(filtered)
+                    .out_retry(MemoryPublish)
+                    .transform(ToOriginalTopic)
+                    .build(),
+            );
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers(
+            "sensors",
+            &Order { id: 23 },
+            &Routed {
+                topic: "sensors.north",
+            },
+        )
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    // The copy went to the topic the delivery named, not to the filter the subscription reads.
+    tb.broker::<MemoryBroker>()
+        .subscriber("sensors")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("sensors.north")
+        .assert_called_once()
+        .with(&Order { id: 23 });
+}
+
+/// A registration on a descriptor that addresses nothing, with no destination of its own, refuses
+/// to start: its copies would go nowhere. The mount chain refuses the same mistake at compile
+/// time wherever its terminal is a call; a scope's guard commits when the statement ends, so this
+/// is where the refusal lands there.
+#[tokio::test]
+async fn an_unnamed_destination_on_an_unaddressed_descriptor_refuses_to_start() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(filtered);
+        });
+
+    let failed = TestApp::start(app)
+        .await
+        .expect_err("a registration whose copies go nowhere must not start");
+    let message = failed.to_string();
+    assert!(message.contains("sensors"), "{message}");
+    assert!(message.contains("NamedCopies"), "{message}");
+    assert!(message.contains(".to("), "{message}");
 }

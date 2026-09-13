@@ -22,7 +22,7 @@ use opentelemetry::{KeyValue, global};
 use serde::de::DeserializeOwned;
 use tracing::{error, warn};
 
-use crate::IncomingMessage;
+use crate::{BuildBatchContext, IncomingMessage};
 
 use super::context::Context;
 use super::dispatch::{Delivery, Workers, settle_outcome};
@@ -364,7 +364,7 @@ where
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Send + Sync,
     Inner: SliceHandler<Input::Owned, C, S>,
-    C: Send + Sync,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
@@ -425,7 +425,7 @@ where
     M: IncomingMessage,
     F: Deserialized + Send + Sync + 'static,
     Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
-    C: Send + Sync,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
@@ -474,13 +474,16 @@ where
 /// Settles a batch whose rejected elements were deferred past the handler call: each rejected
 /// index settles by its recorded outcome, and the accepted remainder settles by the handler's
 /// [`BatchResult`] in order, exactly as [`settle_batch`] applies it.
-async fn settle_split_batch<M: IncomingMessage>(
+async fn settle_split_batch<M, C>(
     batch: Vec<M>,
     rejected: Vec<(usize, HandlerResult)>,
     result: BatchResult,
     subscription: &str,
-    delivery: &Delivery,
-) {
+    delivery: &Delivery<C>,
+) where
+    M: IncomingMessage,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
+{
     if rejected.is_empty() {
         return settle_batch(batch, result, subscription, delivery).await;
     }
@@ -508,14 +511,28 @@ async fn settle_split_batch<M: IncomingMessage>(
     for (index, msg) in batch.into_iter().enumerate() {
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
-            settle_outcome(msg, outcome, subscription, delivery).await;
+            settle_outcome(
+                msg,
+                outcome,
+                subscription,
+                delivery,
+                C::build as fn(&M) -> C,
+            )
+            .await;
             continue;
         }
         let mut result = accepted_results
             .next()
             .unwrap_or_else(HandlerOutcome::retry);
         let after = result.take_after();
-        settle_outcome(msg, result.outcome(), subscription, delivery).await;
+        settle_outcome(
+            msg,
+            result.outcome(),
+            subscription,
+            delivery,
+            C::build as fn(&M) -> C,
+        )
+        .await;
         if let Some(after) = after {
             delivery.tasks.spawn(after);
         }
@@ -524,12 +541,15 @@ async fn settle_split_batch<M: IncomingMessage>(
 
 /// Applies one [`BatchResult`] to the accepted deliveries behind it - uniformly, or element by
 /// element, spawning each per-element continuation on the tracked set after its settle.
-pub(crate) async fn settle_batch<M: IncomingMessage>(
+pub(crate) async fn settle_batch<M, C>(
     accepted: Vec<M>,
     result: BatchResult,
     subscription: &str,
-    delivery: &Delivery,
-) {
+    delivery: &Delivery<C>,
+) where
+    M: IncomingMessage,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
+{
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.
     #[cfg(feature = "testing")]
@@ -541,7 +561,7 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
             for msg in accepted {
                 #[cfg(feature = "testing")]
                 batch.settled(status);
-                settle_outcome(msg, status, subscription, delivery).await;
+                settle_outcome(msg, status, subscription, delivery, C::build as fn(&M) -> C).await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
             // tracked set so a graceful shutdown drains it (at-most-once, like the
@@ -568,7 +588,14 @@ pub(crate) async fn settle_batch<M: IncomingMessage>(
                 let after = result.take_after();
                 #[cfg(feature = "testing")]
                 batch.settled(result.outcome());
-                settle_outcome(msg, result.outcome(), subscription, delivery).await;
+                settle_outcome(
+                    msg,
+                    result.outcome(),
+                    subscription,
+                    delivery,
+                    C::build as fn(&M) -> C,
+                )
+                .await;
                 // The continuation runs after this element is settled, on the tracked set so a
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
                 // never redelivers the already-settled message.
@@ -675,7 +702,7 @@ where
     M: IncomingMessage,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Sync,
-    C: Send + Sync,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
     let subscription = ctx.name().to_owned();
@@ -699,7 +726,14 @@ where
                     "codec decode failed",
                 );
                 let outcome = rejection(&err, "batch decode failed", decode, ctx);
-                settle_outcome(msg, outcome, &subscription, delivery).await;
+                settle_outcome(
+                    msg,
+                    outcome,
+                    &subscription,
+                    delivery,
+                    <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+                )
+                .await;
             }
         }
     }

@@ -16,8 +16,8 @@ use std::{
 
 use futures::{Stream, StreamExt};
 use ruststream::{
-    AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, RawMessage,
-    Subscribe, Subscriber,
+    AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage,
+    OutgoingMessage, RawMessage, Subscribe, Subscriber,
     conformance::harness,
     memory::{
         ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
@@ -126,6 +126,8 @@ impl<S: Settlement> TestableBroker for ConnectedStandin<S> {
 }
 
 impl<S: Settlement> Subscribe for ConnectedStandin<S> {
+    // One name is both ends of this stand-in, so a publish under it reaches the subscription.
+    type Copies = AddressedCopies;
     type Subscriber = StandinSubscriber<S>;
 
     fn subscribe(

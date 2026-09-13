@@ -44,7 +44,7 @@ pub use mount::{
     RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterMount,
 };
 #[doc(hidden)]
-pub use routes::{RouteCopies, RouteMetadata};
+pub use routes::{RouteMetadata, RouteSubscription};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 

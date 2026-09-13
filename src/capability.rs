@@ -9,8 +9,8 @@ use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Dur
 use futures::Stream;
 
 use crate::{
-    Broker, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
-    RedeliveryAddress, Subscriber,
+    Broker, ConnectedBroker, CopyPath, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
+    Subscriber,
 };
 
 /// A subscriber that delivers messages in batches.
@@ -459,6 +459,18 @@ pub trait Subscribe: ConnectedBroker {
     /// The subscriber type opened by a by-name subscription.
     type Subscriber: Subscriber;
 
+    /// Who publishes the copies a retry of a by-name subscription is made of, and who names where
+    /// they go. This is what the [`Name`](crate::Name) source reports, so it decides how
+    /// `#[subscriber("orders")]` retries on this broker.
+    ///
+    /// Answer [`AddressedCopies`](crate::AddressedCopies) where a publish under a subscribe name
+    /// reaches the subscription opened by it - a subject, a topic, a stream, a queue name usually
+    /// is both ends - and the name itself is then the address. Answer
+    /// [`NamedCopies`](crate::NamedCopies) where it is not: an MQTT filter and a wildcard subject
+    /// read many destinations and name none, so the mount site names one. Answer
+    /// [`BrokerMoves`](crate::BrokerMoves) where the broker moves a spent delivery itself.
+    type Copies: CopyPath;
+
     /// Opens a subscription to `name`, producing this broker's [`Subscriber`](Self::Subscriber).
     ///
     /// # Errors
@@ -469,41 +481,6 @@ pub trait Subscribe: ConnectedBroker {
         &self,
         name: &str,
     ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
-
-    /// Where a publish reaches the subscription opened under `name` again, for the runtime's
-    /// deferred `retry_after` fallback. `None` means it does not, or that this broker cannot say.
-    ///
-    /// Answer with `name` itself when a subscribe name is also a publish destination, which is
-    /// what a subject, a topic, a stream or a queue name usually is. Keep the default where the
-    /// two are separate resources: a Pub/Sub subscription is subscribed to by its own name while
-    /// a publish goes to the topic behind it, and the subscription descriptor is what answers
-    /// there ([`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address)).
-    ///
-    /// This is what the [`Name`](crate::Name) source reports, so it decides whether
-    /// `#[subscriber("orders")]` composes with the deferred-retry position
-    /// ([`Retry`](crate::runtime::Retry)) on this broker.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::{Broker, RedeliveryAddress, Subscribe};
-    ///
-    /// let connected = MemoryBroker::new().connect().await?;
-    /// assert_eq!(
-    ///     connected.redelivery_address("orders"),
-    ///     Some(RedeliveryAddress::new("orders")),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[must_use]
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
-        let _ = name;
-        None
-    }
 }
 
 /// How to reach a broker, for the `servers` section of an `AsyncAPI` document.

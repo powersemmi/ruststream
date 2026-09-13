@@ -1,32 +1,34 @@
 //! What one registration owes its retries at startup: the publisher a copy of a delivery leaves
-//! through, the address such a copy reaches the subscription at, and the declaration the mount
-//! site made.
+//! through, where such a copy goes, and the declaration the mount site made.
 //!
 //! A copy needs a destination, and a subscription's own name is not one: where a subscription and
 //! a publish destination are separate resources (a Pub/Sub subscription and its topic), a copy
-//! published under the subscription's name reaches nothing. So the address comes from the
-//! subscription's [`SubscriptionSource`], and a registration whose descriptor says the runtime
-//! publishes its copies ([`RuntimeCopies`]) but reports no address refuses to start - on its own,
-//! leaving the other registrations of the scope untouched.
+//! published under the subscription's name reaches nothing. Which of the two a descriptor is, and
+//! whether it can name the destination at all, is its own type
+//! ([`SubscriptionSource::Copies`](crate::SubscriptionSource::Copies)), so the mount site is told
+//! at compile time and nothing here refuses to start over an address.
 
 use std::any::type_name;
+use std::borrow::Cow;
 use std::fmt;
+use std::future::{Future, ready};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use bytes::BytesMut;
 use thiserror::Error;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
 use crate::runtime::dispatch::Delivery;
-use crate::runtime::handle::Slot;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
-use crate::runtime::publish::OutPipeline;
-use crate::runtime::publisher_registry::ErasedPublisher;
-use crate::runtime::retry::Retry;
+use crate::runtime::publish::{
+    ForReply, OutPipeline, Outgoing, PublishContext, PublishTransform, PublishTransformIdentity,
+};
 use crate::{
-    Broker, BrokerMoves, Connected, DefaultPublish, PairError, PublishPolicy, Publisher,
-    RetryDeclaration, RuntimeCopies, SubscriptionSource,
+    AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DefaultPublish, NamedCopies,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed,
+    RetryDeclaration, SubscriptionSource,
 };
 
 #[cfg(feature = "testing")]
@@ -39,20 +41,97 @@ type DefaultPolicy<B> = <Connected<B> as DefaultPublish>::Policy;
 /// The live publisher that policy pairs into.
 type DefaultLive<B> = <DefaultPolicy<B> as PublishPolicy<Connected<B>>>::Live;
 
-/// The retry path of one subscription: the publisher a copy of a delivery leaves through, and the
-/// address a copy meant for the subscription itself is published to.
-pub(crate) struct DeferredRetry {
-    /// The registration's retry slot, erased. A publish through it travels the slot's own
-    /// transforms and the app's publish pipeline, as a publish through any slot does.
-    pub(crate) publisher: Arc<dyn ErasedPublisher>,
-    pub(crate) address: Arc<str>,
+/// The retry path of one subscription: the publisher a copy of a delivery leaves through, and
+/// where a copy meant for the subscription itself goes.
+///
+/// The destination is `None` where the mount site named none and the descriptor has none of its
+/// own, which is a [`NamedCopies`] registration whose transforms name it per delivery.
+pub(crate) struct DeferredRetry<Cx> {
+    /// The registration's retry slot, erased against the delivery context its transforms read. A
+    /// publish through it travels the mount site's transforms and the app's publish pipeline.
+    pub(crate) publisher: Arc<dyn ErasedRetryPublisher<Cx>>,
+    pub(crate) destination: Option<Arc<str>>,
+}
+
+/// The retry publisher of one registration, erased against everything but the delivery context
+/// its transforms read.
+///
+/// The copy carries the delivery's own bytes, so nothing here encodes; what the erasure has to
+/// keep is the context, because a transform on this position reads the delivery being retried.
+pub(crate) trait ErasedRetryPublisher<Cx>: Send + Sync {
+    /// Sends one copy, with the delivery it is a copy of in hand.
+    fn publish_copy<'a>(
+        &'a self,
+        msg: OutgoingMessage<'a>,
+        cx: &'a PublishContext<'a, Cx>,
+    ) -> BoxFuture<'a, Result<(), BoxError>>;
+}
+
+/// The live retry publisher: the leaf the policy paired into, the mount site's transform stack,
+/// and the app's publish pipeline underneath it.
+struct RetryLeaf<Live, Stack, Pipeline> {
+    live: Live,
+    stack: Stack,
+    pipeline: Pipeline,
+}
+
+impl<Cx, Live, Stack, Pipeline> ErasedRetryPublisher<Cx> for RetryLeaf<Live, Stack, Pipeline>
+where
+    Cx: Send + Sync + 'static,
+    Live: Publisher + Send + Sync + 'static,
+    Stack: PublishTransform<ForReply<Cx>, Live::Options> + Send + Sync + 'static,
+    Pipeline: OutPipeline<Live> + 'static,
+{
+    fn publish_copy<'a>(
+        &'a self,
+        msg: OutgoingMessage<'a>,
+        cx: &'a PublishContext<'a, Cx>,
+    ) -> BoxFuture<'a, Result<(), BoxError>> {
+        Box::pin(async move {
+            // The publisher's own constants sit under the delivery's headers, as they do under
+            // any publish through it; the transforms then see the message as it will be sent.
+            let mut out = Outgoing::new(msg.name(), BytesMut::from(msg.payload()));
+            let headers = out.headers_mut();
+            if let Some(base) = self.live.base_headers() {
+                for (key, value) in base.iter() {
+                    headers.insert(key.to_owned(), value.to_owned());
+                }
+            }
+            for (key, value) in msg.headers().iter() {
+                headers.insert(key.to_owned(), value.to_owned());
+            }
+            let mut options: Option<Live::Options> = None;
+            self.stack.apply(&mut out, &mut options, cx);
+            let sent =
+                OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
+            self.pipeline
+                .send(&self.live, sent, options.as_ref())
+                .await
+                .map_err(|err| Box::new(err) as BoxError)
+        })
+    }
+}
+
+/// The retry publisher of a registration that named neither a transform nor a middleware: what a
+/// bare mount produces, for tests that drive the dispatch functions directly.
+#[cfg(test)]
+pub(crate) fn bare_retry_publisher<Cx, P>(live: P) -> Arc<dyn ErasedRetryPublisher<Cx>>
+where
+    Cx: Send + Sync + 'static,
+    P: Publisher + Send + Sync + 'static,
+{
+    Arc::new(RetryLeaf {
+        live,
+        stack: PublishTransformIdentity,
+        pipeline: crate::runtime::publish::PublishIdentity,
+    })
 }
 
 /// Whether a mount site may name the publisher of this descriptor's retry copies.
 ///
-/// Implemented by [`RuntimeCopies`] alone: where the broker moves the delivery itself there is no
-/// publisher of this process's to customise. The descriptor rides the trait's parameter so the
-/// compile error names it. Machinery; never named directly.
+/// Implemented by the two copy paths this process publishes on: where the broker moves the
+/// delivery itself there is no publisher of this process's to customise. The descriptor rides the
+/// trait's parameter so the compile error names it. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "subscription descriptor `{Source}` publishes no retry copy in this process",
@@ -66,92 +145,188 @@ pub(crate) struct DeferredRetry {
 )]
 pub trait PublishesCopiesHere<Source> {}
 
-impl<Source> PublishesCopiesHere<Source> for RuntimeCopies {}
+impl<Source> PublishesCopiesHere<Source> for AddressedCopies {}
+impl<Source> PublishesCopiesHere<Source> for NamedCopies {}
+
+/// Whether this registration knows where its retry copies go.
+///
+/// A descriptor that addresses its own copies answers for them, and one whose broker moves the
+/// delivery publishes none; a [`NamedCopies`] descriptor answers neither, so the mount site has
+/// to - and this is the bound that says so. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration does not say where its retry copies go",
+    label = "subscription descriptor `{Source}` cannot address them",
+    note = "`{Source}` declares `Copies = NamedCopies`: one such subscription reads many \
+            destinations (a wildcard subject, a filter, a pattern, a list of topics), so it names \
+            none of them and the mount site names one",
+    note = "name a fixed destination - `.out_retry(policy).to(\"orders\")` - or compose a publish \
+            transform that names one per delivery, which reads the delivery being retried"
+)]
+pub trait CopiesAddressed<Source> {}
+
+impl<Source> CopiesAddressed<Source> for AddressedCopies {}
+impl<Source> CopiesAddressed<Source> for BrokerMoves {}
 
 /// The retry publisher a descriptor's copy path owes every registration mounted on it.
 ///
-/// [`RuntimeCopies`] owes one, paired from the broker's [`DefaultPublish`] policy the way the
-/// default reply publisher is, so a `retry_after` behaves the same whether or not the mount site
-/// named a policy; [`BrokerMoves`] owes none. Machinery; never named directly.
+/// The two paths this process publishes on owe one, paired from the broker's [`DefaultPublish`]
+/// policy the way the default reply publisher is, so a `retry_after` behaves the same whether or
+/// not the mount site named a policy; [`BrokerMoves`] owes none. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "broker `{B}` names no default publish policy, so a retry copy has nothing to \
                leave through",
     label = "this subscription's retry copies are published by the runtime",
-    note = "the descriptor declares `Copies = RuntimeCopies`, so every registration on it gets a \
-            retry publisher paired from `DefaultPublish`; implement `DefaultPublish` on the \
-            broker's connected form, or declare `Copies = BrokerMoves` on a descriptor whose \
-            deliveries the broker moves itself"
+    note = "the descriptor declares a copy path this process publishes on, so every registration \
+            on it gets a retry publisher paired from `DefaultPublish`; implement `DefaultPublish` \
+            on the broker's connected form, or declare `Copies = BrokerMoves` on a descriptor \
+            whose deliveries the broker moves itself"
 )]
-pub trait CopyPathPairing<B: Broker, Pipeline> {
+pub trait CopyPathPairing<B: Broker, Cx, Pipeline> {
     /// The pairing, or `None` where this process publishes nothing for the subscription.
-    fn pairing(pipeline: Pipeline) -> Option<RetryPairing<B>>;
+    fn pairing(pipeline: Pipeline) -> Option<RetryPairing<B, Cx>>;
 }
 
-impl<B, Pipeline> CopyPathPairing<B, Pipeline> for RuntimeCopies
-where
-    B: Broker + 'static,
-    Connected<B>: DefaultPublish,
-    DefaultLive<B>: Publisher + 'static,
-    Pipeline: OutPipeline<DefaultLive<B>> + 'static,
-{
-    fn pairing(pipeline: Pipeline) -> Option<RetryPairing<B>> {
-        // The copy carries the delivery's own bytes, so the codec position stays empty: the unit
-        // codec is what the wire resolves for a slot that encodes nothing.
-        Some(RetryPairing::new(
-            DefaultPolicy::<B>::default(),
-            (),
-            pipeline,
-        ))
-    }
+/// Implements the default pairing for the copy paths this process publishes on.
+macro_rules! impl_default_pairing {
+    ($($path:ident),+ $(,)?) => {$(
+        impl<B, Cx, Pipeline> CopyPathPairing<B, Cx, Pipeline> for $path
+        where
+            B: Broker + 'static,
+            Cx: Send + Sync + 'static,
+            Connected<B>: DefaultPublish,
+            DefaultLive<B>: Publisher + Send + Sync + 'static,
+            Pipeline: OutPipeline<DefaultLive<B>> + 'static,
+        {
+            fn pairing(pipeline: Pipeline) -> Option<RetryPairing<B, Cx>> {
+                Some(RetryPairing::new(
+                    DefaultPolicy::<B>::default(),
+                    PublishTransformIdentity,
+                    pipeline,
+                ))
+            }
+        }
+    )+};
 }
 
-impl<B: Broker, Pipeline> CopyPathPairing<B, Pipeline> for BrokerMoves {
-    fn pairing(_pipeline: Pipeline) -> Option<RetryPairing<B>> {
+impl_default_pairing!(AddressedCopies, NamedCopies);
+
+impl<B: Broker, Cx, Pipeline> CopyPathPairing<B, Cx, Pipeline> for BrokerMoves {
+    fn pairing(_pipeline: Pipeline) -> Option<RetryPairing<B, Cx>> {
         None
     }
 }
 
+/// Where a copy that goes back to the subscription itself is published, read off the descriptor's
+/// copy path at startup.
+///
+/// [`AddressedCopies`] answers from the descriptor, which is why the copy path requires
+/// [`RedeliveryAddressed`]; the other two answer nothing, and the mount site is what named the
+/// destination. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CopyPathAddress<C: ConnectedBroker, Source> {
+    /// Asks the descriptor, once, at startup.
+    fn address(
+        source: &Source,
+        connected: &C,
+    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send;
+}
+
+impl<C, Source> CopyPathAddress<C, Source> for AddressedCopies
+where
+    C: ConnectedBroker,
+    Source: RedeliveryAddressed<C> + Sync,
+{
+    async fn address(
+        source: &Source,
+        connected: &C,
+    ) -> Result<Option<RedeliveryAddress>, C::Error> {
+        source.redelivery_address(connected).await.map(Some)
+    }
+}
+
+/// Implements the "nothing to ask" half for the copy paths that name no address of their own.
+macro_rules! impl_no_address {
+    ($($path:ident),+ $(,)?) => {$(
+        impl<C: ConnectedBroker, Source> CopyPathAddress<C, Source> for $path {
+            fn address(
+                _source: &Source,
+                _connected: &C,
+            ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+                ready(Ok(None))
+            }
+        }
+    )+};
+}
+
+impl_no_address!(NamedCopies, BrokerMoves);
+
 /// What one registration hands the runtime about its retries: the publisher a copy leaves
-/// through, and what the mount site declared.
+/// through, where the copies go, and what the mount site declared.
 ///
 /// The publisher starts empty and is filled from one of two places - the policy a
 /// `.out_retry(policy)` named, or the descriptor's copy path, which pairs the broker's default -
 /// so a registration whose subscription publishes its copies here always has one.
 #[doc(hidden)]
-pub struct RetrySetup<B: Broker> {
-    publisher: Option<RetryPairing<B>>,
+pub struct RetrySetup<B: Broker, Cx> {
+    publisher: Option<RetryPairing<B, Cx>>,
+    destination: Option<Cow<'static, str>>,
+    /// Whether the registration's transforms name the destination per delivery, so the
+    /// subscription owes none of its own.
+    named_per_delivery: bool,
     declaration: RetryDeclaration,
 }
 
 // The publisher is a closure with nothing to print; the declaration is the part worth reading.
-impl<B: Broker> fmt::Debug for RetrySetup<B> {
+impl<B: Broker, Cx> fmt::Debug for RetrySetup<B, Cx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RetrySetup")
+            .field("destination", &self.destination)
             .field("declaration", &self.declaration)
             .finish_non_exhaustive()
     }
 }
 
-impl<B: Broker> Default for RetrySetup<B> {
+impl<B: Broker, Cx> Default for RetrySetup<B, Cx> {
     fn default() -> Self {
         Self {
             publisher: None,
+            destination: None,
+            named_per_delivery: false,
             declaration: RetryDeclaration::new(),
         }
     }
 }
 
-impl<B: Broker + 'static> RetrySetup<B> {
-    /// Records the publisher a `.out(Retry, policy)` named, replacing the broker's default.
-    pub(crate) fn with_publisher(mut self, publisher: RetryPairing<B>) -> Self {
+impl<B: Broker + 'static, Cx> RetrySetup<B, Cx> {
+    /// Records the publisher a `.out(Retry, policy)` named, replacing the broker's default, and
+    /// the destination a `.to(name)` after it gave the copies.
+    pub(crate) fn with_publisher(
+        mut self,
+        publisher: RetryPairing<B, Cx>,
+        destination: Option<Cow<'static, str>>,
+        named_per_delivery: bool,
+    ) -> Self {
         self.publisher = Some(publisher);
+        self.named_per_delivery = named_per_delivery;
+        // A `.to(name)` ahead of the publisher already spoke; one after it names the same thing,
+        // and the chain admits only one of the two.
+        self.destination = destination;
         self
     }
 
-    /// Records what `max_attempts(..)` and `dead_letter(..)` declared.
-    pub(crate) fn with_declaration(mut self, declaration: RetryDeclaration) -> Self {
+    /// Records what `max_attempts(..)`, `dead_letter(..)` and a `.to(name)` ahead of the publisher
+    /// declared.
+    pub(crate) fn with_declaration(
+        mut self,
+        declaration: RetryDeclaration,
+        destination: Option<Cow<'static, str>>,
+    ) -> Self {
         self.declaration = declaration;
+        // The chain admits one `.to(name)`, on either side of the publisher, so at most one of
+        // the two steps carries it.
+        self.destination = self.destination.take().or(destination);
         self
     }
 
@@ -160,7 +335,7 @@ impl<B: Broker + 'static> RetrySetup<B> {
     #[must_use]
     pub(crate) fn resolve<Copies, Pipeline>(mut self, pipeline: &Pipeline) -> Self
     where
-        Copies: CopyPathPairing<B, Pipeline>,
+        Copies: CopyPathPairing<B, Cx, Pipeline>,
         Pipeline: Clone,
     {
         if self.publisher.is_none() {
@@ -178,54 +353,61 @@ impl<B: Broker + 'static> RetrySetup<B> {
 /// pipeline the mount composed - is what keeps the retry position out of the route's type: a
 /// route carries this one type whatever the mount site named.
 #[doc(hidden)]
-pub struct RetryPairing<B: Broker>(PairRetry<B>);
+pub struct RetryPairing<B: Broker, Cx>(PairRetry<B, Cx>);
 
 // The pairing is a closure over the bound policy, with nothing of its own to print.
-impl<B: Broker> fmt::Debug for RetryPairing<B> {
+impl<B: Broker, Cx> fmt::Debug for RetryPairing<B, Cx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RetryPairing").finish_non_exhaustive()
     }
 }
 
 /// The erased pairing step: pairs the bound policy against the connected broker.
-type PairRetry<B> = Box<
+type PairRetry<B, Cx> = Box<
     dyn for<'a> FnOnce(
             &'a Connected<B>,
-        ) -> BoxFuture<'a, Result<Arc<dyn ErasedPublisher>, PairError>>
+        )
+            -> BoxFuture<'a, Result<Arc<dyn ErasedRetryPublisher<Cx>>, PairError>>
         + Send,
 >;
 
-impl<B: Broker + 'static> RetryPairing<B> {
-    /// The pairing the retry slot owes against this broker's connected form.
+impl<B: Broker + 'static, Cx: Send + Sync + 'static> RetryPairing<B, Cx> {
+    /// The pairing the retry position owes against this broker's connected form.
     ///
-    /// What the pairing yields is the slot entry itself, erased: a publish through it runs the
-    /// mount site's transforms and the app's publish pipeline before reaching the broker, which
-    /// is what makes the deferred copy travel the slot it was bound on rather than a path of its
-    /// own.
-    pub(crate) fn new<Policy, Enc, Pipe>(policy: Policy, codec: Enc, pipeline: Pipe) -> Self
+    /// What the pairing yields is the live publisher with the mount site's transforms and the
+    /// app's publish pipeline around it, erased against everything but the delivery context those
+    /// transforms read.
+    pub(crate) fn new<Policy, Stack, Pipe>(policy: Policy, stack: Stack, pipeline: Pipe) -> Self
     where
         Policy: PublishPolicy<Connected<B>> + Send + 'static,
-        Policy::Live: Publisher + 'static,
-        Enc: Send + Sync + 'static,
+        Policy::Live: Publisher + Send + Sync + 'static,
+        Stack: PublishTransform<ForReply<Cx>, <Policy::Live as Publisher>::Options>
+            + Send
+            + Sync
+            + 'static,
         Pipe: OutPipeline<Policy::Live> + 'static,
     {
         Self(Box::new(move |connected| {
             Box::pin(async move {
                 let live = policy.pair(connected).await?;
-                Ok(
-                    Arc::new(Slot::<Retry, _, _, _>::wired(live, codec, pipeline))
-                        as Arc<dyn ErasedPublisher>,
-                )
+                Ok(Arc::new(RetryLeaf {
+                    live,
+                    stack,
+                    pipeline,
+                }) as Arc<dyn ErasedRetryPublisher<Cx>>)
             })
         }))
     }
 
-    /// Takes the pairing, producing the publisher the deferred copy leaves through.
+    /// Takes the pairing, producing the publisher a copy leaves through.
     ///
     /// # Errors
     ///
     /// Returns the policy's own [`PairError`].
-    async fn pair(self, connected: &Connected<B>) -> Result<Arc<dyn ErasedPublisher>, PairError> {
+    async fn pair(
+        self,
+        connected: &Connected<B>,
+    ) -> Result<Arc<dyn ErasedRetryPublisher<Cx>>, PairError> {
         (self.0)(connected).await
     }
 }
@@ -279,29 +461,26 @@ impl ScopeDelivery {
     }
 }
 
-/// A registration whose subscription publishes its retry copies in this process, over a
-/// descriptor that cannot say where such a copy reaches it.
+/// A registration whose descriptor addresses no retry copies, and whose mount site named no
+/// destination either.
 ///
-/// Raised at startup, before that subscription opens, and only for that registration. The
-/// alternative is a `retry_after` that publishes its copy into nothing under load, which is a
-/// lost message.
+/// Raised at startup, before the subscription opens, and only for that registration. The mount
+/// chain refuses the same mistake at compile time wherever it can - a router chain, a
+/// slot-carrying form - but a scope's guard commits when the statement ends, so the chain there
+/// has no uncommittable state to fail on and this is where the refusal lands.
 // The field is named away from `source` so `thiserror` does not read it as the error's cause.
 #[derive(Debug, Error)]
 #[error(
-    "subscription `{subscription}`: descriptor `{source_type}` declares `Copies = RuntimeCopies`, \
-     so the runtime publishes this subscription's retry copies, but it reports no redelivery \
-     address on broker `{broker}`. Implement `SubscriptionSource::redelivery_address` (or \
-     `Subscribe::redelivery_address` for the by-name form) with the destination a publish reaches \
-     this subscription at, or declare `Copies = BrokerMoves` where the broker moves the delivery \
-     itself"
+    "subscription `{subscription}`: descriptor `{source_type}` declares `Copies = NamedCopies`, \
+     so it addresses no retry copies, and this registration names no destination for them. Name \
+     one at the mount site with `.to(\"name\")` before `out_retry(policy)`, or compose a publish \
+     transform declaring `Destination = Names` that names one per delivery"
 )]
-pub(crate) struct RetryAddressError {
+pub(crate) struct RetryDestinationError {
     /// The subscription as the registration names it.
     subscription: String,
-    /// The subscription descriptor that declined to answer.
+    /// The subscription descriptor that addresses nothing.
     source_type: &'static str,
-    /// The connected broker the descriptor was asked against.
-    broker: &'static str,
 }
 
 /// The policy bound with `.out(Retry, policy)` could not be paired with the connected broker.
@@ -321,34 +500,37 @@ pub(crate) struct RetryPairError {
 
 /// Opens `source`'s subscription and builds the delivery context it dispatches under.
 ///
-/// The retry publisher is paired and the redelivery address resolved first, against the live
+/// The retry publisher is paired and the descriptor's address resolved first, against the live
 /// connection, because both may have to talk to the broker (a Pub/Sub subscription is looked up
-/// to learn its topic) and because a registration that cannot answer must fail before it holds an
-/// open subscription. The declaration reaches the descriptor before it subscribes, so a broker
-/// that applies the cap and the destination itself declares its topology with them.
+/// to learn its topic) and because a registration that cannot pair must fail before it holds an
+/// open subscription. Where the mount site named a destination with `.to(name)` that is what the
+/// copies use, and a descriptor that addresses its own is asked only otherwise. The declaration
+/// reaches the descriptor before it subscribes, so a broker that applies the cap and the
+/// destination itself declares its topology with them.
 ///
 /// # Errors
 ///
-/// Returns the broker's error when the address lookup or the subscription fails, [`RetryPairError`]
-/// when the bound retry policy fails to pair, and [`RetryAddressError`] when the descriptor
-/// publishes its copies here and reports no address.
-pub(crate) async fn open_subscription<B, Source>(
+/// Returns the broker's error when the address lookup or the subscription fails, and
+/// [`RetryPairError`] when the bound retry policy fails to pair.
+pub(crate) async fn open_subscription<B, Source, Cx>(
     source: Source,
     connected: &Connected<B>,
     scope: &ScopeDelivery,
     subscription: &str,
-    setup: RetrySetup<B>,
-) -> Result<(Source::Subscriber, Arc<Delivery>), BoxError>
+    setup: RetrySetup<B, Cx>,
+) -> Result<(Source::Subscriber, Arc<Delivery<Cx>>), BoxError>
 where
     B: Broker + 'static,
+    Cx: Send + Sync + 'static,
     Source: SubscriptionSource<Connected<B>>,
+    Source::Copies: CopyPathAddress<Connected<B>, Source>,
 {
     let RetrySetup {
         publisher,
+        destination,
+        named_per_delivery,
         declaration,
     } = setup;
-    // The publisher and the address are read into the pair together, so a retry path that holds
-    // one without the other is never built.
     let retry = match publisher {
         Some(pairing) => {
             let publisher = pairing.pair(connected).await.map_err(|err| {
@@ -357,18 +539,29 @@ where
                     source: err,
                 }) as BoxError
             })?;
-            let reported = source
-                .redelivery_address(connected)
+            let destination = match destination {
+                Some(named) => Some(Arc::from(named.as_ref())),
+                None => <Source::Copies as CopyPathAddress<Connected<B>, Source>>::address(
+                    &source, connected,
+                )
                 .await
                 .map_err(|err| Box::new(err) as BoxError)?
-                .ok_or_else(|| RetryAddressError {
+                .map(|address| Arc::from(address.as_str())),
+            };
+            // A descriptor that addresses its own copies answers here; one that does not leaves
+            // the mount site to name them, statically or per delivery. Nothing left is a
+            // registration whose copies would go nowhere, and the mount chain of a scope cannot
+            // refuse it at compile time: its guard commits when the statement ends, so every
+            // state the chain passes through has to be committable, `include`'s own included.
+            if destination.is_none() && !named_per_delivery {
+                return Err(Box::new(RetryDestinationError {
                     subscription: subscription.to_owned(),
                     source_type: type_name::<Source>(),
-                    broker: type_name::<Connected<B>>(),
-                })?;
+                }));
+            }
             Some(DeferredRetry {
                 publisher,
-                address: Arc::from(reported.as_str()),
+                destination,
             })
         }
         None => None,
@@ -387,7 +580,11 @@ where
 
 /// Says once, at startup, what a registration declared and who applies it, so an operator reading
 /// the log knows whether the cap is this process's business or the broker's.
-fn announce(subscription: &str, declaration: &RetryDeclaration, retry: Option<&DeferredRetry>) {
+fn announce<Cx>(
+    subscription: &str,
+    declaration: &RetryDeclaration,
+    retry: Option<&DeferredRetry<Cx>>,
+) {
     if declaration.declares_nothing() {
         return;
     }
@@ -417,7 +614,7 @@ fn announce(subscription: &str, declaration: &RetryDeclaration, retry: Option<&D
 /// The delivery context for a subscriber mounted without a source: nothing describes where a
 /// redelivery of it would be published, and no mount chain can bind the retry position on one, so
 /// there is no retry path to build.
-pub(crate) fn open_mounted_subscriber(scope: &ScopeDelivery) -> Arc<Delivery> {
+pub(crate) fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery) -> Arc<Delivery<Cx>> {
     Arc::new(Delivery::for_subscription(
         scope,
         None,
@@ -434,12 +631,16 @@ mod tests {
     use super::*;
     use crate::memory::{MemoryBroker, MemoryPublish};
     use crate::runtime::publish::PublishIdentity;
-    use crate::{IncomingMessage, OutgoingMessage, Subscriber};
+    use crate::{HeaderMap, IncomingMessage, OutgoingMessage, Subscriber};
 
-    /// The retry slot of a mount that named neither a codec nor a transform: the surface's codec
-    /// position and the app's bare pipeline, which is what the wire produces there.
-    fn bare_slot() -> RetryPairing<MemoryBroker> {
-        RetryPairing::<MemoryBroker>::new(MemoryPublish, (), PublishIdentity)
+    /// The retry position of a mount that named no transform: the app's bare pipeline, which is
+    /// what the wire produces there.
+    fn bare_position() -> RetryPairing<MemoryBroker, ()> {
+        RetryPairing::<MemoryBroker, ()>::new(
+            MemoryPublish,
+            PublishTransformIdentity,
+            PublishIdentity,
+        )
     }
 
     /// A scope with the harness pieces it holds under the `testing` feature.
@@ -458,25 +659,30 @@ mod tests {
     /// chain offers no way to bind one.
     #[test]
     fn a_sourceless_mount_carries_no_retry_path() {
-        let delivery = open_mounted_subscriber(&scope());
+        let delivery = open_mounted_subscriber::<()>(&scope());
         assert!(delivery.retry.is_none());
         assert!(delivery.declaration.declares_nothing());
     }
 
-    /// The bound slot pairs against the connected broker, and the entry it yields reaches that
-    /// broker: what the deferred copy travels through.
+    /// The bound position pairs against the connected broker, and the publisher it yields reaches
+    /// that broker: what a copy travels through.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_bound_slot_pairs_against_the_connected_broker() {
+    async fn the_bound_position_pairs_against_the_connected_broker() {
         let broker = MemoryBroker::new();
         let mut subscriber = broker.subscribe("retry.fallback");
         let connected = broker.connect().await.expect("connect");
 
-        let publisher = bare_slot()
+        let publisher = bare_position()
             .pair(&connected)
             .await
-            .expect("the bound slot pairs");
+            .expect("the bound position pairs");
+        let headers = HeaderMap::new();
+        let cx = ();
         publisher
-            .publish_erased(OutgoingMessage::new("retry.fallback", b"deferred"))
+            .publish_copy(
+                OutgoingMessage::new("retry.fallback", b"deferred"),
+                &PublishContext::new("retry.fallback", &headers, &cx),
+            )
             .await
             .expect("the erased publish failed");
 

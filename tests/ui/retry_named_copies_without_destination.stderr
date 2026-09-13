@@ -1,0 +1,27 @@
+error[E0277]: this registration does not say where its retry copies go
+  --> tests/ui/retry_named_copies_without_destination.rs:38:40
+   |
+38 |         b.include(reconcile).out_retry(MemoryPublish);
+   |                              --------- ^^^^^^^^^^^^^ its subscription descriptor cannot address them, and nothing here names a destination
+   |                              |
+   |                              required by a bound introduced by this call
+   |
+   = note: one such subscription reads many destinations (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of topics), so the descriptor names none of them
+   = note: name a fixed destination - `.to("orders")`, which a scope's chain takes before `out_retry(policy)` - or compose a publish transform declaring `Destination = Names`, which reads the delivery being retried and names one per delivery
+help: the trait `DestinationSettled<Reads>` is not implemented for `Names`
+      but trait `DestinationSettled<Names>` is implemented for it
+  --> src/runtime/publish/transform.rs
+   |
+   | impl DestinationSettled<Self> for Names {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Names`, found `Reads`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>` to implement `ruststream::runtime::AttachRetry<ruststream::runtime::OutAttachment<ruststream::prelude::Retry, _>, ruststream::runtime::OpenDestination>`
+   = note: required for `RouterWith<ruststream::runtime::RetryMount, Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<Filter, Typed<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::SoloBody<Solo<Order>, (), reconcile>>>, ())>, (), ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, _>>, ruststream::runtime::RetryPos>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>>::out_retry`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn out_retry<Policy>(
+   |            --------- required by a bound in this associated function
+...
+   |         >>::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>>::out_retry`

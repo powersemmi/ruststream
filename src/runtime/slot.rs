@@ -623,6 +623,13 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
         }
     }
 
+    /// Hands back the pieces without folding them: what the deferred-retry position resolves
+    /// from, which keeps the mount site's transform stack out of the publish pipeline so it can
+    /// be run against the delivery being retried.
+    pub(crate) fn into_parts(self) -> (Policy, Layers, Enc) {
+        (self.policy, self.layers, self.enc)
+    }
+
     /// Splits the attachment into what one slot resolves from at startup: the policy the runtime
     /// pairs (narrowed to plain sending where this slot's transforms name the destination), the
     /// encode codec (this slot's own when it named one, the surface's otherwise), and the pipeline

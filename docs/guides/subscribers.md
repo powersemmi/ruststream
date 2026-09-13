@@ -175,9 +175,7 @@ copy carries the delivery's own bytes, so the codec resolves the position and en
 
 The copy goes to the address the subscription reports, which is not always its name. A NATS subject
 and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its own name
-and published to through its topic. Your broker crate answers for its own subscriptions, and a
-registration whose subscription cannot answer does not start, naming that subscription and the fix;
-the registrations beside it are untouched.
+and published to through its topic. Your broker crate answers for its own subscriptions.
 
 A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) takes the same path:
 there is nothing to drop, so the copy is the whole retry. The other case is a settlement the broker
@@ -199,6 +197,33 @@ per element, so entries that are not ready wait without holding up the rest of t
     ```rust
     --8<-- "examples/manual/retry.rs:batch_retry_after"
     ```
+
+### Where a retry copy goes
+
+A subscription that reads one destination says where a copy of a delivery reaches it again, and
+your broker crate answers for it. A subscription that reads many - a wildcard subject, an MQTT
+filter, a Pulsar pattern, a list of topics - names none of them, and the mount site names one:
+
+```rust
+--8<-- "examples/retry.rs:named"
+```
+
+`.to(name)` is a plain destination, as a reply's is. It comes before `out_retry(policy)`: a
+registration on a scope commits when the statement ends, so the chain has to have said where its
+copies go by the time it passes through. On a chain that ends in `.build()` - a `Router`, a
+handler with `Out` slots - it can also follow the publisher.
+
+The other way is a transform that names the destination per delivery, reading the delivery being
+retried, which is how a copy goes back to the concrete topic a wildcard subscription received it
+on:
+
+```rust
+--8<-- "examples/retry.rs:naming_transform"
+```
+
+The two are mutually exclusive, as a declared reply and a naming transform are. Where a
+descriptor addresses its own copies, neither is needed and a naming transform is a compile error;
+`.to(name)` there overrides the address.
 
 ### Capping the retries
 

@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForSlot, HandlerOutcome, Names, Outgoing as OutgoingMessage, PublishTransform, RustStream, SlotContext};
+use ruststream::runtime::{
+    AppInfo, ForReply, HandlerOutcome, Names, Outgoing as OutgoingMessage, PublishContext,
+    PublishTransform, RustStream,
+};
 use ruststream::subscriber;
 use serde::Deserialize;
 
@@ -10,14 +13,14 @@ struct Order {
 
 struct ByTenant;
 
-impl<Options> PublishTransform<ForSlot, Options> for ByTenant {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ByTenant {
     type Destination = Names;
 
     fn apply(
         &self,
         out: &mut OutgoingMessage<'_>,
         _options: &mut Option<Options>,
-        _cx: &SlotContext<'_>,
+        _cx: &PublishContext<'_, C>,
     ) {
         out.set_name("orders.north");
     }
@@ -29,8 +32,8 @@ async fn reconcile(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// The deferred copy goes to the address the subscription reported, so the retry slot has no
-// destination to hand a transform: a transform that names one has nowhere to name it.
+// The by-name descriptor addresses its own copies on this broker, so the position has a
+// destination already: a transform that names one has nothing to name here.
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile)

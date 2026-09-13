@@ -78,12 +78,14 @@ subject or a queue. `#[subscriber("name")]` subscribes through it.
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
-    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 
-    // Defaulted: None. Answer with the name itself where a publish to a subscribe name
-    // reaches the subscription opened under it, which is what a subject, a topic, a
-    // stream or a queue name usually is.
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress>;
+    // Who publishes the retry copies of a by-name subscription, and who names where they
+    // go. AddressedCopies where a publish under a subscribe name reaches the subscription
+    // opened by it - a subject, a topic, a stream, a queue name - and the name is then the
+    // address. NamedCopies where it is not: an MQTT filter reads many topics and names none.
+    type Copies: CopyPath;
+
+    async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
 }
 ```
 
@@ -93,14 +95,13 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` reports the address the runtime publishes a retry copy to. The by-name source
-declares that the runtime publishes its copies, so answering this is what makes
-`#[subscriber("orders")]` start at all on your broker: a registration whose subscription cannot say
-where a copy reaches it refuses to start, naming the subscription and this method.
+`type Copies` is what the by-name source reports on your broker, so it decides how
+`#[subscriber("orders")]` retries here: with `AddressedCopies` the name is the address and nothing
+else is written, with `NamedCopies` the mount site names where a copy goes.
 
-Keep the default where a subscribe name is not a publish destination. A Google Pub/Sub subscription
-is subscribed to by its own name and published to through its topic, so the descriptor answers
-there instead.
+Answer `NamedCopies` where a subscribe name is not a publish destination. A Google Pub/Sub
+subscription is subscribed to by its own name and published to through its topic, and an MQTT
+filter reads many topics; a descriptor of your own then carries the richer answer.
 
 ### `Subscriber`
 
@@ -298,9 +299,8 @@ implements `SubscriptionSource`:
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
 
-    // Who publishes the copies this subscription's retries are made of:
-    // RuntimeCopies where this process does, BrokerMoves where the server or the
-    // client library moves the delivery itself.
+    // Who publishes the copies this subscription's retries are made of, and who names
+    // where they go: AddressedCopies, NamedCopies or BrokerMoves.
     type Copies: CopyPath;
 
     fn name(&self) -> &str;
@@ -311,10 +311,12 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     // open, where the broker has a mechanism for them.
     fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
 
-    // Defaulted: Ok(None). Answer where a publish reaches this subscription again,
-    // asking the broker when only the live connection knows. A RuntimeCopies
-    // descriptor owes an answer.
-    async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
+}
+
+// The other half of AddressedCopies: the destination is a property of the type, not an
+// answer checked at startup. Ask the broker where only the live connection knows.
+pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies> {
+    async fn redelivery_address(&self, connected: &C) -> Result<RedeliveryAddress, C::Error>;
 }
 ```
 
@@ -335,19 +337,31 @@ definition can be mounted on two brokers at once.
 
 ### Who publishes a retry copy
 
-Every descriptor declares one of two things with `type Copies`.
+Every descriptor declares one of three things with `type Copies`.
 
-`RuntimeCopies` says this process publishes the copies a retry needs. The runtime pairs a retry
-publisher for every registration on such a descriptor, from the broker's `DefaultPublish` policy,
-and the mount site may replace it with `.out_retry(policy)`. This is the answer for a subject, a
-topic, a stream and a queue - anything the service itself can publish back to. A descriptor that
-declares it over a broker with no `DefaultPublish` does not compile.
+`AddressedCopies` says this process publishes the copies a retry needs, and the descriptor knows
+where they go. It implements `RedeliveryAddressed` beside `SubscriptionSource`, so the address is a
+property of the type rather than an answer checked at startup. This is the answer for a subject, a
+topic, a stream and a queue - one subscription, one destination the service can publish back to.
+
+`NamedCopies` says this process publishes them but the descriptor cannot address them: a wildcard
+subject, an MQTT filter, a Pulsar pattern, a list of topics. One such subscription reads many
+destinations, so the mount site names one, statically with `.to(name)` or per delivery with a
+publish transform.
 
 `BrokerMoves` says the server or the client library moves the delivery itself: a quorum queue with
 `x-delivery-limit` and an `x-dead-letter-exchange`, a Pub/Sub subscription with a dead-letter
 policy, an SQS redrive policy, a Pulsar consumer with a `DeadLetterPolicy`. Nothing is published
 from the service, so `.out_retry(..)` is a compile error at every mount site of that descriptor,
 and the error names it.
+
+The first two pair a retry publisher for every registration from the broker's `DefaultPublish`
+policy, so a descriptor declaring either over a broker with no `DefaultPublish` does not compile.
+
+`Subscribe` declares the same thing for the by-name form: `type Copies` there is what
+`#[subscriber("orders")]` reports on your broker. Answer `AddressedCopies` where a publish under a
+subscribe name reaches the subscription opened by it, which a subject, a topic, a stream and a
+queue name usually are - the name is then the address, and nothing else has to be written.
 
 Where the nativeness depends on a field's value rather than on the type - a RabbitMQ queue without
 `.delay(..)` has no native delayed redelivery of its own - keep the path open.
@@ -363,7 +377,7 @@ the declaration on the retry path.
 ### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
-message once the delay is over. Your descriptor says where that copy goes.
+message once the delay is over. An `AddressedCopies` descriptor says where that copy goes.
 
 ```rust
 --8<-- "src/memory/mod.rs:source"
@@ -374,15 +388,11 @@ subject on NATS, the topic on Kafka, the stream key on Redis.
 
 On Google Pub/Sub a subscription and a topic are separate resources, so the answer is the topic the
 subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
-startup.
+startup, and a `.to(name)` at the mount site overrides it.
 
-A `RuntimeCopies` descriptor owes an answer: a registration over one that reports `None` refuses to
-start, naming the subscription, the descriptor and this method. The alternative is a `retry_after`
-that publishes into nothing under load, which is a lost message. Declare `BrokerMoves` where
-publishing cannot reach your subscription at all.
-
-`harness::lifecycle` checks the answer you give: a publish to the reported address must arrive at
-the subscription that reported it.
+`harness::redelivery_address` checks the answer you give: a publish to the reported address must
+arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and
+`harness::lifecycle` covers the rest of the ladder for both.
 
 ### Naming a kind by one string
 

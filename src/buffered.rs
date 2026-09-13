@@ -19,8 +19,8 @@ use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
 use crate::{
-    BatchSubscriber, ConnectedBroker, RedeliveryAddress, RetryDeclaration, Seekable, Subscriber,
-    SubscriptionSource,
+    AddressedCopies, BatchSubscriber, ConnectedBroker, RedeliveryAddress, RedeliveryAddressed,
+    RetryDeclaration, Seekable, Subscriber, SubscriptionSource,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -102,13 +102,20 @@ where
             max_wait: self.max_wait,
         })
     }
+}
 
-    /// Batching happens on the client, so a deferred redelivery goes where the wrapped source
-    /// says it does.
+/// Batching happens on the client, so a retry copy goes where the wrapped source says it does.
+impl<C, S> RedeliveryAddressed<C> for Buffered<S>
+where
+    Self: SubscriptionSource<C, Copies = AddressedCopies>,
+    C: ConnectedBroker,
+    S: RedeliveryAddressed<C> + Send + Sync,
+    S::Subscriber: Send,
+{
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
         self.source.redelivery_address(connected)
     }
 }

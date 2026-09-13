@@ -23,23 +23,24 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
-    LowerOutTransforms, NarrowToUse, OutPipeline, PublishIdentity, PublishPipeline, SlotStackUse,
+    DestinationSettled, FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline,
+    PublishIdentity, PublishPipeline, PublishTransform, Reads,
 };
 use crate::runtime::publishing::{PublishingDef, publishing_metadata};
 use crate::runtime::redelivery::{PublishesCopiesHere, RetryPairing, RetrySetup};
 use crate::runtime::retry::{
-    Absent, DeclareCap, DeclareDeadLetter, DeclareMount, Present, Retry, RetryOpen, RouteDeclaring,
-    RoutePosition,
+    Absent, DeclareCap, DeclareDeadLetter, DeclareMount, DestinationLast, FixedDestination,
+    Present, Retry, RetryOffer, RetryOpen, RetryStackUse, RouteDeclaring, RoutePosition,
 };
 use crate::runtime::settings::BatchSized;
-use crate::runtime::slot::{NoReply, OutAttachment, SlotCodec, SlotPolicy};
+use crate::runtime::slot::{NoOutBound, NoReply, OutAttachment, SlotCodec};
 use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
 use crate::runtime::typed::Typed;
 
 use super::builders::RouterWith;
 use super::routes::{
-    BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RouteCopies, RouteMeta,
-    RouteMetadata, RouterDef, RouterHandlers, SubscribeRoute,
+    BatchRoute, DeclaredRoute, HandleRoute, MountRoute, RetriedRoute, RouteMeta, RouteMetadata,
+    RouteSubscription, RouterDef, RouterHandlers, SubscribeRoute,
 };
 use super::routes_inject::{BatchInjectRoute, InjectRoute};
 use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
@@ -865,6 +866,25 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
         RouterWith::new((), (NoReply, ()).declare_cap(attempts), self)
     }
 
+    /// Names where the retry copies of the registration just added go.
+    ///
+    /// See [`RouterWith::to`]. It opens a mount chain, so `.max_attempts(..)`,
+    /// `.dead_letter(..)`, `.out_retry(..)` and `.build()` follow it.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn to(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> RouterWith<DeclareMount, Self, (), RouteDeclaring<Absent, Absent, FixedDestination>>
+    where
+        Head: RetryOpen,
+    {
+        RouterWith::new(
+            (),
+            DestinationLast::<NoOutBound>::destination_last((NoReply, ()), destination.into()),
+            self,
+        )
+    }
+
     /// Names where a delivery of the registration just added goes once its attempts run out.
     ///
     /// See [`RouterWith::dead_letter`].
@@ -912,59 +932,105 @@ impl<B: Broker + 'static, Routes, C, Layers, Pipe> RouterBroker
     type Broker = B;
 }
 
-/// The live publisher the deferred-retry slot's policy pairs into: what fixes the per-message
+/// The live publisher the deferred-retry position's policy pairs into: what fixes the per-message
 /// options its transforms write.
 type RetryLive<Policy, B> = <Policy as PublishPolicy<Connected<B>>>::Live;
 
-/// The value the deferred-retry slot is actually wired with: the policy after the narrowing a
-/// naming transform would apply, paired.
-type RetryWire<Transforms, Policy, B> =
-    <SlotPolicy<Transforms, Policy, RetryLive<Policy, B>> as PublishPolicy<Connected<B>>>::Live;
+/// What one registration's retry transforms read: the broker's typed per-delivery context of the
+/// delivery being retried.
+type RetryCx<Head, B> = <Head as RouteSubscription<B>>::Context;
 
-/// Wires the deferred-retry slot onto the registration a router grew last: the tail of
+/// What the position offers a transform on this registration: the naming right only where the
+/// descriptor addresses nothing and the mount site named nothing.
+type RetryOfferOf<Head, B, Dest> =
+    <<Head as RouteSubscription<B>>::Copies as RetryOffer<Dest>>::Offer;
+
+/// The most the mount site's transforms do to the destination, projected against the publisher
+/// they run over.
+type RetryUse<Transforms, Policy, B, Head> =
+    <Transforms as RetryStackUse<RetryLive<Policy, B>, RetryCx<Head, B>>>::Destination;
+
+/// The policy the position pairs: the one the mount site named, narrowed to plain sending where
+/// its transforms name the destination.
+type RetryPolicy<Transforms, Policy, B, Head> =
+    <RetryUse<Transforms, Policy, B, Head> as NarrowToUse<Policy>>::Out;
+
+/// The live publisher that narrowed policy pairs into.
+type RetryWire<Transforms, Policy, B, Head> =
+    <RetryPolicy<Transforms, Policy, B, Head> as PublishPolicy<Connected<B>>>::Live;
+
+/// Wires the deferred-retry position onto the registration a router grew last: the tail of
 /// `.out(Retry, policy)` on a mount chain, after the chain committed its registration.
 ///
-/// This is where the slot's attachment resolves into what one slot resolves from anywhere - the
-/// policy, the codec and the composed publish pipeline - and where the three are erased into the
-/// pairing the starter takes. Machinery; never named directly.
+/// This is where the position's attachment resolves into what the runtime pairs - the policy and
+/// the transform stack that runs against the delivery being retried - and where the two are
+/// erased into the pairing the starter takes. It is also where the destination is settled: a
+/// descriptor that addresses its own copies, a `.to(name)`, or a transform that names one per
+/// delivery, and a registration with none of the three does not compile. Machinery; never named
+/// directly.
 #[doc(hidden)]
-pub trait AttachRetry<Attachment>: Sized {
+pub trait AttachRetry<Attachment, Dest>: Sized {
     /// The router with that registration's retry position bound.
     type Out;
 
     /// Wires it.
-    fn attach_retry(self, slot: Attachment) -> Self::Out;
+    fn attach_retry(self, slot: Attachment, destination: Option<Cow<'static, str>>) -> Self::Out;
 }
 
-impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc>
-    AttachRetry<OutAttachment<Retry, Policy, Transforms, Enc>>
+impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
+    AttachRetry<OutAttachment<Retry, Policy, Transforms, Enc>, Dest>
     for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     B: Broker + 'static,
-    Head: RetryOpen + RouteCopies<B>,
+    Head: RetryOpen + RouteSubscription<B, Context: Send + Sync + 'static>,
     // The descriptor decides whether there is a publisher of this process's to name at all: where
     // the broker moves the delivery itself, this is the bound that refuses the position and names
     // the descriptor.
-    <Head as RouteCopies<B>>::Copies: PublishesCopiesHere<<Head as RouteCopies<B>>::Source>,
+    <Head as RouteSubscription<B>>::Copies:
+        PublishesCopiesHere<<Head as RouteSubscription<B>>::Source> + RetryOffer<Dest>,
+    // And whether the mount site still owes a destination: the offer is `Names` only where
+    // nothing has declared one, and then a naming transform is what has to declare it.
+    RetryOfferOf<Head, B, Dest>: DestinationSettled<RetryUse<Transforms, Policy, B, Head>>,
     C: Clone,
-    Pipe: Clone,
-    Enc: SlotCodec<C, Codec: Send + Sync + 'static>,
+    Pipe: Clone + OutPipeline<RetryWire<Transforms, Policy, B, Head>> + 'static,
+    Enc: SlotCodec<C>,
     Policy: PublishPolicy<Connected<B>>,
-    Transforms: LowerOutTransforms<Pipe> + SlotStackUse<RetryLive<Policy, B>>,
-    <Transforms as SlotStackUse<RetryLive<Policy, B>>>::Destination: NarrowToUse<Policy>,
-    SlotPolicy<Transforms, Policy, RetryLive<Policy, B>>:
-        PublishPolicy<Connected<B>, Live: Publisher + 'static> + Send + 'static,
-    <Transforms as LowerOutTransforms<Pipe>>::Out:
-        OutPipeline<RetryWire<Transforms, Policy, B>> + 'static,
+    Transforms: RetryStackUse<RetryLive<Policy, B>, RetryCx<Head, B>>
+        + PublishTransform<
+            ForReply<RetryCx<Head, B>>,
+            <RetryWire<Transforms, Policy, B, Head> as Publisher>::Options,
+        > + Send
+        + Sync
+        + 'static,
+    // `FitsOffer` is the other half of the same rule: a transform may name the destination only
+    // where the position offers the right, so a declared destination and a naming transform are
+    // mutually exclusive, as they are on a reply.
+    RetryUse<Transforms, Policy, B, Head>: NarrowToUse<Policy>
+        + NamesDestination
+        + FitsOffer<RetryOfferOf<Head, B, Dest>, Reads, Retry>,
+    RetryPolicy<Transforms, Policy, B, Head>:
+        PublishPolicy<Connected<B>, Live: Publisher + Send + Sync + 'static> + Send + 'static,
 {
-    type Out = Router<B, (RetriedRoute<Head, B>, Tail), C, Layers, Pipe>;
+    type Out = Router<B, (RetriedRoute<Head, B, RetryCx<Head, B>>, Tail), C, Layers, Pipe>;
 
-    fn attach_retry(self, slot: OutAttachment<Retry, Policy, Transforms, Enc>) -> Self::Out {
-        let (policy, codec, pipeline) = slot.wire(self.codec.clone(), self.pipeline.clone());
+    fn attach_retry(
+        self,
+        slot: OutAttachment<Retry, Policy, Transforms, Enc>,
+        destination: Option<Cow<'static, str>>,
+    ) -> Self::Out {
+        // The copy carries the delivery's own bytes, so the codec the chain resolved here encodes
+        // nothing and is dropped; what is kept is the policy and the transforms.
+        let (policy, transforms, _codec) = slot.into_parts();
+        let policy = <RetryUse<Transforms, Policy, B, Head> as NarrowToUse<Policy>>::narrow(policy);
         let (head, tail) = self.routes;
         Router {
             routes: (
-                RetriedRoute::new(head, RetryPairing::new(policy, codec, pipeline)),
+                RetriedRoute::new(
+                    head,
+                    RetryPairing::new(policy, transforms, self.pipeline.clone()),
+                    destination,
+                    <RetryUse<Transforms, Policy, B, Head> as NamesDestination>::NAMES,
+                ),
                 tail,
             ),
             codec: self.codec,
@@ -984,22 +1050,31 @@ where
 /// gains the declaration itself, which the runtime hands the subscription descriptor at startup.
 /// Machinery; never named directly.
 #[doc(hidden)]
-pub trait AttachDeclaration: Sized {
+pub trait AttachDeclaration<Dest>: Sized {
     /// The router with that registration's declaration wired.
     type Out;
 
     /// Wires it.
-    fn attach_declaration(self, declaration: RetryDeclaration) -> Self::Out;
+    fn attach_declaration(
+        self,
+        declaration: RetryDeclaration,
+        destination: Option<Cow<'static, str>>,
+    ) -> Self::Out;
 }
 
-impl<B, Head, Tail, C, Layers, Pipe> AttachDeclaration for Router<B, (Head, Tail), C, Layers, Pipe>
+impl<B, Head, Tail, C, Layers, Pipe, Dest> AttachDeclaration<Dest>
+    for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     B: Broker + 'static,
     Head: RetryOpen + RouteMetadata,
 {
-    type Out = Router<B, (DeclaredRoute<Head>, Tail), C, Layers, Pipe>;
+    type Out = Router<B, (DeclaredRoute<Head, Dest>, Tail), C, Layers, Pipe>;
 
-    fn attach_declaration(self, declaration: RetryDeclaration) -> Self::Out {
+    fn attach_declaration(
+        self,
+        declaration: RetryDeclaration,
+        destination: Option<Cow<'static, str>>,
+    ) -> Self::Out {
         let (mut head, tail) = self.routes;
         // A dead-lettered delivery is the registration's input leaving the service, so the
         // document reports it under the input's own schema on the declared channel.
@@ -1011,7 +1086,7 @@ where
             meta.outgoing.push(entry);
         }
         Router {
-            routes: (DeclaredRoute::new(head, declaration), tail),
+            routes: (DeclaredRoute::new(head, declaration, destination), tail),
             codec: self.codec,
             layers: self.layers,
             pipeline: self.pipeline,
@@ -1087,6 +1162,9 @@ where
     Routes: RouterDef<B, State, Pipe>,
     Layers: BlanketLayer + Clone + Send + Sync + 'static,
 {
+    // A whole router is many registrations, each with its own context; nothing here reads one.
+    type Context = ();
+
     fn mount_one<G, PP>(
         self,
         global: &G,
@@ -1097,7 +1175,7 @@ where
         sink: &mut RouterSink<B, State>,
         // A whole router is many registrations, and a retry position or declaration belongs to
         // one, so neither binds here: `RetryOpen` is not implemented for a router.
-        _setup: RetrySetup<B>,
+        _setup: RetrySetup<B, ()>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,

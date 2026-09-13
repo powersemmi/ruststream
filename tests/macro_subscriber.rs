@@ -19,7 +19,9 @@ use ruststream::runtime::{
     ContextKind, Outgoing, PublishLayer, PublishNext, PublishTransform, Reads,
 };
 use ruststream::testing::{Outcome, TestApp};
-use ruststream::{RedeliveryAddress, RuntimeCopies, Subscribe, SubscriptionSource};
+use ruststream::{
+    AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, SubscriptionSource,
+};
 use serde::{Deserialize, Serialize};
 
 // The derive is spelled out: `runtime::Outgoing` above is the publish transform's message view,
@@ -62,7 +64,7 @@ impl StreamSource {
 
 impl SubscriptionSource<ConnectedMemoryBroker> for StreamSource {
     type Subscriber = MemorySubscriber;
-    type Copies = RuntimeCopies;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         &self.name
@@ -74,14 +76,16 @@ impl SubscriptionSource<ConnectedMemoryBroker> for StreamSource {
     ) -> Result<MemorySubscriber, MemoryError> {
         Subscribe::subscribe(connected, &self.name).await
     }
+}
 
-    // One in-memory subject is both what the subscription reads and what a publish reaches, and
-    // no lookup stands between the descriptor and the answer.
+// One in-memory subject is both what the subscription reads and what a publish reaches, and no
+// lookup stands between the descriptor and the answer.
+impl RedeliveryAddressed<ConnectedMemoryBroker> for StreamSource {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, MemoryError>> + Send {
-        ready(Ok(Some(RedeliveryAddress::new(self.name.clone()))))
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
 

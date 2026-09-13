@@ -20,60 +20,82 @@ use std::{
 
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 
-/// Who publishes the copies a subscription's retries are made of.
+/// Who publishes the copies a subscription's retries are made of, and who names where they go.
 ///
-/// Every descriptor answers with [`SubscriptionSource::Copies`], and the answer is a closed set
-/// of two: [`RuntimeCopies`] where this process publishes them, [`BrokerMoves`] where the server
-/// or the client library moves the delivery itself. It decides two things at the mount site -
-/// whether `.out_retry(policy)` has a publisher to name, and whether the runtime pairs one of its
-/// own for every registration on that descriptor.
+/// Every descriptor answers with [`SubscriptionSource::Copies`], and the answer is a closed set of
+/// three: [`AddressedCopies`] where this process publishes them and the descriptor knows the
+/// destination, [`NamedCopies`] where this process publishes them and the mount site names the
+/// destination, [`BrokerMoves`] where the server or the client library moves the delivery itself.
+/// It decides three things at the mount site - whether `.out_retry(policy)` has a publisher to
+/// customise, whether the runtime pairs one of its own, and whether the registration owes a
+/// destination.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{BrokerMoves, CopyPath, RuntimeCopies};
+/// use ruststream::{AddressedCopies, BrokerMoves, CopyPath, NamedCopies};
 ///
 /// fn declared<P: CopyPath>() -> &'static str {
 ///     std::any::type_name::<P>()
 /// }
 ///
-/// assert!(declared::<RuntimeCopies>().ends_with("RuntimeCopies"));
+/// assert!(declared::<AddressedCopies>().ends_with("AddressedCopies"));
+/// assert!(declared::<NamedCopies>().ends_with("NamedCopies"));
 /// assert!(declared::<BrokerMoves>().ends_with("BrokerMoves"));
 /// ```
 pub trait CopyPath: copy_path::Sealed {}
 
 mod copy_path {
-    /// Keeps the set of copy paths at the two the runtime knows how to act on.
+    /// Keeps the set of copy paths at the three the runtime knows how to act on.
     pub trait Sealed {}
 
-    impl Sealed for super::RuntimeCopies {}
+    impl Sealed for super::AddressedCopies {}
+    impl Sealed for super::NamedCopies {}
     impl Sealed for super::BrokerMoves {}
 }
 
-/// The copy path of a subscription whose retries this process publishes.
+/// The copy path of a subscription whose retries this process publishes, to a destination the
+/// descriptor knows: a subject, a topic, a queue, a stream key.
 ///
-/// The runtime pairs a retry publisher for every registration on such a descriptor, from the
-/// broker's [`DefaultPublish`](crate::DefaultPublish) policy, and `.out_retry(policy)` replaces
-/// it. A descriptor that declares it must also answer
-/// [`redelivery_address`](SubscriptionSource::redelivery_address): that is where a deferred copy
-/// goes, and a registration whose subscription cannot say refuses to start rather than publish
-/// into nothing.
+/// A descriptor that declares it implements [`RedeliveryAddressed`], which is where that
+/// destination comes from - the address is a property of the type, not an answer checked at
+/// startup. The runtime pairs a retry publisher for every registration on such a descriptor, from
+/// the broker's [`DefaultPublish`](crate::DefaultPublish) policy; `.out_retry(policy)` replaces
+/// it, and `.to(name)` on that position overrides the address.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Name, RuntimeCopies, Subscribe, SubscriptionSource};
+/// use ruststream::{AddressedCopies, CopyPath};
 ///
-/// // The by-name source publishes its copies here, so a mount site may name their publisher.
-/// fn declared<C: Subscribe>() -> &'static str {
-///     std::any::type_name::<<Name as SubscriptionSource<C>>::Copies>()
-/// }
-/// # let _: RuntimeCopies = RuntimeCopies;
+/// fn publishes_here<P: CopyPath>(_: P) {}
+/// publishes_here(AddressedCopies);
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct RuntimeCopies;
+pub struct AddressedCopies;
 
-impl CopyPath for RuntimeCopies {}
+impl CopyPath for AddressedCopies {}
+
+/// The copy path of a subscription whose retries this process publishes but cannot address: a
+/// wildcard subject, an MQTT filter, a Pulsar pattern, a list of topics.
+///
+/// One subscription like this reads many destinations, so the descriptor has no single answer and
+/// the mount site names one: `.out_retry(policy).to("orders")` for a fixed destination, or a
+/// publish transform that names it per delivery. A registration that names neither does not
+/// compile.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{CopyPath, NamedCopies};
+///
+/// fn publishes_here<P: CopyPath>(_: P) {}
+/// publishes_here(NamedCopies);
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct NamedCopies;
+
+impl CopyPath for NamedCopies {}
 
 /// The copy path of a subscription whose deliveries the broker moves itself.
 ///
@@ -255,17 +277,18 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// The subscriber type this source opens.
     type Subscriber: Subscriber;
 
-    /// Who publishes the copies this subscription's retries are made of:
-    /// [`RuntimeCopies`] where this process does, [`BrokerMoves`] where the server or the client
-    /// library moves the delivery itself.
+    /// Who publishes the copies this subscription's retries are made of, and who names where they
+    /// go: [`AddressedCopies`], [`NamedCopies`] or [`BrokerMoves`].
     ///
-    /// Answer [`RuntimeCopies`] unless the broker applies a delivery limit and a dead-letter
-    /// destination on its own (a quorum queue with `x-delivery-limit` and an
-    /// `x-dead-letter-exchange`, a Pub/Sub dead-letter policy, an SQS redrive policy, a Pulsar
-    /// `DeadLetterPolicy`); a descriptor that answers so must also report a
-    /// [`redelivery_address`](Self::redelivery_address). [`BrokerMoves`] makes `.out_retry(..)`
-    /// a compile error at every mount site of this descriptor, because there is no publisher of
-    /// this process's for the mount site to name.
+    /// Answer [`AddressedCopies`] where one subscription reads one destination this process can
+    /// publish to, and implement [`RedeliveryAddressed`] beside it - the copy path requires it.
+    /// Answer [`NamedCopies`] where the subscription reads many (a wildcard, a filter, a pattern,
+    /// a list) and the mount site has to name one. Answer [`BrokerMoves`] where the broker applies
+    /// a delivery limit and a dead-letter destination on its own (a quorum queue with
+    /// `x-delivery-limit` and an `x-dead-letter-exchange`, a Pub/Sub dead-letter policy, an SQS
+    /// redrive policy, a Pulsar `DeadLetterPolicy`); that makes `.out_retry(..)` a compile error at
+    /// every mount site of this descriptor, because there is no publisher of this process's to
+    /// customise.
     type Copies: CopyPath;
 
     /// The name (subject / channel) this subscription binds to.
@@ -299,7 +322,8 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// ```
     /// use std::borrow::Cow;
     ///
-    /// use ruststream::{RetryDeclaration, RuntimeCopies, Subscribe, SubscriptionSource};
+    /// use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed};
+    /// use ruststream::{RetryDeclaration, Subscribe, SubscriptionSource};
     ///
     /// /// A queue this broker declares itself, so it takes the declaration into its topology.
     /// #[derive(Debug, Clone)]
@@ -311,7 +335,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///
     /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
     ///     type Subscriber = C::Subscriber;
-    ///     type Copies = RuntimeCopies;
+    ///     type Copies = AddressedCopies;
     ///
     ///     fn name(&self) -> &str {
     ///         &self.name
@@ -327,6 +351,13 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///         self
     ///     }
     /// }
+    ///
+    /// // The queue is one destination, so it answers where a copy reaches it again.
+    /// impl<C: Subscribe> RedeliveryAddressed<C> for Queue {
+    ///     async fn redelivery_address(&self, _connected: &C) -> Result<RedeliveryAddress, C::Error> {
+    ///         Ok(RedeliveryAddress::new(self.name.clone()))
+    ///     }
+    /// }
     /// ```
     #[must_use]
     fn declare_retry(self, declaration: &RetryDeclaration) -> Self
@@ -336,58 +367,63 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
         let _ = declaration;
         self
     }
+}
 
-    /// Where a publish reaches this subscription again, for the runtime's deferred `retry_after`
-    /// fallback. `None` means the broker cannot say.
-    ///
-    /// A broker without native delayed redelivery gets the delay honoured by a copy the runtime
-    /// publishes after it: this is the name that copy goes to. Answer with the name a publisher
-    /// bound to the same broker must use, resolving it against `connected` when only the live
-    /// connection knows it (a Pub/Sub subscription has to be looked up to learn its topic).
-    /// Called once per subscription at startup, never on the delivery path.
-    ///
-    /// The default answers `None`, which suits a descriptor whose
-    /// [`Copies`](Self::Copies) are [`BrokerMoves`]: nothing of this process's is published for
-    /// it. A [`RuntimeCopies`] descriptor owes an address, and a registration over one that
-    /// answers `None` refuses to start. A subscription's name is not an address: where a
-    /// subscription and a publish destination are separate resources, answering with it would
-    /// publish the copy into nothing and lose the message under load.
+/// A subscription descriptor that knows where a publish reaches it again.
+///
+/// The other half of [`AddressedCopies`]: a descriptor declaring that copy path implements this
+/// too, so the destination of a retry copy is a property of the descriptor's type rather than an
+/// answer the runtime has to check at startup. A descriptor that cannot name one destination
+/// declares [`NamedCopies`] instead and the mount site names it.
+///
+/// Answer with the name a publisher bound to the same broker uses to reach this subscription
+/// again, resolving it against `connected` when only the live connection knows it (a Pub/Sub
+/// subscription has to be looked up to learn its topic). Called once per subscription at startup,
+/// never on the delivery path.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "memory")]
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+/// use ruststream::{Broker, RedeliveryAddress, RedeliveryAddressed};
+///
+/// let connected = MemoryBroker::new().connect().await?;
+/// let source = MemorySource::new("orders");
+///
+/// // The in-memory subject is both what a subscription reads and what a publish reaches.
+/// assert_eq!(
+///     source.redelivery_address(&connected).await?,
+///     RedeliveryAddress::new("orders"),
+/// );
+/// # Ok(())
+/// # }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` declares `Copies = AddressedCopies` but says no address",
+    label = "no redelivery address for this descriptor on `{C}`",
+    note = "a descriptor whose retry copies this process publishes to one destination implements \
+            `RedeliveryAddressed` beside `SubscriptionSource`; one that reads many destinations \
+            declares `Copies = NamedCopies` and lets the mount site name one"
+)]
+pub trait RedeliveryAddressed<C: ConnectedBroker>:
+    SubscriptionSource<C, Copies = AddressedCopies>
+{
+    /// Where a publish reaches this subscription again.
     ///
     /// # Errors
     ///
     /// Returns [`ConnectedBroker::Error`] when the broker has to be asked and the request fails.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::memory::{MemoryBroker, MemorySource};
-    /// use ruststream::{Broker, RedeliveryAddress, SubscriptionSource};
-    ///
-    /// let connected = MemoryBroker::new().connect().await?;
-    /// let source = MemorySource::new("orders");
-    ///
-    /// // The in-memory subject is both what a subscription reads and what a publish reaches.
-    /// assert_eq!(
-    ///     source.redelivery_address(&connected).await?,
-    ///     Some(RedeliveryAddress::new("orders")),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
-        let _ = connected;
-        async { Ok(None) }
-    }
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send;
 }
 
 /// The name a deferred redelivery of one subscription is published to.
 ///
-/// Reported by [`SubscriptionSource::redelivery_address`]. It is a publish destination, not a
+/// Reported by [`RedeliveryAddressed::redelivery_address`]. It is a publish destination, not a
 /// subscription name: the two coincide on a NATS subject or a Kafka topic and differ wherever a
 /// subscription is a resource of its own, so the runtime never substitutes one for the other.
 ///
@@ -562,9 +598,9 @@ impl<S> fmt::Debug for Unnamed<S> {
 
 impl<C: Subscribe> SubscriptionSource<C> for Name {
     type Subscriber = C::Subscriber;
-    // A name is one string on every broker that takes one, and a publish to it reaches the
-    // subscription: the runtime is what publishes a copy there.
-    type Copies = RuntimeCopies;
+    // Only the broker knows whether a publish under a subscribe name reaches the subscription
+    // opened by it: a subject or a topic is both, an MQTT filter is neither.
+    type Copies = C::Copies;
 
     fn name(&self) -> &str {
         &self.0
@@ -573,15 +609,16 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         connected.subscribe(&self.0).await
     }
+}
 
-    /// The broker answers for its own names: only it knows whether a publish to a name it
-    /// subscribes by comes back to that subscription (see
-    /// [`Subscribe::redelivery_address`]). The answer needs no I/O, so the future is ready.
+/// Where the broker says a subscribe name is also a publish destination, the name is the address,
+/// and no lookup stands between the descriptor and the answer.
+impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
     fn redelivery_address(
         &self,
-        connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
-        ready(Ok(connected.redelivery_address(&self.0)))
+        _connected: &C,
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.0.clone())))
     }
 }
 
@@ -737,12 +774,19 @@ where
         subscriber.seeker().seek(self.position).await?;
         Ok(subscriber)
     }
+}
 
-    /// A start position changes where the subscription opens, not where a publish reaches it.
+/// A start position changes where the subscription opens, not where a publish reaches it.
+impl<C, S, P> RedeliveryAddressed<C> for StartAt<S, P>
+where
+    Self: SubscriptionSource<C, Copies = AddressedCopies>,
+    C: ConnectedBroker,
+    S: RedeliveryAddressed<C> + Send + Sync,
+{
     fn redelivery_address(
         &self,
         connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
         self.inner.redelivery_address(connected)
     }
 }
@@ -800,14 +844,14 @@ mod tests {
                 .redelivery_address(&connected)
                 .await
                 .expect("the in-memory broker answers without a lookup"),
-            Some(address.clone()),
+            address.clone(),
         );
         assert_eq!(
             Buffered::new(MemorySource::new("orders"))
                 .redelivery_address(&connected)
                 .await
                 .expect("client-side batching changes no address"),
-            Some(address.clone()),
+            address.clone(),
         );
 
         // The start-position decorator only wraps a source whose subscriptions replay, so it is
@@ -821,7 +865,7 @@ mod tests {
                 .redelivery_address(&retaining)
                 .await
                 .expect("a start position changes no address"),
-            Some(address),
+            address,
         );
     }
 

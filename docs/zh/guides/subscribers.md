@@ -164,8 +164,7 @@
 ```
 
 副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
-串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate，
-订阅答不上来的那条注册起不来，并报出是哪条订阅、该怎么改，旁边的注册不受影响。
+串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate。
 
 完全不能结算的传输（MQTT 的 QoS 0、ZeroMQ 和 Redis pub/sub）走同一条路径：没有原件可丢，重新
 投递就只剩这份副本。另一种情形是 Broker 拒绝了结算：这条消息仍归 Broker，由它自己重新投递，因此
@@ -185,6 +184,30 @@
     ```rust
     --8<-- "examples/manual/retry.rs:batch_retry_after"
     ```
+
+### 重试副本发往哪里
+
+只读一个地址的订阅会说出副本按哪个地址能重新到达它，这由 Broker crate 回答。读很多地址的订阅 -
+带通配符的 subject、MQTT 的过滤器、Pulsar 的 pattern、一串 topic - 一个也说不出来，于是由挂载处
+说出来：
+
+```rust
+--8<-- "examples/retry.rs:named"
+```
+
+`.to(name)` 是一个普通地址，和回复的地址一样。它排在 `out_retry(policy)` 之前：scope 上的注册在
+语句结束时提交，所以到那一刻，链上必须已经说过副本发往哪里。在以 `.build()` 结尾的链上 -
+`Router`、带 `Out` 槽的处理器 - 它也可以排在发布者之后。
+
+另一种方式是用一个变换为每次投递各自命名，它读的是被重试的那次投递。带通配符的订阅正是这样把副
+本送回它收到消息的那个具体 topic：
+
+```rust
+--8<-- "examples/retry.rs:naming_transform"
+```
+
+这两种方式互斥，就像声明了目的地的回复和命名变换互斥一样。描述符自己给副本定址的地方，两者都不
+需要，命名变换也编译不过；那里的 `.to(name)` 覆盖描述符给出的地址。
 
 ### 给重试封顶
 

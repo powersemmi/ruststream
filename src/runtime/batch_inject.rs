@@ -9,7 +9,7 @@
 
 use std::future::Future;
 
-use crate::IncomingMessage;
+use crate::{BuildBatchContext, IncomingMessage};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
@@ -136,7 +136,7 @@ where
     Def: BatchInjectCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
     Def::Injections: Send + Sync,
-    Def::Context: Send + Sync,
+    Def::Context: BuildBatchContext<Msg> + Send + Sync + 'static,
     DecodeCodec: Send + Sync,
     State: Send + Sync,
 {

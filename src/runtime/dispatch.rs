@@ -17,16 +17,18 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
-use crate::{AckError, BatchSubscriber, HeaderMap, IncomingMessage, RetryDeclaration, Subscriber};
+use crate::{
+    AckError, BatchSubscriber, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration,
+    Subscriber,
+};
 
 use super::batch::BatchHandler;
 use super::context::Context;
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
-use super::publish::raw_of;
+use super::publish::PublishContext;
 #[cfg(test)]
-use super::publisher_registry::ErasedPublisher;
-use super::publisher_registry::ErasedSink;
+use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
@@ -127,13 +129,12 @@ impl Default for Workers {
 /// broker-agnostic `retry_after` fallback of this registration and the app-wide tracker for
 /// post-settle continuations.
 /// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
-pub(crate) struct Delivery {
+pub(crate) struct Delivery<C = ()> {
     /// The retry path of this subscription: the publisher a copy of a delivery leaves through,
-    /// paired with the address its descriptor reported at startup. `None` where the broker moves
+    /// with the destination the mount site or the descriptor named. `None` where the broker moves
     /// the delivery itself, in which case a `NackAfter` on a transport with no native delayed
-    /// redelivery has nothing left to do but requeue. A publisher without an address never
-    /// reaches here: the subscription refuses to start instead.
-    pub(crate) retry: Option<DeferredRetry>,
+    /// redelivery has nothing left to do but requeue.
+    pub(crate) retry: Option<DeferredRetry<C>>,
     /// What the mount site declared with `max_attempts(..)` and `dead_letter(..)`. Read only
     /// where the runtime is the one moving the delivery.
     pub(crate) declaration: RetryDeclaration,
@@ -150,12 +151,12 @@ pub(crate) struct Delivery {
     pub(crate) scope_id: usize,
 }
 
-impl Delivery {
-    /// The context one subscription dispatches under: its own deferred-retry fallback over what
-    /// the whole scope shares.
+impl<C> Delivery<C> {
+    /// The context one subscription dispatches under: its own retry path over what the whole
+    /// scope shares.
     pub(crate) fn for_subscription(
         scope: &ScopeDelivery,
-        retry: Option<DeferredRetry>,
+        retry: Option<DeferredRetry<C>>,
         declaration: RetryDeclaration,
     ) -> Self {
         Self {
@@ -172,7 +173,7 @@ impl Delivery {
     /// A delivery context outside any scope, for tests that drive the dispatch functions
     /// directly.
     #[cfg(test)]
-    pub(crate) fn detached(retry: Option<DeferredRetry>, tasks: TaskTracker) -> Self {
+    pub(crate) fn detached(retry: Option<DeferredRetry<C>>, tasks: TaskTracker) -> Self {
         Self {
             retry,
             declaration: RetryDeclaration::new(),
@@ -184,17 +185,18 @@ impl Delivery {
         }
     }
 
-    /// A delivery context deferring retries to `publisher` at `address`. For tests.
+    /// A delivery context publishing its retry copies through `publisher` at `destination`. For
+    /// tests.
     #[cfg(test)]
     pub(crate) fn deferring_to(
-        publisher: Arc<dyn ErasedPublisher>,
-        address: &str,
+        publisher: Arc<dyn ErasedRetryPublisher<C>>,
+        destination: &str,
         tasks: TaskTracker,
     ) -> Self {
         Self::detached(
             Some(DeferredRetry {
                 publisher,
-                address: Arc::from(address),
+                destination: Some(Arc::from(destination)),
             }),
             tasks,
         )
@@ -222,12 +224,12 @@ impl Delivery {
     }
 }
 
-impl fmt::Debug for Delivery {
+impl<C> fmt::Debug for Delivery<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery")
             .field(
-                "retry_address",
-                &self.retry.as_ref().map(|retry| &retry.address),
+                "retry_destination",
+                &self.retry.as_ref().map(|retry| &retry.destination),
             )
             .field("declaration", &self.declaration)
             .field("pending_continuations", &self.tasks.len())
@@ -244,13 +246,13 @@ pub(crate) fn spawn_dispatch<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
 ) -> JoinHandle<()>
 where
     S: Subscriber + Send + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -299,7 +301,7 @@ pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -307,7 +309,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     if workers.is_sequential() {
@@ -333,7 +335,7 @@ fn spawn_dispatch_pool<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -341,7 +343,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -396,7 +398,7 @@ fn spawn_dispatch_lanes<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
 ) -> JoinHandle<()>
@@ -404,7 +406,7 @@ where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
     H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -511,7 +513,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     shutdown: CancellationToken,
     name: Arc<str>,
     state: Arc<St>,
-    delivery: Arc<Delivery>,
+    delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
     batch_size: NonZeroUsize,
@@ -520,7 +522,7 @@ where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
     H: BatchHandler<S::Message, C, St> + 'static,
-    C: crate::BuildBatchContext<S::Message> + Send + 'static,
+    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
@@ -588,11 +590,11 @@ async fn dispatch<H, M, C, St>(
     msg: M,
     name: &str,
     state: &St,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
     failure: &DispatchFailure,
 ) where
     H: Handler<M, C, St>,
-    C: crate::BuildContext<M>,
+    C: crate::BuildContext<M> + Send + Sync + 'static,
     M: IncomingMessage,
     // The dispatch future is awaited inside a spawned task, so it must be `Send`: the context
     // borrows `&St` across the handler await, which requires `St: Sync`.
@@ -683,7 +685,7 @@ async fn dispatch<H, M, C, St>(
     }
     drop(ctx);
     if let Some(mut s) = settle {
-        settle_outcome(msg, s.outcome(), name, delivery).await;
+        settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C).await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
@@ -713,12 +715,12 @@ async fn run_batch<H, M, C, St>(
     batch: Vec<M>,
     name: &str,
     state: &St,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
     failure: &DispatchFailure,
 ) where
     H: BatchHandler<M, C, St>,
     M: IncomingMessage,
-    C: crate::BuildBatchContext<M> + Send,
+    C: crate::BuildBatchContext<M> + Send + Sync + 'static,
     St: Send + Sync,
 {
     // A batch with no deliveries has nothing to settle and no first delivery to build a context
@@ -804,7 +806,7 @@ async fn run_batch<H, M, C, St>(
 /// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)
 /// is driving this app.
 #[cfg(feature = "testing")]
-fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
+fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
     delivery
         .hooks
         .coordinator()
@@ -817,17 +819,23 @@ fn harness_scope(delivery: &Delivery) -> Option<HarnessScope> {
 /// The single place a settlement reaches the broker, single-message and batch paths alike: a
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
 /// the retry path below is exactly the part that is easy to leave out.
-pub(crate) async fn settle_outcome<M: IncomingMessage>(
+pub(crate) async fn settle_outcome<M, C>(
     msg: M,
     outcome: HandlerResult,
     name: &str,
-    delivery: &Delivery,
-) {
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
     let ack_result = match outcome {
         HandlerResult::Ack => msg.ack().await,
         HandlerResult::Nack { requeue: false } => msg.nack(false).await,
-        HandlerResult::Nack { requeue: true } => settle_retry(msg, name, delivery).await,
-        HandlerResult::NackAfter { delay } => settle_nack_after(msg, name, delay, delivery).await,
+        HandlerResult::Nack { requeue: true } => settle_retry(msg, name, delivery, build_cx).await,
+        HandlerResult::NackAfter { delay } => {
+            settle_nack_after(msg, name, delay, delivery, build_cx).await
+        }
     };
     if let Err(err) = ack_result {
         warn!(
@@ -901,11 +909,16 @@ fn redelivery_of<'d, M: IncomingMessage>(
 /// # Errors
 ///
 /// Returns the [`AckError`] from settling the original delivery.
-async fn settle_retry<M: IncomingMessage>(
+async fn settle_retry<M, C>(
     msg: M,
     name: &str,
-    delivery: &Delivery,
-) -> Result<(), AckError> {
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
     if delivery.declaration.declares_nothing() {
         return msg.nack(true).await;
     }
@@ -915,8 +928,8 @@ async fn settle_retry<M: IncomingMessage>(
         Redelivery::Subscription if msg.redelivery_count().is_some() => msg.nack(true).await,
         Redelivery::Subscription => match delivery.retry.as_ref() {
             Some(retry) => {
-                let address = Arc::clone(&retry.address);
-                publish_copy(msg, name, address, None, retry, delivery).await
+                let destination = retry.destination.clone();
+                publish_copy(msg, name, destination, None, retry, delivery, build_cx).await
             }
             // The broker moves this subscription's deliveries itself, so its requeue is what an
             // immediate retry is, and the declaration is the broker's to apply.
@@ -931,7 +944,16 @@ async fn settle_retry<M: IncomingMessage>(
                     warn_at_cap(name, attempt_of(&msg), Some(destination));
                 }
                 let destination = Arc::from(destination);
-                publish_copy(msg, name, destination, None, retry, delivery).await
+                publish_copy(
+                    msg,
+                    name,
+                    Some(destination),
+                    None,
+                    retry,
+                    delivery,
+                    build_cx,
+                )
+                .await
             }
             None => msg.nack(false).await,
         },
@@ -982,14 +1004,16 @@ async fn settle_retry<M: IncomingMessage>(
 /// that window: if the process exits (or the runtime is dropped) before the timer fires, the
 /// deferred message is lost, since the original has already been dropped. Brokers that need
 /// at-least-once delayed redelivery across a crash must provide native support.
-async fn settle_nack_after<M>(
+async fn settle_nack_after<M, C>(
     msg: M,
     name: &str,
     delay: Duration,
-    delivery: &Delivery,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
 ) -> Result<(), AckError>
 where
     M: IncomingMessage,
+    C: Send + Sync + 'static,
 {
     if msg.supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
@@ -1006,7 +1030,16 @@ where
                 Redelivery::DeadLetter { destination, .. } => {
                     warn_at_cap(name, attempt_of(&msg), Some(destination));
                     let destination = Arc::from(destination);
-                    return publish_copy(msg, name, destination, None, retry, delivery).await;
+                    return publish_copy(
+                        msg,
+                        name,
+                        Some(destination),
+                        None,
+                        retry,
+                        delivery,
+                        build_cx,
+                    )
+                    .await;
                 }
                 Redelivery::Reject => {
                     warn_at_cap(name, attempt_of(&msg), None);
@@ -1030,8 +1063,17 @@ where
 
     match redelivery_of(&msg, &delivery.declaration) {
         Redelivery::Subscription => {
-            let address = Arc::clone(&retry.address);
-            publish_copy(msg, name, address, Some(delay), retry, delivery).await
+            let destination = retry.destination.clone();
+            publish_copy(
+                msg,
+                name,
+                destination,
+                Some(delay),
+                retry,
+                delivery,
+                build_cx,
+            )
+            .await
         }
         Redelivery::DeadLetter {
             destination,
@@ -1043,7 +1085,16 @@ where
             // A delivery that has run out of attempts is not retried, so the delay it asked for
             // does not apply to the copy that carries it away.
             let destination = Arc::from(destination);
-            publish_copy(msg, name, destination, None, retry, delivery).await
+            publish_copy(
+                msg,
+                name,
+                Some(destination),
+                None,
+                retry,
+                delivery,
+                build_cx,
+            )
+            .await
         }
         Redelivery::Reject => {
             warn_at_cap(name, attempt_of(&msg), None);
@@ -1076,27 +1127,41 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 
 /// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`.
 ///
+/// `destination` is `None` only where the registration's transforms name one per delivery; the
+/// copy then starts at the subscription's own name, which is what the transforms read as the
+/// delivery's channel, and one of them renames it.
+///
 /// # Errors
 ///
 /// Returns the [`AckError`] from dropping the original where that failed and the transport does
 /// settle: the delivery then stays with the broker, and a copy on top of it would duplicate the
 /// message.
-async fn publish_copy<M: IncomingMessage>(
+async fn publish_copy<M, C>(
     msg: M,
     name: &str,
-    destination: Arc<str>,
+    destination: Option<Arc<str>>,
     delay: Option<Duration>,
-    retry: &DeferredRetry,
-    delivery: &Delivery,
-) -> Result<(), AckError> {
+    retry: &DeferredRetry<C>,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
     let publisher = Arc::clone(&retry.publisher);
-    let subscription = name.to_owned();
+    let subscription: Arc<str> = Arc::from(name);
+    let target = destination.unwrap_or_else(|| Arc::clone(&subscription));
 
-    // Settling consumes the message, so capture everything the copy needs first.
+    // Settling consumes the message, so capture everything the copy needs first: its bytes, the
+    // headers the handler saw, and the broker's own per-delivery context, which is what a
+    // transform on this position reads.
     let payload = Bytes::copy_from_slice(msg.payload());
-    let mut headers = msg.headers().clone();
+    let delivered = msg.headers().clone();
+    let mut headers = delivered.clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
+    let context = build_cx(&msg);
 
     // Drop the original so the broker does not also redeliver it; the copy carries the retry
     // forward. A transport with no settlement at all has nothing to drop and no redelivery of its
@@ -1109,14 +1174,13 @@ async fn publish_copy<M: IncomingMessage>(
     }
 
     let republish = async move {
-        let copy = raw_of(ErasedSink(publisher.as_ref()), &payload)
-            .with_headers(headers)
-            .to(destination.as_ref());
-        if let Err(err) = copy.publish().await {
+        let cx = PublishContext::new(&subscription, &delivered, &context);
+        let copy = OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
+        if let Err(err) = publisher.publish_copy(copy, &cx).await {
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %subscription,
-                address = %destination,
+                destination = %target,
                 error = %err,
                 "publishing the retry copy failed; message lost",
             );

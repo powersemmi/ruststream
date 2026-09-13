@@ -14,7 +14,7 @@ use std::future::Future;
 use serde::Serialize;
 use tracing::warn;
 
-use crate::IncomingMessage;
+use crate::{BuildBatchContext, IncomingMessage};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
@@ -182,7 +182,7 @@ where
     D::Input: DecodeWith<C>,
     D::Injections: Send + Sync,
     D::Reply: Serialize + Send + Sync,
-    D::Context: Send + Sync,
+    D::Context: BuildBatchContext<M> + Send + Sync + 'static,
     C: Send + Sync,
     R: ReplyPublisher<D::Context>,
     PP: PublishPipeline,

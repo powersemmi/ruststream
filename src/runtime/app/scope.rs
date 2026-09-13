@@ -97,7 +97,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         S: Subscriber + Send + 'static,
         S::Message: Send + Sync + 'static,
         State: Send + Sync + 'static,
-        Cx: crate::BuildContext<S::Message> + Send + 'static,
+        Cx: crate::BuildContext<S::Message> + Send + Sync + 'static,
         H: Handler<S::Message, Cx, State> + 'static,
         Layers: BlanketLayer + Clone + Send + Sync + 'static,
     {

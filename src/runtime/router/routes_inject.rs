@@ -14,20 +14,20 @@ use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
 };
 
-use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectHandler};
+use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
-use crate::runtime::inject::{FromStartup, InjectCall, InjectHandler};
+use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
 use crate::runtime::input::DecodeWith;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
-use crate::runtime::redelivery::{CopyPathPairing, RetrySetup, open_subscription};
-use crate::runtime::retry::RetryOpen;
+use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
+use crate::runtime::retry::{OpenDestination, RetryOpen};
 
 use super::SourceMessage;
-use super::routes::{MountRoute, RouteCopies, RouteMeta, RouteMetadata};
+use super::routes::{MountRoute, RouteMeta, RouteMetadata, RouteSubscription};
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
@@ -99,14 +99,6 @@ macro_rules! impl_route_markers {
             }
         }
 
-        impl<B, $($param),+> RouteCopies<B> for $route<$($param),+>
-        where
-            B: Broker,
-            Source: SubscriptionSource<Connected<B>>,
-        {
-            type Source = Source;
-            type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
-        }
     )+};
 }
 
@@ -115,12 +107,40 @@ impl_route_markers!(
     BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
+impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
+    for InjectRoute<Source, Def, DecodeCodec, Extra>
+where
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
+    Def: InjectDef,
+{
+    type Source = Source;
+    type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
+    type Context = Def::Context;
+    type Destination = OpenDestination;
+}
+
+impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
+where
+    B: Broker,
+    Source: SubscriptionSource<Connected<B>>,
+    Def: BatchInjectDef,
+{
+    type Source = Source;
+    type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
+    type Context = Def::Context;
+    type Destination = OpenDestination;
+}
+
 impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    Source::Copies:
+        CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
+    Def::Context: Send + Sync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
@@ -134,13 +154,15 @@ where
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
+    type Context = Def::Context;
+
     fn mount_one<G, PP>(
         self,
         global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        setup: RetrySetup<B>,
+        setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -163,9 +185,14 @@ where
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
-                            .await?;
+                    let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
+                        source,
+                        connected.as_ref(),
+                        &scope,
+                        &name,
+                        setup,
+                    )
+                    .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
@@ -201,7 +228,9 @@ impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, Sta
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
-    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    Source::Copies:
+        CopyPathPairing<B, Def::Context, RetryPipeline> + CopyPathAddress<Connected<B>, Source>,
+    Def::Context: Send + Sync + 'static,
     RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
     SourceMessage<B, Source>: Send + 'static,
@@ -213,13 +242,15 @@ where
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
+    type Context = Def::Context;
+
     fn mount_one<G, PP>(
         self,
         _global: &G,
         _pipeline: &PP,
         retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        setup: RetrySetup<B>,
+        setup: RetrySetup<B, Def::Context>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,

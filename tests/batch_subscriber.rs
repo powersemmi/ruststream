@@ -25,8 +25,8 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
-    BatchSubscriber, Buffered, BufferedSubscriber, RedeliveryAddress, RuntimeCopies, Seekable,
-    Subscribe, Subscriber, SubscriptionSource,
+    AddressedCopies, BatchSubscriber, Buffered, BufferedSubscriber, RedeliveryAddress,
+    RedeliveryAddressed, Seekable, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -189,7 +189,7 @@ struct Trickle {
 
 impl SubscriptionSource<ConnectedMemoryBroker<Retaining>> for Trickle {
     type Subscriber = TrickleSubscriber;
-    type Copies = RuntimeCopies;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.name
@@ -203,15 +203,16 @@ impl SubscriptionSource<ConnectedMemoryBroker<Retaining>> for Trickle {
             Subscribe::subscribe(connected, self.name).await?,
         ))
     }
+}
 
-    // A descriptor whose copies the runtime publishes owes the destination those copies go to.
-    // One in-memory subject is both ends of the bus, so the name answers for itself, and no
-    // lookup stands between the descriptor and the answer.
+// A descriptor that addresses its own copies says where they go, and one in-memory subject is
+// both ends of the bus, so the name answers for itself with no lookup in between.
+impl RedeliveryAddressed<ConnectedMemoryBroker<Retaining>> for Trickle {
     fn redelivery_address(
         &self,
         _connected: &ConnectedMemoryBroker<Retaining>,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, MemoryError>> + Send {
-        ready(Ok(Some(RedeliveryAddress::new(self.name))))
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
 // --8<-- [end:buffered_capability]

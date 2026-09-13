@@ -14,7 +14,7 @@ use ruststream::memory::prelude::*;
 // The derive and the pipeline's message type share the name in different namespaces: the derive
 // is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
 // `ruststream::runtime::Outgoing`.
-use ruststream::runtime::{Outgoing, SlotContext};
+use ruststream::runtime::{Outgoing, PublishContext};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -71,17 +71,22 @@ impl Handle<[Payment]> for ReconcileBatch {
 // --8<-- [end:batch_retry_after]
 
 // --8<-- [start:mount]
-/// A transform on the retry position: it stamps every copy with the slot it left through, so a
-/// redelivery is recognisable downstream. The position is an `Out` slot, so its transforms read a
-/// `SlotContext` like any other slot's.
+/// A transform on the retry position: it stamps every copy with the subscription the delivery
+/// came from, so a redelivery is recognisable downstream. Transforms here read the delivery being
+/// retried, the way a reply's do.
 struct DeferredStamp;
 
-impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for DeferredStamp {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
-            .insert("x-left-through", cx.slot().to_owned());
+            .insert("x-retried-from", cx.name().to_owned());
     }
 }
 
@@ -94,6 +99,13 @@ fn app() -> RustStream {
             .max_attempts(nonzero!(5u32))
             .dead_letter("payments.dead");
         // --8<-- [end:declaration]
+        // --8<-- [start:named]
+        // Where a subscription's descriptor addresses nothing - a wildcard, a filter, a pattern -
+        // the mount site names where a copy goes, before the publisher.
+        b.include(subscriber("payments.settled", Reconcile).build())
+            .to("payments.retry")
+            .max_attempts(nonzero!(5u32));
+        // --8<-- [end:named]
         // Batches dispatch per batch rather than per delivery, and the batch input is what says
         // so; the batch size is the one parameter the mount owes the broker. Every registration
         // already has a publisher for its copies, taken from the broker's default policy, and

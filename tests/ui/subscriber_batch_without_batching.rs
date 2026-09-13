@@ -1,7 +1,7 @@
 use futures::Stream;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemorySubscriber};
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
-use ruststream::{RuntimeCopies, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber};
+use ruststream::{AddressedCopies, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -28,7 +28,7 @@ struct Trickle {
 
 impl SubscriptionSource<ConnectedMemoryBroker> for Trickle {
     type Subscriber = OneAtATime;
-    type Copies = RuntimeCopies;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.name

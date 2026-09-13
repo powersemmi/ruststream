@@ -19,7 +19,6 @@ mod metadata;
 mod middleware;
 mod publish;
 mod publish_source;
-mod publisher_registry;
 mod publishing;
 mod redelivery;
 mod retry;
@@ -99,11 +98,12 @@ pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // service code.
 #[doc(hidden)]
 pub use publish::{
-    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen, DestinationUse,
-    Direct, Either, EncodeOutcome, FitsOffer, InTransaction, LowerOutTransforms, MapReplyPolicy,
-    NameReplyCodec, NamedDestinationSend, NamingOffered, NamingUntaken, NarrowToUse, PayloadError,
-    PublishingDirectly, RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy, SlotStackUse,
-    SlotTransforms, Transactional, TransactionalReply, TypedPublisher, WirePayload,
+    AddBatchReplyTransform, AddReplyTransform, Admits, AnyDeclared, CodecSlotOpen,
+    DestinationSettled, DestinationUse, Direct, Either, EncodeOutcome, FitsOffer, FitsTaken,
+    InTransaction, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, NamedDestinationSend,
+    NamesDestination, NamingOffered, NamingUntaken, NarrowToUse, PayloadError, PublishingDirectly,
+    RawReplyWiring, ReplyPublisher, ReplyWiring, SendOnlyPolicy, SlotStackUse, SlotTransforms,
+    Transactional, TransactionalReply, TypedPublisher, WirePayload,
 };
 pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
@@ -122,21 +122,24 @@ pub use publish::{
 #[cfg(feature = "testing")]
 pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
-pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use redelivery::{CopyPathPairing, PublishesCopiesHere, RetryPairing, RetrySetup};
+pub use redelivery::{
+    CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
+    RetrySetup,
+};
 pub use retry::Retry;
 #[doc(hidden)]
 pub use retry::{
-    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
-    Present, Retried, RetryChain, RetryMount, RetryOpen, RetryPos, RouteDeclaring, RoutePosition,
-    StepOpen, StepTaken,
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount,
+    DeclaredDestination, Declaring, DestinationLast, DestinationOpen, FixedDestination,
+    OpenDestination, Present, Retried, RetryChain, RetryMount, RetryOffer, RetryOpen, RetryPos,
+    RetryStackUse, RouteDeclaring, RoutePosition, StepOpen, StepTaken,
 };
 #[doc(hidden)]
 pub use router::{
     AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
-    RouteCopies, RouteMetadata, RouterBroker, RouterCommit, RouterMount,
+    RouteMetadata, RouteSubscription, RouterBroker, RouterCommit, RouterMount,
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,

@@ -4,7 +4,7 @@ use std::future::{Future, ready};
 use futures::{Stream, stream};
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::{
-    AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, RedeliveryAddress, Subscribe,
+    AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Subscribe,
     Subscriber, subscriber,
 };
 use serde::Deserialize;
@@ -38,15 +38,13 @@ impl ConnectedBroker for ConnectedBus {
 }
 
 impl Subscribe for ConnectedBus {
+    type Copies = AddressedCopies;
     type Subscriber = BusSubscriber;
 
     fn subscribe(&self, _name: &str) -> impl Future<Output = Result<BusSubscriber, Infallible>> {
         ready(Ok(BusSubscriber))
     }
 
-    fn redelivery_address(&self, name: &str) -> Option<RedeliveryAddress> {
-        Some(RedeliveryAddress::new(name.to_owned()))
-    }
 }
 
 struct BusSubscriber;

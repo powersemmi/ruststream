@@ -24,7 +24,8 @@ use std::{fmt, time::Duration};
 use super::helpers::unique_subject;
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
-    Publisher, Subscribe, Subscriber, SubscriptionSource, testing::TestableBroker,
+    Publisher, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    testing::TestableBroker,
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -102,11 +103,10 @@ where
 /// created before the shutdown must error afterwards, never silently succeed against a dead
 /// connection.
 ///
-/// A source that reports a
-/// [`redelivery_address`](SubscriptionSource::redelivery_address) is held to it: a publish to
-/// that address must reach the subscription that reported it, because that is what the runtime's
-/// deferred `retry_after` fallback does with a delayed message. Reporting none is a legal answer
-/// and skips the step.
+/// A descriptor that addresses its own retry copies is held to that address by
+/// [`redelivery_address`], a suite of its own:
+/// a publish there must reach the subscription that reported it, because that is what the runtime
+/// does with a delayed message.
 ///
 /// The three factories keep the check broker-agnostic:
 /// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -192,34 +192,6 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
 
-    // What a reported redelivery address promises: publish there and this subscription gets the
-    // message. The runtime's deferred `retry_after` fallback publishes exactly like this, so an
-    // address that reaches nothing would lose every delayed message.
-    let address = source
-        .redelivery_address(&connected)
-        .await
-        .expect("reporting a redelivery address must not fail against a live connection");
-    if let Some(address) = address {
-        publisher
-            .publish(
-                OutgoingMessage::new(address.as_str(), b"redelivered".as_slice()),
-                None,
-            )
-            .await
-            .expect("publish to the reported redelivery address failed");
-        let msg = expect_next(&mut stream, "redelivery_address").await;
-        assert_eq!(
-            msg.payload(),
-            b"redelivered",
-            "a publish to the reported redelivery address must reach the subscription that \
-             reported it",
-        );
-        match msg.ack().await {
-            Ok(()) | Err(AckError::Unsupported) => {}
-            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-        }
-    }
-
     let _closed = connected
         .shutdown()
         .await
@@ -237,6 +209,76 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
             .is_err(),
         "publish through a handle aliasing the closed connection must error",
     );
+}
+
+/// What a descriptor that addresses its own retry copies promises: publish to the address it
+/// reports and the subscription that reported it gets the message.
+///
+/// The runtime publishes a `retry_after` copy exactly like this, so an address that reaches
+/// nothing would lose every delayed message. Only a descriptor declaring
+/// [`AddressedCopies`](crate::AddressedCopies) has one; a
+/// [`NamedCopies`](crate::NamedCopies) descriptor takes its destination from the mount site and
+/// has nothing to check here.
+///
+/// # Panics
+///
+/// Panics with a descriptive message if the reported address does not reach the subscription.
+pub async fn redelivery_address<B, MkBroker, Src, MkSrc, Pub, MkPub>(
+    make_broker: MkBroker,
+    make_source: MkSrc,
+    make_publisher: MkPub,
+) where
+    B: Broker,
+    MkBroker: Fn() -> B,
+    Src: RedeliveryAddressed<Connected<B>> + Clone + Send + Sync,
+    Src::Subscriber: Send,
+    MkSrc: Fn(&str) -> Src,
+    Pub: Publisher,
+    MkPub: Fn(&Connected<B>) -> Pub,
+{
+    let subject = unique_subject("conformance.redelivery");
+
+    let connected = make_broker()
+        .connect()
+        .await
+        .expect("broker must connect after synchronous construction");
+
+    let source = make_source(&subject);
+    let address = source
+        .redelivery_address(&connected)
+        .await
+        .expect("reporting a redelivery address must not fail against a live connection");
+    let mut subscriber = source
+        .subscribe(&connected)
+        .await
+        .expect("subscription source must open against the connected form");
+    let publisher = make_publisher(&connected);
+
+    publisher
+        .publish(
+            OutgoingMessage::new(address.as_str(), b"redelivered".as_slice()),
+            None,
+        )
+        .await
+        .expect("publish to the reported redelivery address failed");
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let msg = expect_next(&mut stream, "redelivery_address").await;
+    assert_eq!(
+        msg.payload(),
+        b"redelivered",
+        "a publish to the reported redelivery address must reach the subscription that reported \
+         it",
+    );
+    match msg.ack().await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+    }
+
+    let _closed = connected
+        .shutdown()
+        .await
+        .expect("broker must shut down cleanly");
 }
 
 async fn ordering<C: TestableBroker + Subscribe>(broker: C) {

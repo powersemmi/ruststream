@@ -23,14 +23,14 @@ use futures::{Stream, StreamExt};
 use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::runtime::{
-    AppInfo, ForSlot, HandlerOutcome, Out, Outgoing, PublishTransform, RETRY_COUNT_HEADER, Reads,
-    Router, RustStream, SlotContext,
+    AppInfo, ForReply, HandlerOutcome, Out, Outgoing, PublishContext, PublishTransform,
+    RETRY_COUNT_HEADER, Reads, Router, RustStream,
 };
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
-    AckError, ConnectedBroker, HeaderMap, IncomingMessage, OutSlot, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, RedeliveryAddress, RuntimeCopies, Subscribe, Subscriber,
-    SubscriptionSource, subscriber,
+    AckError, AddressedCopies, ConnectedBroker, HeaderMap, IncomingMessage, NamedCopies, OutSlot,
+    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed,
+    Subscribe, Subscriber, SubscriptionSource, subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -54,7 +54,7 @@ impl BoundSubscription {
 
 impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
-    type Copies = RuntimeCopies;
+    type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
         self.subscription
@@ -63,32 +63,34 @@ impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         Ok(UnsettledSubscriber(connected.subscribe(self.topic).await?))
     }
+}
 
+impl<C: Subscribe> RedeliveryAddressed<C> for BoundSubscription {
     fn redelivery_address(
         &self,
         _connected: &C,
-    ) -> impl Future<Output = Result<Option<RedeliveryAddress>, C::Error>> + Send {
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
         // The descriptor already holds the topic, so no lookup stands between it and the answer.
-        ready(Ok(Some(RedeliveryAddress::new(self.topic))))
+        ready(Ok(RedeliveryAddress::new(self.topic)))
     }
 }
 
-/// The same subscription shape from a broker crate that has not adopted the contract: it reports
-/// no redelivery address at all.
+/// The same subscription shape over a filter: it reads many destinations, so it addresses none of
+/// them and the mount site names where a copy goes.
 #[derive(Debug, Clone)]
-struct SilentSubscription {
+struct FilteredSubscription {
     topic: &'static str,
 }
 
-impl SilentSubscription {
+impl FilteredSubscription {
     const fn new(topic: &'static str) -> Self {
         Self { topic }
     }
 }
 
-impl<C: Subscribe> SubscriptionSource<C> for SilentSubscription {
+impl<C: Subscribe> SubscriptionSource<C> for FilteredSubscription {
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
-    type Copies = RuntimeCopies;
+    type Copies = NamedCopies;
 
     fn name(&self) -> &str {
         self.topic
@@ -287,17 +289,22 @@ async fn a_router_registration_binds_the_retry_position() {
     );
 }
 
-/// Stamps every message leaving the slot it is mounted on with that slot's name: a transform that
-/// reads the slot kind, which is the kind the retry position offers.
+/// Stamps every copy with the subscription its delivery came from: a transform that reads the
+/// delivery being retried, which is what this position hands one.
 #[derive(Debug, Clone, Copy)]
-struct StampSlot;
+struct StampSource;
 
-impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
-            .insert("x-left-through", cx.slot().to_owned());
+            .insert("x-retried-from", cx.name().to_owned());
     }
 }
 
@@ -367,7 +374,7 @@ async fn a_transform_on_the_retry_slot_stamps_the_deferred_copy() {
         |b| {
             b.include(reconcile)
                 .out_retry(MemoryPublish)
-                .transform(StampSlot);
+                .transform(StampSource);
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -381,7 +388,7 @@ async fn a_transform_on_the_retry_slot_stamps_the_deferred_copy() {
 
     tb.broker::<MemoryBroker>()
         .published::<Order>("orders")
-        .with_header("x-left-through", "Retry");
+        .with_header("x-retried-from", "orders-workers");
     assert_eq!(
         tb.broker::<MemoryBroker>()
             .subscriber("orders-workers")
@@ -449,14 +456,14 @@ impl<P: Publisher> Publisher for PriorityPublisher<P> {
 #[derive(Debug, Clone, Copy)]
 struct Expedite;
 
-impl PublishTransform<ForSlot, PriorityOptions> for Expedite {
+impl<C> PublishTransform<ForReply<C>, PriorityOptions> for Expedite {
     type Destination = Reads;
 
     fn apply(
         &self,
         _out: &mut Outgoing<'_>,
         options: &mut Option<PriorityOptions>,
-        _cx: &SlotContext<'_>,
+        _cx: &PublishContext<'_, C>,
     ) {
         options
             .get_or_insert_with(PriorityOptions::default)
@@ -571,7 +578,7 @@ async fn a_router_registration_takes_the_retry_slots_steps() {
                     .include(reconcile)
                     .out_retry(MemoryPublish)
                     .codec(JsonCodec)
-                    .transform(StampSlot)
+                    .transform(StampSource)
                     .build(),
             );
         },
@@ -588,7 +595,7 @@ async fn a_router_registration_takes_the_retry_slots_steps() {
 
     tb.broker::<MemoryBroker>()
         .published::<Order>("orders")
-        .with_header("x-left-through", "Retry")
+        .with_header("x-retried-from", "orders-workers")
         .with_raw(&delivered);
 }
 
@@ -634,7 +641,7 @@ async fn the_retry_slot_binds_beside_a_handlers_own_slots() {
         |b| {
             b.include(audit)
                 .out_retry(MemoryPublish)
-                .transform(StampSlot)
+                .transform(StampSource)
                 .out(Audit, MemoryPublish)
                 .build();
         },
@@ -650,62 +657,55 @@ async fn the_retry_slot_binds_beside_a_handlers_own_slots() {
 
     tb.broker::<MemoryBroker>()
         .published::<Order>("audits")
-        .with_header("x-left-through", "Retry");
+        .with_header("x-retried-from", "audits-workers");
     tb.broker::<MemoryBroker>()
         .published::<Receipt>("receipts")
         .assert_called_once()
         .with(&Receipt { id: 3 });
 }
 
-/// Defers every delivery. Mounted on a source that reports no redelivery address, so the app it
-/// belongs to never starts.
-#[subscriber(SilentSubscription::new("payments"))]
-async fn settle_later(_order: &Order) -> HandlerOutcome {
-    HandlerOutcome::retry_after(RETRY_DELAY)
+/// Defers every delivery. Mounted on a descriptor that addresses nothing, so the mount site is
+/// what names where a copy goes.
+#[subscriber(FilteredSubscription::new("payments"))]
+async fn settle_later(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let _ = order.id;
+    if ctx.headers().get_str(RETRY_COUNT_HEADER).is_none() {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
 }
 
-/// A registration whose descriptor publishes its retry copies here but cannot say where such a
-/// copy reaches the subscription fails to start, naming that subscription, its descriptor and the
-/// fix. The registration beside it in the same scope is addressed, so the refusal is the one
-/// registration's, not the scope's.
-#[tokio::test]
-async fn an_unaddressed_open_descriptor_refuses_to_start() {
+/// A descriptor that addresses nothing takes its destination from the mount site: `.to(name)`
+/// after the position sends the copies there, and the handler reads them back.
+#[tokio::test(start_paused = true)]
+async fn a_named_destination_sends_the_copies_where_the_mount_site_said() {
     let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(reconcile).out_retry(MemoryPublish);
-            b.include(settle_later).out_retry(MemoryPublish);
+            b.include(settle_later)
+                .to("payments")
+                .out_retry(MemoryPublish);
         },
     );
+    let tb = TestApp::start(app).await.expect("startup failed");
 
-    let failed = TestApp::start(app)
+    tb.message(&Order { id: 9 })
+        .to("payments")
+        .publish()
         .await
-        .expect_err("a registration that cannot address its retries must not start");
-    let message = failed.to_string();
-    assert!(message.contains("payments"), "{message}");
-    assert!(message.contains("SilentSubscription"), "{message}");
-    assert!(message.contains("MemoryBroker"), "{message}");
-    assert!(message.contains("redelivery_address"), "{message}");
-    assert!(
-        !message.contains("orders-workers"),
-        "the addressed registration is untouched: {message}",
-    );
-}
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("payments")
+        .assert_called_once()
+        .settled(HandlerOutcome::retry_after(RETRY_DELAY));
 
-/// The publisher of the copies exists whether or not the mount site names one, so a descriptor
-/// that declares `RuntimeCopies` owes an address either way: the same registration without
-/// `out_retry` refuses to start too, rather than dropping a handler's delay at run time.
-#[tokio::test]
-async fn an_unaddressed_open_descriptor_refuses_to_start_without_a_named_publisher() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(settle_later);
-        },
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("payments")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the copy must reach the handler through the destination the mount site named",
     );
-
-    let failed = TestApp::start(app)
-        .await
-        .expect_err("an open descriptor without an address must not start");
-    assert!(failed.to_string().contains("RuntimeCopies"), "{failed}");
 }
