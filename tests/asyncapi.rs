@@ -1170,3 +1170,259 @@ mod document_surface {
         assert_eq!(spec.components.messages["Confirmed"].title, None);
     }
 }
+
+/// Protocol bindings: what a broker's descriptor and its server spec add to the document, in the
+/// broker's own vocabulary, without the core naming a single field of it.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod protocol_bindings {
+    use std::future::Future;
+
+    use ruststream::asyncapi::{Binding, Bindings};
+    use ruststream::memory::prelude::*;
+    use ruststream::schemars::JsonSchema;
+    use ruststream::{
+        AddressedCopies, RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe,
+        SubscriptionSource,
+    };
+    use serde::{Deserialize, Serialize};
+
+    use super::build_spec;
+
+    /// An order to confirm.
+    #[derive(Deserialize, JsonSchema)]
+    struct Order {
+        #[allow(dead_code)]
+        id: u64,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpQueue {
+        name: &'static str,
+        durable: bool,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpChannel {
+        is: &'static str,
+        queue: AmqpQueue,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpOperation {
+        ack: bool,
+    }
+
+    #[derive(Serialize)]
+    struct AmqpMessage {
+        #[serde(rename = "messageType")]
+        message_type: &'static str,
+    }
+
+    // --8<-- [start:descriptor_bindings]
+    /// A descriptor of the shape a broker crate ships: it reads its own private fields and says
+    /// what the protocol calls them.
+    #[derive(Clone)]
+    struct RabbitQueue {
+        name: &'static str,
+        durable: bool,
+    }
+
+    impl<C: Subscribe> SubscriptionSource<C> for RabbitQueue {
+        type Subscriber = C::Subscriber;
+        type Copies = AddressedCopies;
+
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+            connected.subscribe(self.name).await
+        }
+
+        fn channel_bindings(&self) -> Bindings {
+            let body = AmqpChannel {
+                is: "queue",
+                queue: AmqpQueue {
+                    name: self.name,
+                    durable: self.durable,
+                },
+            };
+            Binding::new("amqp", "0.3.0", &body)
+                .map(|binding| Bindings::new().with(binding))
+                .unwrap_or_default()
+        }
+
+        fn operation_bindings(&self) -> Bindings {
+            Binding::new("amqp", "0.3.0", &AmqpOperation { ack: true })
+                .map(|binding| Bindings::new().with(binding))
+                .unwrap_or_default()
+        }
+
+        fn message_bindings(&self) -> Bindings {
+            let body = AmqpMessage {
+                message_type: "order",
+            };
+            Binding::new("amqp", "0.3.0", &body)
+                .map(|binding| Bindings::new().with(binding))
+                .unwrap_or_default()
+        }
+    }
+    // --8<-- [end:descriptor_bindings]
+
+    impl<C: Subscribe> RedeliveryAddressed<C> for RabbitQueue {
+        fn redelivery_address(
+            &self,
+            _connected: &C,
+        ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+            std::future::ready(Ok(RedeliveryAddress::new(self.name)))
+        }
+    }
+
+    #[subscriber(RabbitQueue { name: "orders", durable: true })]
+    async fn confirm(order: &Order) -> HandlerOutcome {
+        let _ = order.id;
+        HandlerOutcome::ack()
+    }
+
+    #[test]
+    fn a_descriptor_describes_its_channel_its_operation_and_its_messages() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+            },
+        );
+        let spec = build_spec(&app);
+        let json = spec.to_json().expect("the document must serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+
+        let channel = &value["channels"]["orders"]["bindings"]["amqp"];
+        assert_eq!(channel["queue"]["name"], "orders");
+        assert_eq!(channel["queue"]["durable"], true);
+        // The core writes the version, so a broker cannot ship a binding without one.
+        assert_eq!(channel["bindingVersion"], "0.3.0");
+
+        assert_eq!(
+            value["operations"]["receive_orders"]["bindings"]["amqp"]["ack"],
+            true,
+        );
+        assert_eq!(
+            value["components"]["messages"]["Order"]["bindings"]["amqp"]["messageType"],
+            "order",
+        );
+    }
+
+    /// A descriptor that says nothing leaves no empty objects behind.
+    #[test]
+    fn a_silent_descriptor_changes_no_document() {
+        #[subscriber("plain")]
+        async fn plain(order: &Order) -> HandlerOutcome {
+            let _ = order.id;
+            HandlerOutcome::ack()
+        }
+
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(plain);
+            },
+        );
+        let json = build_spec(&app)
+            .to_json()
+            .expect("the document must serialize");
+
+        assert!(!json.contains("\"bindings\""));
+    }
+
+    /// The server binding is the broker's too, and it travels on the server spec.
+    #[test]
+    fn a_server_carries_the_brokers_own_binding() {
+        #[derive(Serialize)]
+        struct MqttServer {
+            #[serde(rename = "clientId")]
+            client_id: &'static str,
+        }
+
+        let binding = Binding::new(
+            "mqtt",
+            "0.2.0",
+            &MqttServer {
+                client_id: "orders",
+            },
+        )
+        .expect("mqtt is a listed protocol");
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).server(
+            "mqtt",
+            ServerSpec::new("mqtt.example.com:1883", "mqtt")
+                .with_bindings(Bindings::new().with(binding)),
+        );
+        let json = build_spec(&app)
+            .to_json()
+            .expect("the document must serialize");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+
+        assert_eq!(
+            value["servers"]["mqtt"]["bindings"]["mqtt"]["clientId"],
+            "orders"
+        );
+        assert_eq!(
+            value["servers"]["mqtt"]["bindings"]["mqtt"]["bindingVersion"],
+            "0.2.0",
+        );
+    }
+
+    /// The conformance scan is what keeps a broker honest about credentials, so it has to fail on
+    /// one.
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn the_credential_scan_catches_a_password_in_a_binding() {
+        use ruststream::conformance::harness;
+
+        #[derive(Serialize)]
+        struct Leaky {
+            // What a broker does when it builds a binding out of its configuration URL instead of
+            // the coordinate the document is allowed to carry.
+            url: &'static str,
+        }
+
+        #[derive(Clone)]
+        struct LeakyQueue;
+
+        impl<C: Subscribe> SubscriptionSource<C> for LeakyQueue {
+            type Subscriber = C::Subscriber;
+            type Copies = AddressedCopies;
+
+            fn name(&self) -> &'static str {
+                "orders"
+            }
+
+            async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+                connected.subscribe("orders").await
+            }
+
+            fn channel_bindings(&self) -> Bindings {
+                let body = Leaky {
+                    url: "amqp://svc:hunter2@rabbit:5672",
+                };
+                Binding::new("amqp", "0.3.0", &body)
+                    .map(|binding| Bindings::new().with(binding))
+                    .unwrap_or_default()
+            }
+        }
+
+        impl<C: Subscribe> RedeliveryAddressed<C> for LeakyQueue {
+            fn redelivery_address(
+                &self,
+                _connected: &C,
+            ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+                std::future::ready(Ok(RedeliveryAddress::new("orders")))
+            }
+        }
+
+        let leak = std::panic::catch_unwind(|| {
+            harness::describes_without_credentials(&MemoryBroker::new(), &LeakyQueue, "hunter2");
+        });
+
+        assert!(leak.is_err(), "a password in a binding must fail the scan");
+    }
+}

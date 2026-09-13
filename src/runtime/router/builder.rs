@@ -273,7 +273,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
@@ -313,7 +314,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -356,7 +358,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     {
         // The self-deserializing batch mounts with no codec, so the media type it would report
         // is the one nothing produced.
-        let meta = batch_metadata(source.name().to_owned(), &def);
+        let meta =
+            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -410,7 +413,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = inject_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -460,7 +464,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = batch_inject_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -516,7 +521,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = batch_publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -581,7 +587,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -638,7 +645,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>();
+            .decoded_with::<Def::Input, DecodeCodec>()
+            .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {

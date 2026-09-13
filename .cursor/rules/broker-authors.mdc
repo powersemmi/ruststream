@@ -61,6 +61,14 @@ alwaysApply: false
   builds its `ServerSpec` with `ServerSpec::from_url` (several addresses: `host_from_url` each);
   trimming the scheme off the URL and passing the rest to `ServerSpec::new` keeps the userinfo, and
   that bug shipped in more than one broker crate.
+- Protocol bindings ride the descriptor: `channel_bindings`, `operation_bindings` and
+  `message_bindings` on `SubscriptionSource`, and `ServerSpec::with_bindings` for the server.
+  Build each with `Binding::new(protocol, version, &body)`, which writes `bindingVersion` and
+  checks the protocol against the specification's closed list, or with `Binding::extension("x-..")`
+  where the specification has no binding for the transport. They are computed from the descriptor
+  alone (the document is built before connect, so a live partition count or a queue ARN cannot
+  appear) and never carry a credential; `conformance::harness::describes_without_credentials`
+  checks that. All of it is gated on the core's `asyncapi` feature, which your crate forwards.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
   the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching

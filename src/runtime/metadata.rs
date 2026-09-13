@@ -2,8 +2,10 @@
 
 use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
-use crate::RetryDeclaration;
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::SubscriptionBindings;
 use crate::runtime::input::DecodeWith;
+use crate::{ConnectedBroker, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.
 ///
@@ -201,6 +203,10 @@ pub struct HandlerMetadata {
     /// What the registration declared about retrying a failed delivery: the attempt cap and the
     /// dead-letter destination. Empty unless the mount site declared one.
     pub retry: RetryDeclaration,
+    /// What the subscription descriptor adds to the generated document at each level. Empty
+    /// unless the broker's descriptor fills it in.
+    #[cfg(feature = "asyncapi")]
+    pub bindings: SubscriptionBindings,
 }
 
 impl HandlerMetadata {
@@ -222,6 +228,8 @@ impl HandlerMetadata {
             server: None,
             content_type: None,
             retry: RetryDeclaration::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: SubscriptionBindings::default(),
         }
     }
 
@@ -245,6 +253,8 @@ impl HandlerMetadata {
             server: None,
             content_type: None,
             retry: RetryDeclaration::new(),
+            #[cfg(feature = "asyncapi")]
+            bindings: SubscriptionBindings::default(),
         }
     }
 
@@ -306,6 +316,31 @@ impl HandlerMetadata {
     {
         self.content_type = <Input as DecodeWith<DecodeCodec>>::CONTENT_TYPE;
         self
+    }
+
+    /// Records what the subscription descriptor adds to the generated document.
+    ///
+    /// Without the `asyncapi` feature there is no document and no descriptor to ask, so the call
+    /// carries the metadata through unchanged.
+    #[must_use]
+    pub(crate) fn describing<C, S>(self, source: &S) -> Self
+    where
+        C: ConnectedBroker,
+        S: SubscriptionSource<C>,
+    {
+        let _ = source;
+        #[cfg(not(feature = "asyncapi"))]
+        let this = self;
+        #[cfg(feature = "asyncapi")]
+        let this = Self {
+            bindings: SubscriptionBindings {
+                channel: source.channel_bindings(),
+                operation: source.operation_bindings(),
+                message: source.message_bindings(),
+            },
+            ..self
+        };
+        this
     }
 
     /// Attaches the optional descriptive fields that every generated definition trait exposes

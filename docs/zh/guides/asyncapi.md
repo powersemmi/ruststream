@@ -186,6 +186,9 @@ struct Order {
 Broker crate 也可以实现 `DescribeServer` 能力。这时 `broker.describe_server()` 给出这份 spec，
 `with_broker_labeled` 把它记在该 Broker 的标签之下。随框架发布的 Broker 都有该能力。
 
+Broker 还会用自己协议的词汇描述它的通道、操作和消息：队列是否持久、消费者组、QoS。这些**绑定**会自动
+出现在文档里，具体某个 Broker 填了哪些，见它自己的文档。
+
 客户端说的协议版本由 `with_protocol_version` 给出。一个协议名覆盖了互不兼容的几个版本时，值得把它填上：
 AMQP 0.9.1 和 AMQP 1.0 在文档里都是 `amqp`，除此之外毫无共同之处。
 

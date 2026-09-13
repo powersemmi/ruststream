@@ -204,6 +204,10 @@ A broker crate may implement the `DescribeServer` capability. Then `broker.descr
 produces the server specification, and `with_broker_labeled` records it under the broker's label.
 Every shipped broker has this capability.
 
+A broker also describes its channels, operations and messages in its own protocol's vocabulary: a
+queue's durability, a consumer group, a QoS. Those **bindings** appear in the document with nothing
+asked of you, and what a given broker fills in is in its own documentation.
+
 `with_protocol_version` names the version of the protocol clients speak. It is worth filling in
 wherever one protocol name covers incompatible versions: AMQP 0.9.1 and AMQP 1.0 are both `amqp`
 in the document and share nothing else.

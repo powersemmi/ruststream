@@ -824,6 +824,54 @@ path, before the codec sees them, and frame outgoing ones with a core `PublishLa
 via `RustStream::publish_layer`. The publish layer is async and can return an error, and
 `Outgoing::payload_mut` exists exactly for envelope wrapping.
 
+## Protocol bindings
+
+The generated AsyncAPI document has room for what only your broker knows: a RabbitMQ queue's
+durability, a Kafka consumer group, an MQTT QoS. The specification calls those **bindings**, and
+your descriptor fills them.
+
+```rust
+--8<-- "tests/asyncapi.rs:descriptor_bindings"
+```
+
+`Binding::new(protocol, version, &body)` serializes the body once and writes `bindingVersion`
+itself, so you cannot ship a binding without one. The protocol key is checked against the
+specification's closed list, and an unlisted key comes back as an error rather than reaching a
+document no tool can read. `Bindings` is empty by default: a descriptor that says nothing changes
+no document.
+
+The server level is a field rather than a method, because a server is described once per broker:
+`ServerSpec::new(host, protocol).with_bindings(..)` in your `DescribeServer` impl.
+
+Three rules bound what belongs in a binding.
+
+The value is computed from the descriptor alone. The document is built before anything connects, so
+a Kafka topic's real partition count, the topic behind a Pub/Sub subscription and an SQS queue's ARN
+cannot come from here.
+
+A credential never goes in, for the reason `DescribeServer` gives. `conformance::harness` has the
+check: configure your broker and your descriptor with a known password and run the scan.
+
+```rust
+--8<-- "tests/conformance_self.rs:credentials"
+```
+
+A protocol the specification has no binding for goes in `Binding::extension("x-kinesis", &body)`.
+The protocol keys are a closed list, so ZeroMQ, Kinesis and a file transport have no lawful key;
+an `x-` extension sits at the same level and carries no `bindingVersion`.
+
+Bindings come from a descriptor, so a subscription opened by bare name carries none: there is
+nothing bound to it to describe. A broker that wants bindings ships a `SubscriptionSource` type.
+
+The hooks are gated on the core's `asyncapi` feature. Forward it from your crate:
+
+```toml
+[features]
+asyncapi = ["ruststream/asyncapi"]
+```
+
+and put `#[cfg(feature = "asyncapi")]` on each method you fill in.
+
 ## Config and defaults
 
 Your crate owns its `Config`: the core carries no broker-specific config. If a field has no sane
