@@ -93,16 +93,37 @@ where
     type Destination = <Outer::Destination as Either<Inner::Destination>>::Out;
 }
 
-/// What a chain has already said about where its retry copies go, read off the attachment so the
-/// position inherits it when `out_retry(policy)` binds. Machinery; never named directly.
+/// A registration whose retry copies have a destination by the time the position is wired: the
+/// descriptor addressed them, `.to(name)` named one, or a transform names one per delivery.
+/// Machinery; never named directly.
 #[doc(hidden)]
-pub trait DeclaredDestination {
-    /// [`FixedDestination`] once a `.to(name)` ahead of the publisher has spoken.
-    type Destination;
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DestinationDeclared;
+
+/// A registration whose retry copies have none. Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DestinationUndeclared;
+
+/// Folds what the position offered and what its transforms declared into one answer: whether the
+/// registration says where its copies go. Machinery; never named directly.
+#[doc(hidden)]
+pub trait SettlesDestination<Stack> {
+    /// [`DestinationDeclared`] unless the position offered the naming right and nothing took it.
+    type Settled;
 }
 
-impl<Rep, Slots> DeclaredDestination for (Rep, Slots) {
-    type Destination = OpenDestination;
+// A position that offers nothing has the destination declared already, whatever the stack does.
+impl<Stack> SettlesDestination<Stack> for Reads {
+    type Settled = DestinationDeclared;
+}
+
+impl SettlesDestination<Self> for Names {
+    type Settled = DestinationDeclared;
+}
+
+impl SettlesDestination<Reads> for Names {
+    type Settled = DestinationUndeclared;
 }
 
 /// Whether the deferred-retry position can still be given a destination. Machinery; the guidance a
@@ -111,7 +132,7 @@ impl<Rep, Slots> DeclaredDestination for (Rep, Slots) {
 #[diagnostic::on_unimplemented(
     message = "`.to(..)` has no destination to name here",
     label = "`{Self}`: the destination was named already, or this position takes none",
-    note = "`.to(name)` names where a registration's retry copies go, once, on either side of \
+    note = "`.to(name)` names where a registration's retry copies go, once, right after \
             `out_retry(policy)`; a reply's destination comes from its own type or from the mount \
             site's `publish(\"dest\")`, and an `Out` slot's from the type it publishes"
 )]

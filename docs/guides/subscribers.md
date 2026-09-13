@@ -208,10 +208,11 @@ filter, a Pulsar pattern, a list of topics - names none of them, and the mount s
 --8<-- "examples/retry.rs:named"
 ```
 
-`.to(name)` is a plain destination, as a reply's is. It comes before `out_retry(policy)`: a
-registration on a scope commits when the statement ends, so the chain has to have said where its
-copies go by the time it passes through. On a chain that ends in `.build()` - a `Router`, a
-handler with `Out` slots - it can also follow the publisher.
+`.to(name)` is a plain destination, as a reply's is. It follows `out_retry(policy)`: the
+destination belongs to the publisher the copies leave through, so naming that publisher is what
+such a registration owes first. A chain that ends in `.build()` - a `Router`, a handler with `Out`
+slots - refuses there a registration that names no destination at all. A registration on a scope
+commits when the statement ends, so there the same refusal is the subscription's at startup.
 
 The other way is a transform that names the destination per delivery, reading the delivery being
 retried, which is how a copy goes back to the concrete topic a wildcard subscription received it

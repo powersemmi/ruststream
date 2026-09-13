@@ -34,10 +34,12 @@ use crate::runtime::publish::{
 };
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler};
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
-use crate::runtime::retry::{OpenDestination, RetryOpen};
+use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
-use super::routes::{MountRoute, RouteMeta, RouteMetadata, RouteSubscription};
+use super::routes::{
+    MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
+};
 use super::sink::RouterSink;
 
 /// What the reply position's transform stack does to the destination, projected against the
@@ -168,7 +170,6 @@ macro_rules! impl_route_subscription {
             type Source = Source;
             type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
             type Context = <Def as $def>::Context;
-            type Destination = OpenDestination;
         }
     )+};
 }
@@ -177,6 +178,15 @@ impl_route_subscription!(
     PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> via PublishingDef,
     RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> via PublishingDef,
     BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> via BatchPublishingDef,
+);
+
+impl_destination_declared!(
+    [Source, Def, DecodeCodec, ReplySource, Extra]
+        PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    [Source, Def, DecodeCodec, ReplySource, Extra]
+        RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    [Source, Def, DecodeCodec, ReplySource, Extra]
+        BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
 );
 
 impl<

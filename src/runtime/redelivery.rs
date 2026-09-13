@@ -302,7 +302,7 @@ impl<B: Broker, Cx> Default for RetrySetup<B, Cx> {
 
 impl<B: Broker + 'static, Cx> RetrySetup<B, Cx> {
     /// Records the publisher a `.out(Retry, policy)` named, replacing the broker's default, and
-    /// the destination a `.to(name)` after it gave the copies.
+    /// the destination the `.to(name)` after it gave the copies.
     pub(crate) fn with_publisher(
         mut self,
         publisher: RetryPairing<B, Cx>,
@@ -317,17 +317,9 @@ impl<B: Broker + 'static, Cx> RetrySetup<B, Cx> {
         self
     }
 
-    /// Records what `max_attempts(..)`, `dead_letter(..)` and a `.to(name)` ahead of the publisher
-    /// declared.
-    pub(crate) fn with_declaration(
-        mut self,
-        declaration: RetryDeclaration,
-        destination: Option<Cow<'static, str>>,
-    ) -> Self {
+    /// Records what `max_attempts(..)` and `dead_letter(..)` declared.
+    pub(crate) fn with_declaration(mut self, declaration: RetryDeclaration) -> Self {
         self.declaration = declaration;
-        // The chain admits one `.to(name)`, on either side of the publisher, so at most one of
-        // the two steps carries it.
-        self.destination = self.destination.take().or(destination);
         self
     }
 
@@ -496,8 +488,8 @@ impl ScopeDelivery {
 #[error(
     "subscription `{subscription}`: descriptor `{source_type}` declares `Copies = NamedCopies`, \
      so it addresses no retry copies, and this registration names no destination for them. Name \
-     one at the mount site with `.to(\"name\")` before `out_retry(policy)`, or compose a publish \
-     transform declaring `Destination = Names` that names one per delivery"
+     one at the mount site with `.out_retry(policy).to(\"name\")`, or compose a publish transform \
+     declaring `Destination = Names` that names one per delivery"
 )]
 pub(crate) struct RetryDestinationError {
     /// The subscription as the registration names it.
@@ -573,9 +565,9 @@ where
             };
             // A descriptor that addresses its own copies answers here; one that does not leaves
             // the mount site to name them, statically or per delivery. Nothing left is a
-            // registration whose copies would go nowhere, and the mount chain of a scope cannot
-            // refuse it at compile time: its guard commits when the statement ends, so every
-            // state the chain passes through has to be committable, `include`'s own included.
+            // registration whose copies would go nowhere. A `Router` chain refuses that at
+            // `.build()`; a scope's guard cannot, because it commits when the statement ends and
+            // `.to(name)` is written after the publisher, so the refusal lands here.
             if destination.is_none() && !named_per_delivery {
                 return Err(Box::new(RetryDestinationError {
                     subscription: subscription.to_owned(),

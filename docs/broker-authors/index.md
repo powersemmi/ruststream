@@ -346,8 +346,8 @@ topic, a stream and a queue - one subscription, one destination the service can 
 
 `NamedCopies` says this process publishes them but the descriptor cannot address them: a wildcard
 subject, an MQTT filter, a Pulsar pattern, a list of topics. One such subscription reads many
-destinations, so the mount site names one, statically with `.to(name)` or per delivery with a
-publish transform.
+destinations, so the mount site names one, statically with `.out_retry(policy).to(name)` or per
+delivery with a publish transform.
 
 `BrokerMoves` says the server or the client library moves the delivery itself: a quorum queue with
 `x-delivery-limit` and an `x-dead-letter-exchange`, a Pub/Sub subscription with a dead-letter

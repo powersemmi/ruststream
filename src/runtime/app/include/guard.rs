@@ -22,7 +22,7 @@ use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
 use crate::runtime::retry::{
     Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, DestinationLast,
-    DestinationOpen, FixedDestination, Present, Retry, RetryOpen, RouteDeclaring, RoutePosition,
+    DestinationOpen, Present, Retry, RetryOpen, RouteDeclaring, RoutePosition,
 };
 use crate::runtime::router::{
     MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith,
@@ -72,7 +72,9 @@ where
     Attach::Out: ScopeCommit<B, Layers, C, State, Pipeline>,
 {
     fn commit_into(self, scope: &mut BrokerScope<B, Layers, C, State, Pipeline>) {
-        self.build().commit_into(scope);
+        // Not `build()`: see `RouterWith::commit_chain`, a scope's chain answers for its retry
+        // destinations at startup rather than here.
+        self.commit_chain().commit_into(scope);
     }
 }
 
@@ -509,38 +511,6 @@ where
         >: ScopeCommit<B, Layers, C, State, Pipeline>,
     {
         self.map_chain(|chain| chain.max_attempts(attempts))
-    }
-
-    /// See [`RouterWith::to`]: the same step on a registration that was a finished route the
-    /// moment `include` returned.
-    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
-    pub fn to(
-        self,
-        destination: impl Into<Cow<'static, str>>,
-    ) -> Mounting<
-        's,
-        B,
-        Layers,
-        C,
-        State,
-        Pipeline,
-        RouterWith<
-            DeclareMount,
-            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
-            (),
-            RouteDeclaring<Absent, Absent, FixedDestination>,
-        >,
-    >
-    where
-        Head: RetryOpen,
-        RouterWith<
-            DeclareMount,
-            EagerChain<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>,
-            (),
-            RouteDeclaring<Absent, Absent, FixedDestination>,
-        >: ScopeCommit<B, Layers, C, State, Pipeline>,
-    {
-        self.map_chain(|chain| chain.to(destination))
     }
 
     /// See [`RouterWith::dead_letter`].

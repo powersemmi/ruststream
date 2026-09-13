@@ -15,7 +15,7 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetryPairing, RetrySetup};
-use crate::runtime::retry::OpenDestination;
+use crate::runtime::retry::DestinationDeclared;
 use crate::runtime::retry::RetryOpen;
 use crate::{CopyPath, RetryDeclaration};
 
@@ -106,9 +106,59 @@ pub trait RouteSubscription<B: Broker> {
 
     /// The broker's typed per-delivery context the registration's handler reads.
     type Context;
+}
 
-    /// Whether the registration has already been told where its retry copies go.
-    type Destination;
+/// Every registration of this router says where its retry copies go.
+///
+/// A route says so unless it bound the deferred-retry position on a descriptor that addresses
+/// nothing and then named no destination. `.build()` asks for it; a scope's guard does not,
+/// because it commits when the statement ends and the chain has no state to fail on before the
+/// `.to(name)` is written - there the startup refusal reports it instead. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration does not say where its retry copies go",
+    label = "the subscription descriptor of `{Self}` addresses none, and nothing here names a \
+             destination",
+    note = "one such subscription reads many destinations (a wildcard subject, an MQTT filter, a \
+            Pulsar pattern, a list of topics), so the descriptor names none of them",
+    note = "name one with `.out_retry(policy).to(\"orders\")`, or compose a publish transform \
+            declaring `Destination = Names`, which reads the delivery being retried and names one \
+            per delivery"
+)]
+pub trait RetryDestinationsDeclared {}
+
+/// Implements it for the routes that carry no retry position of their own: their destination is
+/// the descriptor's business, and the runtime reports one that cannot answer at startup.
+macro_rules! impl_destination_declared {
+    ($([$($extra:tt)*] $route:ty),+ $(,)?) => {$(
+        impl<$($extra)*> $crate::runtime::router::RetryDestinationsDeclared for $route {}
+    )+};
+}
+
+pub(super) use impl_destination_declared;
+
+impl_destination_declared!(
+    [S, H, Cx] SubscribeRoute<S, H, Cx>,
+    [S, H, Cx] BatchRoute<S, H, Cx>,
+    [S, H] HandleRoute<S, H>,
+    [Route] DeclaredRoute<Route>,
+);
+
+// The registration that bound the position answered when it was wired: see `AttachRetry`.
+impl<Route, B: Broker, Cx> RetryDestinationsDeclared
+    for RetriedRoute<Route, B, Cx, DestinationDeclared>
+{
+}
+
+// An empty list, and one whose head and tail both answer.
+impl RetryDestinationsDeclared for () {}
+
+impl<Head, Tail> RetryDestinationsDeclared for (Head, Tail)
+where
+    Head: RetryDestinationsDeclared,
+    Tail: RetryDestinationsDeclared,
+{
 }
 
 /// One registration's metadata, reachable while the router still holds the route: how a
@@ -127,14 +177,15 @@ pub trait RouteMetadata {
 /// [`RetryOpen`], so a second `.out(Retry, ..)` has nothing to bind - and it keeps the pairing out
 /// of every route type: a route that binds nothing carries nothing.
 #[doc(hidden)]
-pub struct RetriedRoute<Route, B: Broker, Cx> {
+pub struct RetriedRoute<Route, B: Broker, Cx, Settled = DestinationDeclared> {
     route: Route,
     retry: RetryPairing<B, Cx>,
     destination: Option<Cow<'static, str>>,
     named_per_delivery: bool,
+    _settled: PhantomData<fn() -> Settled>,
 }
 
-impl<Route, B: Broker, Cx> RetriedRoute<Route, B, Cx> {
+impl<Route, B: Broker, Cx, Settled> RetriedRoute<Route, B, Cx, Settled> {
     pub(super) fn new(
         route: Route,
         retry: RetryPairing<B, Cx>,
@@ -146,6 +197,7 @@ impl<Route, B: Broker, Cx> RetriedRoute<Route, B, Cx> {
             retry,
             destination,
             named_per_delivery,
+            _settled: PhantomData,
         }
     }
 }
@@ -157,55 +209,40 @@ impl<Route, B: Broker, Cx> RetriedRoute<Route, B, Cx> {
 /// out of every route type: a route that declares nothing carries nothing.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct DeclaredRoute<Route, Dest = OpenDestination> {
+pub struct DeclaredRoute<Route> {
     route: Route,
     declaration: RetryDeclaration,
-    destination: Option<Cow<'static, str>>,
-    _dest: PhantomData<fn() -> Dest>,
 }
 
-impl<Route, Dest> DeclaredRoute<Route, Dest> {
-    pub(super) fn new(
-        route: Route,
-        declaration: RetryDeclaration,
-        destination: Option<Cow<'static, str>>,
-    ) -> Self {
-        Self {
-            route,
-            declaration,
-            destination,
-            _dest: PhantomData,
-        }
+impl<Route> DeclaredRoute<Route> {
+    pub(super) fn new(route: Route, declaration: RetryDeclaration) -> Self {
+        Self { route, declaration }
     }
 }
 
-impl<Route: RouteMeta, Dest> RouteMeta for DeclaredRoute<Route, Dest> {
+impl<Route: RouteMeta> RouteMeta for DeclaredRoute<Route> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.route.collect(out);
     }
 }
 
-impl<Route: RouteMetadata, Dest> RouteMetadata for DeclaredRoute<Route, Dest> {
+impl<Route: RouteMetadata> RouteMetadata for DeclaredRoute<Route> {
     fn metadata_mut(&mut self) -> &mut HandlerMetadata {
         self.route.metadata_mut()
     }
 }
 
-impl<Route: RetryOpen, Dest> RetryOpen for DeclaredRoute<Route, Dest> {}
+impl<Route: RetryOpen> RetryOpen for DeclaredRoute<Route> {}
 
-impl<B: Broker, Route: RouteSubscription<B>, Dest> RouteSubscription<B>
-    for DeclaredRoute<Route, Dest>
-{
+impl<B: Broker, Route: RouteSubscription<B>> RouteSubscription<B> for DeclaredRoute<Route> {
     type Source = Route::Source;
     type Copies = Route::Copies;
     type Context = Route::Context;
-    type Destination = Dest;
 }
 
 // The wrapped route mounts as it always does, with the declaration the mount site made: this is
 // the one place a declaration reaches the sink.
-impl<B, Route, State, RetryPipeline, Dest> MountRoute<B, State, RetryPipeline>
-    for DeclaredRoute<Route, Dest>
+impl<B, Route, State, RetryPipeline> MountRoute<B, State, RetryPipeline> for DeclaredRoute<Route>
 where
     B: Broker + 'static,
     Route: MountRoute<B, State, RetryPipeline>,
@@ -228,13 +265,13 @@ where
             pipeline,
             retry_pipeline,
             sink,
-            setup.with_declaration(self.declaration, self.destination),
+            setup.with_declaration(self.declaration),
         );
     }
 }
 
 // The pairing is a closure with nothing to print, so the wrapper renders as the route it carries.
-impl<Route: fmt::Debug, B: Broker, Cx> fmt::Debug for RetriedRoute<Route, B, Cx> {
+impl<Route: fmt::Debug, B: Broker, Cx, Settled> fmt::Debug for RetriedRoute<Route, B, Cx, Settled> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RetriedRoute")
             .field("route", &self.route)
@@ -242,13 +279,15 @@ impl<Route: fmt::Debug, B: Broker, Cx> fmt::Debug for RetriedRoute<Route, B, Cx>
     }
 }
 
-impl<Route: RouteMeta, B: Broker, Cx> RouteMeta for RetriedRoute<Route, B, Cx> {
+impl<Route: RouteMeta, B: Broker, Cx, Settled> RouteMeta for RetriedRoute<Route, B, Cx, Settled> {
     fn collect(&self, out: &mut Vec<HandlerMetadata>) {
         self.route.collect(out);
     }
 }
 
-impl<Route: RouteMetadata, B: Broker, Cx> RouteMetadata for RetriedRoute<Route, B, Cx> {
+impl<Route: RouteMetadata, B: Broker, Cx, Settled> RouteMetadata
+    for RetriedRoute<Route, B, Cx, Settled>
+{
     fn metadata_mut(&mut self) -> &mut HandlerMetadata {
         self.route.metadata_mut()
     }
@@ -256,8 +295,8 @@ impl<Route: RouteMetadata, B: Broker, Cx> RouteMetadata for RetriedRoute<Route, 
 
 // The wrapped route mounts as it always does, with the pairing the mount site bound: this is the
 // one place a `Some` reaches the sink.
-impl<B, Route, State, RetryPipeline, Cx> MountRoute<B, State, RetryPipeline>
-    for RetriedRoute<Route, B, Cx>
+impl<B, Route, State, RetryPipeline, Cx, Settled> MountRoute<B, State, RetryPipeline>
+    for RetriedRoute<Route, B, Cx, Settled>
 where
     B: Broker + 'static,
     Route: MountRoute<B, State, RetryPipeline, Context = Cx>,
@@ -325,7 +364,6 @@ macro_rules! impl_route_subscription {
             type Source = $source;
             type Copies = <$source as SubscriptionSource<Connected<B>>>::Copies;
             type Context = $context;
-            type Destination = OpenDestination;
         }
     )+};
 }

@@ -21,11 +21,10 @@ use std::num::NonZeroU32;
 use crate::RetryDeclaration;
 use crate::runtime::router::{AttachDeclaration, RouterCommit};
 use crate::runtime::slot::{
-    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NoOutBound, NoReply, Reply,
-    ReplyLast, SlotPos, TransactionalLast, TransformLast,
+    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NoReply, Reply, ReplyLast,
+    SlotPos, TransactionalLast, TransformLast,
 };
 
-use super::destination::{DeclaredDestination, DestinationLast, FixedDestination, OpenDestination};
 use super::{Retried, RetryOpen};
 
 /// A declaration step this registration has not taken yet. Machinery; never named directly.
@@ -38,20 +37,16 @@ pub struct Absent;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Present;
 
-/// The three declaration steps a registration has taken, as one type. Machinery.
-type DeclaredSteps<Cap, Dead, Dest> = PhantomData<fn() -> (Cap, Dead, Dest)>;
-
 /// A mount chain's attachment with the registration's retry declaration beside it.
 #[doc(hidden)]
-pub struct Declaring<Under, Cap = Absent, Dead = Absent, Dest = OpenDestination> {
+pub struct Declaring<Under, Cap = Absent, Dead = Absent> {
     under: Under,
     declaration: RetryDeclaration,
-    destination: Option<Cow<'static, str>>,
-    _steps: DeclaredSteps<Cap, Dead, Dest>,
+    _steps: PhantomData<fn() -> (Cap, Dead)>,
 }
 
 // The chain's own state, like `RouterWith`'s: what it carries is machinery, not data to print.
-impl<Under, Cap, Dead, Dest> fmt::Debug for Declaring<Under, Cap, Dead, Dest> {
+impl<Under, Cap, Dead> fmt::Debug for Declaring<Under, Cap, Dead> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Declaring")
             .field("declaration", &self.declaration)
@@ -59,25 +54,20 @@ impl<Under, Cap, Dead, Dest> fmt::Debug for Declaring<Under, Cap, Dead, Dest> {
     }
 }
 
-impl<Under, Cap, Dead, Dest> Declaring<Under, Cap, Dead, Dest> {
+impl<Under, Cap, Dead> Declaring<Under, Cap, Dead> {
     fn new(under: Under, declaration: RetryDeclaration) -> Self {
         Self {
             under,
             declaration,
-            destination: None,
             _steps: PhantomData,
         }
     }
 
     /// Grows the wrapped attachment in place: how every step on a publish position reaches it.
-    fn map<NewUnder>(
-        self,
-        f: impl FnOnce(Under) -> NewUnder,
-    ) -> Declaring<NewUnder, Cap, Dead, Dest> {
+    fn map<NewUnder>(self, f: impl FnOnce(Under) -> NewUnder) -> Declaring<NewUnder, Cap, Dead> {
         Declaring {
             under: f(self.under),
             declaration: self.declaration,
-            destination: self.destination,
             _steps: PhantomData,
         }
     }
@@ -86,33 +76,12 @@ impl<Under, Cap, Dead, Dest> Declaring<Under, Cap, Dead, Dest> {
     fn declare<NewCap, NewDead>(
         self,
         f: impl FnOnce(RetryDeclaration) -> RetryDeclaration,
-    ) -> Declaring<Under, NewCap, NewDead, Dest> {
+    ) -> Declaring<Under, NewCap, NewDead> {
         Declaring {
             under: self.under,
             declaration: f(self.declaration),
-            destination: self.destination,
             _steps: PhantomData,
         }
-    }
-
-    /// Fixes where the registration's retry copies go: the `.to(name)` step ahead of the
-    /// publisher.
-    fn name_destination(
-        self,
-        destination: Cow<'static, str>,
-    ) -> Declaring<Under, Cap, Dead, FixedDestination> {
-        Declaring {
-            under: self.under,
-            declaration: self.declaration,
-            destination: Some(destination),
-            _steps: PhantomData,
-        }
-    }
-
-    /// What the declaration carries to the route: the cap, where a spent delivery goes, and where
-    /// the copies go.
-    fn into_parts(self) -> (Under, RetryDeclaration, Option<Cow<'static, str>>) {
-        (self.under, self.declaration, self.destination)
     }
 }
 
@@ -166,9 +135,9 @@ impl<Rep, Slots> DeclareCap for (Rep, Slots) {
 }
 
 // The second step, over a registration that has already named a destination.
-impl<Under, Dead, Dest> DeclareCap for Declaring<Under, Absent, Dead, Dest> {
+impl<Under, Dead> DeclareCap for Declaring<Under, Absent, Dead> {
     type Step = StepOpen;
-    type Out = Declaring<Under, Present, Dead, Dest>;
+    type Out = Declaring<Under, Present, Dead>;
 
     fn declare_cap(self, attempts: NonZeroU32) -> Self::Out {
         self.declare(|declaration| declaration.with_max_attempts(attempts))
@@ -177,7 +146,7 @@ impl<Under, Dead, Dest> DeclareCap for Declaring<Under, Absent, Dead, Dest> {
 
 // The two closed arms, as the slot steps carry theirs: the impl exists so the call resolves as a
 // method and fails on `Step: CapOpen`, which is where the guidance lives. Neither ever runs.
-impl<Under, Dead, Dest> DeclareCap for Declaring<Under, Present, Dead, Dest> {
+impl<Under, Dead> DeclareCap for Declaring<Under, Present, Dead> {
     type Step = StepTaken;
     type Out = Self;
 
@@ -233,9 +202,9 @@ impl<Rep, Slots> DeclareDeadLetter for (Rep, Slots) {
     }
 }
 
-impl<Under, Cap, Dest> DeclareDeadLetter for Declaring<Under, Cap, Absent, Dest> {
+impl<Under, Cap> DeclareDeadLetter for Declaring<Under, Cap, Absent> {
     type Step = StepOpen;
-    type Out = Declaring<Under, Cap, Present, Dest>;
+    type Out = Declaring<Under, Cap, Present>;
 
     fn declare_dead_letter(self, destination: Cow<'static, str>) -> Self::Out {
         self.declare(|declaration| declaration.with_dead_letter(destination))
@@ -243,7 +212,7 @@ impl<Under, Cap, Dest> DeclareDeadLetter for Declaring<Under, Cap, Absent, Dest>
 }
 
 // See the capped arms above: these exist so the call resolves and fails on `Step: DeadLetterOpen`.
-impl<Under, Cap, Dest> DeclareDeadLetter for Declaring<Under, Cap, Present, Dest> {
+impl<Under, Cap> DeclareDeadLetter for Declaring<Under, Cap, Present> {
     type Step = StepTaken;
     type Out = Self;
 
@@ -264,8 +233,7 @@ impl<Under, Attachment, Dest> DeclareDeadLetter for Retried<Under, Attachment, D
 /// The attachment a route-level declaration starts from: the registration is already mounted, so
 /// there is no publish position of the handler's own left to carry.
 #[doc(hidden)]
-pub type RouteDeclaring<Cap, Dead, Dest = OpenDestination> =
-    Declaring<(NoReply, ()), Cap, Dead, Dest>;
+pub type RouteDeclaring<Cap, Dead> = Declaring<(NoReply, ()), Cap, Dead>;
 
 /// The commit token of a declaration made on a registration that is already a route: the chain
 /// has no definition left to mount, only the declaration to wire. Machinery; never named
@@ -284,35 +252,29 @@ impl<R> RouterCommit<DeclareMount, R, ()> for (NoReply, ()) {
     }
 }
 
-// What the declaration block already said about the destination travels onto the position when
-// the publisher binds, so a second `.to(..)` after it has nothing to name.
-impl<Under, Cap, Dead, Dest> DeclaredDestination for Declaring<Under, Cap, Dead, Dest> {
-    type Destination = Dest;
-}
-
 // A declaration is not a publish position, so the retry publisher still binds after it - which is
 // the order the chain reads in.
-impl<Under: RetryOpen, Cap, Dead, Dest> RetryOpen for Declaring<Under, Cap, Dead, Dest> {}
+impl<Under: RetryOpen, Cap, Dead> RetryOpen for Declaring<Under, Cap, Dead> {}
 
 // The publish positions keep binding after the declaration, in any order.
-impl<Mount, Policy, Under, Cap, Dead, Dest> BindAt<Mount, Reply, Policy, ReplyLast>
-    for Declaring<Under, Cap, Dead, Dest>
+impl<Mount, Policy, Under, Cap, Dead> BindAt<Mount, Reply, Policy, ReplyLast>
+    for Declaring<Under, Cap, Dead>
 where
     Under: BindAt<Mount, Reply, Policy, ReplyLast>,
 {
-    type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+    type Out = Declaring<Under::Out, Cap, Dead>;
 
     fn bind_at(self, policy: Policy) -> Self::Out {
         self.map(|under| under.bind_at(policy))
     }
 }
 
-impl<Mount, M, Policy, Under, Cap, Dead, Dest, const POS: usize>
-    BindAt<Mount, M, Policy, SlotPos<POS>> for Declaring<Under, Cap, Dead, Dest>
+impl<Mount, M, Policy, Under, Cap, Dead, const POS: usize> BindAt<Mount, M, Policy, SlotPos<POS>>
+    for Declaring<Under, Cap, Dead>
 where
     Under: BindAt<Mount, M, Policy, SlotPos<POS>>,
 {
-    type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+    type Out = Declaring<Under::Out, Cap, Dead>;
 
     fn bind_at(self, policy: Policy) -> Self::Out {
         self.map(|under| under.bind_at(policy))
@@ -323,65 +285,65 @@ where
 /// adds no position of its own, so each step rides the attachment underneath unchanged.
 macro_rules! forward_steps {
     ($([$($extra:tt)*] $index:ty),+ $(,)?) => {$(
-        impl<Cd, Under, Cap, Dead, Dest, $($extra)*> CodecLast<Cd, $index> for Declaring<Under, Cap, Dead, Dest>
+        impl<Cd, Under, Cap, Dead, $($extra)*> CodecLast<Cd, $index> for Declaring<Under, Cap, Dead>
         where
             Under: CodecLast<Cd, $index>,
         {
             type Step = Under::Step;
-            type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+            type Out = Declaring<Under::Out, Cap, Dead>;
 
             fn codec_last(self, codec: Cd) -> Self::Out {
                 self.map(|under| under.codec_last(codec))
             }
         }
 
-        impl<N, Under, Cap, Dead, Dest, $($extra)*> TransformLast<N, $index>
-            for Declaring<Under, Cap, Dead, Dest>
+        impl<N, Under, Cap, Dead, $($extra)*> TransformLast<N, $index>
+            for Declaring<Under, Cap, Dead>
         where
             Under: TransformLast<N, $index>,
         {
             type Step = Under::Step;
-            type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+            type Out = Declaring<Under::Out, Cap, Dead>;
 
             fn transform_last(self, transform: N) -> Self::Out {
                 self.map(|under| under.transform_last(transform))
             }
         }
 
-        impl<N, Under, Cap, Dead, Dest, Mount, Def, B, $($extra)*> AdmitsAt<N, $index, Mount, Def, B>
-            for Declaring<Under, Cap, Dead, Dest>
+        impl<N, Under, Cap, Dead, Mount, Def, B, $($extra)*> AdmitsAt<N, $index, Mount, Def, B>
+            for Declaring<Under, Cap, Dead>
         where
             Under: AdmitsAt<N, $index, Mount, Def, B>,
         {
         }
 
-        impl<N, Under, Cap, Dead, Dest, $($extra)*> BatchTransformLast<N, $index>
-            for Declaring<Under, Cap, Dead, Dest>
+        impl<N, Under, Cap, Dead, $($extra)*> BatchTransformLast<N, $index>
+            for Declaring<Under, Cap, Dead>
         where
             Under: BatchTransformLast<N, $index>,
         {
             type Step = Under::Step;
-            type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+            type Out = Declaring<Under::Out, Cap, Dead>;
 
             fn batch_transform_last(self, transform: N) -> Self::Out {
                 self.map(|under| under.batch_transform_last(transform))
             }
         }
 
-        impl<Under, Cap, Dead, Dest, $($extra)*> TransactionalLast<$index>
-            for Declaring<Under, Cap, Dead, Dest>
+        impl<Under, Cap, Dead, $($extra)*> TransactionalLast<$index>
+            for Declaring<Under, Cap, Dead>
         where
             Under: TransactionalLast<$index>,
         {
             type Step = Under::Step;
-            type Out = Declaring<Under::Out, Cap, Dead, Dest>;
+            type Out = Declaring<Under::Out, Cap, Dead>;
 
             fn transactional_last(self) -> Self::Out {
                 self.map(TransactionalLast::transactional_last)
             }
         }
 
-        impl<Under, Cap, Dead, Dest, $($extra)*> MapPolicyLast<$index> for Declaring<Under, Cap, Dead, Dest>
+        impl<Under, Cap, Dead, $($extra)*> MapPolicyLast<$index> for Declaring<Under, Cap, Dead>
         where
             Under: MapPolicyLast<$index>,
         {
@@ -399,53 +361,16 @@ forward_steps!([] ReplyLast, [const POS: usize] SlotPos<POS>);
 
 // The commit is the attachment's own, with the declaration wired onto the registration it grew
 // into.
-impl<Mount, R, Def, Under, Cap, Dead, Dest> RouterCommit<Mount, R, Def>
-    for Declaring<Under, Cap, Dead, Dest>
+impl<Mount, R, Def, Under, Cap, Dead> RouterCommit<Mount, R, Def> for Declaring<Under, Cap, Dead>
 where
     Under: RouterCommit<Mount, R, Def>,
-    Under::Out: AttachDeclaration<Dest>,
+    Under::Out: AttachDeclaration,
 {
-    type Out = <Under::Out as AttachDeclaration<Dest>>::Out;
+    type Out = <Under::Out as AttachDeclaration>::Out;
 
     fn commit(self, def: Def, router: R) -> Self::Out {
-        let (under, declaration, destination) = self.into_parts();
-        under
+        self.under
             .commit(def, router)
-            .attach_declaration(declaration, destination)
-    }
-}
-
-// The `.to(name)` step ahead of the publisher: the destination is a property of the registration,
-// so it is declared beside the cap. A scope's guard commits when the statement ends, so a chain
-// that named the publisher first has no committable state to pass through - hence this position.
-impl<Under, Cap, Dead> DestinationLast<NoOutBound>
-    for Declaring<Under, Cap, Dead, OpenDestination>
-{
-    type Step = StepOpen;
-    type Out = Declaring<Under, Cap, Dead, FixedDestination>;
-
-    fn destination_last(self, destination: Cow<'static, str>) -> Self::Out {
-        self.name_destination(destination)
-    }
-}
-
-impl<Under, Cap, Dead> DestinationLast<NoOutBound>
-    for Declaring<Under, Cap, Dead, FixedDestination>
-{
-    type Step = StepTaken;
-    type Out = Self;
-
-    fn destination_last(self, _destination: Cow<'static, str>) -> Self {
-        self
-    }
-}
-
-impl<Rep, Slots> DestinationLast<NoOutBound> for (Rep, Slots) {
-    type Step = StepOpen;
-    type Out = Declaring<Self, Absent, Absent, FixedDestination>;
-
-    fn destination_last(self, destination: Cow<'static, str>) -> Self::Out {
-        Declaring::<Self, Absent, Absent, OpenDestination>::new(self, RetryDeclaration::new())
-            .name_destination(destination)
+            .attach_declaration(self.declaration)
     }
 }

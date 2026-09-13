@@ -28,7 +28,8 @@ alwaysApply: false
   stream, a queue); implement `RedeliveryAddressed` beside `SubscriptionSource`, which is what
   makes the address a property of the type. `NamedCopies`: this process publishes them but the
   descriptor addresses none (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of
-  topics), and the mount site names one with `.to(name)` or with a naming transform. `BrokerMoves`:
+  topics), and the mount site names one with `.out_retry(policy).to(name)` or with a naming
+  transform. `BrokerMoves`:
   the server or the client library moves the delivery itself (a delivery limit with a dead-letter
   exchange, a Pub/Sub dead-letter policy, an SQS redrive policy), so `.out_retry(..)` is a compile
   error at every mount site of that descriptor. The first two pair a retry publisher from

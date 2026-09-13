@@ -24,10 +24,12 @@ use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
-use crate::runtime::retry::{OpenDestination, RetryOpen};
+use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
-use super::routes::{MountRoute, RouteMeta, RouteMetadata, RouteSubscription};
+use super::routes::{
+    MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
+};
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
@@ -107,6 +109,11 @@ impl_route_markers!(
     BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
+impl_destination_declared!(
+    [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
+    [Source, Def, DecodeCodec, Extra] BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+);
+
 impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
@@ -117,7 +124,6 @@ where
     type Source = Source;
     type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
     type Context = Def::Context;
-    type Destination = OpenDestination;
 }
 
 impl<B, Source, Def, DecodeCodec, Extra> RouteSubscription<B>
@@ -130,7 +136,6 @@ where
     type Source = Source;
     type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
     type Context = Def::Context;
-    type Destination = OpenDestination;
 }
 
 impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
