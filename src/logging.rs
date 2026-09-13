@@ -14,6 +14,12 @@
 //!
 //! Available with the `logging` feature.
 //!
+//! Any other `tracing` subscriber works in its place: one built on `tracing-subscriber`, a JSON
+//! formatter, or the stack your service already installs. A subscriber installed earlier stays
+//! in place, and [`init`] reports [`LoggingInitError::AlreadyInitialized`]. The per-message
+//! events come from [`TracingLayer`](crate::runtime::layers::TracingLayer): mount it to see
+//! every delivery arrive and settle.
+//!
 //! # Examples
 //!
 //! ```no_run

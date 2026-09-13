@@ -23,6 +23,23 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! The consume layer records every handled message, and the publish layer every publish
+//! attempt, the failed ones included. [`Metrics::with_registry`] collects into a registry of
+//! your own, and [`Metrics::registry`] hands the registry out for your own collectors or an
+//! existing exporter.
+//!
+//! | Metric | Type | Labels |
+//! |---|---|---|
+//! | `ruststream_messages_consumed_total` | counter | `name`, `status` |
+//! | `ruststream_consume_duration_seconds` | histogram | `name` |
+//! | `ruststream_messages_published_total` | counter | `name`, `status` |
+//!
+//! `name` is the subscription or destination, and `status` the outcome: `ack` or `nack` on the
+//! consume side, `ok` or `error` on the publish side. `examples/metrics_http.rs` in the
+//! repository serves `/metrics` with axum. A service exporting through the `otel` feature
+//! instead has a Grafana dashboard in
+//! [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana).
 
 use std::future::Future;
 use std::sync::Arc;

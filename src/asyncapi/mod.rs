@@ -1,14 +1,109 @@
 //! `AsyncAPI` 3.1 document generation from a [`RustStream`](crate::runtime::RustStream) service.
 //!
 //! [`build_spec`] turns a service's registered handlers and metadata into a [`Spec`] that
-//! serializes to an `AsyncAPI` 3.1 document ([`to_json`](Spec::to_json) / [`to_yaml`](Spec::to_yaml)).
-//! Hosting it over HTTP is the user's concern; [`render_viewer_html`] produces a ready-to-serve HTML
-//! page that renders the document with the `AsyncAPI` React component from a CDN.
+//! serializes with [`to_json`](Spec::to_json) or [`to_yaml`](Spec::to_yaml). Each subscriber
+//! becomes a channel and a `receive` operation, a reply rides that operation as its `reply`,
+//! every message type an `Out` slot declares gets a `send` operation, and payload and header
+//! types contribute schemas. The generated CLI prints the same document with
+//! `ruststream asyncapi gen` (see [`cli`](crate::runtime::cli)).
 //!
-//! The document covers info, servers, channels, operations, and per-message payload JSON schemas
-//! (for message types that implement [`schemars::JsonSchema`]). A request-reply registration is
-//! one `receive` operation carrying its `reply`, not two unrelated operations, and every channel
-//! says which server it lives on wherever the registration names one.
+//! # Examples
+//!
+//! ```
+//! # #[cfg(all(feature = "asyncapi", feature = "macros", feature = "memory", feature = "json"))]
+//! # mod demo {
+//! use ruststream::asyncapi::build_spec;
+//! use ruststream::memory::prelude::*;
+//! use ruststream::schemars::JsonSchema;
+//! use serde::{Deserialize, Serialize};
+//!
+//! /// An order placed by a customer.
+//! #[derive(Deserialize, JsonSchema)]
+//! struct Order {
+//!     id: u64,
+//! }
+//!
+//! /// The confirmation an order gets back.
+//! #[derive(Serialize, Outgoing, JsonSchema)]
+//! struct Confirmed {
+//!     id: u64,
+//! }
+//!
+//! /// Answers every request on `requests` with a confirmation on `responses`.
+//! #[subscriber("requests", publish("responses"))]
+//! async fn confirm(order: &Order) -> Confirmed {
+//!     Confirmed { id: order.id }
+//! }
+//!
+//! fn document() -> Result<String, serde_json::Error> {
+//!     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_labeled(
+//!         "in-process",
+//!         MemoryBroker::new(),
+//!         |b| {
+//!             b.include(confirm);
+//!         },
+//!     );
+//!     let spec = build_spec(&app);
+//!     assert!(spec.messages_without_schema().is_empty());
+//!     spec.to_json()
+//! }
+//! # }
+//! # fn main() {}
+//! ```
+//!
+//! # Schemas
+//!
+//! A payload type appears with a schema when it derives `JsonSchema`; the crate re-exports
+//! [`schemars`] for it. On the attribute path a type without the derive still
+//! works and contributes no schema: the generator logs a `WARN` naming the subscription and the
+//! type, and [`Spec::messages_without_schema`] lists the gaps for a test to assert on. The
+//! manual `subscriber(..)` chain is documented by default and demands the derive at compile
+//! time; `.undocumented()` takes a registration out of the document. A message that is its own
+//! wire format, a [`Deserialized`](macro@crate::Deserialized) input or a
+//! [`Serialized`](macro@crate::Serialized) output, appears under its own name with no schema and
+//! no warning: the bytes are the format. A payload type's doc comment becomes the message
+//! description, and [`MessageInfo`](crate::MessageInfo) names the component explicitly, so
+//! renaming the Rust type does not change the wire contract.
+//!
+//! # What else the document says
+//!
+//! * A reply is the `receive` operation's `reply`, naming the channel and the message it
+//!   answers with. A reply named per delivery by a transform reports no fixed address and says
+//!   where a client reads one, in the broker's own expression.
+//! * A name template such as `orders.{tenant}.v1` becomes a channel with `parameters`; a type
+//!   declaring no destination contributes no channel.
+//! * A header contract, from a `Headers<T>` parameter or from `#[outgoing(headers = ..)]`,
+//!   becomes the message's headers schema.
+//! * The media type comes from the codec that decodes or encodes the message,
+//!   [`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE). One format everywhere is also
+//!   the root `defaultContentType`; two formats leave the root field out.
+//! * A retry cap and a dead-letter destination appear on the operation as the extension
+//!   `x-ruststream-retry`, and the dead-letter channel gets a `send` operation.
+//! * A channel says which servers it lives on, from the label the broker was registered under.
+//!
+//! # Servers and security
+//!
+//! [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled) records the broker
+//! under a label that is its server name, and a broker implementing
+//! [`DescribeServer`](crate::DescribeServer) fills the entry itself, in its protocol's vocabulary
+//! and with its bindings; every shipped broker does.
+//! [`server`](crate::runtime::RustStream::server) declares one explicitly from a
+//! [`ServerSpec`](crate::ServerSpec): [`protocol_version`](crate::ServerSpec::protocol_version)
+//! where one protocol name covers incompatible versions, and
+//! [`security`](crate::ServerSpec::security) with a [`SecurityScheme`](crate::SecurityScheme)
+//! constructor for how clients authenticate. Security is the author's statement, never the
+//! broker's: to secure an automatically registered server, declare it again under the same label
+//! with the scheme attached. The `info` section takes what [`AppInfo`](crate::runtime::AppInfo)
+//! carries: description, contact, license, tags, and an [`id`](crate::runtime::AppInfo::id)
+//! parsed as a URI on construction.
+//!
+//! # Serving it
+//!
+//! Serve the document's bytes from the HTTP stack you already run. [`render_viewer_html`]
+//! returns a self-contained page that renders the specification at a URL with the `AsyncAPI`
+//! React component, and [`ViewerOptions`] sets the page title and another asset base for an
+//! offline deployment. `examples/asyncapi_http.rs` in the repository serves both routes with
+//! axum.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
