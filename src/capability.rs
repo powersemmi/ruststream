@@ -501,6 +501,10 @@ pub struct ServerSpec {
     /// The messaging protocol, e.g. `"nats"`, `"kafka"`, `"amqp"`, or `"memory"` for the in-process
     /// broker.
     pub protocol: String,
+    /// The version of that protocol, when the protocol has versions a client has to match:
+    /// `"0.9.1"` against `"1.0"` for AMQP, `"5"` for MQTT. `None` where the protocol name already
+    /// says everything, which is the usual case.
+    pub protocol_version: Option<String>,
     /// An optional human description of this server.
     pub description: Option<String>,
     /// How clients authenticate to this server, emitted as the `AsyncAPI` server's `security`
@@ -517,6 +521,7 @@ impl ServerSpec {
         Self {
             host: Some(host.into()),
             protocol: protocol.into(),
+            protocol_version: None,
             description: None,
             security: Vec::new(),
         }
@@ -592,6 +597,7 @@ impl ServerSpec {
         Self {
             host: None,
             protocol: protocol.into(),
+            protocol_version: None,
             description: None,
             security: Vec::new(),
         }
@@ -601,6 +607,26 @@ impl ServerSpec {
     #[must_use]
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Names the version of the protocol clients speak to this server.
+    ///
+    /// Worth filling in wherever one protocol name covers incompatible versions: a reader cannot
+    /// tell AMQP 0.9.1 from AMQP 1.0 by the server's host.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::ServerSpec;
+    ///
+    /// let spec = ServerSpec::new("rabbit.example.com:5672", "amqp").with_protocol_version("0.9.1");
+    ///
+    /// assert_eq!(spec.protocol_version.as_deref(), Some("0.9.1"));
+    /// ```
+    #[must_use]
+    pub fn with_protocol_version(mut self, version: impl Into<String>) -> Self {
+        self.protocol_version = Some(version.into());
         self
     }
 
@@ -624,7 +650,7 @@ impl ServerSpec {
     }
 }
 
-/// How clients authenticate to an [`AsyncAPI` server](ServerSpec), per the `AsyncAPI` 3.0
+/// How clients authenticate to an [`AsyncAPI` server](ServerSpec), per the `AsyncAPI`
 /// security scheme types.
 ///
 /// Constructed with the per-kind constructors ([`scram_sha512`](Self::scram_sha512),
@@ -680,7 +706,7 @@ pub(crate) enum SecuritySchemeKind {
     },
 }
 
-/// Where an `apiKey` scheme carries the key, per `AsyncAPI` 3.0.
+/// Where an `apiKey` scheme carries the key, per `AsyncAPI`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiKeyLocation {
     /// The key rides in the user field of the transport's credentials.
@@ -700,7 +726,7 @@ impl ApiKeyLocation {
     }
 }
 
-/// Where an `httpApiKey` scheme carries the key, per `AsyncAPI` 3.0.
+/// Where an `httpApiKey` scheme carries the key, per `AsyncAPI`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpApiKeyLocation {
     /// A query parameter.

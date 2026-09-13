@@ -21,7 +21,7 @@ use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
-use ruststream::{SecurityScheme, ServerSpec};
+use ruststream::{Contact, License, SecurityScheme, ServerSpec, Tag};
 use serde::Deserialize;
 
 // --8<-- [start:payload]
@@ -58,7 +58,17 @@ fn service() -> RustStream {
     // spec - here the in-memory broker, which describes itself as an in-process "memory" server
     // with no host. A broker without a `DescribeServer` impl is instead declared explicitly with
     // `.server(name, spec)` alongside a plain `with_broker`.
-    RustStream::new(AppInfo::new("orders", "0.1.0"))
+    let info = AppInfo::new("orders", "0.1.0")
+        .with_description("Everything the order domain publishes")
+        .with_contact(
+            Contact::new()
+                .with_name("Payments team")
+                .with_email("payments@example.com"),
+        )
+        .with_license(License::new("Apache-2.0"))
+        .with_tag(Tag::new("payments"));
+
+    RustStream::new(info)
         // --8<-- [start:security]
         // A described external server. Security is the author's statement, not the broker's:
         // the same broker is deployed publicly and internally with different authentication,
@@ -66,6 +76,9 @@ fn service() -> RustStream {
         .server(
             "kafka",
             ServerSpec::new("kafka.example.com:9093", "kafka")
+                // The wire protocol clients have to speak, where the protocol name alone does
+                // not say it: AMQP 0.9.1 and AMQP 1.0 share the name `amqp` and share nothing else.
+                .with_protocol_version("3.9")
                 .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS")),
         )
         // --8<-- [end:security]

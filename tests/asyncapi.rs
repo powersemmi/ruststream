@@ -28,7 +28,7 @@ fn build_spec_describes_handlers() {
 
     let spec = build_spec(&app);
 
-    assert_eq!(spec.asyncapi, "3.0.0");
+    assert_eq!(spec.asyncapi, "3.1.0");
     assert_eq!(spec.info.title, "orders-svc");
     assert_eq!(spec.info.version, "1.2.3");
     assert_eq!(spec.info.description.as_deref(), Some("Order processing"));
@@ -51,7 +51,7 @@ fn build_spec_describes_handlers() {
     assert_eq!(spec.messages_without_schema(), vec!["u64"]);
 
     let json = spec.to_json().unwrap();
-    assert!(json.contains("\"asyncapi\": \"3.0.0\""));
+    assert!(json.contains("\"asyncapi\": \"3.1.0\""));
     assert!(json.contains("\"receive\""));
     assert!(json.contains("\"$ref\""));
 }
@@ -122,7 +122,7 @@ fn build_spec_includes_servers_and_yaml() {
     assert_eq!(server.description.as_deref(), Some("primary"));
 
     let yaml = spec.to_yaml().unwrap();
-    assert!(yaml.contains("asyncapi: 3.0.0"));
+    assert!(yaml.contains("asyncapi: 3.1.0"));
     assert!(yaml.contains("host: nats.example.com:4222"));
 }
 
@@ -556,9 +556,14 @@ mod typed_headers_spec {
         assert!(done_headers["properties"].get("task_id").is_some());
         assert!(spec.components.messages["Progress"].headers.is_none());
 
-        // The reply form declares its own send operation; the reply type's contract feeds the
-        // headers schema.
-        assert_eq!(spec.operations["send_requests_responses"].action, "send");
+        // The reply answers the receive operation rather than standing as an operation of its
+        // own; the reply type's contract feeds the headers schema.
+        let reply = spec.operations["receive_requests"]
+            .reply
+            .as_ref()
+            .expect("the request-reply registration reports what answers it");
+        assert_eq!(reply.channel.reference, "#/channels/responses");
+        assert!(!spec.operations.contains_key("send_requests_responses"));
         assert!(spec.channels.contains_key("responses"));
         let response = &spec.components.messages["Response"];
         assert!(response.headers.is_some());
@@ -776,5 +781,392 @@ mod dead_letter {
         let spec = build_spec(&app);
 
         assert!(!spec.channels.contains_key("orders.dead"));
+    }
+}
+
+/// The 3.1 surface the core fills from what a mounted registration already knows: what answers a
+/// request, which server a channel lives on, the media type of a payload, and what the
+/// registration declared about giving up.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod document_surface {
+    use ruststream::memory::prelude::*;
+    use ruststream::runtime::HandlerMetadata;
+    use ruststream::schemars::JsonSchema;
+    use ruststream::{AppId, Contact, ExternalDocs, License, ServerSpec, Tag, nonzero};
+    use serde::{Deserialize, Serialize};
+
+    use super::{Context, HandlerOutcome, build_spec};
+
+    /// An order to confirm.
+    #[derive(Deserialize, JsonSchema)]
+    #[schemars(title = "A placed order")]
+    struct Order {
+        #[allow(dead_code)]
+        id: u64,
+    }
+
+    /// The confirmation.
+    #[derive(Serialize, JsonSchema, Outgoing)]
+    struct Confirmed {
+        id: u64,
+    }
+
+    #[subscriber("orders", publish("orders.confirmed"))]
+    async fn confirm(order: &Order) -> Confirmed {
+        Confirmed { id: order.id }
+    }
+
+    #[subscriber("orders")]
+    async fn reconcile(order: &Order) -> HandlerOutcome {
+        let _ = order.id;
+        HandlerOutcome::retry()
+    }
+
+    /// A request-reply registration is one operation carrying its reply, not two operations a
+    /// reader has to pair up by name.
+    #[test]
+    fn a_reply_answers_the_operation_it_belongs_to() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+            },
+        );
+        let spec = build_spec(&app);
+
+        let reply = spec.operations["receive_orders"]
+            .reply
+            .as_ref()
+            .expect("a publish(..) registration reports what answers it");
+        assert_eq!(reply.channel.reference, "#/channels/orders.confirmed");
+        assert_eq!(
+            reply.messages[0].reference,
+            "#/channels/orders.confirmed/messages/Confirmed",
+        );
+
+        // The reply is not a second, unrelated operation.
+        assert!(
+            spec.operations
+                .values()
+                .all(|operation| operation.action == "receive"),
+            "the reply must not stand as a send operation of its own",
+        );
+        // Its channel is still in the document: the traffic is real.
+        assert!(spec.channels.contains_key("orders.confirmed"));
+    }
+
+    /// A labeled registration says which server its channels live on, so a multi-broker document
+    /// stops showing every channel on every server.
+    #[test]
+    fn a_labeled_registration_names_the_server_of_its_channels() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker_labeled("local", MemoryBroker::new(), |b| {
+                b.include(confirm);
+            })
+            .with_broker_labeled("audit", MemoryBroker::new(), |b| {
+                let audit = b.broker().subscribe("audit");
+                b.handle(
+                    audit,
+                    |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                    HandlerMetadata::raw("audit"),
+                );
+            });
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.channels["orders"].servers[0].reference,
+            "#/servers/local",
+        );
+        assert_eq!(
+            spec.channels["orders.confirmed"].servers[0].reference,
+            "#/servers/local",
+        );
+        assert_eq!(
+            spec.channels["audit"].servers[0].reference,
+            "#/servers/audit",
+        );
+    }
+
+    /// One server and no label: there is nothing to be ambiguous about, so every channel names
+    /// it.
+    #[test]
+    fn a_single_server_document_names_it_on_every_channel() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .server("nats", ServerSpec::new("nats.example.com:4222", "nats"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm);
+            });
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.channels["orders"].servers[0].reference,
+            "#/servers/nats"
+        );
+        // And the protocol of that server labels the operation.
+        assert_eq!(spec.operations["receive_orders"].tags[0].name, "nats");
+    }
+
+    /// Several servers and an unlabeled registration: the core cannot say which one, and a guess
+    /// would be a claim the service never made.
+    #[test]
+    fn several_servers_and_no_label_leave_the_channel_silent() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .server("nats", ServerSpec::new("nats.example.com:4222", "nats"))
+            .server("kafka", ServerSpec::new("kafka.example.com:9092", "kafka"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm);
+            });
+        let spec = build_spec(&app);
+
+        assert!(spec.channels["orders"].servers.is_empty());
+        assert!(spec.operations["receive_orders"].tags.is_empty());
+    }
+
+    /// The codec names the media type of what it decodes, and a document that agrees on one
+    /// states it once at the root.
+    #[test]
+    fn the_codec_names_the_media_type_of_what_it_decodes() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.components.messages["A placed order"]
+                .content_type
+                .as_deref(),
+            Some("application/json"),
+        );
+        assert_eq!(
+            spec.default_content_type.as_deref(),
+            Some("application/json")
+        );
+    }
+
+    /// Two codecs in one service: the root default would misdescribe half the document, so it is
+    /// left out and each message states its own.
+    #[cfg(feature = "cbor")]
+    #[test]
+    fn two_codecs_leave_the_document_without_a_default_media_type() {
+        use ruststream::codec::CborCodec;
+
+        /// An audited event.
+        #[derive(Deserialize, JsonSchema)]
+        struct Audited {
+            #[allow(dead_code)]
+            id: u64,
+        }
+
+        #[subscriber("audit")]
+        async fn audit(event: &Audited) -> HandlerOutcome {
+            let _ = event.id;
+            HandlerOutcome::ack()
+        }
+
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm);
+            })
+            .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
+                b.include(audit);
+            });
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.components.messages["A placed order"]
+                .content_type
+                .as_deref(),
+            Some("application/json"),
+        );
+        assert_eq!(
+            spec.components.messages["Audited"].content_type.as_deref(),
+            Some("application/cbor"),
+        );
+        assert_eq!(spec.default_content_type, None);
+    }
+
+    /// The attempt cap and the dead-letter destination ride the operation they belong to, so a
+    /// reader tells a dead-letter channel from a business destination.
+    #[test]
+    fn a_declared_retry_rides_the_receive_operation() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile)
+                    .max_attempts(nonzero!(5u32))
+                    .dead_letter("orders.dead");
+            },
+        );
+        let spec = build_spec(&app);
+
+        let retry = spec.operations["receive_orders"]
+            .retry
+            .as_ref()
+            .expect("a declared cap reaches the document");
+        assert_eq!(retry.max_attempts, Some(5));
+        assert_eq!(retry.dead_letter.as_deref(), Some("orders.dead"));
+
+        let json = spec.to_json().unwrap();
+        assert!(json.contains("\"x-ruststream-retry\""));
+    }
+
+    /// A registration that declared nothing carries no extension: the document reports what the
+    /// service said, not what it might have said.
+    #[test]
+    fn an_undeclared_retry_adds_no_extension() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert!(spec.operations["receive_orders"].retry.is_none());
+    }
+
+    /// The `AsyncAPI` Schema Object extends Draft 07, so that is the draft the payloads are
+    /// generated in: a document that says one draft and carries another is wrong for every tool
+    /// that reads it.
+    #[test]
+    fn payload_schemas_are_draft_07() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+            },
+        );
+        let spec = build_spec(&app);
+
+        let payload = spec.components.messages["A placed order"]
+            .payload
+            .as_ref()
+            .expect("payload schema");
+        assert_eq!(
+            payload["$schema"].as_str(),
+            Some("http://json-schema.org/draft-07/schema#"),
+        );
+    }
+
+    /// One protocol name can cover incompatible versions, and the broker is what knows which one
+    /// its clients speak.
+    #[test]
+    fn a_server_reports_the_version_of_its_protocol() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).server(
+            "rabbit",
+            ServerSpec::new("rabbit.example.com:5672", "amqp").with_protocol_version("0.9.1"),
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.servers["rabbit"].protocol_version.as_deref(),
+            Some("0.9.1"),
+        );
+        assert!(spec.to_json().unwrap().contains("\"protocolVersion\""));
+    }
+
+    /// The legal and editorial surround of a service: who owns it, under what licence, where its
+    /// prose lives, and what identifies it.
+    #[test]
+    fn the_service_describes_its_owner_and_its_licence() {
+        let info = AppInfo::new("orders", "1.0.0")
+            .with_id("urn:example:orders".parse().unwrap())
+            .with_terms_of_service("https://example.com/tos")
+            .with_contact(Contact::new().with_email("payments@example.com"))
+            .with_license(License::new("Apache-2.0"))
+            .with_tag(Tag::new("payments"))
+            .with_external_docs(ExternalDocs::new("https://example.com/orders"));
+        let app = RustStream::new(info).with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm);
+        });
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.id.as_ref().map(AppId::as_str),
+            Some("urn:example:orders")
+        );
+        assert_eq!(
+            spec.info.contact.as_ref().and_then(|c| c.email.as_deref()),
+            Some("payments@example.com"),
+        );
+        assert_eq!(
+            spec.info.license.as_ref().map(|l| l.name.as_str()),
+            Some("Apache-2.0"),
+        );
+        assert_eq!(spec.info.tags[0].name, "payments");
+        assert!(spec.info.external_docs.is_some());
+        assert_eq!(
+            spec.info.terms_of_service.as_deref(),
+            Some("https://example.com/tos"),
+        );
+
+        let json = spec.to_json().unwrap();
+        assert!(json.contains("\"termsOfService\""));
+        assert!(json.contains("\"externalDocs\""));
+    }
+
+    /// A service that filled nothing in carries no empty objects: an absent contact is absent,
+    /// not an object with no fields.
+    #[test]
+    fn an_undescribed_service_carries_no_empty_objects() {
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert!(spec.info.contact.is_none());
+        assert!(spec.id.is_none());
+        let json = spec.to_json().unwrap();
+        assert!(!json.contains("\"contact\""));
+        // The payload schema has a field called `id`, so the check is the root key, not the word.
+        assert!(!json.contains("\"asyncapi\": \"3.1.0\",\n  \"id\""));
+    }
+
+    /// The schema's title is a human name for the payload; it reaches the message when it says
+    /// something the machine name does not.
+    #[test]
+    fn a_schema_title_becomes_the_message_title() {
+        /// A shipment, named one way on the wire and another for a reader.
+        #[derive(Deserialize, JsonSchema)]
+        #[schemars(title = "A dispatched shipment")]
+        struct Shipment {
+            #[allow(dead_code)]
+            id: u64,
+        }
+
+        impl MessageInfo for Shipment {
+            const NAME: &'static str = "ShipmentV2";
+        }
+
+        #[subscriber("shipments")]
+        async fn dispatch(shipment: &Shipment) -> HandlerOutcome {
+            let _ = shipment.id;
+            HandlerOutcome::ack()
+        }
+
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+                b.include(dispatch);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.components.messages["ShipmentV2"].title.as_deref(),
+            Some("A dispatched shipment"),
+        );
+        // The order's own title names the component, and repeating it would tell the reader
+        // nothing.
+        assert_eq!(spec.components.messages["A placed order"].title, None);
+        // The reply type's title is its type name, so it does not repeat either.
+        assert_eq!(spec.components.messages["Confirmed"].title, None);
     }
 }

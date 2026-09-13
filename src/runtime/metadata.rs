@@ -2,11 +2,51 @@
 
 use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
-/// One message a handler publishes, as declared for the `AsyncAPI` document: the reply of a
-/// `publish("dest")` form, or one entry of an `Out` slot's `#[publishes(..)]` dictionary.
+use crate::RetryDeclaration;
+use crate::runtime::input::DecodeWith;
+
+/// What a declared outgoing message is to the registration declaring it.
+///
+/// The three kinds document differently: an answer replies to the delivery being handled, a slot
+/// entry is a destination the handler body writes to, and a dead-lettered delivery is the input
+/// giving up. `build_spec` reads this to put a reply on the `receive` operation instead of a
+/// `send` operation of its own, and to tell a dead-letter channel from a business destination.
+///
+/// The variants are named apart from the mount-position markers [`Reply`](crate::runtime::Reply)
+/// and [`Slot`](crate::runtime::Slot): a position is where a policy is bound, a kind is what the
+/// document makes of the message that leaves through it.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{OutgoingKind, OutgoingMessageMetadata};
+///
+/// let slot = OutgoingMessageMetadata::new("events.progress", "Progress");
+/// assert_eq!(slot.kind, OutgoingKind::SlotEntry);
+/// assert_eq!(slot.with_kind(OutgoingKind::Answer).kind, OutgoingKind::Answer);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum OutgoingKind {
+    /// One entry of an `Out` slot's `#[publishes(..)]` dictionary: a destination the handler
+    /// body publishes to. The default, because a bare declaration is exactly that.
+    #[default]
+    SlotEntry,
+    /// The reply of a `publish(..)` registration: the value the handler returns, answering the
+    /// delivery it was given.
+    Answer,
+    /// The destination a `dead_letter(..)` declaration names: a delivery out of attempts leaves
+    /// the service there.
+    DeadLetter,
+}
+
+/// One message a handler publishes, as declared for the `AsyncAPI` document.
+///
+/// The declaration is the reply of a `publish("dest")` form, one entry of an `Out` slot's
+/// `#[publishes(..)]` dictionary, or the destination of a `dead_letter(..)` declaration.
 ///
 /// Constructed by generated code through [`new`](Self::new) plus the builder-style setters;
-/// consumed by `build_spec`, which renders each entry as a `send` operation on its channel.
+/// consumed by `build_spec`, which renders each entry according to its [`kind`](Self::kind).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OutgoingMessageMetadata {
@@ -32,6 +72,9 @@ pub struct OutgoingMessageMetadata {
     /// ([`Serialized`](crate::runtime::Serialized)): its bytes are its own wire format, so the
     /// missing payload schema is by design rather than a documentation gap.
     pub serialized: bool,
+    /// What this entry is to its registration: a slot publish, a reply, or a dead-letter
+    /// destination.
+    pub kind: OutgoingKind,
 }
 
 impl OutgoingMessageMetadata {
@@ -47,7 +90,16 @@ impl OutgoingMessageMetadata {
             headers_schema: None,
             parameters: &[],
             serialized: false,
+            kind: OutgoingKind::SlotEntry,
         }
+    }
+
+    /// Builder-style setter for what this entry is to its registration (see
+    /// [`kind`](Self::kind)).
+    #[must_use]
+    pub const fn with_kind(mut self, kind: OutgoingKind) -> Self {
+        self.kind = kind;
+        self
     }
 
     /// Builder-style setter for a templated destination's placeholder names.
@@ -132,6 +184,23 @@ pub struct HandlerMetadata {
     /// ([`Deserialized`](crate::runtime::Deserialized)): the payload has no serde model, so
     /// the missing schema is by design rather than a documentation gap.
     pub deserialized: bool,
+    /// The name of the `AsyncAPI` server this handler's broker was registered under, when the
+    /// registration carries one: the label of
+    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled). Feeds the
+    /// channel's `servers` list, so a multi-broker document says which broker a channel lives
+    /// on instead of showing every channel on every server.
+    ///
+    /// A cross-broker publish is outside what this can answer: a
+    /// [`Bound`](crate::runtime::Bound) token publishes against its own broker, which the
+    /// registration's label does not name.
+    pub server: Option<Cow<'static, str>>,
+    /// The media type the codec decoding this subscription produces, when a codec decodes it
+    /// at all ([`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE)). `None` on the
+    /// self-deserializing lane, whose bytes are their own wire format.
+    pub content_type: Option<&'static str>,
+    /// What the registration declared about retrying a failed delivery: the attempt cap and the
+    /// dead-letter destination. Empty unless the mount site declared one.
+    pub retry: RetryDeclaration,
 }
 
 impl HandlerMetadata {
@@ -150,6 +219,9 @@ impl HandlerMetadata {
             message_description: None,
             outgoing: Vec::new(),
             deserialized: false,
+            server: None,
+            content_type: None,
+            retry: RetryDeclaration::new(),
         }
     }
 
@@ -170,6 +242,9 @@ impl HandlerMetadata {
             message_description: None,
             outgoing: Vec::new(),
             deserialized: false,
+            server: None,
+            content_type: None,
+            retry: RetryDeclaration::new(),
         }
     }
 
@@ -219,6 +294,17 @@ impl HandlerMetadata {
     #[must_use]
     pub fn with_message_description(mut self, description: impl Into<Cow<'static, str>>) -> Self {
         self.message_description = Some(description.into());
+        self
+    }
+
+    /// Records the media type the mounted codec decodes this subscription with, taken from the
+    /// input kind so a byte input (which mounts with no codec) reports none.
+    #[must_use]
+    pub(crate) fn decoded_with<Input, DecodeCodec>(mut self) -> Self
+    where
+        Input: DecodeWith<DecodeCodec>,
+    {
+        self.content_type = <Input as DecodeWith<DecodeCodec>>::CONTENT_TYPE;
         self
     }
 

@@ -1,8 +1,8 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    collections::BTreeMap, error::Error as StdError, fmt, future::Future, marker::PhantomData,
-    sync::Arc, time::Duration,
+    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, future::Future,
+    marker::PhantomData, sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;
@@ -667,7 +667,12 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
                     .expect("brokers connect before subscriptions open");
                 bound(connected, state, scope_delivery, shutdown, token)
             }));
-            self.handlers.push(meta);
+            // The scope's label is the name of this broker's AsyncAPI server, so every channel
+            // the scope mounts can say which server it lives on.
+            self.handlers.push(HandlerMetadata {
+                server: label.clone().map(Cow::Owned),
+                ..meta
+            });
         }
         self.brokers.push(RegisteredBroker {
             lifecycle: Box::new(BrokerCell { broker, slot }),

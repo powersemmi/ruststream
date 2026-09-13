@@ -20,7 +20,7 @@ use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
     DestinationSettled, FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline,
@@ -272,7 +272,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
     {
-        let meta = subscriber_metadata(source.name().to_owned(), &def);
+        let meta = subscriber_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
@@ -311,7 +312,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
     {
-        let meta = batch_metadata(source.name().to_owned(), &def);
+        let meta = batch_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -352,6 +354,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def: BatchDef<Input = Provided<F>> + BatchSized,
         Def::Handler: 'static,
     {
+        // The self-deserializing batch mounts with no codec, so the media type it would report
+        // is the one nothing produced.
         let meta = batch_metadata(source.name().to_owned(), &def);
         let policies = def.failure_policies();
         let workers = def.workers();
@@ -405,7 +409,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
     {
-        let meta = inject_metadata(source.name().to_owned(), &def);
+        let meta = inject_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -454,7 +459,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Def::Input: DecodeWith<DecodeCodec>,
         DecodeCodec: Send + Sync + 'static,
     {
-        let meta = batch_inject_metadata(source.name().to_owned(), &def);
+        let meta = batch_inject_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -509,7 +515,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: Send + Sync + 'static,
         ReplySource: 'static,
     {
-        let meta = batch_publishing_metadata(source.name().to_owned(), &def);
+        let meta = batch_publishing_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
@@ -573,7 +580,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
-        let meta = publishing_metadata(source.name().to_owned(), &def);
+        let meta = publishing_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -629,7 +637,8 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
-        let meta = publishing_metadata(source.name().to_owned(), &def);
+        let meta = publishing_metadata(source.name().to_owned(), &def)
+            .decoded_with::<Def::Input, DecodeCodec>();
         let policies = def.failure_policies();
         let workers = def.workers();
         Router {
@@ -1082,9 +1091,14 @@ where
             let meta = head.metadata_mut();
             let entry = OutgoingMessageMetadata::new(destination.to_owned(), meta.input_type)
                 .with_payload_schema(meta.payload_schema.clone())
-                .with_headers_schema(meta.headers_schema.clone());
+                .with_headers_schema(meta.headers_schema.clone())
+                .with_kind(OutgoingKind::DeadLetter);
             meta.outgoing.push(entry);
         }
+        // The declaration itself rides the metadata too: the cap is what the document reports
+        // next to the dead-letter channel, and a cap without a destination is still a fact
+        // about the registration.
+        head.metadata_mut().retry = declaration.clone();
         Router {
             routes: (DeclaredRoute::new(head, declaration, destination), tail),
             codec: self.codec,

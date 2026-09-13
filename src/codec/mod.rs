@@ -90,6 +90,30 @@ pub enum CodecError {
 /// # fn main() {}
 /// ```
 pub trait Codec: Send + Sync {
+    /// The media type of the bytes this codec produces, reported as the `contentType` of every
+    /// message it encodes or decodes in the generated `AsyncAPI` document.
+    ///
+    /// The built-in codecs name `application/json`, `application/cbor` (RFC 8949) and
+    /// `application/msgpack`. `MessagePack` has no registered media type; of the two spellings
+    /// in use, `application/msgpack` is the one this crate reports.
+    ///
+    /// The default is `application/octet-stream`: what a codec whose output carries no media
+    /// type of its own should keep.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # fn main() {
+    /// use ruststream::codec::{Codec, JsonCodec};
+    ///
+    /// assert_eq!(JsonCodec::CONTENT_TYPE, "application/json");
+    /// # }
+    /// # #[cfg(not(feature = "json"))]
+    /// # fn main() {}
+    /// ```
+    const CONTENT_TYPE: &'static str = "application/octet-stream";
+
     /// Encodes `value` into a mutable byte buffer.
     ///
     /// Returning [`BytesMut`] lets the encoded buffer move into the publish pipeline (an

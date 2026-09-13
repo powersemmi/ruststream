@@ -17,8 +17,8 @@ use axum::routing::get;
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
-use ruststream::{SecurityScheme, ServerSpec};
-use serde::Deserialize;
+use ruststream::{Contact, License, SecurityScheme, ServerSpec, Tag};
+use serde::{Deserialize, Serialize};
 
 // --8<-- [start:payload]
 /// An order placed by a customer.
@@ -35,6 +35,20 @@ async fn handle(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
+// --8<-- [start:reply]
+/// The confirmation an order gets back.
+#[derive(Debug, Serialize, Outgoing, JsonSchema)]
+struct Confirmed {
+    id: u64,
+}
+
+/// Answers every request on `requests` with a confirmation on `responses`.
+#[subscriber("requests", publish("responses"))]
+async fn confirm(order: &Order) -> Confirmed {
+    Confirmed { id: order.id }
+}
+// --8<-- [end:reply]
+
 // --8<-- [start:server]
 fn service() -> RustStream {
     // `with_broker_labeled` records the broker under a label that is both its stable identity and
@@ -42,7 +56,19 @@ fn service() -> RustStream {
     // spec - here the in-memory broker, which describes itself as an in-process "memory" server
     // with no host. A broker without a `DescribeServer` impl is instead declared explicitly with
     // `.server(name, spec)` alongside a plain `with_broker`.
-    RustStream::new(AppInfo::new("orders", "0.1.0"))
+    // --8<-- [start:describe]
+    let info = AppInfo::new("orders", "0.1.0")
+        .with_description("Everything the order domain publishes")
+        .with_contact(
+            Contact::new()
+                .with_name("Payments team")
+                .with_email("payments@example.com"),
+        )
+        .with_license(License::new("Apache-2.0"))
+        .with_tag(Tag::new("payments"));
+    // --8<-- [end:describe]
+
+    RustStream::new(info)
         // --8<-- [start:security]
         // A described external server. Security is the author's statement, not the broker's:
         // the same broker is deployed publicly and internally with different authentication,
@@ -50,11 +76,15 @@ fn service() -> RustStream {
         .server(
             "kafka",
             ServerSpec::new("kafka.example.com:9093", "kafka")
+                // The wire protocol clients have to speak, where the protocol name alone does
+                // not say it: AMQP 0.9.1 and AMQP 1.0 share the name `amqp` and share nothing else.
+                .with_protocol_version("3.9")
                 .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS")),
         )
         // --8<-- [end:security]
         .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
             b.include(handle);
+            b.include(confirm);
         })
 }
 // --8<-- [end:server]

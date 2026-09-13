@@ -91,7 +91,7 @@ pub use input::Provided;
 pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
 pub use lifecycle::ConnectedSlot;
-pub use metadata::{HandlerMetadata, OutgoingMessageMetadata};
+pub use metadata::{HandlerMetadata, OutgoingKind, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // The reply wiring a mount site's chain builds, the live sinks it pairs into, and the step traits
 // the chain resolves through: the chain names them for the user, so none of it is spelled in
