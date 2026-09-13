@@ -522,10 +522,11 @@ async fn a_broker_moved_subscription_keeps_its_own_requeue_under_a_cap() {
     assert_eq!(settled.load(Ordering::SeqCst), 2);
 }
 
-/// The same subscription at the cap: there is no publisher to carry the delivery to the declared
-/// destination, so it is rejected rather than requeued into a loop.
+/// The same subscription at the cap: the declaration reached the descriptor at startup, so the
+/// runtime never reads it again here. A rejection would settle the delivery ahead of the move the
+/// broker was about to make, and on a queue that deletes a rejected delivery it would lose it.
 #[tokio::test]
-async fn a_broker_moved_subscription_rejects_a_spent_delivery() {
+async fn a_broker_moved_spent_delivery_stays_the_brokers_requeue() {
     let delivery = Delivery::empty().declaring(
         RetryDeclaration::new()
             .with_max_attempts(crate::nonzero!(1u32))
@@ -540,7 +541,7 @@ async fn a_broker_moved_subscription_rejects_a_spent_delivery() {
         unit_cx,
     )
     .await;
-    assert_eq!(settled.load(Ordering::SeqCst), 1);
+    assert_eq!(settled.load(Ordering::SeqCst), 2);
 }
 
 /// A registration that declares nothing keeps the immediate retry it always had, whatever the
