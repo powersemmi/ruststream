@@ -48,7 +48,7 @@ where
     P: Publisher,
     C: Codec,
     PL: Send + Sync,
-    BL: BatchPublishTransform<Cx>,
+    BL: BatchPublishTransform<Cx, P::Options>,
     Cx: Sync,
 {
     type Codec = C;
@@ -82,7 +82,7 @@ where
     P: TransactionalPublisher,
     C: Codec,
     PL: Send + Sync,
-    BL: BatchPublishTransform<Cx>,
+    BL: BatchPublishTransform<Cx, P::Options>,
     Cx: Sync,
 {
     type Codec = C;

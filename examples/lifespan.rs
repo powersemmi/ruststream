@@ -73,6 +73,8 @@ fn app() -> RustStream<Identity, Database> {
         })
         // bound the post-shutdown drain of in-flight handlers
         .shutdown_timeout(Duration::from_secs(10))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle);
+        })
 }
 // --8<-- [end:hooks]

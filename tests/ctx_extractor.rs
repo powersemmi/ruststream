@@ -88,7 +88,9 @@ async fn ctx_extractor_projects_the_context_from_its_key() {
     let state_seen = SeenLen(Arc::clone(&seen_len));
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, Infallible>(MeasureState { seen: state_seen }) })
-        .with_broker(MemoryBroker::new(), |b| b.include(measure));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(measure);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -128,8 +130,10 @@ async fn both(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ctx_extractor_composes_with_an_explicit_ctx_parameter() {
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(both));
+    let app =
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(both);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()
@@ -173,7 +177,9 @@ async fn ctx_extractor_composes_with_state() {
     let state_hits = Hits(hits.clone());
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, Infallible>(AppState { hits: state_hits }) })
-        .with_broker(MemoryBroker::new(), |b| b.include(count));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(count);
+        });
 
     let tb = TestApp::start(app).await.expect("start");
     tb.broker::<MemoryBroker>()

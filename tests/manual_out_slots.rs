@@ -395,10 +395,10 @@ async fn a_broker_defined_capability_extends_the_slot_vocabulary() {
 /// The slot transform the mount below composes on top of the entry's publish path.
 struct Envelope;
 
-impl<K: ContextKind> PublishTransform<K> for Envelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }

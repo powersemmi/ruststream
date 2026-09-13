@@ -36,8 +36,9 @@ async fn explode(order: &Order) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graceful_shutdown_reports_stopped() {
     let broker = MemoryBroker::new();
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(fine));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(fine);
+    });
 
     let running = app.start().await.expect("startup failed");
     let health = running.health();
@@ -55,8 +56,9 @@ async fn graceful_shutdown_reports_stopped() {
 async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(explode));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(explode);
+    });
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
@@ -97,8 +99,9 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
 async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(explode));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(explode);
+    });
 
     let running = app.start().await.expect("startup failed");
     // Deliberately no probe yet: the transition must be stored even with zero subscribers,
@@ -131,8 +134,9 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn detached_probe_keeps_the_last_state_and_parks() {
     let broker = MemoryBroker::new();
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| b.include(fine));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(fine);
+    });
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();

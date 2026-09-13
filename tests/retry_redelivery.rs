@@ -18,15 +18,19 @@ mod common;
 use std::future::{Future, ready};
 use std::time::Duration;
 
-use common::Order;
+use common::{Order, Receipt};
 use futures::{Stream, StreamExt};
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RETRY_COUNT_HEADER, RustStream};
-use ruststream::subscriber;
+use ruststream::codec::JsonCodec;
+use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::runtime::{
+    AppInfo, ForSlot, HandlerOutcome, Out, Outgoing, PublishTransform, RETRY_COUNT_HEADER, Reads,
+    Router, RustStream, SlotContext,
+};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
-    AckError, HeaderMap, IncomingMessage, RedeliveryAddress, Subscribe, Subscriber,
-    SubscriptionSource,
+    AckError, ConnectedBroker, HeaderMap, IncomingMessage, OutSlot, OutgoingMessage, PairError,
+    PublishPolicy, Publisher, RedeliveryAddress, Subscribe, Subscriber, SubscriptionSource,
+    subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -144,17 +148,75 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
     }
 }
 
+/// Defers the first delivery and answers the copy, so one registration carries both a reply and
+/// a deferred retry.
+#[subscriber(
+    BoundSubscription::new("invoices-workers", "invoices"),
+    publish("receipts")
+)]
+async fn settle(order: &Order, ctx: &mut Context) -> Result<Receipt, HandlerOutcome> {
+    let attempt = ctx
+        .headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    if attempt == 0 {
+        Err(HandlerOutcome::retry_after(RETRY_DELAY))
+    } else {
+        Ok(Receipt { id: order.id })
+    }
+}
+
+/// The retry position sits beside the rest of the chain: the reply keeps its own policy and
+/// codec whichever order the two are named in, and the deferred copy still comes back.
+#[tokio::test(start_paused = true)]
+async fn the_retry_position_composes_with_the_reply_wiring() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(settle)
+                .out_retry(MemoryPublish)
+                .out_reply(MemoryPublish)
+                .codec(JsonCodec);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 7 })
+        .to("invoices")
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .subscriber("invoices-workers")
+        .assert_called_once()
+        .settled(HandlerOutcome::retry_after(RETRY_DELAY));
+
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("invoices-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the deferred copy must reach the handler and be answered",
+    );
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { id: 7 });
+}
+
 /// The deferred copy goes to the address the source reported, so the handler sees the message
 /// again. Published under the subscription's own name it would reach nothing, and the delayed
 /// message would be lost.
 #[tokio::test(start_paused = true)]
 async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(reconcile);
-    });
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+        },
+    );
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -166,6 +228,7 @@ async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
         .subscriber("orders-workers")
         .assert_called_once()
         .settled(HandlerOutcome::retry_after(RETRY_DELAY));
+    let delivered = delivered_bytes(&tb);
 
     // The delay is real: nothing comes back before it elapses.
     tb.advance(RETRY_DELAY.saturating_sub(Duration::from_millis(1)))
@@ -183,6 +246,413 @@ async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
         [Outcome::Nack, Outcome::Ack],
         "the deferred copy must reach the handler and settle",
     );
+    // A position that names no codec encodes nothing either: the copy is the delivery's bytes.
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_raw(&delivered);
+}
+
+/// The router surface binds the position the same way: a registration grouped in a `Router` names
+/// its deferred-retry publisher where it is included, and the copy comes back as it does on a
+/// scope.
+#[tokio::test(start_paused = true)]
+async fn a_router_registration_binds_the_retry_position() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_router(
+                Router::<MemoryBroker>::new()
+                    .include(reconcile)
+                    .out_retry(MemoryPublish)
+                    .build(),
+            );
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the deferred copy must reach the handler and settle",
+    );
+}
+
+/// Stamps every message leaving the slot it is mounted on with that slot's name: a transform that
+/// reads the slot kind, which is the kind the retry position offers.
+#[derive(Debug, Clone, Copy)]
+struct StampSlot;
+
+impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
+    type Destination = Reads;
+
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
+        out.headers_mut()
+            .insert("x-left-through", cx.slot().to_owned());
+    }
+}
+
+/// A publish policy whose publisher contributes a constant to every message, the way a broker's
+/// own publisher does. What the deferred copy carries from it is what any publish through the
+/// same policy carries.
+#[derive(Debug, Clone, Copy)]
+struct StampedPublish;
+
+impl<C: ConnectedBroker> PublishPolicy<C> for StampedPublish
+where
+    MemoryPublish: PublishPolicy<C>,
+{
+    type Live = Stamped<<MemoryPublish as PublishPolicy<C>>::Live>;
+
+    async fn pair(self, connected: &C) -> Result<Self::Live, PairError> {
+        let mut base = HeaderMap::new();
+        base.insert("x-publisher", "deferred");
+        Ok(Stamped {
+            inner: MemoryPublish.pair(connected).await?,
+            base,
+        })
+    }
+}
+
+/// The live form of [`StampedPublish`].
+#[derive(Debug)]
+struct Stamped<P> {
+    inner: P,
+    base: HeaderMap,
+}
+
+impl<P: Publisher> Publisher for Stamped<P> {
+    type Error = P::Error;
+    type Options = P::Options;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        self.inner.publish(msg, options).await
+    }
+
+    fn base_headers(&self) -> Option<&HeaderMap> {
+        Some(&self.base)
+    }
+}
+
+/// The bytes of the message the test publishes, as the handler's first delivery carries them.
+fn delivered_bytes(tb: &TestApp<()>) -> Vec<u8> {
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders-workers")
+        .received_raw()
+        .first()
+        .expect("the subscription received the first delivery")
+        .to_vec()
+}
+
+/// A transform on the retry slot runs on the deferred copy, and it reads what a slot transform
+/// reads: the slot's own name. Nothing else on the chain sees the copy, so this is the only place
+/// a service can stamp it.
+#[tokio::test(start_paused = true)]
+async fn a_transform_on_the_retry_slot_stamps_the_deferred_copy() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile)
+                .out_retry(MemoryPublish)
+                .transform(StampSlot);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("x-left-through", "Retry");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the stamped copy must still reach the handler",
+    );
+}
+
+/// A broker's per-message settings, as small as a broker's can be, so the retry slot has
+/// something to carry. The publisher resolves the call's value against the policy's and puts the
+/// answer in a header the assertion reads back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PriorityOptions {
+    priority: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PriorityPublish {
+    priority: u8,
+}
+
+/// The live form of [`PriorityPublish`].
+#[derive(Debug)]
+struct PriorityPublisher<P> {
+    inner: P,
+    default_priority: u8,
+}
+
+impl<C: ConnectedBroker> PublishPolicy<C> for PriorityPublish
+where
+    MemoryPublish: PublishPolicy<C>,
+{
+    type Live = PriorityPublisher<<MemoryPublish as PublishPolicy<C>>::Live>;
+
+    async fn pair(self, connected: &C) -> Result<Self::Live, PairError> {
+        Ok(PriorityPublisher {
+            inner: MemoryPublish.pair(connected).await?,
+            default_priority: self.priority,
+        })
+    }
+}
+
+impl<P: Publisher> Publisher for PriorityPublisher<P> {
+    type Error = P::Error;
+    type Options = PriorityOptions;
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        let priority = options
+            .and_then(|options| options.priority)
+            .unwrap_or(self.default_priority);
+        let mut headers = msg.headers().clone();
+        headers.insert("priority", priority.to_string());
+        let stamped = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
+        self.inner.publish(stamped, None).await
+    }
+}
+
+/// Sends the deferred copy at a priority of its own: the copy has no call site, so a transform on
+/// the retry slot is where its per-message settings come from.
+#[derive(Debug, Clone, Copy)]
+struct Expedite;
+
+impl PublishTransform<ForSlot, PriorityOptions> for Expedite {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        _out: &mut Outgoing<'_>,
+        options: &mut Option<PriorityOptions>,
+        _cx: &SlotContext<'_>,
+    ) {
+        options
+            .get_or_insert_with(PriorityOptions::default)
+            .priority = Some(7);
+    }
+}
+
+/// The runtime publishes the deferred copy, so nothing on the chain names its per-message
+/// settings; a transform on the retry slot does, and the broker sees them.
+#[tokio::test(start_paused = true)]
+async fn a_transform_on_the_retry_slot_sets_the_deferred_copy_options() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile)
+                .out_retry(PriorityPublish::default())
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("priority", "7");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the copy the transform settled must still reach the handler",
+    );
+}
+
+/// The deferred copy is the delivery's own bytes: a codec named on the retry slot resolves the
+/// position and encodes nothing, so a copy stamped with the retry count still decodes as the
+/// message the subscription decodes with its own codec.
+#[cfg(feature = "msgpack")]
+#[tokio::test(start_paused = true)]
+async fn a_codec_named_on_the_retry_slot_does_not_re_encode_the_copy() {
+    use ruststream::codec::MsgpackCodec;
+
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile)
+                .out_retry(MemoryPublish)
+                .codec(MsgpackCodec);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    let delivered = delivered_bytes(&tb);
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_raw(&delivered);
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the copy must decode as the delivery it was made from",
+    );
+}
+
+/// What the bound policy's publisher contributes to every message it sends reaches the deferred
+/// copy too: the copy leaves through that publisher, not past it.
+#[tokio::test(start_paused = true)]
+async fn the_retry_publishers_base_headers_reach_the_deferred_copy() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(StampedPublish);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("x-publisher", "deferred");
+}
+
+/// The router chain offers the same steps as the scope: a registration grouped in a `Router` names
+/// the retry slot's codec and its transform where it is included.
+#[tokio::test(start_paused = true)]
+async fn a_router_registration_takes_the_retry_slots_steps() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include_router(
+                Router::<MemoryBroker>::new()
+                    .include(reconcile)
+                    .out_retry(MemoryPublish)
+                    .codec(JsonCodec)
+                    .transform(StampSlot)
+                    .build(),
+            );
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    let delivered = delivered_bytes(&tb);
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("orders")
+        .with_header("x-left-through", "Retry")
+        .with_raw(&delivered);
+}
+
+/// The slot a registration publishes through itself, beside the retry slot.
+#[derive(OutSlot)]
+#[publishes(Receipt)]
+struct Audit;
+
+/// Defers the first delivery and audits the copy: one registration carrying a slot of its own and
+/// the retry slot beside it, bound in either order.
+#[subscriber(BoundSubscription::new("audits-workers", "audits"))]
+async fn audit(
+    order: &Order,
+    ctx: &mut Context,
+    Out(trail): Out<impl Publisher, Audit>,
+) -> HandlerOutcome {
+    let attempt = ctx
+        .headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    if attempt == 0 {
+        return HandlerOutcome::retry_after(RETRY_DELAY);
+    }
+    if trail
+        .message(&Receipt { id: order.id })
+        .to("receipts")
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// A handler's own slots and the retry slot are positions of one chain: both bind through
+/// `.out(..)`, and the registration commits with `.build()` as any slot-carrying one does.
+#[tokio::test(start_paused = true)]
+async fn the_retry_slot_binds_beside_a_handlers_own_slots() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(audit)
+                .out_retry(MemoryPublish)
+                .transform(StampSlot)
+                .out(Audit, MemoryPublish)
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 3 })
+        .to("audits")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("audits")
+        .with_header("x-left-through", "Retry");
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { id: 3 });
 }
 
 /// Defers every delivery. Mounted on a source that reports no redelivery address, so the app it
@@ -192,34 +662,46 @@ async fn settle_later(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-/// A scope that wires a deferred-retry publisher over a subscription that cannot say where a
-/// redelivery is published fails to start, naming the subscription, its source and the fix.
+/// A registration that binds the deferred-retry position over a subscription which cannot say
+/// where a redelivery is published fails to start, naming that subscription, its source and the
+/// fix. The registration beside it in the same scope is addressed and bound the same way, so the
+/// refusal is the one registration's, not the scope's.
 #[tokio::test]
-async fn a_retry_publisher_over_an_unaddressed_source_refuses_to_start() {
-    let broker = MemoryBroker::new();
-    let retry_publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(broker, |b| {
-        b.retry_via(retry_publisher);
-        b.include(settle_later);
-    });
+async fn a_retry_position_over_an_unaddressed_source_refuses_to_start() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+            b.include(settle_later).out_retry(MemoryPublish);
+        },
+    );
 
     let failed = TestApp::start(app)
         .await
-        .expect_err("a scope that cannot address its retries must not start");
+        .expect_err("a registration that cannot address its retries must not start");
     let message = failed.to_string();
     assert!(message.contains("payments"), "{message}");
     assert!(message.contains("SilentSubscription"), "{message}");
     assert!(message.contains("MemoryBroker"), "{message}");
-    assert!(message.contains("retry_via"), "{message}");
+    assert!(message.contains("out_retry"), "{message}");
+    assert!(
+        !message.contains("orders-workers"),
+        "the addressed registration is untouched: {message}",
+    );
 }
 
-/// Without a retry publisher the same subscription starts: `retry_after` then degrades to an
-/// immediate requeue, which is the documented answer for a broker with neither native delayed
-/// redelivery nor a publisher to defer through.
+/// Without the position the same subscription starts, beside one that binds it: `retry_after`
+/// then degrades to an immediate requeue, which is the documented answer for a registration with
+/// neither native delayed redelivery nor a publisher to defer through.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unaddressed_source_starts_when_the_scope_defers_nothing() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(settle_later));
+async fn an_unaddressed_source_starts_when_the_registration_defers_nothing() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(reconcile).out_retry(MemoryPublish);
+            b.include(settle_later);
+        },
+    );
 
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.shutdown().await.expect("graceful shutdown failed");

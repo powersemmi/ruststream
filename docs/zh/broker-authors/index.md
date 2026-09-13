@@ -85,7 +85,7 @@ pub trait Subscribe: ConnectedBroker {
 ```
 
 `redelivery_address` 报出的是运行时发布延后重试所用的地址。回答了它，`#[subscriber("orders")]`
-在你的 Broker 上才能和 `BrokerScope::retry_via` 一起用。
+在你的 Broker 上才能和挂载处的延后重试位（`.out_retry(policy)`）一起用。
 
 订阅名不是发布地址的地方，保留默认值。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic，
 那里改由描述符回答。
@@ -139,10 +139,10 @@ pub trait IncomingMessage: Send + Sync {
 一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
 这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
-方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后发布一份副本，用的是应用通过
-`BrokerScope::retry_via` 接上的那个发布者，同时把重试计数消息头加一。这份副本发往
-[你的订阅给出的地址](#where-a-deferred-retry-is-published)。只有在没有这个发布者的时候，延迟才退化
-成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
+方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后发布一份副本，用的是挂载处通过
+`.out_retry(policy)` 占位时给出的那个策略，同时把重试计数消息头加一。这份副本发往
+[你的订阅给出的地址](#where-a-deferred-retry-is-published)。只有在这条注册没有给出这个策略的时候，
+延迟才退化成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：
@@ -228,7 +228,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 合编解码器和变换。
 
 如果普通策略用自己的默认值就够用（几乎总是如此），就在已连接形态上再实现 `DefaultPublish`，在那里指
-名这个策略。这样，带 `publish("dest")` 的处理器在没有显式 `.out(Reply, ..)` 的情况下挂载，运行时自己
+名这个策略。这样，带 `publish("dest")` 的处理器在没有显式 `.out_reply(..)` 的情况下挂载，运行时自己
 就把回复用的发布者实例化出来，只写 `b.include(def)` 也能编译。发布者总是需要显式选项的 Broker 不实现
 `DefaultPublish`，它们的用户在每次注册处理器时指定策略。
 
@@ -403,7 +403,7 @@ impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
 
 <!-- inline-rust: the call shape against the broker policy sketched above -->
 ```rust
-b.include(confirm).out(Reply, Publish).stream("ORDERS");
+b.include(confirm).out_reply(Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 ```
 
@@ -411,7 +411,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 
 `map_publisher` 把策略换成同一类型的策略。换成另一种策略类型意味着另一种发布模式，它的位置在
 `.out(marker, policy)` 调用本身。已经配置好的值也可以直接传到那里：
-`.out(Reply, Publish::default().stream("ORDERS"))`。
+`.out_reply(Publish::default().stream("ORDERS"))`。
 
 ### 发布构建器上的逐条设置 { #per-message-settings-on-the-publish-builder }
 

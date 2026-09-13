@@ -70,6 +70,23 @@ pub(crate) fn record_slot_publish<Options>(
     });
 }
 
+/// Records a reply publish's per-message options against the harness driving the current dispatch
+/// task, if any. Called by the reply sink for every reply it sends; outside a harness-driven
+/// handler it is a no-op.
+///
+/// Only the options are kept: the reply's message reaches the broker's publish log on its own,
+/// and that log is what the channel assertions read.
+pub(crate) fn record_reply_publish<Options>(name: &str, options: Option<&Options>)
+where
+    Options: Clone + Send + Sync + 'static,
+{
+    let _ = HARNESS.try_with(|scope| {
+        scope
+            .coordinator
+            .record_reply(name, RecordedOptions::capture(options));
+    });
+}
+
 /// The broker's per-message options one slot publish carried, copied and type-erased so the
 /// assertions can hand them back to a test as the broker's own type.
 ///
@@ -309,6 +326,8 @@ struct Inner {
     notify: tokio::sync::Notify,
     records: Mutex<Vec<Record>>,
     slot_records: Mutex<Vec<SlotRecord>>,
+    /// One entry per reply the runtime published, keyed by the channel it went to.
+    reply_records: Mutex<Vec<(String, RecordedOptions)>>,
     timers: Mutex<Vec<Timer>>,
 }
 
@@ -331,6 +350,7 @@ impl Coordinator {
                 notify: tokio::sync::Notify::new(),
                 records: Mutex::new(Vec::new()),
                 slot_records: Mutex::new(Vec::new()),
+                reply_records: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
             }),
         }
@@ -496,6 +516,27 @@ impl Coordinator {
                 message,
                 options,
             });
+    }
+
+    /// Records the per-message options one reply published to `name` carried.
+    pub(crate) fn record_reply(&self, name: &str, options: RecordedOptions) {
+        self.inner
+            .reply_records
+            .lock()
+            .expect("coordinator reply records mutex poisoned")
+            .push((name.to_owned(), options));
+    }
+
+    /// The per-message options of every reply published to `name`, in publish order.
+    pub(crate) fn reply_published(&self, name: &str) -> Vec<RecordedOptions> {
+        self.inner
+            .reply_records
+            .lock()
+            .expect("coordinator reply records mutex poisoned")
+            .iter()
+            .filter(|(channel, _)| channel == name)
+            .map(|(_, options)| options.clone())
+            .collect()
     }
 
     /// Every publish made through the `Out` slot named `slot`, in publish order.

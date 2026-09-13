@@ -2,8 +2,12 @@
 //!
 //! Every publish policy a registration names is attached with one verb,
 //! [`out`](RouterWith::out): [`Reply`] names the policy the value a `publish("dest")` handler
-//! returns leaves through, and a slot marker names one [`Out`](crate::runtime::Out) slot's. The
-//! steps after a call ride the position it named - [`codec`](RouterWith::codec),
+//! returns leaves through, a slot marker names one [`Out`](crate::runtime::Out) slot's, and
+//! [`Retry`] names the one a deferred `retry_after` copy leaves through.
+//! [`out_reply`](RouterWith::out_reply) and [`out_retry`](RouterWith::out_retry) are the same
+//! call with the marker spelled out.
+//!
+//! The steps after a call ride the position it named - [`codec`](RouterWith::codec),
 //! [`transform`](RouterWith::transform),
 //! [`map_publisher`](crate::runtime::MapPublisher::map_publisher) on either kind,
 //! [`batch_transform`](RouterWith::batch_transform) and
@@ -19,12 +23,13 @@
 use std::fmt;
 use std::marker::PhantomData;
 
-#[cfg(doc)]
-use crate::runtime::slot::Reply;
+use crate::runtime::retry::Retry;
 use crate::runtime::slot::{
-    AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoOutBound,
-    ReplyStep, TransactionalLast, TransformLast,
+    AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
+    Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
 };
+
+use super::builder::RouterBroker;
 
 /// One commit strategy of a mount chain's attachment, keyed by its `Mount` token and the chain
 /// it grew on. Machinery; never named directly.
@@ -71,16 +76,24 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Names the publish policy of one position: [`Reply`] for the value a `publish("dest")`
-    /// handler returns, an [`Out`](crate::runtime::Out) slot's own marker for a slot.
+    /// handler returns, an [`Out`](crate::runtime::Out) slot's own marker for a slot, [`Retry`]
+    /// for the deferred `retry_after` copy.
     ///
     /// `policy` is one of the broker prelude's (`Publish`, `TransactionalPublish`, ...), or a
     /// [`Bound`](crate::runtime::Bound) token wrapping one for a cross-broker target; the runtime
     /// pairs it after the brokers connect. Calls bind by marker, so their order does not matter,
     /// and each position takes exactly one: binding one twice does not compile. Omitting
     /// `.out(Reply, ..)` leaves the reply on the broker's own
-    /// [`DefaultPublish`](crate::DefaultPublish) policy; omitting a slot's call does not compile.
+    /// [`DefaultPublish`](crate::DefaultPublish) policy; omitting a slot's call does not compile;
+    /// omitting `.out(Retry, ..)` leaves a `retry_after` to requeue immediately on a broker with
+    /// no delayed redelivery of its own.
     ///
-    /// The steps after the call fill the rest of that position's wiring.
+    /// The steps after the call fill the rest of that position's wiring, whichever position it
+    /// is: the deferred-retry copy is a slot publish like any other, so it takes the slot steps
+    /// too.
+    ///
+    /// [`out_reply`](Self::out_reply) and [`out_retry`](Self::out_retry) are this call with the
+    /// marker spelled out.
     // The unit marker drives inference, so it travels by value to keep the call site
     // `.out(Reply, ..)`; the return type names the chain with the bound position.
     #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
@@ -88,13 +101,64 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         self,
         marker: M,
         policy: Policy,
-    ) -> RouterWith<Mount, R, Def, <Attach as BindAt<Mount, M, Policy, Index>>::Out, Index>
+    ) -> RouterWith<
+        Mount,
+        R,
+        Def,
+        <M as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+        Index,
+    >
     where
-        Attach: BindAt<Mount, M, Policy, Index>,
+        R: RouterBroker,
+        M: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         // The marker is inference input only; its value carries no data.
         let _ = marker;
-        RouterWith::new(self.def, self.attach.bind_at(policy), self.router)
+        RouterWith::new(self.def, M::bind(self.attach, policy), self.router)
+    }
+
+    /// Names the publish policy the handler's reply leaves through: [`out`](Self::out) with the
+    /// [`Reply`] marker, and the same chain afterwards.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_reply<Policy>(
+        self,
+        policy: Policy,
+    ) -> RouterWith<
+        Mount,
+        R,
+        Def,
+        <Reply as OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>>::Out,
+        ReplyLast,
+    >
+    where
+        R: RouterBroker,
+        Reply: OutPosition<Mount, R::Broker, Attach, Policy, ReplyLast>,
+    {
+        self.out(Reply, policy)
+    }
+
+    /// Names the publish policy a deferred `retry_after` copy leaves through: [`out`](Self::out)
+    /// with the [`Retry`] marker, and the same chain afterwards.
+    ///
+    /// The position is an `Out` slot like any other, so the steps after it are the slot steps:
+    /// [`codec`](Self::codec), [`transform`](Self::transform) and a broker's own
+    /// [`map_publisher`](MapPublisher::map_publisher) settings.
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn out_retry<Policy, Index>(
+        self,
+        policy: Policy,
+    ) -> RouterWith<
+        Mount,
+        R,
+        Def,
+        <Retry as OutPosition<Mount, R::Broker, Attach, Policy, Index>>::Out,
+        Index,
+    >
+    where
+        R: RouterBroker,
+        Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
+    {
+        self.out(Retry, policy)
     }
 
     /// Encodes what leaves the position named last with `codec` instead of the registration
@@ -135,7 +199,8 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         transform: N,
     ) -> RouterWith<Mount, R, Def, <Attach as TransformLast<N, Last>>::Out, Last>
     where
-        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def>,
+        R: RouterBroker,
+        Attach: TransformLast<N, Last, Step: NamedStep> + AdmitsAt<N, Last, Mount, Def, R::Broker>,
     {
         RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
     }

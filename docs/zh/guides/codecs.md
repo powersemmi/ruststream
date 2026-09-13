@@ -18,7 +18,7 @@
 ## 默认编解码器 { #the-default-codec }
 
 `DefaultCodec` 是按启用的 feature 选出的别名：启用了 `json` 就是它，否则是 `cbor`，再否则是
-`msgpack`。哪里都没有指定编解码器时，`include(def)` 和停在 `.out(Reply, policy)` 的回复链用的
+`msgpack`。哪里都没有指定编解码器时，`include(def)` 和停在 `.out_reply(policy)` 的回复链用的
 就是它。这两种写法都不接收编解码器参数。
 
 一个编解码器 feature 都不启用时，就没有东西可以编码和解码。凡是会用到默认编解码器的写法都成为
@@ -155,8 +155,8 @@ feature：本 crate 只调用属性点名的函数，不依赖其中任何一个
 
 ## 发布一侧 { #the-publish-side }
 
-发布者遵循同样的规则：`.out(Reply, policy)` 用默认编解码器编码回复，
-`.out(Reply, policy).codec(codec)` 显式指定一个，单个 `Out` 槽位的
+发布者遵循同样的规则：`.out_reply(policy)` 用默认编解码器编码回复，
+`.out_reply(policy).codec(codec)` 显式指定一个，单个 `Out` 槽位的
 `.out(marker, policy).codec(codec)` 也一样。
 
 传入的请求用 `with_broker_codec` 设置的作用域编解码器解码，或者用 `Router::with_codec` 设置的

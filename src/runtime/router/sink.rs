@@ -15,7 +15,9 @@ use crate::runtime::failure::{DispatchFailure, ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::redelivery::{ScopeDelivery, open_mounted_subscriber, open_subscription};
+use crate::runtime::redelivery::{
+    RetryPairing, ScopeDelivery, open_mounted_subscriber, open_subscription,
+};
 
 use super::SourceMessage;
 
@@ -70,6 +72,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         handler: H,
         meta: HandlerMetadata,
         policies: FailurePolicies,
+        retry: Option<RetryPairing<B>>,
     ) where
         S: Subscriber + Send + 'static,
         Cx: crate::BuildContext<S::Message> + Send + 'static,
@@ -80,9 +83,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.starters.push(Box::new(
             move |_connected, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    // No source to ask where a deferred retry goes, so a scope that defers
-                    // retries refuses this mount rather than guessing an address.
-                    let delivery = open_mounted_subscriber(&scope, &name)?;
+                    // No source to ask where a deferred retry goes, so a registration that binds
+                    // the position refuses this mount rather than guessing an address.
+                    let delivery = open_mounted_subscriber::<B>(&scope, &name, retry)?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch(
                         subscriber, handler, token, name, state, delivery, failure,
@@ -97,6 +100,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     /// [`BatchSubscriber::batches`]; the subscription opens against the connected broker. `Cx`
     /// is the definition's subscription-scoped batch context, passed explicitly because the
     /// adapter handlers are generic over it.
+    // See `spawn_dispatch_workers`: each piece is the registration's own and bundling them would
+    // hide that.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_subscribe_batch<S, H, Cx>(
         &mut self,
         source: S,
@@ -105,6 +111,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
+        retry: Option<RetryPairing<B>>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -118,7 +125,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     // Turbofish: the adapter handlers are generic over the batch context, so
@@ -142,6 +149,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
+        retry: Option<RetryPairing<B>>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -155,7 +163,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch_workers(
@@ -179,6 +187,8 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     /// The batch counterpart of [`push_injected_workers`](Self::push_injected_workers): the
     /// factory resolves the injections off the opened subscriber, then the loop drives
     /// [`BatchSubscriber::batches`].
+    // See `push_subscribe_batch`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_injected_batch<Source, MakeHandler, HandlerFut, NewHandler, HandlerCx>(
         &mut self,
         source: Source,
@@ -187,6 +197,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
+        retry: Option<RetryPairing<B>>,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -201,7 +212,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;

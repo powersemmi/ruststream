@@ -188,7 +188,9 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
             FAIL_FAST_READY.notify_one();
             Ok::<(), io::Error>(())
         })
-        .with_broker(broker, |b| b.include(explodes));
+        .with_broker(broker, |b| {
+            b.include(explodes);
+        });
 
     let run = tokio::spawn(app.run_until(pending()));
     FAIL_FAST_READY.notified().await;
@@ -241,7 +243,9 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
             SIGNAL_READY.notify_one();
             Ok::<(), io::Error>(())
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(signalled));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(signalled);
+        });
 
     let mut run = tokio::spawn(app.run());
     SIGNAL_READY.notified().await;
@@ -475,7 +479,9 @@ async fn the_shutdown_timeout_aborts_a_handler_that_never_returns() {
     let app = RustStream::new(AppInfo::new("cov-hung", "0.1.0"))
         // Short on purpose: the timeout firing is the subject, not a wait for something else.
         .shutdown_timeout(Duration::from_millis(50))
-        .with_broker(broker, |b| b.include(hung));
+        .with_broker(broker, |b| {
+            b.include(hung);
+        });
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -510,7 +516,9 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("cov-continuation", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(50))
-        .with_broker(broker, |b| b.include(with_continuation));
+        .with_broker(broker, |b| {
+            b.include(with_continuation);
+        });
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -581,10 +589,10 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
 /// Stamps every outgoing reply, so a test can prove which reply source was used.
 struct Envelope;
 
-impl<K: ContextKind> PublishTransform<K> for Envelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }

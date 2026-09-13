@@ -396,7 +396,7 @@ async fn the_reply_position_takes_the_policy_defaults() {
                     .to("options.reply.out")
                     .build(),
             )
-            .out(Reply, PriorityPublish::default().priority(4));
+            .out_reply(PriorityPublish::default().priority(4));
         },
     );
     // --8<-- [end:reply_mount]
@@ -524,10 +524,11 @@ struct TtlOptions {
     ttl: Option<u8>,
 }
 
-/// The publish log has consumed the options by the time it records the message, so asking it for
-/// them is a test-authoring mistake and the panic says where to ask instead.
+/// The broker has consumed the options by the time its publish log records the message, so a
+/// channel the runtime only reached through a slot has none to read there, and the panic says
+/// where to ask instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "does not record per-message options")]
+#[should_panic(expected = "recorded for a reply and for a slot publish")]
 async fn the_publish_log_sends_an_options_assertion_to_the_slot_view() {
     let tb = one_delivery().await;
 

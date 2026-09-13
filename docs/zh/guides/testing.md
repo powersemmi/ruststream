@@ -179,9 +179,10 @@ Broker 的设置类型并比对取值；`assert_options_default` 断言这次发
     --8<-- "tests/manual_publish_options.rs:options_assert"
     ```
 
-两者都读最近一次发布，和 `with_header` 一样。设置只记录在槽位视图上。Broker 的发布日志看到消息时，
-这些设置已经映射进了它自己的协议，所以向 `published::<T>(name)` 要设置会 panic。启动钩子或应用状态
-拿到的裸发布者不属于任何槽位，它的设置不会记录在任何地方。
+两者都读最近一次发布，和 `with_header` 一样。这两个断言在 `published::<T>(name)` 上同样可用，
+用于处理器作答过的那个 channel：回复没有调用点，所以读回的就是回复位置上的变换留下的设置。
+运行时只经由槽位写入过的 channel 在那里没有设置可读 —— 对槽位视图断言；测试自己发布的消息，
+以及启动钩子里的裸发布者发出的消息，同样没有。
 
 ### 失败策略、panic 与关闭
 

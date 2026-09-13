@@ -192,7 +192,7 @@ impl TestBrokers<'_> {
 /// }
 ///
 /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
 /// let tb = TestApp::start(app).await?;
 ///
 /// tb.broker::<MemoryBroker>().publish("orders", &Order { id: 1 }).await?;
@@ -546,7 +546,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
     /// let tb = TestApp::start(app).await?;
     ///
     /// tb.message(&Order { id: 7 }).publish().await?;
@@ -801,7 +801,7 @@ impl<'a> BrokerHandle<'a> {
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| b.include(handle));
+    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
     /// let tb = TestApp::start(app).await?;
     ///
     /// tb.broker::<MemoryBroker>()
@@ -908,7 +908,11 @@ impl BrokerHandle<'_> {
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
         let messages = self.testable.map(|t| t.published(name)).unwrap_or_default();
-        PublishedAssertions::new(name.to_owned(), messages)
+        PublishedAssertions::new(
+            name.to_owned(),
+            messages,
+            self.coordinator.reply_published(name),
+        )
     }
 }
 

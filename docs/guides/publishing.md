@@ -59,15 +59,18 @@ a mount-site name does not apply to it.
     ```
 
 Mount it with plain `include`. With nothing else said, the reply is published through the broker's
-default publish policy under the default codec. `.out(Reply, Publish)` names the policy the broker
+default publish policy under the default codec. `.out_reply(Publish)` names the policy the broker
 prelude exports, and the steps after it fill the rest of the reply wiring: `.codec(..)` sets the
 reply codec, `.transform(..)` a static publish transform, `.transactional()` one broker transaction
 per batch of replies. The codec is named once, so a second `.codec(..)` is a compile error.
 
 A handler definition never names a publisher: it declares what the handler replies with and where
 it goes. A publish policy belongs to a broker, so you specify it where the broker is named, at the
-mount site, with the same `.out(marker, policy)` call that binds an `Out` slot. `Reply` is the
-marker of the position a handler's returned value is published through.
+mount site. Every position takes its policy from one call, `.out(marker, policy)`: an `Out` slot
+from its own marker, the reply from the `Reply` marker, the deferred `retry_after` copy from the
+`Retry` marker (see [delayed redelivery](subscribers.md#delayed-redelivery)). The reply and the
+deferred retry also have that call spelled out: `.out_reply(policy)` is `.out(Reply, policy)`, and
+`.out_retry(policy)` is `.out(Retry, policy)`.
 
 === "Macros"
 
@@ -87,7 +90,7 @@ codec. The reply codec comes from the wiring the chain built. See
 
 One `publish(..)` serves both ways of sending: the choice belongs to the reply type. A
 `serde::Serialize` reply encodes, as above. A `#[derive(Serialized)]` reply produces its own bytes
-and is published byte for byte, so its `.out(Reply, ..)` takes the policy and nothing else: there
+and is published byte for byte, so its `.out_reply(..)` takes the policy and nothing else: there
 is no codec to name on that path, and `.codec(..)` after it does not compile. See
 [raw subscribers](subscribers.md#raw-subscribers).
 
@@ -180,7 +183,7 @@ the implicit `DefaultSlot` (`.out(DefaultSlot, Publish).build()`).
 A `.transform(..)` after an `.out(..)` applies to the position that call named (see
 [the publish pipeline](#the-publish-pipeline)), so a registration that both replies and sends
 copies names one on each:
-`.out(Reply, Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`.
+`.out_reply(Publish).transform(StampSource).out(Audit, Publish).transform(Envelope)`.
 
 === "Macros"
 
@@ -351,7 +354,7 @@ bidirectional bridge binds both directions up front.
 A token shares a slot with the `Bindable` wrapper it was minted from, so register that same
 wrapper (`with_broker(bindable, ..)`) for startup to fill the slot with the connected broker. A
 token whose broker never registers returns a clear error right at pairing. The same form works for
-reply publishing (`.out(Reply, token)` on a `publish("dest")` handler) and for the batch forms.
+reply publishing (`.out_reply(token)` on a `publish("dest")` handler) and for the batch forms.
 
 Outside a registration a token pairs itself once startup has connected its broker:
 `running.publisher(token)` hands a sibling task its live publisher, see
@@ -409,7 +412,8 @@ that slot is sent with them:
     ```
 
 The same policy in the `Reply` position sets the defaults for what a `publish("dest")` handler
-returns. A reply has no call site, so the policy is the only place to set them:
+returns. A reply has no call site, so the policy is where its settings are named, and a
+[transform](#what-a-transform-declares) on that position is what adjusts them per message:
 
 === "Macros"
 
@@ -424,7 +428,7 @@ returns. A reply has no call site, so the policy is the only place to set them:
     ```
 
 The other place is the call: you can change a setting for one message with a step your broker adds
-to the publish builder. A setting no step names keeps the policy's default:
+to the publish builder. A setting neither a step nor a transform names keeps the policy's default:
 
 === "Macros"
 
@@ -471,20 +475,27 @@ A published message passes through two levels before it leaves the process, and 
 
 ### What a transform declares
 
-A transform declares two things: what it reads and what it may do to the destination.
+A transform declares three things: what it reads, what it writes, and what it may do to the
+destination.
 
 What it reads is the position's context kind, the `K` in
-`apply(&mut Outgoing<'_>, &K::View<'_>)`, chosen at the mount site:
+`apply(&mut Outgoing<'_>, &mut Option<Options>, &K::View<'_>)`, chosen at the mount site:
 
 | position | kind | what the transform reads |
 |---|---|---|
-| reply, after `.out(Reply, ..)` | `ForReply<C>` | `PublishContext<'_, C>`: the delivery being answered |
+| reply, after `.out_reply(..)` | `ForReply<C>` | `PublishContext<'_, C>`: the delivery being answered |
 | `Out` slot, after `.out(marker, policy)` | `ForSlot` | `SlotContext<'_>`: the slot's own name |
+
+What it writes is `Options`, the broker's [per-message settings](#broker-settings-per-message). A
+transform that touches none of them is generic over the type and mounts over any broker's
+publisher; one that sets a setting names that broker's type, and then mounts over that broker's
+publisher and nowhere else.
 
 What it may do is `type Destination`: `Reads` for a transform that leaves the destination alone,
 `Names` for one that sets it. Every impl writes the line, and almost every one writes `Reads`.
 
-A transform that reads nothing writes a single impl over every kind and mounts on either position:
+A transform that reads and writes nothing writes a single impl over every kind and every options
+type, and mounts on either position:
 
 ```rust
 --8<-- "examples/publishing.rs:static_transform"
@@ -501,6 +512,16 @@ can read its own `Context` and put on the message whatever it needs from the del
 ```rust
 --8<-- "examples/publishing.rs:slot_transform"
 ```
+
+Naming a broker's options type fixes where the transform mounts the same way naming a kind does:
+
+```rust
+--8<-- "tests/publish_options.rs:transform"
+```
+
+On a slot the settings position starts as a copy of what the call site's own steps set, so a
+transform completes that call: it fills a setting the call left alone, and overrides one the call
+named. A reply has no call site, so there a transform is the only thing that adjusts its settings.
 
 A batch handler's replies go past the per-message `.transform(..)` stack. You can add a transform
 for them with `.batch_transform(..)`, reusing a per-message `PublishTransform` through
@@ -575,7 +596,7 @@ The app-wide layer wraps every publish a handler makes: the reply of a `publish(
 message that leaves through an injected `Out` slot.
 
 The mount site's transforms act on the position they were named on:
-`.out(Reply, Publish).transform(StampSource)` grows the reply's stack,
+`.out_reply(Publish).transform(StampSource)` grows the reply's stack,
 `.out(Audit, Publish).transform(OutboxEnvelope)` grows that slot's. A registration with both sides
 writes both calls, and `.transform(..)` applies to the position named before it. Order of the
 pipeline: a position's transforms in the order the chain writes them, then the app-wide middleware,
@@ -610,7 +631,7 @@ a transaction):
     --8<-- "examples/manual/publishing.rs:batch_publishing"
     ```
 
-Mount it with `include`, chaining the reply wiring with `.out(Reply, ..)`:
+Mount it with `include`, chaining the reply wiring with `.out_reply(..)`:
 
 === "Macros"
 
@@ -627,7 +648,7 @@ Mount it with `include`, chaining the reply wiring with `.out(Reply, ..)`:
 Without `.transactional()`, each reply publishes independently. A mid-batch failure retries the
 whole batch, so on redelivery the earlier replies may be published again (at-least-once).
 
-Chaining `.transactional()` after `.out(Reply, ..)` switches the wiring to one broker transaction
+Chaining `.transactional()` after `.out_reply(..)` switches the wiring to one broker transaction
 per batch: the runtime begins a transaction, publishes every reply, commits it, and only then acks
 the incoming batch. Any failure aborts the transaction, so replies are never half-visible.
 

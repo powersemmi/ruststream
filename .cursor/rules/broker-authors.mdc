@@ -28,13 +28,14 @@ alwaysApply: false
   runtime publishes the deferred copy when `retry_after` has no native delayed redelivery to ride.
   Both default to "cannot say", which is the right answer wherever a subscribe name is not a
   publish destination: a Google Pub/Sub subscription is read by its own name and published to
-  through its topic, so the descriptor asks the API. A scope wired with `retry_via` over a source
-  that cannot say refuses to start, naming the subscription - so a silent broker loses no message,
-  it loses the fallback. `harness::lifecycle` holds the answer to its promise.
+  through its topic, so the descriptor asks the API. A registration that binds the deferred-retry
+  position (`.out_retry(policy)`) over a source that cannot say refuses to start, naming that
+  subscription - so a silent broker loses no message, it loses the fallback. `harness::lifecycle`
+  holds the answer to its promise.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
-  compiles with no `.out(Reply, ..)`). Make mode selection a policy type transition, not a runtime
+  compiles with no `.out_reply(..)`). Make mode selection a policy type transition, not a runtime
   flag: only the transactional policy's live form implements `TransactionalPublisher`.
 - Per-message settings (a QoS, a priority, an ordering key, an expiration) are `Publisher::Options`,
   a type you own with every field optional (`()` when you have none). The policy holds the defaults,
@@ -360,7 +361,7 @@ topic or a stream puts a second source of truth next to the one the document rep
 `map_publisher` replaces the policy with one of the same type, which is what a publisher's own
 settings produce; a different policy type is a different publish mode and belongs in the
 `.out(marker, policy)` call itself, where an already-configured value can be passed directly
-(`.out(Reply, Publish::default().ack_timeout(Duration::from_secs(5)))`).
+(`.out_reply(Publish::default().ack_timeout(Duration::from_secs(5)))`).
 
 ## Extending the `Out` slot vocabulary
 

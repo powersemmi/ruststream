@@ -81,7 +81,9 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_order));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_order);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in [1u32, 2] {
@@ -129,7 +131,9 @@ async fn hooks_drain_on_graceful_shutdown() {
 
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
         .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_slow));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_slow);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })

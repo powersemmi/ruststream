@@ -41,7 +41,7 @@ Some handlers need an attachment: a reply publisher or an
 [`Out`](publishing.md#publishing-from-inside-a-handler) slot. They register on the router the same
 way as on the scope, with one difference: an explicit `.build()` commits the registration.
 `.out(marker, policy)` names the publish policy of one position: `Reply` for the reply, the slot's
-marker for an `Out` slot. When the chain names no `.out(Reply, ..)`, `.build()` takes the broker's
+marker for an `Out` slot. When the chain names no `.out_reply(..)`, `.build()` takes the broker's
 own default publish policy for the reply.
 
 A chain without `.build()` never becomes a router, so it does not compile. The policies stay pure

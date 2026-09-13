@@ -38,10 +38,10 @@ impl PublishLayer for AppStamp {
 /// A per-slot transform: the outbox envelope one destination wants and the others do not.
 struct Envelope;
 
-impl<K: ContextKind> PublishTransform<K> for Envelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
@@ -50,10 +50,10 @@ impl<K: ContextKind> PublishTransform<K> for Envelope {
 /// leaving through. One value can then ride several slots and still tell them apart.
 struct StampSlot;
 
-impl PublishTransform<ForSlot> for StampSlot {
+impl<Options> PublishTransform<ForSlot, Options> for StampSlot {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &SlotContext<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, cx: &SlotContext<'_>) {
         out.headers_mut()
             .insert("x-slot", cx.slot().as_bytes().to_vec());
     }
@@ -62,10 +62,15 @@ impl PublishTransform<ForSlot> for StampSlot {
 /// A per-reply transform, stamping the delivery the reply answers.
 struct StampSource;
 
-impl<C> PublishTransform<ForReply<C>> for StampSource {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
             .insert("x-source", cx.name().as_bytes().to_vec());
     }

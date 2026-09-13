@@ -15,20 +15,30 @@ struct Receipt {
 
 struct ReplyTo;
 
-impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     type Destination = Names;
 
-    fn apply(&self, out: &mut OutgoingMessage<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut OutgoingMessage<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.set_name(cx.name().to_owned());
     }
 }
 
 struct Inbox;
 
-impl<K: ContextKind> PublishTransform<K> for Inbox {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for Inbox {
     type Destination = Names;
 
-    fn apply(&self, out: &mut OutgoingMessage<'_>, _cx: &K::View<'_>) {
+    fn apply(
+        &self,
+        out: &mut OutgoingMessage<'_>,
+        _options: &mut Option<Options>,
+        _cx: &K::View<'_>,
+    ) {
         out.set_name("inbox");
     }
 }

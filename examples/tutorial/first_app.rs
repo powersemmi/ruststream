@@ -17,7 +17,8 @@ use crate::orders::handle;
 
 #[ruststream::app]
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders-service", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+    RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle);
+    })
 }
 // --8<-- [end:app]

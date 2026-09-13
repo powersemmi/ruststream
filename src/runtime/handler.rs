@@ -27,8 +27,8 @@ pub(crate) enum HandlerResult {
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
     /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
     /// without, the runtime drops the delivery and re-publishes a copy to its own source after
-    /// the delay. Only with no [`retry_via`](super::BrokerScope::retry_via) publisher wired does
-    /// the delay degrade to an immediate requeue.
+    /// the delay. Only where the registration bound no deferred-retry position
+    /// ([`Retry`](super::Retry)) does the delay degrade to an immediate requeue.
     NackAfter {
         /// How long the broker should wait before redelivering.
         delay: Duration,
@@ -127,11 +127,11 @@ impl HandlerOutcome {
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
     /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
     /// without, the runtime drops the delivery and re-publishes a copy to its own source after
-    /// the delay, through the publisher [`retry_via`](super::BrokerScope::retry_via) wired, with
-    /// the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER) incremented. That copy is
-    /// at-most-once over the delay window: it rides a detached task, so a process that exits
-    /// before the timer fires loses it. Only with no such publisher does the delay degrade to an
-    /// immediate requeue.
+    /// the delay, through the policy the mount site bound with `.out_retry(policy)` (see
+    /// [`Retry`](super::Retry)), with the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER)
+    /// incremented. That copy is at-most-once over the delay window: it rides a detached task, so
+    /// a process that exits before the timer fires loses it. Only where the registration bound no
+    /// such policy does the delay degrade to an immediate requeue.
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
             outcome: HandlerResult::retry_after(delay),

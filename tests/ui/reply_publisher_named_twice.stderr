@@ -1,12 +1,27 @@
-error[E0599]: the method `out` exists for struct `Mounting<'_, MemoryBroker, Identity, (), (), PublishIdentity, RouterWith<ruststream::runtime::PublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<Solo<Order>, Receipt, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Open)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()), ruststream::runtime::ReplyLast>>`, but its trait bounds were not satisfied
-  --> tests/ui/reply_publisher_named_twice.rs:27:14
+error[E0277]: this registration has no unbound publish position marked `Reply`
+  --> tests/ui/reply_publisher_named_twice.rs:27:18
    |
-25 | /         b.include(confirm)
-26 | |             .out(Reply, MemoryPublish)
-27 | |             .out(Reply, MemoryPublish);
-   | |             -^^^ method cannot be called due to unsatisfied trait bounds
-   | |_____________|
+27 |             .out(Reply, MemoryPublish);
+   |              --- ^^^^^ `.out(Reply, ..)` has no position to bind here
+   |              |
+   |              required by a bound introduced by this call
    |
+   = help: the trait `ruststream::runtime::OutPosition<ruststream::runtime::PublishMount, MemoryBroker, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()), _, _>` is not implemented for `Reply`
+   = note: `.out(marker, policy)` binds one position: `Reply` for the value a `publish("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
+help: the trait `ruststream::runtime::OutPosition<Mount, B, Attach, Policy, ruststream::runtime::ReplyLast>` is conditionally implemented for `Reply`
+  --> src/runtime/slot.rs
    |
-   = note: the following trait bounds were not satisfied:
-           `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()): ruststream::runtime::BindAt<ruststream::runtime::PublishMount, _, _, _>`
+   | / impl<Mount, B, Attach, Policy> OutPosition<Mount, B, Attach, Policy, ReplyLast> for Reply
+   | | where
+   | |     Attach: BindAt<Mount, Self, Policy, ReplyLast>,
+   | |_____________--------------------------------------^
+   |               |
+   |               unsatisfied requirement introduced here: `(ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()): ruststream::runtime::BindAt<ruststream::runtime::PublishMount, Reply, _, ruststream::runtime::ReplyLast>`
+note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::out`
+  --> src/runtime/app/include/guard.rs
+   |
+   |     pub fn out<M, Policy, Index>(
+   |            --- required by a bound in this associated function
+...
+   |         M: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::out`

@@ -375,10 +375,15 @@ impl Field<TraceCtx> for Correlation {
 
 struct PropagateCorrelation;
 
-impl PublishTransform<ForReply<TraceCtx>> for PropagateCorrelation {
+impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrelation {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, TraceCtx>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, TraceCtx>,
+    ) {
         if let Some(id) = cx.context(Correlation) {
             out.headers_mut()
                 .insert("correlation-id", id.as_bytes().to_vec());

@@ -10,7 +10,7 @@ pub(crate) fn orders() -> impl RouterDef<MemoryBroker> {
     Router::new()
         .include(orders::handle)
         .include(orders::confirm)
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .build()
 }
 // --8<-- [end:routes]

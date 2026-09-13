@@ -121,8 +121,8 @@ cargo run -- run
     --8<-- "examples/manual/tutorial/routes.rs:routes"
     ```
 
-带回复的处理器用链式调用挂到路由器上：`.out(Reply, ..)` 指定回复的发布策略，`.build()` 提交这次
-注册。不写 `.out(Reply, ..)` 时，`.build()` 采用 Broker 的默认发布策略，也就是第 4 步里 `include`
+带回复的处理器用链式调用挂到路由器上：`.out_reply(..)` 指定回复的发布策略，`.build()` 提交这次
+注册。不写 `.out_reply(..)` 时，`.build()` 采用 Broker 的默认发布策略，也就是第 4 步里 `include`
 用的那一个。路由器的其余用法参见[路由](../guides/routing.md)。
 
 === "宏"

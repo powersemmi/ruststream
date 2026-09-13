@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to("confirmations")
                     .build(),
             )
-            .out(Reply, Publish);
+            .out_reply(Publish);
         });
     // --8<-- [end:wiring]
 

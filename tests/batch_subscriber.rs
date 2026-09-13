@@ -38,8 +38,10 @@ async fn bill(orders: &[Order]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_macro_def_receives_batches() {
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(bill.batch(nonzero!(64))));
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(bill.batch(nonzero!(64)));
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     for id in 0..3u32 {
@@ -70,8 +72,10 @@ async fn sift(orders: &[Order]) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undecodable_elements_never_reach_the_handler() {
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(sift.batch(nonzero!(64))));
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(sift.batch(nonzero!(64)));
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -335,7 +339,7 @@ async fn batch_replies_publish_transactionally() {
         MemoryBroker::new(),
         |b| {
             b.include(confirm.batch(nonzero!(64)))
-                .out(Reply, TransactionalPublish)
+                .out_reply(TransactionalPublish)
                 .transactional();
         },
     );
@@ -361,7 +365,7 @@ async fn batch_replies_publish_transactionally() {
 fn batch_publishing_def_records_metadata() {
     let broker = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-        b.include(audit.batch(nonzero!(64))).out(Reply, Publish);
+        b.include(audit.batch(nonzero!(64))).out_reply(Publish);
     });
 
     assert_eq!(app.handlers().len(), 1);
@@ -376,8 +380,9 @@ fn batch_publishing_def_records_metadata() {
 #[test]
 fn batch_def_records_metadata() {
     let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .with_broker(broker, |b| b.include(bill.batch(nonzero!(64))));
+    let app = RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(broker, |b| {
+        b.include(bill.batch(nonzero!(64)));
+    });
 
     assert_eq!(app.handlers().len(), 1);
     assert_eq!(app.handlers()[0].name, "orders");
@@ -412,7 +417,7 @@ async fn batch_handler_reads_typed_state() {
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
         .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(scale.batch(nonzero!(64))).out(Reply, Publish);
+            b.include(scale.batch(nonzero!(64))).out_reply(Publish);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

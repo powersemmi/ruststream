@@ -10,7 +10,7 @@
 //! refresh the snapshots after an intentional message change, run on stable:
 //!
 //! ```text
-//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --test ui --features macros,memory,json
+//! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --all-features --test ui
 //! ```
 
 /// Whether this run skips the snapshots, and whether skipping them is allowed.

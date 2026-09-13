@@ -1,7 +1,7 @@
 error[E0277]: `.batch_transform(..)` and `.transactional()` ride the reply position
-  --> tests/ui/slot_batch_transform_rejected.rs:36:30
+  --> tests/ui/slot_batch_transform_rejected.rs:41:30
    |
-36 |             .batch_transform(for_batch(Stamp))
+41 |             .batch_transform(for_batch(Stamp))
    |              --------------- ^^^^^^^^^^^^^^^^ the position this chain named before it is not `Reply`
    |              |
    |              required by a bound introduced by this call

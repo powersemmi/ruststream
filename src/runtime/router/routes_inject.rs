@@ -23,7 +23,8 @@ use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
-use crate::runtime::redelivery::open_subscription;
+use crate::runtime::redelivery::{RetryPairing, open_subscription};
+use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta};
@@ -86,6 +87,13 @@ debug_by_metadata!(
     BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
+impl<Source, Def, DecodeCodec, Extra> RetryOpen for InjectRoute<Source, Def, DecodeCodec, Extra> {}
+
+impl<Source, Def, DecodeCodec, Extra> RetryOpen
+    for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
+{
+}
+
 impl<B, Source, Def, DecodeCodec, Extra, State> MountRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
@@ -103,8 +111,13 @@ where
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        _pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -126,7 +139,7 @@ where
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -173,8 +186,13 @@ where
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
 {
-    fn mount_one<G, PP>(self, _global: &G, _pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        _global: &G,
+        _pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -207,6 +225,7 @@ where
             policies,
             workers,
             batch_size,
+            retry,
         );
     }
 }

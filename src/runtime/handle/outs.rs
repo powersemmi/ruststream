@@ -182,7 +182,7 @@ where
 {
 }
 
-impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline, Body>
+impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Body>
     Slot<M, W, E, Pipe, Body>
 {
     /// Starts a typed publish through the slot, on the message type's own wire
@@ -404,7 +404,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 // stamped message. The transaction calls and the request round trip reach the leaf directly -
 // the pipeline ends in a send, and neither of those is one - and report their errors in the
 // entry's own error type.
-impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline, Body> Publisher
+impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
     type Error = Pipe::Error<W::Error>;
@@ -425,7 +425,7 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline, Body> Publishe
     }
 }
 
-impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline, Body>
+impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
 {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
@@ -444,7 +444,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline, B
     }
 }
 
-impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline, Body> OwnedTransactions
+impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline<W>, Body> OwnedTransactions
     for Slot<M, W, E, Pipe, Body>
 {
     type Transaction = W::Transaction;
@@ -457,7 +457,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: OutPipeline, Body> 
     }
 }
 
-impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline, Body> RequestReply
+impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> RequestReply
     for Slot<M, W, E, Pipe, Body>
 {
     type Reply = W::Reply;
@@ -474,11 +474,13 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline, Body> Reque
     }
 }
 
-#[cfg(test)]
 impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
-    /// Builds an entry directly for the crate's own unit tests; production entries are only
-    /// ever paired by the runtime at startup.
-    pub(crate) fn test_entry(wired: W, codec: E, pipeline: Pipe) -> Self {
+    /// Builds an entry over an already-paired live value.
+    ///
+    /// The injected path pairs through [`FromStartup`] instead; this is for the one slot the
+    /// runtime owns rather than the handler - the deferred-retry slot, which the starter pairs
+    /// and then erases - and for the crate's own unit tests.
+    pub(crate) fn wired(wired: W, codec: E, pipeline: Pipe) -> Self {
         Self {
             wired: SlotPublisher::new(wired),
             codec,
@@ -602,8 +604,9 @@ pub trait OutEntry<M, Body = ()>: Send + Sync {
     type Enc: Codec;
 
     /// The publish path every message leaving the entry travels: the app's publish pipeline with
-    /// the slot's `.transform(..)` steps composed on top.
-    type Pipe: OutPipeline;
+    /// the slot's `.transform(..)` steps composed on top. It is stated over the wired value,
+    /// because a transform there writes that publisher's own per-message options.
+    type Pipe: OutPipeline<Self::Wire>;
 
     /// The entry behind the bound. Machinery: [`Outs::get`] resolves the concrete slot through
     /// it, and only a [`Slot`] can produce one.
@@ -615,7 +618,7 @@ impl<M, W, E, Pipe, Body> OutEntry<M, Body> for Slot<M, W, E, Pipe, Body>
 where
     W: Send + Sync,
     E: Codec,
-    Pipe: OutPipeline,
+    Pipe: OutPipeline<W>,
 {
     type Wire = W;
     type Enc = E;

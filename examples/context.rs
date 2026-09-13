@@ -110,6 +110,8 @@ fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
             })
         })
         .layer(RequestId)
-        .with_broker(MemoryBroker::new(), |b| b.include(handle))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle);
+        })
 }
 // --8<-- [end:app]

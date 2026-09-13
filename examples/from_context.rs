@@ -59,7 +59,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .on_startup(move |()| async move {
             Ok::<_, std::convert::Infallible>(AppState { create_order })
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(handle));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle);
+        });
 
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()

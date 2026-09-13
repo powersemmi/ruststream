@@ -419,14 +419,15 @@ async fn fallback_increments_an_existing_retry_count() {
 }
 
 #[tokio::test]
-async fn without_a_retry_publisher_the_fallback_requeues_immediately() {
+async fn without_a_retry_position_the_fallback_requeues_immediately() {
     let delivery = Delivery::empty();
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
     settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
         .await
         .unwrap();
-    // No retry publisher: degrade to an immediate requeue rather than dropping silently.
+    // No deferred-retry position on this registration: degrade to an immediate requeue rather
+    // than dropping silently.
     assert_eq!(settled.load(Ordering::SeqCst), 2);
 }
 

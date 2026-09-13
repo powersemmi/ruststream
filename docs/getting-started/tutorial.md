@@ -126,8 +126,8 @@ As the number of handlers grows, keep them in their own module and collect them 
     ```
 
 `include` adds a plain handler to the router directly. A handler that publishes a reply hands back
-a mount chain instead: `.out(Reply, ..)` names the reply's publish policy, and `.build()` finishes
-the registration. Without `.out(Reply, ..)`, `.build()` takes the broker's default publish policy -
+a mount chain instead: `.out_reply(..)` names the reply's publish policy, and `.build()` finishes
+the registration. Without `.out_reply(..)`, `.build()` takes the broker's default publish policy -
 the same one `include` took in step 4. [Routing](../guides/routing.md) covers the rest of the router
 surface.
 

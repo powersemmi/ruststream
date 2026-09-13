@@ -31,7 +31,8 @@ use crate::runtime::publish::{
     ForReply, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
-use crate::runtime::redelivery::open_subscription;
+use crate::runtime::redelivery::{RetryPairing, open_subscription};
+use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
 use super::routes::{MountRoute, RouteMeta};
@@ -114,6 +115,20 @@ debug_by_metadata!(
     BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
 );
 
+/// Implements [`RetryOpen`] for the reply-publishing routes: none of them has bound the
+/// deferred-retry position, which is what `.out(Retry, policy)` asks.
+macro_rules! impl_retry_open {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> RetryOpen for $route<$($param),+> {}
+    )+};
+}
+
+impl_retry_open!(
+    PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+);
+
 impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Leaf, ReplyCodec, Transforms>
     MountRoute<B, State> for PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
@@ -141,10 +156,15 @@ where
         + 'static,
     Leaf: Publisher + 'static,
     ReplyCodec: Codec + Send + Sync + 'static,
-    Transforms: PublishTransform<ForReply<Def::Context>> + Send + Sync + 'static,
+    Transforms: PublishTransform<ForReply<Def::Context>, Leaf::Options> + Send + Sync + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -172,7 +192,7 @@ where
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -227,8 +247,13 @@ where
     ReplySource: PublishPolicy<Connected<B>, Live = Live> + Send + 'static,
     Live: Publisher + Send + Sync + 'static,
 {
-    fn mount_one<G, PP>(self, global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -255,7 +280,7 @@ where
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -310,8 +335,13 @@ where
     ReplySource: PublishPolicy<Connected<B>, Live = BatchReply> + Send + 'static,
     BatchReply: ReplyPublisher<Def::Context> + 'static,
 {
-    fn mount_one<G, PP>(self, _global: &G, pipeline: &PP, sink: &mut RouterSink<B, State>)
-    where
+    fn mount_one<G, PP>(
+        self,
+        _global: &G,
+        pipeline: &PP,
+        sink: &mut RouterSink<B, State>,
+        retry: Option<RetryPairing<B>>,
+    ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
     {
@@ -354,6 +384,7 @@ where
             policies,
             workers,
             batch_size,
+            retry,
         );
     }
 }

@@ -3,7 +3,7 @@
 //! declaration they mint is written out here: the reply bodies, the slot markers and their
 //! dictionaries, and what a message type says about being sent. Everything a body does is an axis
 //! of its own `impl Handle`, and the mount site then reads exactly as it does with the attribute -
-//! `include`, `.out(Reply, ..)`, `.out(marker, ..)`, `.build()`.
+//! `include`, `.out_reply(..)`, `.out(marker, ..)`, `.build()`.
 //!
 //! ```text
 //! cargo run --example manual_publishing --no-default-features --features memory,json
@@ -433,10 +433,10 @@ where
 /// reads no context, so one impl serves every position - a reply and an `Out` slot alike.
 struct EnvelopeTransform;
 
-impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -448,10 +448,10 @@ impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
 /// publish itself, so the delivery is the body's own to read and put on the message.
 struct OutboxEnvelope;
 
-impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for OutboxEnvelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
@@ -548,7 +548,7 @@ fn app() -> impl App {
                     .to("responses")
                     .build(),
             )
-            .out(Reply, Publish)
+            .out_reply(Publish)
             .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(
@@ -573,7 +573,7 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // one verb for both positions: .out_reply(..) names who publishes the returned
             // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
             // slot - DefaultSlot for a single unnamed slot
             b.include(
@@ -602,7 +602,7 @@ fn app() -> impl App {
                     .batch(nonzero!(64))
                     .build(),
             )
-            .out(Reply, TransactionalPublish)
+            .out_reply(TransactionalPublish)
             .transactional();
             // --8<-- [end:batch_publishing_mount]
         })

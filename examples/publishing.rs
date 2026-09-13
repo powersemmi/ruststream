@@ -199,10 +199,10 @@ async fn route(
 /// reads no context, so one impl serves every position - a reply and an `Out` slot alike.
 struct EnvelopeTransform;
 
-impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for EnvelopeTransform {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
     }
 }
@@ -214,10 +214,10 @@ impl<K: ContextKind> PublishTransform<K> for EnvelopeTransform {
 /// publish itself, so the delivery is the body's own to read and put on the message.
 struct OutboxEnvelope;
 
-impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
+impl<K: ContextKind, Options> PublishTransform<K, Options> for OutboxEnvelope {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut Outgoing<'_>, _cx: &K::View<'_>) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
@@ -230,10 +230,15 @@ impl<K: ContextKind> PublishTransform<K> for OutboxEnvelope {
 /// stands.
 struct ReplyTo;
 
-impl<C> PublishTransform<ForReply<C>> for ReplyTo {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     type Destination = Names;
 
-    fn apply(&self, out: &mut Outgoing<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         if let Some(to) = cx.headers().get("reply-to")
             && let Ok(to) = std::str::from_utf8(to)
         {
@@ -326,7 +331,7 @@ fn app() -> impl App {
             // static, per-reply: the chain names the policy and composes the transform at
             // compile time; the runtime pairs it with the connected broker at startup
             b.include(respond)
-                .out(Reply, Publish)
+                .out_reply(Publish)
                 .transform(EnvelopeTransform);
             // the default reply wiring: the broker's default policy under the default codec
             b.include(validate);
@@ -334,7 +339,7 @@ fn app() -> impl App {
             // --8<-- [start:naming_transform_mount]
             // `Response` leaves its destination open, so this position offers the naming right and
             // `ReplyTo` may take it; the steps run in the order written
-            b.include(answer).out(Reply, Publish).transform(ReplyTo);
+            b.include(answer).out_reply(Publish).transform(ReplyTo);
             // --8<-- [end:naming_transform_mount]
             // --8<-- [start:forward_mount]
             b.include(forward).out(DefaultSlot, Publish).build();
@@ -349,7 +354,7 @@ fn app() -> impl App {
                 .build();
             // --8<-- [end:slots_mount]
             // --8<-- [start:publish_out_mount]
-            // one verb for both positions: .out(Reply, ..) names who publishes the returned
+            // one verb for both positions: .out_reply(..) names who publishes the returned
             // value (or leave it out for the default), and .out(<marker>, ..) binds an Out
             // parameter - DefaultSlot for a single unnamed slot
             b.include(gateway).out(DefaultSlot, Publish).build();
@@ -363,7 +368,7 @@ fn app() -> impl App {
             // owes. .transactional() marks the wiring; the pairing checks that the policy's live
             // publisher is transactional. Without it, each reply publishes independently.
             b.include(confirm.batch(nonzero!(64)))
-                .out(Reply, TransactionalPublish)
+                .out_reply(TransactionalPublish)
                 .transactional();
             // --8<-- [end:batch_publishing_mount]
         })

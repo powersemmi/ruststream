@@ -8,7 +8,7 @@ error[E0277]: `MemoryRequester` does not support broker-side transactions
 help: the following other types implement trait `ruststream::TransactionalPublisher`
   --> src/runtime/handle/outs.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
@@ -58,7 +58,7 @@ error[E0277]: `MemoryRequester` does not support broker-side transactions
 help: the following other types implement trait `ruststream::TransactionalPublisher`
   --> src/runtime/handle/outs.rs
    |
-   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline, Body>
+   | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |

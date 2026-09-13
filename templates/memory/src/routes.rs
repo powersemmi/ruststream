@@ -9,7 +9,7 @@ use crate::orders;
 
 /// Builds the orders router: a publishing handler (replies to `confirmations`) plus a plain one.
 ///
-/// `confirm` needs a publisher for its reply; `.out(Reply, Publish)` names the position the reply
+/// `confirm` needs a publisher for its reply; `.out_reply(Publish)` names the position the reply
 /// leaves through and the broker's publish policy, and the reply encodes with the default codec
 /// unless the chain names one (`.codec(..)`). The reply wiring is pure declaration: the runtime
 /// pairs the policy with the connected broker at startup, so the router borrows no broker.
@@ -19,7 +19,7 @@ use crate::orders;
 pub fn orders() -> impl RouterDef<MemoryBroker> {
     Router::new()
         .include(orders::confirm)
-        .out(Reply, Publish)
+        .out_reply(Publish)
         .build()
         .include(orders::on_cancel)
 }

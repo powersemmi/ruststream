@@ -150,15 +150,23 @@
   （[`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)）
   加了一，处理器可以按它给重新投递次数封顶。
 
-  在一个作用域里，可以调用
-  [`BrokerScope::retry_via(publisher)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.BrokerScope.html#method.retry_via) 启用它，
-  该发布者必须指向同一个 Broker。没有发布者时，运行时丢弃延迟，消息立即重新入队。在延迟的这段
-  时间里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
+  副本需要一个发布者，由挂载处点名：`.out_retry(policy)` 用 Broker 自己的发布策略占住这条注册
+  的延后重试位。这个位置只占一次。不占它，运行时就丢弃延迟，消息立即重新入队。在延迟的这段时间
+  里，延后重新发布是**至多一次**的：如果进程在定时器触发之前退出，副本就丢了。
+
+  这个位置就是一个 `Out` 槽，所以它后面接的是槽的那几步：`.codec(..)` 点名这个位置的编解码器，
+  `.transform(..)` 叠一个发布变换，副本会经过它。副本带的是投递本身的字节，所以这里的编解码器
+  只是把位置解析出来，并不编码任何东西。
+
+  ```rust
+  --8<-- "examples/retry.rs:mount"
+  ```
 
   副本发往订阅报出的地址，而这不一定就是它的名字。NATS 的 subject 和 Kafka 的 topic 是同一个字符
   串；Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic。替订阅回答的是 Broker crate，
-  订阅答不上来的作用域设了 `retry_via` 之后就起不来，并报出是哪条订阅、该怎么改。那里由 Broker
-  自己的订阅描述符回答：`#[subscriber("name")]` 只在名字本身就是发布地址的地方答得出来。
+  在答不上来的订阅上占了这个位置的那条注册起不来，并报出是哪条订阅、该怎么改，旁边的注册不受
+  影响。那里由 Broker 自己的订阅描述符回答：`#[subscriber("name")]` 只在名字本身就是发布地址的
+  地方答得出来。
 
   完全不能结算的传输（MQTT 的 QoS 0、ZeroMQ 和 Redis pub/sub）走同一条路径：没有原件可丢，重新
   投递就只剩这份延后的副本。另一种情形是 Broker 拒绝了结算：这条消息仍归 Broker，由它自己重新
@@ -549,7 +557,7 @@ derive 也写出批量的声明，批量函数体不需要第二个 impl。批�
 也可以写成 `Result<Export, HandlerOutcome>`，后者和编码形态一样给出显式的 ack 控制。
 
 发布者由 `include` 处指定的策略构造，两种传输方式指定策略的写法相同：
-`b.include(relay).out(Reply, Publish)`。不写 `.out(..)` 时，发布者由 Broker 的默认发布策略构造。
+`b.include(relay).out_reply(Publish)`。不写 `.out(..)` 时，发布者由 Broker 的默认发布策略构造。
 
 之后两条链分开：编码的回复接受 `.codec(..)`、`.transform(..)` 和 `.transactional()`，而
 `Serialized` 的字节原样发出，这条路径上没有这些步骤。回复发布失败会让这次投递

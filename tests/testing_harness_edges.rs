@@ -102,7 +102,9 @@ impl ConnectedBroker for ConnectedOpaque {
 async fn a_broker_without_an_in_process_transport_is_reported_by_name() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .register_broker(Opaque)
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        });
     let tb = TestApp::start(app).await.expect("start");
 
     let opaque = tb.broker::<Opaque>();
@@ -151,8 +153,12 @@ async fn a_mirror_state_addressing_an_unregistered_broker_type_names_it() {
 #[should_panic(expected = "more than one broker of type")]
 async fn a_mirror_state_addressing_a_duplicated_broker_type_names_it() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("a", MemoryBroker::new(), |b| b.include(handle_orders))
-        .with_broker_labeled("b", MemoryBroker::new(), |b| b.include(ingest));
+        .with_broker_labeled("a", MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        })
+        .with_broker_labeled("b", MemoryBroker::new(), |b| {
+            b.include(ingest);
+        });
 
     let _ = TestApp::with_state(app, |brokers| {
         let _ = brokers.broker::<MemoryBroker>();
@@ -164,8 +170,9 @@ async fn a_mirror_state_addressing_a_duplicated_broker_type_names_it() {
 /// no addressing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_unscoped_injection_picks_the_sole_broker() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(ingest));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(ingest);
+    });
     let tb = TestApp::start(app).await.expect("start");
 
     tb.message(&Wire(b"frame".to_vec()))
@@ -209,8 +216,9 @@ async fn gated(order: &Order) -> HandlerOutcome {
 /// makes the ordering exact: the continuation cannot finish while the test itself is running.
 #[tokio::test]
 async fn drain_waits_for_a_still_pending_post_settle_continuation() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(gated));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(gated);
+    });
     let tb = TestApp::start(app).await.expect("start");
 
     tb.publish("gated", &Order { id: 3 })
@@ -255,7 +263,9 @@ async fn the_harness_runs_after_startup_and_honours_the_shutdown_timeout() {
             *STARTED.lock().expect("the test holds no poisoned lock") = true;
             Ok::<_, std::convert::Infallible>(())
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        });
     let tb = TestApp::start(app).await.expect("start");
 
     assert!(*STARTED.lock().expect("the test holds no poisoned lock"));
@@ -275,7 +285,9 @@ async fn a_failing_after_startup_hook_is_reported_as_a_startup_error() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .after_startup(async move |_state| Err::<(), _>(NotReady))
-        .with_broker(MemoryBroker::new(), |b| b.include(handle_orders));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        });
 
     match TestApp::start(app).await {
         Err(TestError::Startup(source)) => {
@@ -290,8 +302,9 @@ async fn a_failing_after_startup_hook_is_reported_as_a_startup_error() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "expected the service to be running")]
 async fn assert_running_reports_why_the_service_stopped() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include(always_panics));
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(always_panics);
+    });
     let tb = TestApp::start(app).await.expect("start");
 
     tb.publish("boom", &Order { id: 0 }).await.expect("publish");

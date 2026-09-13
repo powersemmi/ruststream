@@ -7,14 +7,17 @@
 //! more: every step, every typestate slot and every diagnostic comes from
 //! [`RouterWith`](crate::runtime::RouterWith).
 //!
-//! Which guard a registration uses follows its form, exactly as before. A plain or batch
-//! handler attaches nothing, so `b.include(handle);` is the whole registration and the call
-//! commits on the spot. A reply-publishing one may still name a policy, so it commits when the
-//! [`Mounting`] guard drops at the end of the statement
-//! (`b.include(respond).out(Reply, Publish);`). One carrying [`Out`](crate::runtime::Out) slots
-//! gets a [`MountingSlots`] guard and commits with `.build()`: a chain that still has an unbound
-//! slot has nothing to commit, so its terminal has to be a call - and the type is `#[must_use]`,
-//! so forgetting it is a warning where the mount site is.
+//! Which guard a registration uses follows its form. A plain or batch handler and a
+//! reply-publishing one commit when the [`Mounting`] guard drops at the end of the statement, so
+//! `b.include(handle);` and `b.include(respond).out_reply(Publish);` are each a whole
+//! registration. One carrying [`Out`](crate::runtime::Out) slots gets a [`MountingSlots`] guard
+//! and commits with `.build()`: a chain that still has an unbound slot has nothing to commit, so
+//! its terminal has to be a call - and the type is `#[must_use]`, so forgetting it is a warning
+//! where the mount site is.
+//!
+//! Because every form hands back a guard, a registration is a statement: the guard borrows the
+//! scope, so a `with_broker` closure whose body is the bare call does not compile. Write the body
+//! as statements, `|b| { b.include(handle); }`.
 
 mod guard;
 
@@ -130,24 +133,38 @@ scope_mount_slots! {
     forms::BatchPublishingOut,
 }
 
-/// Implements [`IncludeMount`] for a form that attaches nothing: the chain is already a finished
-/// router, so it drains on the spot and the call is the whole registration.
+/// Implements [`IncludeMount`] for a form that attaches no publish of the handler's own: its
+/// chain is a finished router, in the guard that drains it when the statement ends. The guard is
+/// what carries the one position such a registration can still bind, the deferred retry.
 macro_rules! eager_mount {
     ($($form:ty),+ $(,)?) => {$(
         impl<'s, B, Layers, C, State, Pipeline, Def>
             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
         where
             B: Broker + 'static,
-            C: Clone,
-            Pipeline: Clone,
+            C: Clone + 's,
+            Layers: 's,
+            State: 's,
+            Pipeline: Clone + 's,
             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
             ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
         {
-            type Out = ();
+            type Out = Mounting<
+                's,
+                B,
+                Layers,
+                C,
+                State,
+                Pipeline,
+                ScopeChain<Self, B, C, Pipeline, Def>,
+            >;
 
-            fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) {
+            fn begin(
+                def: Def,
+                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
+            ) -> Self::Out {
                 let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
-                <Self as RouterMount<_, Def>>::begin(def, router).commit_into(scope);
+                Mounting::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
             }
         }
     )+};
@@ -164,9 +181,10 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// Mounts a definition of any form on this broker.
     ///
     /// A plain or batch handler and a `publish("dest")` one register when the statement ends, so
-    /// `b.include(handle);` and `b.include(respond).out(Reply, Publish);` are both complete; a
+    /// `b.include(handle);` and `b.include(respond).out_reply(Publish);` are both complete; a
     /// handler carrying [`Out`](crate::runtime::Out) slots binds each with `.out(marker, policy)`
-    /// and finishes with `.build()`.
+    /// and finishes with `.build()`. Every form takes `.out_retry(policy)`, the deferred
+    /// `retry_after` slot of that one registration, which takes the slot steps like any other.
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the

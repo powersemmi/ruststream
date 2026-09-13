@@ -69,7 +69,9 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
         .on_startup(async move |()| {
             Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(deferred));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(deferred);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // One publish is enough: the second attempt must come from the delayed redelivery.
@@ -117,7 +119,9 @@ async fn retry_completes_inside_a_worker_pool() {
         .on_startup(async move |()| {
             Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(pool_retry));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(pool_retry);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // Injected together, so the pool has several deliveries to spread over its workers; the
@@ -164,7 +168,9 @@ async fn retry_completes_inside_keyed_lanes() {
         .on_startup(async move |()| {
             Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
         })
-        .with_broker(MemoryBroker::new(), |b| b.include(lane_retry));
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(lane_retry);
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     let keyed = |key: &'static str, id: u32| {
@@ -224,8 +230,9 @@ async fn batch_pool_overlaps_batches() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
-        .with_broker(broker, |b| b.include(overlap.batch(nonzero!(8))));
+    let app = RustStream::new(AppInfo::new("overlap", "0.1.0")).with_broker(broker, |b| {
+        b.include(overlap.batch(nonzero!(8)));
+    });
 
     let running = app.start().await.expect("startup failed");
 

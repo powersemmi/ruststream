@@ -18,7 +18,9 @@
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
-use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
+use crate::{
+    BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, SubscriptionSource,
+};
 
 use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_inject::BatchInjectDef;
@@ -27,9 +29,7 @@ use crate::runtime::inject::InjectDef;
 use crate::runtime::input::DecodeWith;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
-use crate::runtime::publish::{
-    ForSlot, LowerOutTransforms, NarrowToUse, PublishTransform, RawReplyWiring,
-};
+use crate::runtime::publish::{LowerOutTransforms, NarrowToUse, RawReplyWiring, SlotStackUse};
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{
@@ -94,13 +94,17 @@ slot_form! {
 /// takes the head of it.
 type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
 
+/// The live publisher one slot's policy pairs into, against the broker the route mounts on: what
+/// fixes the per-message options the slot's transforms write.
+type SlotLive<Policy, B> = <Policy as PublishPolicy<Connected<B>>>::Live;
+
 /// The bound-source tuple element of one slot: the policy the runtime pairs (narrowed where the
 /// chain mounted a naming transform), the codec the slot encodes with (its own when the chain
 /// named one, else the surface's) and the pipeline it publishes through.
 macro_rules! slot_source {
     ($attach:ident, $layers:ident, $enc:ident, $surface:ty, $pipe:ty) => {
         (
-            SlotPolicy<$layers, $attach>,
+            SlotPolicy<$layers, $attach, SlotLive<$attach, B>>,
             <$enc as SlotCodec<$surface>>::Codec,
             SlotPipeline<$layers, $pipe>,
         )
@@ -120,8 +124,9 @@ macro_rules! impl_inject_out_commit {
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
-                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -182,8 +187,9 @@ macro_rules! impl_inject_out_commit {
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
-                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -258,8 +264,9 @@ macro_rules! impl_publishing_out_commit {
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
-                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -326,8 +333,9 @@ macro_rules! impl_publishing_out_commit {
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
-                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,
@@ -394,8 +402,9 @@ macro_rules! impl_publishing_out_commit {
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec>,
-                $layers: LowerOutTransforms<RoutePipe> + PublishTransform<ForSlot>,
-                <$layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<$attach>,
+                $attach: PublishPolicy<Connected<B>>,
+                $layers: LowerOutTransforms<RoutePipe> + SlotStackUse<SlotLive<$attach, B>>,
+                <$layers as SlotStackUse<SlotLive<$attach, B>>>::Destination: NarrowToUse<$attach>,
             )+
             Def: BindSlots<
                 Connected<B>,

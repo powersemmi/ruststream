@@ -122,14 +122,15 @@ impl Default for Workers {
 }
 
 /// Per-subscription publish context threaded into every delivery's [`Context`]: the
-/// broker-agnostic `retry_after` fallback and the app-wide tracker for post-settle continuations.
+/// broker-agnostic `retry_after` fallback of this registration and the app-wide tracker for
+/// post-settle continuations.
 /// An `and_after` continuation is spawned onto `tasks` so a graceful shutdown drains it.
 pub(crate) struct Delivery {
-    /// The deferred `retry_after` fallback for this subscription: the scope's publisher paired
-    /// with the address its source reported at startup. `None` when the scope wired no publisher,
-    /// in which case a `NackAfter` on a non-native broker degrades to an immediate requeue (with
-    /// a warning). A publisher without an address never reaches here: the subscription refuses to
-    /// start instead.
+    /// The deferred `retry_after` fallback for this subscription: the policy the registration
+    /// bound, paired with the address its source reported at startup. `None` when the
+    /// registration bound none, in which case a `NackAfter` on a non-native broker degrades to an
+    /// immediate requeue (with a warning). A publisher without an address never reaches here: the
+    /// subscription refuses to start instead.
     pub(crate) retry: Option<DeferredRetry>,
     /// Per-scope task tracker for post-settle `and_after` continuations. The
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
@@ -188,7 +189,7 @@ impl Delivery {
         )
     }
 
-    /// An empty delivery context: no retry publisher, a fresh continuation tracker. For tests.
+    /// An empty delivery context: no deferred retry, a fresh continuation tracker. For tests.
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::with_tasks(TaskTracker::new())
@@ -825,8 +826,11 @@ pub(crate) async fn settle_outcome<M: IncomingMessage>(
 /// schedules a deferred re-publish of the captured copy to the subscription's redelivery address
 /// with the [`RETRY_COUNT_HEADER`] incremented. That address is what the subscription's source
 /// reported at startup, not the subscription's name: the two differ wherever a subscription is a
-/// resource of its own. With no retry publisher configured on the scope, this falls back to an
-/// immediate requeue and warns.
+/// resource of its own. The copy leaves through the registration's retry slot, so the mount
+/// site's transforms and the publisher's own headers reach it as they reach any slot publish; it
+/// carries bytes already, so no codec encodes it and the call adjusts no per-message settings.
+/// Where the registration bound no deferred-retry position, this falls back to an immediate
+/// requeue and warns.
 ///
 /// A transport with no settlement at all ([`AckError::Unsupported`] from `nack`, as on MQTT at
 /// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the deferred re-publish: there is no original to
@@ -862,8 +866,9 @@ where
         warn!(
             target: "ruststream::dispatch",
             subscription = %name,
-            "retry_after on a broker without native delayed redelivery and no retry publisher \
-             configured; requeuing immediately (the delay is dropped)",
+            "retry_after on a broker without native delayed redelivery, and this registration \
+             binds no deferred-retry position (.out_retry(policy)); requeuing immediately (the \
+             delay is dropped)",
         );
         return msg.nack(true).await;
     };

@@ -21,10 +21,15 @@ struct Audit;
 // handler body and has no delivery to hand on, so this one has no place on a slot.
 struct StampSource;
 
-impl<C> PublishTransform<ForReply<C>> for StampSource {
+impl<C, Options> PublishTransform<ForReply<C>, Options> for StampSource {
     type Destination = Reads;
 
-    fn apply(&self, out: &mut OutgoingMessage<'_>, cx: &PublishContext<'_, C>) {
+    fn apply(
+        &self,
+        out: &mut OutgoingMessage<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
         out.headers_mut()
             .insert("x-source", cx.name().as_bytes().to_vec());
     }

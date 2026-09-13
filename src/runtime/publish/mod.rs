@@ -118,7 +118,7 @@ pub(crate) use builder::{message_of, raw_of};
 pub use ext::PublishExt;
 pub use out::{
     LowerOutTransforms, NamedDestinationSend, NarrowToUse, OutPipeline, PipelinePublishError,
-    SendOnlyPolicy, SlotTransforms,
+    SendOnlyPolicy, SlotStackUse, SlotTransforms,
 };
 pub use pipeline::{
     PublishDynLayer, PublishDynNext, PublishDynStack, PublishIdentity, PublishLayer, PublishNext,

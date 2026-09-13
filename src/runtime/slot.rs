@@ -26,7 +26,7 @@ use crate::runtime::publish::{
     AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, DestinationUse, FitsOffer,
     ForReply, ForSlot, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, Names, NarrowToUse,
     PublishTransform, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
-    RawReplyWiring, Reads, ReplyWiring, TransactionalReply, UnnamedCodec,
+    RawReplyWiring, Reads, ReplyWiring, SlotStackUse, TransactionalReply, UnnamedCodec,
 };
 use crate::runtime::router::{
     BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
@@ -35,8 +35,9 @@ use crate::runtime::router::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
-    CallerName, ConnectedBroker, FixedName, HeaderMap, NameTemplate, OutgoingDestination,
-    OutgoingMessage, OwnedTransactions, Publisher, RequestReply, TransactionalPublisher,
+    Broker, CallerName, Connected, ConnectedBroker, FixedName, HeaderMap, NameTemplate,
+    OutgoingDestination, OutgoingMessage, OwnedTransactions, PublishPolicy, Publisher,
+    RequestReply, TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -626,22 +627,21 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
     /// pairs (narrowed to plain sending where this slot's transforms name the destination), the
     /// encode codec (this slot's own when it named one, the surface's otherwise), and the pipeline
     /// the entry publishes through.
-    pub(crate) fn wire<Surface, Pipeline>(
+    pub(crate) fn wire<Surface, Pipeline, Live>(
         self,
         surface: Surface,
         pipeline: Pipeline,
-    ) -> (SlotPolicy<Layers, Policy>, Enc::Codec, Layers::Out)
+    ) -> (SlotPolicy<Layers, Policy, Live>, Enc::Codec, Layers::Out)
     where
         M: OutSlot,
         Enc: SlotCodec<Surface>,
-        Layers: LowerOutTransforms<Pipeline> + PublishTransform<ForSlot>,
-        <Layers as PublishTransform<ForSlot>>::Destination: NarrowToUse<Policy>,
+        Layers: LowerOutTransforms<Pipeline> + SlotStackUse<Live>,
+        <Layers as SlotStackUse<Live>>::Destination: NarrowToUse<Policy>,
     {
         let codec = self.enc.resolve(surface);
-        let policy =
-            <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::narrow(
-                self.policy,
-            );
+        let policy = <<Layers as SlotStackUse<Live>>::Destination as NarrowToUse<Policy>>::narrow(
+            self.policy,
+        );
         (policy, codec, self.layers.lower(M::NAME, pipeline))
     }
 }
@@ -649,8 +649,8 @@ impl<M, Policy, Layers, Enc> OutAttachment<M, Policy, Layers, Enc> {
 /// The policy one slot pairs: its own, narrowed where the stack names the destination. Machinery;
 /// the commit spells it so the bound reads.
 #[doc(hidden)]
-pub type SlotPolicy<Layers, Policy> =
-    <<Layers as PublishTransform<ForSlot>>::Destination as NarrowToUse<Policy>>::Out;
+pub type SlotPolicy<Layers, Policy, Live> =
+    <<Layers as SlotStackUse<Live>>::Destination as NarrowToUse<Policy>>::Out;
 
 /// Resolves one slot's encode codec: the codec the chain named for that slot, or the registration
 /// surface's own when it named none. The slot counterpart of a reply wiring's
@@ -714,19 +714,72 @@ pub struct ReplyLast;
 
 impl NamedStep for ReplyLast {}
 
-/// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
-/// [`Reply`], one [`Out`](super::Out) slot for a slot marker.
+/// One `.out(marker, policy)` call, keyed by the marker: what the position it names becomes.
 ///
-/// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot - which is
-/// what makes the calls order-independent and what the steps after the call ride. Machinery;
-/// never named directly.
+/// The dispatch is on the marker rather than on the attachment so that the call site's own
+/// argument settles which position is meant, and the error names that marker when the position is
+/// not there to bind. Every marker grows the attachment through [`BindAt`]: [`Reply`], the
+/// handler's own slot markers, and [`Retry`](crate::runtime::Retry), which is the slot the
+/// runtime publishes a deferred `retry_after` copy through.
+///
+/// Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
-    message = "this handler has no unbound publish position marked `{M}`",
+    message = "this registration has no unbound publish position marked `{Self}`",
+    label = "`.out({Self}, ..)` has no position to bind here",
+    note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
+            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
+            and that it was not bound twice"
+)]
+pub trait OutPosition<Mount, B, Attach, Policy, Index> {
+    /// The grown attachment the chain carries after the call.
+    type Out;
+
+    /// Binds the position.
+    fn bind(attach: Attach, policy: Policy) -> Self::Out;
+}
+
+// The reply and the slots are positions of the attachment itself, so both delegate. The broker
+// takes no part: a policy for one of these positions pairs where the registration mounts.
+impl<Mount, B, Attach, Policy> OutPosition<Mount, B, Attach, Policy, ReplyLast> for Reply
+where
+    Attach: BindAt<Mount, Self, Policy, ReplyLast>,
+{
+    type Out = <Attach as BindAt<Mount, Self, Policy, ReplyLast>>::Out;
+
+    fn bind(attach: Attach, policy: Policy) -> Self::Out {
+        attach.bind_at(policy)
+    }
+}
+
+impl<Mount, B, M, Attach, Policy, Index> OutPosition<Mount, B, Attach, Policy, Index> for M
+where
+    M: OutSlot,
+    Attach: BindAt<Mount, M, Policy, Index>,
+{
+    type Out = <Attach as BindAt<Mount, M, Policy, Index>>::Out;
+
+    fn bind(attach: Attach, policy: Policy) -> Self::Out {
+        attach.bind_at(policy)
+    }
+}
+
+/// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
+/// [`Reply`], one [`Out`](super::Out) slot for a slot marker, the deferred-retry slot for
+/// [`Retry`](crate::runtime::Retry).
+///
+/// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot,
+/// [`RetryPos`](crate::runtime::RetryPos) for the deferred retry - which is what makes the calls
+/// order-independent and what the steps after the call ride. Machinery; never named directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "this registration has no unbound publish position marked `{M}`",
     label = "`.out({M}, ..)` has no position to bind here",
     note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
-            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot. Check the \
-            marker, that the handler declares it, and that it was not bound twice"
+            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
+            and that it was not bound twice"
 )]
 pub trait BindAt<Mount, M, Policy, Index> {
     /// The attachment with that position bound.
@@ -879,20 +932,29 @@ impl<N, Rep, Slots> TransformLast<N, NoOutBound> for (Rep, Slots) {
 /// offers what its `#[publishes(..)]` dictionary adds up to - and [`Admits`] settles it against
 /// what the transform declares and what the stack has taken. Machinery; never named directly.
 #[doc(hidden)]
-pub trait AdmitsAt<N, Last, Mount, Def> {}
+pub trait AdmitsAt<N, Last, Mount, Def, B> {}
+
+/// The broker's per-message options one position's live publisher takes, which is what a
+/// transform mounted there writes. Machinery behind the `.transform(..)` step's own bound.
+#[doc(hidden)]
+pub type PositionOptions<Policy, B> =
+    <<Policy as PublishPolicy<Connected<B>>>::Live as Publisher>::Options;
 
 // The reply position: the mount token turns the definition's reply type into an offer, and the
 // wiring's own stack says whether the right has been taken already.
-impl<N, Policy, Enc, PL, BL, Tx, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+impl<N, Policy, Enc, PL, BL, Tx, Slots, Mount, Def, B> AdmitsAt<N, ReplyLast, Mount, Def, B>
     for (WithSource<ReplyWiring<Policy, Enc, PL, BL, Tx>>, Slots)
 where
+    B: Broker,
+    Policy: PublishPolicy<Connected<B>, Live: Publisher>,
     Mount: MountOffer<Def>,
     Def: DeclaresReply,
-    PL: PublishTransform<ForReply<Def::Context>>,
-    N: PublishTransform<ForReply<Def::Context>>,
-    <N as PublishTransform<ForReply<Def::Context>>>::Destination: FitsOffer<
+    PL: PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>,
+    N: PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>,
+    <N as PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>>::Destination:
+        FitsOffer<
             Mount::Offer,
-            <PL as PublishTransform<ForReply<Def::Context>>>::Destination,
+            <PL as PublishTransform<ForReply<Def::Context>, PositionOptions<Policy, B>>>::Destination,
             Def::Reply,
         >,
 {
@@ -900,27 +962,27 @@ where
 
 // The byte-for-byte reply carries no transform stack at all, so `AddReplyTransform` is what has to
 // fail there; this arm keeps this check from failing first and hiding it.
-impl<N, Policy, Slots, Mount, Def> AdmitsAt<N, ReplyLast, Mount, Def>
+impl<N, Policy, Slots, Mount, Def, B> AdmitsAt<N, ReplyLast, Mount, Def, B>
     for (WithSource<RawReplyWiring<Policy>>, Slots)
 {
 }
 
 // One slot position, asked of the slot tuple through the positional machinery.
-impl<N, const POS: usize, Rep, Slots, Mount, Def> AdmitsAt<N, SlotPos<POS>, Mount, Def>
+impl<N, const POS: usize, Rep, Slots, Mount, Def, B> AdmitsAt<N, SlotPos<POS>, Mount, Def, B>
     for (Rep, Slots)
 where
-    Slots: AdmitsSlotAt<N, SlotPos<POS>>,
+    Slots: AdmitsSlotAt<N, SlotPos<POS>, B>,
 {
 }
 
 // See `TransformLast`'s own arm: `Step: NamedStep` is the bound that should fail with nothing
 // named, so this one must not fail first.
-impl<N, Rep, Slots, Mount, Def> AdmitsAt<N, NoOutBound, Mount, Def> for (Rep, Slots) {}
+impl<N, Rep, Slots, Mount, Def, B> AdmitsAt<N, NoOutBound, Mount, Def, B> for (Rep, Slots) {}
 
 /// Whether the slot bound at `Index` admits the transform the `.transform(..)` step is about to
 /// compose. The positional half of [`AdmitsAt`]; machinery, never named directly.
 #[doc(hidden)]
-pub trait AdmitsSlotAt<N, Index> {}
+pub trait AdmitsSlotAt<N, Index, B> {}
 
 /// What one mount token offers a reply transform, read off the definition's reply type.
 ///
@@ -1358,15 +1420,18 @@ macro_rules! impl_step_at {
             }
         }
 
-        impl<N, M, Policy, Layers, Enc $(, $before)* $(, $after)*> AdmitsSlotAt<N, SlotPos<$pos>>
+        impl<N, M, Policy, Layers, Enc, B $(, $before)* $(, $after)*>
+            AdmitsSlotAt<N, SlotPos<$pos>, B>
             for ($($before,)* WithSource<OutAttachment<M, Policy, Layers, Enc>>, $($after,)*)
         where
+            B: Broker,
             M: OutSlot,
-            Layers: PublishTransform<ForSlot>,
-            N: PublishTransform<ForSlot>,
-            <N as PublishTransform<ForSlot>>::Destination: FitsOffer<
+            Policy: PublishPolicy<Connected<B>, Live: Publisher>,
+            Layers: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
+            N: PublishTransform<ForSlot, PositionOptions<Policy, B>>,
+            <N as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination: FitsOffer<
                     M::Destination,
-                    <Layers as PublishTransform<ForSlot>>::Destination,
+                    <Layers as PublishTransform<ForSlot, PositionOptions<Policy, B>>>::Destination,
                     M,
                 >,
         {

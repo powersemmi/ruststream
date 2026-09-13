@@ -53,7 +53,9 @@ fn service() -> RustStream {
                 .with_security(SecurityScheme::scram_sha512().with_description("SASL over TLS")),
         )
         // --8<-- [end:security]
-        .with_broker_labeled("in-process", MemoryBroker::new(), |b| b.include(handle))
+        .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
+            b.include(handle);
+        })
 }
 // --8<-- [end:server]
 

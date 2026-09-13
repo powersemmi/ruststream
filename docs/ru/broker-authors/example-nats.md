@@ -195,8 +195,6 @@ Core NATS отправляет сообщения без подтвержден�
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
-use std::time::Duration;
-
 pub use async_nats::jetstream::consumer::DeliverPolicy;
 use ruststream::SubscriptionSource;
 
@@ -264,7 +262,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
     }
 
     async fn subscribe(self, connected: &ConnectedNatsBroker) -> Result<NatsSubscriber, NatsError> {
-        connected.subscribe(self).await
+        connected.subscribe_with(self).await
     }
 }
 ```
@@ -621,11 +619,11 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 ```rust
 pub use ruststream::prelude::*;
 
-pub use crate::{NatsBroker, NatsError, NatsSource};
+pub use crate::{NatsBroker, NatsError, SubscribeOptions};
 pub use crate::NatsPublish as Publish;
 
 // The capabilities this broker implements on its live values.
-pub use ruststream::{Positioned, RequestReply, Seekable, Seeker};
+pub use ruststream::RequestReply;
 ```
 
 ## Связывание с приложением
@@ -640,7 +638,7 @@ use ruststream_nats::prelude::*;
 let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
         // `Publish` is this crate's publish policy; the runtime pairs it after connect.
-        b.include(confirm).out(Reply, Publish::default());
+        b.include(confirm).out_reply(Publish::default());
     });
 ```
 
