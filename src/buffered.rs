@@ -19,7 +19,8 @@ use futures::{Stream, StreamExt};
 use tokio::time::sleep;
 
 use crate::{
-    BatchSubscriber, ConnectedBroker, RedeliveryAddress, Seekable, Subscriber, SubscriptionSource,
+    BatchSubscriber, ConnectedBroker, RedeliveryAddress, RetryDeclaration, Seekable, Subscriber,
+    SubscriptionSource,
 };
 
 const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
@@ -83,9 +84,16 @@ where
     S::Subscriber: Send,
 {
     type Subscriber = BufferedSubscriber<S::Subscriber>;
+    type Copies = S::Copies;
 
     fn name(&self) -> &str {
         self.source.name()
+    }
+
+    /// Batching happens on the client, so the declaration reaches the wrapped source unchanged.
+    fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+        self.source = self.source.declare_retry(declaration);
+        self
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {

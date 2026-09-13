@@ -7,7 +7,7 @@ error[E0277]: this registration has no unbound publish position marked `ruststre
    = help: the trait `ruststream::runtime::BindAt<ruststream::runtime::RetryMount, ruststream::prelude::Retry, _, _>` is not implemented for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>`
    = note: `.out(marker, policy)` binds one position: `Reply` for the value a `publish("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
 help: `ruststream::runtime::Retried<Under, Attachment>` implements trait `ruststream::runtime::BindAt<Mount, M, Policy, Index>`
-  --> src/runtime/retry.rs
+  --> src/runtime/retry/mod.rs
    |
    | / impl<Mount, Policy, Under, Attachment> BindAt<Mount, Reply, Policy, ReplyLast>
    | |     for Retried<Under, Attachment>
@@ -33,7 +33,7 @@ error[E0277]: this registration has no unbound publish position marked `ruststre
    = help: the trait `ruststream::runtime::BindAt<ruststream::runtime::RetryMount, ruststream::prelude::Retry, _, _>` is not implemented for `ruststream::runtime::Retried<(ruststream::runtime::NoReply, ()), ruststream::runtime::OutAttachment<ruststream::prelude::Retry, MemoryPublish>>`
    = note: `.out(marker, policy)` binds one position: `Reply` for the value a `publish("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
 help: `ruststream::runtime::Retried<Under, Attachment>` implements trait `ruststream::runtime::BindAt<Mount, M, Policy, Index>`
-  --> src/runtime/retry.rs
+  --> src/runtime/retry/mod.rs
    |
    | / impl<Mount, Policy, Under, Attachment> BindAt<Mount, Reply, Policy, ReplyLast>
    | |     for Retried<Under, Attachment>

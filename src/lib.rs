@@ -87,7 +87,10 @@ pub use schema::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 pub use subscriber::Subscriber;
-pub use subscription::{FromName, Name, RedeliveryAddress, StartAt, SubscriptionSource, Unnamed};
+pub use subscription::{
+    BrokerMoves, CopyPath, FromName, Name, RedeliveryAddress, RetryDeclaration, RuntimeCopies,
+    StartAt, SubscriptionSource, Unnamed,
+};
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
 
 pub mod codec;

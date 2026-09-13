@@ -15,9 +15,211 @@ use std::{
     fmt,
     future::{Future, ready},
     marker::PhantomData,
+    num::NonZeroU32,
 };
 
 use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
+
+/// Who publishes the copies a subscription's retries are made of.
+///
+/// Every descriptor answers with [`SubscriptionSource::Copies`], and the answer is a closed set
+/// of two: [`RuntimeCopies`] where this process publishes them, [`BrokerMoves`] where the server
+/// or the client library moves the delivery itself. It decides two things at the mount site -
+/// whether `.out_retry(policy)` has a publisher to name, and whether the runtime pairs one of its
+/// own for every registration on that descriptor.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{BrokerMoves, CopyPath, RuntimeCopies};
+///
+/// fn declared<P: CopyPath>() -> &'static str {
+///     std::any::type_name::<P>()
+/// }
+///
+/// assert!(declared::<RuntimeCopies>().ends_with("RuntimeCopies"));
+/// assert!(declared::<BrokerMoves>().ends_with("BrokerMoves"));
+/// ```
+pub trait CopyPath: copy_path::Sealed {}
+
+mod copy_path {
+    /// Keeps the set of copy paths at the two the runtime knows how to act on.
+    pub trait Sealed {}
+
+    impl Sealed for super::RuntimeCopies {}
+    impl Sealed for super::BrokerMoves {}
+}
+
+/// The copy path of a subscription whose retries this process publishes.
+///
+/// The runtime pairs a retry publisher for every registration on such a descriptor, from the
+/// broker's [`DefaultPublish`](crate::DefaultPublish) policy, and `.out_retry(policy)` replaces
+/// it. A descriptor that declares it must also answer
+/// [`redelivery_address`](SubscriptionSource::redelivery_address): that is where a deferred copy
+/// goes, and a registration whose subscription cannot say refuses to start rather than publish
+/// into nothing.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Name, RuntimeCopies, Subscribe, SubscriptionSource};
+///
+/// // The by-name source publishes its copies here, so a mount site may name their publisher.
+/// fn declared<C: Subscribe>() -> &'static str {
+///     std::any::type_name::<<Name as SubscriptionSource<C>>::Copies>()
+/// }
+/// # let _: RuntimeCopies = RuntimeCopies;
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct RuntimeCopies;
+
+impl CopyPath for RuntimeCopies {}
+
+/// The copy path of a subscription whose deliveries the broker moves itself.
+///
+/// A queue with a delivery limit and a dead-letter exchange, a Pub/Sub subscription with a
+/// dead-letter policy, an SQS redrive policy: the server applies the registration's declaration
+/// and this process publishes nothing. `.out_retry(policy)` is a compile error on such a
+/// descriptor, because there is no publisher to customise, and the runtime pairs none.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{BrokerMoves, CopyPath};
+///
+/// fn moves_at_the_broker<P: CopyPath>(_: P) {}
+/// moves_at_the_broker(BrokerMoves);
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct BrokerMoves;
+
+impl CopyPath for BrokerMoves {}
+
+/// What one registration declared about its retries: how many attempts a delivery gets, and
+/// where it goes when they run out.
+///
+/// Built by the mount site's `max_attempts(..)` and `dead_letter(..)` steps and handed to the
+/// subscription descriptor through
+/// [`declare_retry`](SubscriptionSource::declare_retry) before the subscription opens. A
+/// descriptor whose broker moves the message itself reads it here and configures the queue, the
+/// subscription or the consumer with it; everywhere else the runtime applies it on the retry
+/// path.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{RetryDeclaration, nonzero};
+///
+/// let declared = RetryDeclaration::new()
+///     .with_max_attempts(nonzero!(5u32))
+///     .with_dead_letter("orders.dead");
+///
+/// assert_eq!(declared.max_attempts().map(|n| n.get()), Some(5));
+/// assert_eq!(declared.dead_letter(), Some("orders.dead"));
+/// assert!(!declared.declares_nothing());
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct RetryDeclaration {
+    max_attempts: Option<NonZeroU32>,
+    dead_letter: Option<Cow<'static, str>>,
+}
+
+impl RetryDeclaration {
+    /// The declaration of a registration that declared nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RetryDeclaration;
+    ///
+    /// assert!(RetryDeclaration::new().declares_nothing());
+    /// ```
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_attempts: None,
+            dead_letter: None,
+        }
+    }
+
+    /// Caps the deliveries one message of this registration gets.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{RetryDeclaration, nonzero};
+    ///
+    /// let declared = RetryDeclaration::new().with_max_attempts(nonzero!(3u32));
+    /// assert_eq!(declared.max_attempts().map(|n| n.get()), Some(3));
+    /// ```
+    #[must_use]
+    pub fn with_max_attempts(mut self, attempts: NonZeroU32) -> Self {
+        self.max_attempts = Some(attempts);
+        self
+    }
+
+    /// Names where a delivery goes once the cap is reached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RetryDeclaration;
+    ///
+    /// let declared = RetryDeclaration::new().with_dead_letter("orders.dead");
+    /// assert_eq!(declared.dead_letter(), Some("orders.dead"));
+    /// ```
+    #[must_use]
+    pub fn with_dead_letter(mut self, destination: impl Into<Cow<'static, str>>) -> Self {
+        self.dead_letter = Some(destination.into());
+        self
+    }
+
+    /// How many deliveries one message gets, counting the first. `None` when the registration
+    /// declared no cap.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RetryDeclaration;
+    ///
+    /// assert_eq!(RetryDeclaration::new().max_attempts(), None);
+    /// ```
+    #[must_use]
+    pub const fn max_attempts(&self) -> Option<NonZeroU32> {
+        self.max_attempts
+    }
+
+    /// Where a delivery goes when the cap is reached. `None` when the registration named none,
+    /// in which case the delivery at the cap is rejected instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::RetryDeclaration;
+    ///
+    /// assert_eq!(RetryDeclaration::new().dead_letter(), None);
+    /// ```
+    #[must_use]
+    pub fn dead_letter(&self) -> Option<&str> {
+        self.dead_letter.as_deref()
+    }
+
+    /// Whether the registration declared neither a cap nor a destination, which is what lets a
+    /// broker leave its own topology untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{RetryDeclaration, nonzero};
+    ///
+    /// assert!(RetryDeclaration::new().declares_nothing());
+    /// assert!(!RetryDeclaration::new().with_max_attempts(nonzero!(2u32)).declares_nothing());
+    /// ```
+    #[must_use]
+    pub const fn declares_nothing(&self) -> bool {
+        self.max_attempts.is_none() && self.dead_letter.is_none()
+    }
+}
 
 /// A description of one subscription, resolved against a connected broker at startup.
 ///
@@ -53,6 +255,19 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// The subscriber type this source opens.
     type Subscriber: Subscriber;
 
+    /// Who publishes the copies this subscription's retries are made of:
+    /// [`RuntimeCopies`] where this process does, [`BrokerMoves`] where the server or the client
+    /// library moves the delivery itself.
+    ///
+    /// Answer [`RuntimeCopies`] unless the broker applies a delivery limit and a dead-letter
+    /// destination on its own (a quorum queue with `x-delivery-limit` and an
+    /// `x-dead-letter-exchange`, a Pub/Sub dead-letter policy, an SQS redrive policy, a Pulsar
+    /// `DeadLetterPolicy`); a descriptor that answers so must also report a
+    /// [`redelivery_address`](Self::redelivery_address). [`BrokerMoves`] makes `.out_retry(..)`
+    /// a compile error at every mount site of this descriptor, because there is no publisher of
+    /// this process's for the mount site to name.
+    type Copies: CopyPath;
+
     /// The name (subject / channel) this subscription binds to.
     ///
     /// Used for handler metadata and `AsyncAPI` generation; it need not be the only routing
@@ -70,6 +285,58 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
         connected: &C,
     ) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 
+    /// Takes the registration's retry declaration into the descriptor, before the subscription
+    /// opens.
+    ///
+    /// Called once per registration, with what the mount site declared with `max_attempts(..)`
+    /// and `dead_letter(..)`. A broker that applies a delivery limit and a dead-letter
+    /// destination itself reads them here and configures the subscription with them - and only
+    /// when both are declared, because a native dead-letter policy needs both. The default keeps
+    /// the descriptor as it was, which leaves the declaration to the runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    ///
+    /// use ruststream::{RetryDeclaration, RuntimeCopies, Subscribe, SubscriptionSource};
+    ///
+    /// /// A queue this broker declares itself, so it takes the declaration into its topology.
+    /// #[derive(Debug, Clone)]
+    /// struct Queue {
+    ///     name: Cow<'static, str>,
+    ///     delivery_limit: Option<u32>,
+    ///     dead_letter: Option<Cow<'static, str>>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = RuntimeCopies;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    ///
+    ///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+    ///         self.delivery_limit = declaration.max_attempts().map(|n| n.get());
+    ///         self.dead_letter = declaration.dead_letter().map(|d| Cow::Owned(d.to_owned()));
+    ///         self
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self
+    where
+        Self: Sized,
+    {
+        let _ = declaration;
+        self
+    }
+
     /// Where a publish reaches this subscription again, for the runtime's deferred `retry_after`
     /// fallback. `None` means the broker cannot say.
     ///
@@ -79,10 +346,12 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// connection knows it (a Pub/Sub subscription has to be looked up to learn its topic).
     /// Called once per subscription at startup, never on the delivery path.
     ///
-    /// The default answers `None`, and a registration that bound the deferred-retry position
-    /// ([`Retry`](crate::runtime::Retry)) refuses to start over such a subscription. A subscription's name is not an address: where a subscription and a publish
-    /// destination are separate resources, answering with it would publish the copy into nothing
-    /// and lose the message under load.
+    /// The default answers `None`, which suits a descriptor whose
+    /// [`Copies`](Self::Copies) are [`BrokerMoves`]: nothing of this process's is published for
+    /// it. A [`RuntimeCopies`] descriptor owes an address, and a registration over one that
+    /// answers `None` refuses to start. A subscription's name is not an address: where a
+    /// subscription and a publish destination are separate resources, answering with it would
+    /// publish the copy into nothing and lose the message under load.
     ///
     /// # Errors
     ///
@@ -293,6 +562,9 @@ impl<S> fmt::Debug for Unnamed<S> {
 
 impl<C: Subscribe> SubscriptionSource<C> for Name {
     type Subscriber = C::Subscriber;
+    // A name is one string on every broker that takes one, and a publish to it reaches the
+    // subscription: the runtime is what publishes a copy there.
+    type Copies = RuntimeCopies;
 
     fn name(&self) -> &str {
         &self.0
@@ -447,9 +719,14 @@ where
     P: Send,
 {
     type Subscriber = S::Subscriber;
+    type Copies = S::Copies;
 
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self {
+        self.map_inner(|inner| inner.declare_retry(declaration))
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {

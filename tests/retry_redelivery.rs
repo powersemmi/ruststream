@@ -29,8 +29,8 @@ use ruststream::runtime::{
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
     AckError, ConnectedBroker, HeaderMap, IncomingMessage, OutSlot, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, RedeliveryAddress, Subscribe, Subscriber, SubscriptionSource,
-    subscriber,
+    PublishPolicy, Publisher, RedeliveryAddress, RuntimeCopies, Subscribe, Subscriber,
+    SubscriptionSource, subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -54,6 +54,7 @@ impl BoundSubscription {
 
 impl<C: Subscribe> SubscriptionSource<C> for BoundSubscription {
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
+    type Copies = RuntimeCopies;
 
     fn name(&self) -> &str {
         self.subscription
@@ -87,6 +88,7 @@ impl SilentSubscription {
 
 impl<C: Subscribe> SubscriptionSource<C> for SilentSubscription {
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
+    type Copies = RuntimeCopies;
 
     fn name(&self) -> &str {
         self.topic
@@ -662,12 +664,12 @@ async fn settle_later(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::retry_after(RETRY_DELAY)
 }
 
-/// A registration that binds the deferred-retry position over a subscription which cannot say
-/// where a redelivery is published fails to start, naming that subscription, its source and the
-/// fix. The registration beside it in the same scope is addressed and bound the same way, so the
-/// refusal is the one registration's, not the scope's.
+/// A registration whose descriptor publishes its retry copies here but cannot say where such a
+/// copy reaches the subscription fails to start, naming that subscription, its descriptor and the
+/// fix. The registration beside it in the same scope is addressed, so the refusal is the one
+/// registration's, not the scope's.
 #[tokio::test]
-async fn a_retry_position_over_an_unaddressed_source_refuses_to_start() {
+async fn an_unaddressed_open_descriptor_refuses_to_start() {
     let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
@@ -683,26 +685,27 @@ async fn a_retry_position_over_an_unaddressed_source_refuses_to_start() {
     assert!(message.contains("payments"), "{message}");
     assert!(message.contains("SilentSubscription"), "{message}");
     assert!(message.contains("MemoryBroker"), "{message}");
-    assert!(message.contains("out_retry"), "{message}");
+    assert!(message.contains("redelivery_address"), "{message}");
     assert!(
         !message.contains("orders-workers"),
         "the addressed registration is untouched: {message}",
     );
 }
 
-/// Without the position the same subscription starts, beside one that binds it: `retry_after`
-/// then degrades to an immediate requeue, which is the documented answer for a registration with
-/// neither native delayed redelivery nor a publisher to defer through.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_unaddressed_source_starts_when_the_registration_defers_nothing() {
+/// The publisher of the copies exists whether or not the mount site names one, so a descriptor
+/// that declares `RuntimeCopies` owes an address either way: the same registration without
+/// `out_retry` refuses to start too, rather than dropping a handler's delay at run time.
+#[tokio::test]
+async fn an_unaddressed_open_descriptor_refuses_to_start_without_a_named_publisher() {
     let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
-            b.include(reconcile).out_retry(MemoryPublish);
             b.include(settle_later);
         },
     );
 
-    let tb = TestApp::start(app).await.expect("startup failed");
-    tb.shutdown().await.expect("graceful shutdown failed");
+    let failed = TestApp::start(app)
+        .await
+        .expect_err("an open descriptor without an address must not start");
+    assert!(failed.to_string().contains("RuntimeCopies"), "{failed}");
 }

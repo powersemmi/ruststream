@@ -31,11 +31,11 @@ use crate::runtime::publish::{
     ForReply, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publishing::{PublishingCall, PublishingHandler};
-use crate::runtime::redelivery::{RetryPairing, open_subscription};
+use crate::runtime::redelivery::{CopyPathPairing, RetrySetup, open_subscription};
 use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
-use super::routes::{MountRoute, RouteMeta};
+use super::routes::{MountRoute, RouteCopies, RouteMeta, RouteMetadata};
 use super::sink::RouterSink;
 
 /// One reply-publishing registration whose reply travels the encoded wiring: the stack naming
@@ -129,13 +129,65 @@ impl_retry_open!(
     BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
 );
 
-impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Leaf, ReplyCodec, Transforms>
-    MountRoute<B, State> for PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
+/// Implements [`RouteMetadata`] for the deferred reply-publishing routes: each carries its
+/// metadata in a `meta` field, which is where a declaration writes its dead-letter channel.
+macro_rules! impl_route_metadata {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> RouteMetadata for $route<$($param),+> {
+            fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+                &mut self.meta
+            }
+        }
+    )+};
+}
+
+impl_route_metadata!(
+    PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+);
+
+/// Reads the descriptor's copy-path declaration off the deferred reply-publishing routes.
+macro_rules! impl_route_copies {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<B, $($param),+> RouteCopies<B> for $route<$($param),+>
+        where
+            B: Broker,
+            Source: SubscriptionSource<Connected<B>>,
+        {
+            type Source = Source;
+            type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
+        }
+    )+};
+}
+
+impl_route_copies!(
+    PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+    BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>,
+);
+
+impl<
+    B,
+    Source,
+    Def,
+    DecodeCodec,
+    ReplySource,
+    Extra,
+    State,
+    Leaf,
+    ReplyCodec,
+    Transforms,
+    RetryPipeline,
+> MountRoute<B, State, RetryPipeline>
+    for PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
     // The subscription side: the source opens against the connected form, and the definition's
     // handler runs over the messages it yields.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -162,8 +214,9 @@ where
         self,
         global: &G,
         pipeline: &PP,
+        retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -184,6 +237,7 @@ where
         let global = global.clone();
         let pipeline = pipeline.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
@@ -192,7 +246,7 @@ where
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -226,11 +280,14 @@ where
     }
 }
 
-impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live> MountRoute<B, State>
+impl<B, Source, Def, DecodeCodec, ReplySource, Extra, State, Live, RetryPipeline>
+    MountRoute<B, State, RetryPipeline>
     for RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -251,8 +308,9 @@ where
         self,
         global: &G,
         pipeline: &PP,
+        retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -272,6 +330,7 @@ where
         let global = global.clone();
         let pipeline = pipeline.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
@@ -280,7 +339,7 @@ where
                         .await
                         .map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -314,12 +373,15 @@ where
     }
 }
 
-impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State> MountRoute<B, State>
+impl<B, Source, Def, DecodeCodec, ReplySource, Extra, BatchReply, State, RetryPipeline>
+    MountRoute<B, State, RetryPipeline>
     for BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra>
 where
     B: Broker + 'static,
     // The subscription side: batches open against the connected form.
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
@@ -339,8 +401,9 @@ where
         self,
         _global: &G,
         pipeline: &PP,
+        retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -384,7 +447,7 @@ where
             policies,
             workers,
             batch_size,
-            retry,
+            setup.resolve::<Source::Copies, _>(retry_pipeline),
         );
     }
 }

@@ -727,3 +727,54 @@ fn every_handler_on_a_shared_channel_gets_its_own_receive_operation() {
         );
     }
 }
+
+/// A registration that names a dead-letter destination publishes to it, so the generated document
+/// reports it as a channel of the service rather than leaving it to a runbook.
+#[cfg(all(feature = "macros", feature = "json"))]
+mod dead_letter {
+    use super::*;
+    use ruststream::nonzero;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct Order {
+        id: u64,
+    }
+
+    #[subscriber("orders")]
+    async fn reconcile(order: &Order) -> HandlerOutcome {
+        let _ = order.id;
+        HandlerOutcome::retry()
+    }
+
+    #[test]
+    fn a_declared_dead_letter_destination_is_a_send_operation() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile)
+                    .max_attempts(nonzero!(5u32))
+                    .dead_letter("orders.dead");
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(spec.channels["orders.dead"].address, "orders.dead");
+        assert_eq!(spec.operations["send_orders_orders_dead"].action, "send");
+    }
+
+    /// A registration that names none says nothing: the document reports what the service
+    /// declared, not every destination it might reach.
+    #[test]
+    fn a_cap_without_a_destination_adds_no_channel() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile).max_attempts(nonzero!(5u32));
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert!(!spec.channels.contains_key("orders.dead"));
+    }
+}

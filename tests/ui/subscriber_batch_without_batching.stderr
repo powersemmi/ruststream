@@ -1,7 +1,7 @@
 error[E0277]: `OneAtATime` does not deliver messages in batches
-  --> tests/ui/subscriber_batch_without_batching.rs:52:15
+  --> tests/ui/subscriber_batch_without_batching.rs:53:15
    |
-52 |             b.include(handle.batch(nonzero!(64)));
+53 |             b.include(handle.batch(nonzero!(64)));
    |               ^^^^^^^ this subscription has no batching of its own
    |
 help: the trait `BatchSubscriber` is not implemented for `OneAtATime`

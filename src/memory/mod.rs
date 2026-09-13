@@ -56,7 +56,7 @@ use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName, HeaderMap,
     IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
-    RedeliveryAddress, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    RedeliveryAddress, RuntimeCopies, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -744,6 +744,8 @@ impl FromName for MemorySource {
 // --8<-- [start:source]
 impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
     type Subscriber = MemorySubscriber<Log>;
+    // The bus moves nothing on its own: a copy of a delivery is published by whoever wants one.
+    type Copies = RuntimeCopies;
 
     fn name(&self) -> &str {
         &self.name

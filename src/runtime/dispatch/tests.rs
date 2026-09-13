@@ -10,7 +10,8 @@ use super::*;
 use crate::memory::MemoryBroker;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
-use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher};
+use crate::runtime::handler::HandlerResult;
+use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RetryDeclaration};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -419,15 +420,15 @@ async fn fallback_increments_an_existing_retry_count() {
 }
 
 #[tokio::test]
-async fn without_a_retry_position_the_fallback_requeues_immediately() {
+async fn without_a_copy_path_a_delay_falls_back_to_a_requeue() {
     let delivery = Delivery::empty();
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
     settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery)
         .await
         .unwrap();
-    // No deferred-retry position on this registration: degrade to an immediate requeue rather
-    // than dropping silently.
+    // The broker moves this subscription's deliveries itself and has no delayed redelivery to
+    // ride, so the requeue is all that is left - rather than dropping the message silently.
     assert_eq!(settled.load(Ordering::SeqCst), 2);
 }
 
@@ -465,4 +466,59 @@ async fn native_support_defers_to_the_broker_nack_after() {
     // Native redelivery keeps the original payload and adds no retry-count header.
     assert_eq!(redelivered.payload(), b"native");
     assert_eq!(redelivered.headers().get_str(RETRY_COUNT_HEADER), None);
+}
+
+/// A subscription whose deliveries the broker moves itself carries no retry path, so a
+/// declaration on it is the broker's to apply: an immediate retry stays the broker's requeue.
+#[tokio::test]
+async fn a_broker_moved_subscription_keeps_its_own_requeue_under_a_cap() {
+    let delivery = Delivery::empty()
+        .declaring(RetryDeclaration::new().with_max_attempts(crate::nonzero!(3u32)));
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 2);
+}
+
+/// The same subscription at the cap: there is no publisher to carry the delivery to the declared
+/// destination, so it is rejected rather than requeued into a loop.
+#[tokio::test]
+async fn a_broker_moved_subscription_rejects_a_spent_delivery() {
+    let delivery = Delivery::empty().declaring(
+        RetryDeclaration::new()
+            .with_max_attempts(crate::nonzero!(1u32))
+            .with_dead_letter("orders.dead"),
+    );
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 1);
+}
+
+/// A registration that declares nothing keeps the immediate retry it always had, whatever the
+/// transport: no copy, no count, the broker's own requeue.
+#[tokio::test]
+async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
+    let broker = MemoryBroker::new();
+    let delivery =
+        Delivery::deferring_to(Arc::new(broker.publisher()), "orders", TaskTracker::new());
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_outcome(
+        plain(&[], &settled),
+        HandlerResult::retry(),
+        "orders",
+        &delivery,
+    )
+    .await;
+    assert_eq!(settled.load(Ordering::SeqCst), 2);
 }

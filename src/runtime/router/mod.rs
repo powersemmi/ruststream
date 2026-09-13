@@ -28,7 +28,7 @@ mod sink;
 
 pub use builder::Router;
 #[doc(hidden)]
-pub use builder::{AttachRetry, RouterBroker};
+pub use builder::{AttachDeclaration, AttachRetry, RouterBroker};
 #[doc(hidden)]
 pub use builders::RouterCommit;
 pub use builders::{MapPublisher, RouterOut, RouterPublishing, RouterPublishingOut, RouterWith};
@@ -43,6 +43,8 @@ pub use mount::{
     BatchPublishInjectMount, BatchPublishMount, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterMount,
 };
+#[doc(hidden)]
+pub use routes::{RouteCopies, RouteMetadata};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 

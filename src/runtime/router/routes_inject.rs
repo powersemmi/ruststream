@@ -23,11 +23,11 @@ use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::PublishPipeline;
-use crate::runtime::redelivery::{RetryPairing, open_subscription};
+use crate::runtime::redelivery::{CopyPathPairing, RetrySetup, open_subscription};
 use crate::runtime::retry::RetryOpen;
 
 use super::SourceMessage;
-use super::routes::{MountRoute, RouteMeta};
+use super::routes::{MountRoute, RouteCopies, RouteMeta, RouteMetadata};
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
@@ -87,18 +87,41 @@ debug_by_metadata!(
     BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
 );
 
-impl<Source, Def, DecodeCodec, Extra> RetryOpen for InjectRoute<Source, Def, DecodeCodec, Extra> {}
+/// Implements the three per-route marker impls the mount chain reads: the retry position is
+/// unbound, the metadata is reachable, and the descriptor's copy path is the route's.
+macro_rules! impl_route_markers {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> RetryOpen for $route<$($param),+> {}
 
-impl<Source, Def, DecodeCodec, Extra> RetryOpen
-    for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
-{
+        impl<$($param),+> RouteMetadata for $route<$($param),+> {
+            fn metadata_mut(&mut self) -> &mut HandlerMetadata {
+                &mut self.meta
+            }
+        }
+
+        impl<B, $($param),+> RouteCopies<B> for $route<$($param),+>
+        where
+            B: Broker,
+            Source: SubscriptionSource<Connected<B>>,
+        {
+            type Source = Source;
+            type Copies = <Source as SubscriptionSource<Connected<B>>>::Copies;
+        }
+    )+};
 }
 
-impl<B, Source, Def, DecodeCodec, Extra, State> MountRoute<B, State>
+impl_route_markers!(
+    InjectRoute<Source, Def, DecodeCodec, Extra>,
+    BatchInjectRoute<Source, Def, DecodeCodec, Extra>,
+);
+
+impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    RetryPipeline: Clone,
     Source::Subscriber: Sync + Send + 'static,
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
@@ -115,8 +138,9 @@ where
         self,
         global: &G,
         _pipeline: &PP,
+        retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -135,11 +159,12 @@ where
         // cannot be returned out of a factory closure; apply and spawn stay in one block.
         let global = global.clone();
         let name: Arc<str> = Arc::from(meta.name.as_ref());
+        let setup = setup.resolve::<Source::Copies, _>(retry_pipeline);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
@@ -171,11 +196,13 @@ where
     }
 }
 
-impl<B, Source, Def, DecodeCodec, Extra, State> MountRoute<B, State>
+impl<B, Source, Def, DecodeCodec, Extra, State, RetryPipeline> MountRoute<B, State, RetryPipeline>
     for BatchInjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: Broker + 'static,
     Source: SubscriptionSource<Connected<B>> + Send + 'static,
+    Source::Copies: CopyPathPairing<B, RetryPipeline>,
+    RetryPipeline: Clone,
     Source::Subscriber: BatchSubscriber + Sync + Send + 'static,
     SourceMessage<B, Source>: Send + 'static,
     State: Send + Sync + 'static,
@@ -190,8 +217,9 @@ where
         self,
         _global: &G,
         _pipeline: &PP,
+        retry_pipeline: &RetryPipeline,
         sink: &mut RouterSink<B, State>,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         G: BlanketLayer + Clone + Send + Sync + 'static,
         PP: PublishPipeline + Clone + Send + 'static,
@@ -225,7 +253,7 @@ where
             policies,
             workers,
             batch_size,
-            retry,
+            setup.resolve::<Source::Copies, _>(retry_pipeline),
         );
     }
 }

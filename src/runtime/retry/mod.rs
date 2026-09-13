@@ -2,7 +2,8 @@
 //!
 //! A handler that asks for a delay ([`HandlerOutcome::retry_after`](super::HandlerOutcome::retry_after))
 //! on a broker without native delayed redelivery gets it from a copy the runtime publishes after
-//! the delay. [`Retry`] is the `Out` slot that copy leaves through, bound once per registration.
+//! the delay. [`Retry`] is the `Out` slot that copy leaves through; the position is filled from the
+//! broker's default publish policy and a mount site replaces it once per registration.
 //!
 //! The position is a slot in the full sense: the call attaches an [`OutAttachment`] like any
 //! `.out(marker, policy)`, the steps after it are the slot steps (`.codec(..)`, `.transform(..)`,
@@ -16,7 +17,14 @@
 //! that binds nothing carries nothing - and what makes a second `.out(Retry, ..)` a compile
 //! error: nothing binds the position on a wrapper that already holds one.
 
+mod declare;
+
 use std::fmt;
+
+pub use declare::{
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
+    Present, RouteDeclaring, StepOpen, StepTaken,
+};
 
 use crate::runtime::publish::{
     CallCodec, FitsOffer, ForSlot, PublishTransform, PublishTransformStack, Reads, UnnamedCodec,
@@ -39,18 +47,26 @@ use crate::{Broker, Connected, PublishPolicy, Publisher};
 /// already serialized - it is the delivery's own bytes with the retry count incremented - so it
 /// passes the codec by, the way a [`Serialized`](super::Serialized) value does on any slot.
 ///
-/// Where that copy goes is the subscription's own answer, read at startup from
+/// The position is filled before the call: every registration whose subscription declares
+/// [`RuntimeCopies`](crate::RuntimeCopies) gets a publisher from the broker's own
+/// [`DefaultPublish`](crate::DefaultPublish) policy, and this call replaces it. On a descriptor
+/// that declares [`BrokerMoves`](crate::BrokerMoves) the call does not compile: the broker moves
+/// the delivery itself and there is nothing of this process's to publish. It comes after the
+/// registration's declaration, [`max_attempts`](super::RouterWith::max_attempts) and
+/// [`dead_letter`](super::RouterWith::dead_letter).
+///
+/// Where a copy goes is the subscription's own answer, read at startup from
 /// [`SubscriptionSource::redelivery_address`](crate::SubscriptionSource::redelivery_address): a
 /// subscription name and a publish destination are one string on a subject or a topic, and
-/// separate resources on Google Pub/Sub. A registration that binds this position over a
-/// subscription which reports no address refuses to start, naming the subscription and its source,
-/// instead of publishing copies into nothing once a handler asks for a delay. The slot therefore
-/// never lets a transform name the destination, and the generated `AsyncAPI` document ignores the
-/// position: the copy goes to the subscription's own address, not to a declared channel.
+/// separate resources on Google Pub/Sub. A registration over a subscription which publishes its
+/// copies here and reports no address refuses to start, naming the subscription and its
+/// descriptor, instead of publishing copies into nothing once a handler asks for a delay. The slot
+/// therefore never lets a transform name the destination, and the generated `AsyncAPI` document
+/// ignores the position: a copy goes to the subscription's own address, or to the declared
+/// dead-letter destination, and neither is this position's to name.
 ///
 /// Brokers with native delayed redelivery do not need the position: the runtime uses their
-/// [`nack_after`](crate::IncomingMessage::nack_after) instead. Without it, a `retry_after` on a
-/// non-native broker degrades to an immediate requeue (with a warning).
+/// [`nack_after`](crate::IncomingMessage::nack_after) instead, and no copy is published there.
 ///
 /// # Cancel safety
 ///

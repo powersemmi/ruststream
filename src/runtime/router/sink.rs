@@ -16,7 +16,7 @@ use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::redelivery::{
-    RetryPairing, ScopeDelivery, open_mounted_subscriber, open_subscription,
+    RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
 };
 
 use super::SourceMessage;
@@ -72,7 +72,6 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         handler: H,
         meta: HandlerMetadata,
         policies: FailurePolicies,
-        retry: Option<RetryPairing<B>>,
     ) where
         S: Subscriber + Send + 'static,
         Cx: crate::BuildContext<S::Message> + Send + 'static,
@@ -83,9 +82,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         self.starters.push(Box::new(
             move |_connected, state, scope, shutdown, token| {
                 Box::pin(async move {
-                    // No source to ask where a deferred retry goes, so a registration that binds
-                    // the position refuses this mount rather than guessing an address.
-                    let delivery = open_mounted_subscriber::<B>(&scope, &name, retry)?;
+                    // No descriptor to ask where a copy of a delivery would go, and no mount chain
+                    // that can bind one here, so this mount carries no retry path at all.
+                    let delivery = open_mounted_subscriber(&scope);
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch(
                         subscriber, handler, token, name, state, delivery, failure,
@@ -111,7 +110,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: BatchSubscriber + Send + 'static,
@@ -125,7 +124,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     // Turbofish: the adapter handlers are generic over the batch context, so
@@ -149,7 +148,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         meta: HandlerMetadata,
         policies: FailurePolicies,
         workers: Workers,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         S: SubscriptionSource<Connected<B>> + Send + 'static,
         S::Subscriber: Send + 'static,
@@ -163,7 +162,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let failure = DispatchFailure::new(policies, shutdown);
                     Ok(spawn_dispatch_workers(
@@ -197,7 +196,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         policies: FailurePolicies,
         workers: Workers,
         batch_size: NonZeroUsize,
-        retry: Option<RetryPairing<B>>,
+        setup: RetrySetup<B>,
     ) where
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: BatchSubscriber + Send + 'static,
@@ -212,7 +211,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
             move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
                 Box::pin(async move {
                     let (subscriber, delivery) =
-                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, retry)
+                        open_subscription::<B, _>(source, connected.as_ref(), &scope, &name, setup)
                             .await?;
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;

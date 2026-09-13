@@ -124,15 +124,19 @@ pub(crate) use publish::message_of;
 pub use publish_source::{Bindable, Bound, BrokerRegistration};
 pub use publisher_registry::ErasedPublisher;
 #[doc(hidden)]
-pub use redelivery::RetryPairing;
+pub use redelivery::{CopyPathPairing, PublishesCopiesHere, RetryPairing, RetrySetup};
 pub use retry::Retry;
 #[doc(hidden)]
-pub use retry::{Retried, RetryChain, RetryMount, RetryOpen, RetryPos, RoutePosition};
+pub use retry::{
+    Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, Declaring,
+    Present, Retried, RetryChain, RetryMount, RetryOpen, RetryPos, RouteDeclaring, RoutePosition,
+    StepOpen, StepTaken,
+};
 #[doc(hidden)]
 pub use router::{
-    AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount,
-    PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment, RouterBroker, RouterCommit,
-    RouterMount,
+    AttachDeclaration, AttachRetry, BatchPublishInjectMount, BatchPublishMount, DefaultReply,
+    PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
+    RouteCopies, RouteMetadata, RouterBroker, RouterCommit, RouterMount,
 };
 pub use router::{
     IncludeDef, MapPublisher, Router, RouterDef, RouterHandlers, RouterOut, RouterPublishing,

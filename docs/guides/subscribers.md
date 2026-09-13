@@ -152,39 +152,37 @@ limits the request rate. An immediate redelivery would make no progress:
 The runtime honours the delay as follows:
 
 - A broker with native delayed redelivery receives the delay directly. The in-memory broker
-  redelivers on a timer; a NATS JetStream broker could send a `NAK` with a delay.
-- A broker without native support gets a **deferred re-publish**: after `delay` the runtime
-  publishes a copy of the message back to the subscription it came from, and drops the original. In
-  the new copy the framework retry-count header
-  ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html))
-  is incremented by one, and a handler can read it to cap redeliveries.
+  redelivers on a timer; a NATS JetStream broker sends a `NAK` with a delay.
+- A broker without native support gets a **copy**: after `delay` the runtime publishes the message
+  back to the subscription it came from, and drops the original. The copy carries the framework
+  retry-count header
+  ([`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)),
+  incremented by one.
 
-  The copy needs a publisher, and the mount site names it: `.out_retry(policy)` binds the
-  deferred-retry position of that one registration, with the broker's own publish policy. It binds
-  once. Without it the delay is dropped and the message is requeued immediately. The deferred
-  re-publish is **at-most-once** over the delay window: if the process exits before the timer
-  fires, the copy is lost.
+The publisher that copy leaves through is on every registration already, taken from the broker's
+own default publish policy, so `retry_after` behaves the same however the registration is mounted.
+The copy is **at-most-once** over the delay window: if the process exits before the timer fires,
+the copy is lost.
 
-  The position is an `Out` slot, so the steps after it are the slot steps: `.codec(..)` names the
-  position's codec and `.transform(..)` composes a publish transform the copy travels through. The
-  copy carries the delivery's own bytes, so the codec resolves the position and encodes nothing.
+`.out_retry(policy)` replaces that publisher where you want another one, once per registration. The
+position is an `Out` slot, so the steps after it are the slot steps: `.codec(..)` names the
+position's codec and `.transform(..)` composes a publish transform the copy travels through. The
+copy carries the delivery's own bytes, so the codec resolves the position and encodes nothing.
 
-  ```rust
-  --8<-- "examples/retry.rs:mount"
-  ```
+```rust
+--8<-- "examples/retry.rs:mount"
+```
 
-  The copy goes to the address the subscription reports, which is not always its name. A NATS
-  subject and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its
-  own name and published to through its topic. Your broker crate answers for its own subscriptions,
-  and a registration that binds the position over a subscription which cannot answer does not
-  start, naming that subscription and the fix; the registrations beside it are untouched. There the
-  broker's own subscription descriptor is what answers: `#[subscriber("name")]` answers only where
-  a name is a publish destination.
+The copy goes to the address the subscription reports, which is not always its name. A NATS subject
+and a Kafka topic are one string; a Google Pub/Sub subscription is subscribed to by its own name
+and published to through its topic. Your broker crate answers for its own subscriptions, and a
+registration whose subscription cannot answer does not start, naming that subscription and the fix;
+the registrations beside it are untouched.
 
-  A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) takes the same
-  path: there is nothing to drop, so the deferred copy is the whole retry. The other case is a
-  settlement the broker rejects: the message stays with the broker and it redelivers on its own, so
-  the runtime returns the error and adds no copy on top.
+A transport that cannot settle at all (MQTT at QoS 0, ZeroMQ, Redis pub/sub) takes the same path:
+there is nothing to drop, so the copy is the whole retry. The other case is a settlement the broker
+rejects: the message stays with the broker and it redelivers on its own, so the runtime returns the
+error and adds no copy on top.
 
 The `batch_retry_after` form composes with
 [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerOutcome>` sets the delays
@@ -201,6 +199,40 @@ per element, so entries that are not ready wait without holding up the rest of t
     ```rust
     --8<-- "examples/manual/retry.rs:batch_retry_after"
     ```
+
+### Capping the retries
+
+A handler that keeps answering `retry_after` circulates its message until an operator intervenes.
+Two steps right after `include` end that, and they read the same on every broker:
+
+```rust
+--8<-- "examples/retry.rs:declaration"
+```
+
+`max_attempts(n)` is how many deliveries one message gets, counting the first. `dead_letter(name)`
+is where a delivery goes when they run out: it is republished there as it arrived, payload and
+headers, with the retry-count header incremented. A cap declared without a destination rejects the
+delivery instead, which leaves the broker's own dead-letter policy in play where one is configured.
+A destination declared without a cap takes over every copy: a handler that asks for a retry has its
+delivery carried away rather than sent back.
+
+The count is the broker's own where the transport keeps one - JetStream's `num_delivered`, SQS's
+`ApproximateReceiveCount`, Pub/Sub's `delivery_attempt` - and the framework's retry-count header
+otherwise.
+
+An immediate `retry()` obeys the same cap. On a transport that counts its own redeliveries it stays
+the broker's requeue; on one that counts none the runtime republishes the delivery at once so the
+count travels with it, so under a cap an immediate retry is no longer a broker requeue.
+
+Each step is declared once, and both come before `out_retry(policy)`: the declaration says what
+happens to a spent delivery, the publisher says how a copy leaves. The generated `AsyncAPI`
+document reports the dead-letter destination as a channel the registration publishes to.
+
+Where the broker moves the delivery itself - a queue with a delivery limit and a dead-letter
+exchange, a subscription with a dead-letter policy, an SQS redrive policy - the declaration reaches
+the subscription descriptor and the broker applies it. Nothing is published from the service there,
+and `.out_retry(..)` does not compile: the error names the descriptor and the mechanism that makes
+a publisher pointless.
 
 ## Choosing the subscription source
 

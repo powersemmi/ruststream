@@ -93,9 +93,10 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` reports the address the runtime publishes a deferred retry to. Answering it is
-what makes `#[subscriber("orders")]` work with the mount site's deferred-retry position
-(`.out_retry(policy)`) on your broker.
+`redelivery_address` reports the address the runtime publishes a retry copy to. The by-name source
+declares that the runtime publishes its copies, so answering this is what makes
+`#[subscriber("orders")]` start at all on your broker: a registration whose subscription cannot say
+where a copy reaches it refuses to start, naming the subscription and this method.
 
 Keep the default where a subscribe name is not a publish destination. A Google Pub/Sub subscription
 is subscribed to by its own name and published to through its topic, so the descriptor answers
@@ -142,6 +143,13 @@ pub trait IncomingMessage: Send + Sync {
     // Defaulted: None. Override (with the Partitioned capability) to feed the
     // runtime's keyed worker lanes, workers(n, by_key).
     fn partition_key(&self) -> Option<&[u8]>;
+
+    // Defaulted: None. Override where the transport counts its own deliveries
+    // (JetStream num_delivered, SQS ApproximateReceiveCount, Pub/Sub
+    // delivery_attempt): a registration's max_attempts(..) cap then counts the
+    // broker's redeliveries and not only the copies the runtime published.
+    // The first delivery of a message answers 1.
+    fn redelivery_count(&self) -> Option<u64>;
 }
 ```
 
@@ -151,13 +159,16 @@ Delayed redelivery is two methods, and the runtime asks `supports_nack_after`. O
 `nack(true)`: a transport that cannot hold a message back has to say so, or the pause before a
 retry turns into a storm of redeliveries.
 
-A broker that overrides none of the three defaulted methods still works with every runtime feature.
+A broker that overrides none of the four defaulted methods still works with every runtime feature.
 Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
-delivery and, after the delay, publishes a copy through the policy the mount site bound with
-`.out_retry(policy)`, with an incremented retry-count header. That copy goes to the address
-[your subscription reports](#where-a-deferred-retry-is-published). Only where a registration binds
-no such policy does the delay degrade to an immediate requeue. Keyed worker lanes hand out keyless messages
-round-robin.
+delivery and, after the delay, publishes a copy through the registration's retry publisher, with an
+incremented retry-count header. That copy goes to the address
+[your subscription reports](#where-a-retry-copy-is-published). Keyed worker lanes hand out keyless
+messages round-robin.
+
+Where `redelivery_count` stays `None`, that header is the only count there is, and a
+`max_attempts(..)` cap is read from it. Override the method and the cap counts the broker's own
+redeliveries too, which is what a user expects from a broker that has a delivery count of its own.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:
@@ -283,11 +294,23 @@ implements `SubscriptionSource`:
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
+
+    // Who publishes the copies this subscription's retries are made of:
+    // RuntimeCopies where this process does, BrokerMoves where the server or the
+    // client library moves the delivery itself.
+    type Copies: CopyPath;
+
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 
+    // Defaulted: the descriptor unchanged. Read the registration's max_attempts(..)
+    // and dead_letter(..) here and apply them to the subscription you are about to
+    // open, where the broker has a mechanism for them.
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
+
     // Defaulted: Ok(None). Answer where a publish reaches this subscription again,
-    // asking the broker when only the live connection knows.
+    // asking the broker when only the live connection knows. A RuntimeCopies
+    // descriptor owes an answer.
     async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
 }
 ```
@@ -307,7 +330,34 @@ branches inside, as the [NATS example](example-nats.md) does.
 Derive `Clone` on the descriptor: the mount rebuilds the configuration per registration, so one
 definition can be mounted on two brokers at once.
 
-### Where a deferred retry is published
+### Who publishes a retry copy
+
+Every descriptor declares one of two things with `type Copies`.
+
+`RuntimeCopies` says this process publishes the copies a retry needs. The runtime pairs a retry
+publisher for every registration on such a descriptor, from the broker's `DefaultPublish` policy,
+and the mount site may replace it with `.out_retry(policy)`. This is the answer for a subject, a
+topic, a stream and a queue - anything the service itself can publish back to. A descriptor that
+declares it over a broker with no `DefaultPublish` does not compile.
+
+`BrokerMoves` says the server or the client library moves the delivery itself: a quorum queue with
+`x-delivery-limit` and an `x-dead-letter-exchange`, a Pub/Sub subscription with a dead-letter
+policy, an SQS redrive policy, a Pulsar consumer with a `DeadLetterPolicy`. Nothing is published
+from the service, so `.out_retry(..)` is a compile error at every mount site of that descriptor,
+and the error names it.
+
+Where the nativeness depends on a field's value rather than on the type - a RabbitMQ queue without
+`.delay(..)` has no native delayed redelivery of its own - keep the path open.
+
+### What the registration declares
+
+`declare_retry` hands you the cap and the destination the mount site declared, once per
+registration, before `subscribe` runs. A descriptor that has a mechanism of its own turns them into
+topology there, and only when both are declared, because a native dead-letter policy needs the
+limit and the address together. A descriptor without one keeps the default and the runtime applies
+the declaration on the retry path.
+
+### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
 message once the delay is over. Your descriptor says where that copy goes.
@@ -323,9 +373,10 @@ On Google Pub/Sub a subscription and a topic are separate resources, so the answ
 subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
 startup.
 
-Keep the default where publishing cannot reach your subscription at all. An application that wires
-a retry publisher over such a subscription then does not start, and the error names the
-subscription and its source.
+A `RuntimeCopies` descriptor owes an answer: a registration over one that reports `None` refuses to
+start, naming the subscription, the descriptor and this method. The alternative is a `retry_after`
+that publishes into nothing under load, which is a lost message. Declare `BrokerMoves` where
+publishing cannot reach your subscription at all.
 
 `harness::lifecycle` checks the answer you give: a publish to the reported address must arrive at
 the subscription that reported it.

@@ -26,9 +26,8 @@ pub(crate) enum HandlerResult {
     ///
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
     /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
-    /// without, the runtime drops the delivery and re-publishes a copy to its own source after
-    /// the delay. Only where the registration bound no deferred-retry position
-    /// ([`Retry`](super::Retry)) does the delay degrade to an immediate requeue.
+    /// without, the runtime drops the delivery and re-publishes a copy of it to its own source
+    /// after the delay.
     NackAfter {
         /// How long the broker should wait before redelivering.
         delay: Duration,
@@ -114,6 +113,13 @@ impl HandlerOutcome {
     }
 
     /// Negatively acknowledge the message, asking the broker to redeliver it.
+    ///
+    /// Under a registration's [`max_attempts`](super::RouterWith::max_attempts) cap this obeys
+    /// the cap as `retry_after` does. Where the transport counts its own redeliveries
+    /// ([`redelivery_count`](crate::IncomingMessage::redelivery_count)) it stays the broker's
+    /// requeue and that count is read; where it counts none the runtime republishes the delivery
+    /// at once so the framework's count travels with it, and on that path an immediate retry is
+    /// no longer a broker requeue.
     pub const fn retry() -> Self {
         Self {
             outcome: HandlerResult::retry(),
@@ -126,12 +132,16 @@ impl HandlerOutcome {
     ///
     /// A broker with native delayed redelivery (`JetStream` `NAK` with delay) honours the delay
     /// itself, through [`IncomingMessage::nack_after`](crate::IncomingMessage::nack_after); on one
-    /// without, the runtime drops the delivery and re-publishes a copy to its own source after
-    /// the delay, through the policy the mount site bound with `.out_retry(policy)` (see
-    /// [`Retry`](super::Retry)), with the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER)
-    /// incremented. That copy is at-most-once over the delay window: it rides a detached task, so
-    /// a process that exits before the timer fires loses it. Only where the registration bound no
-    /// such policy does the delay degrade to an immediate requeue.
+    /// without, the runtime drops the delivery and re-publishes a copy of it to its own source
+    /// after the delay, with the [`RETRY_COUNT_HEADER`](super::RETRY_COUNT_HEADER) incremented.
+    /// The publisher that copy leaves through is on every registration already, from the broker's
+    /// own [`DefaultPublish`](crate::DefaultPublish) policy, and `.out_retry(policy)` replaces it
+    /// (see [`Retry`](super::Retry)). That copy is at-most-once over the delay window: it rides a
+    /// detached task, so a process that exits before the timer fires loses it.
+    ///
+    /// How many times a message comes back, and where it goes when the attempts run out, is the
+    /// registration's own declaration: see
+    /// [`max_attempts`](super::RouterWith::max_attempts).
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
             outcome: HandlerResult::retry_after(delay),

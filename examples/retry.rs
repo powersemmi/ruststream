@@ -53,9 +53,9 @@ async fn reconcile_batch(payments: &[Payment]) -> Vec<HandlerOutcome> {
 // --8<-- [end:batch_retry_after]
 
 // --8<-- [start:mount]
-/// A transform on the retry position: it stamps every deferred copy with the slot it left
-/// through, so a redelivery is recognisable downstream. The position is an `Out` slot, so its
-/// transforms read a `SlotContext` like any other slot's.
+/// A transform on the retry position: it stamps every copy with the slot it left through, so a
+/// redelivery is recognisable downstream. The position is an `Out` slot, so its transforms read a
+/// `SlotContext` like any other slot's.
 struct DeferredStamp;
 
 impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
@@ -70,14 +70,21 @@ impl<Options> PublishTransform<ForSlot, Options> for DeferredStamp {
 #[ruststream::app]
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // The publisher a deferred copy leaves through, named once per registration. The
-        // in-memory broker honours the delay itself, so nothing here defers; a broker without
-        // delayed redelivery of its own does, and then this position is what carries the delay.
-        b.include(reconcile).out_retry(Publish);
-        // The position is an `Out` slot, so it takes the slot steps. The deferred copy carries
-        // the delivery's own bytes, so the codec named here resolves the position and encodes
-        // nothing, while the transforms run on the copy.
+        // --8<-- [start:declaration]
+        // A poison message is one that never settles, and the cap is what ends it: after five
+        // deliveries the payment goes to the dead-letter subject instead of coming back.
+        b.include(reconcile)
+            .max_attempts(nonzero!(5u32))
+            .dead_letter("payments.dead");
+        // --8<-- [end:declaration]
+        // Every registration already has a publisher for its copies, taken from the broker's
+        // default policy. Naming one replaces it: another policy, another codec, a transform.
+        // The position is an `Out` slot, so it takes the slot steps, and a copy carries the
+        // delivery's own bytes, so the codec named here resolves the position and encodes
+        // nothing.
         b.include(reconcile_batch.batch(nonzero!(64)))
+            .max_attempts(nonzero!(5u32))
+            .dead_letter("payments.dead")
             .out_retry(Publish)
             .codec(JsonCodec)
             .transform(DeferredStamp);

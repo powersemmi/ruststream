@@ -64,6 +64,10 @@ message(&export)  ->          bytes -> broker    （Serialized 的值自己产�
 更短的写法：`.out_reply(policy)` 就是 `.out(Reply, policy)`，`.out_retry(policy)` 就是
 `.out(Retry, policy)`。
 
+重试位和其他位置有一点不同：它已经被占上了。凡是由运行时发布副本的注册，都会从 Broker 自己的默认
+发布策略拿到一个发布者，`.out_retry(policy)` 是把它替掉。这个调用排在这条注册的
+[重试声明](subscribers.md#capping-the-retries)（`max_attempts(..)` 和 `dead_letter(..)`）之后。
+
 === "宏"
 
     ```rust

@@ -20,10 +20,12 @@
 //! error at the next use. A [`BrokerScope`](crate::runtime::BrokerScope) drives the same chain
 //! through a guard that commits when the statement ends.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
+use std::num::NonZeroU32;
 
-use crate::runtime::retry::Retry;
+use crate::runtime::retry::{CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, Retry};
 use crate::runtime::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
     Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
@@ -85,8 +87,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// and each position takes exactly one: binding one twice does not compile. Omitting
     /// `.out(Reply, ..)` leaves the reply on the broker's own
     /// [`DefaultPublish`](crate::DefaultPublish) policy; omitting a slot's call does not compile;
-    /// omitting `.out(Retry, ..)` leaves a `retry_after` to requeue immediately on a broker with
-    /// no delayed redelivery of its own.
+    /// omitting `.out(Retry, ..)` leaves a `retry_after` copy on that same default policy.
     ///
     /// The steps after the call fill the rest of that position's wiring, whichever position it
     /// is: the deferred-retry copy is a slot publish like any other, so it takes the slot steps
@@ -137,12 +138,15 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         self.out(Reply, policy)
     }
 
-    /// Names the publish policy a deferred `retry_after` copy leaves through: [`out`](Self::out)
-    /// with the [`Retry`] marker, and the same chain afterwards.
+    /// Replaces the publish policy a `retry_after` copy leaves through: [`out`](Self::out) with
+    /// the [`Retry`] marker, and the same chain afterwards.
     ///
-    /// The position is an `Out` slot like any other, so the steps after it are the slot steps:
-    /// [`codec`](Self::codec), [`transform`](Self::transform) and a broker's own
-    /// [`map_publisher`](MapPublisher::map_publisher) settings.
+    /// The position is filled already, from the broker's own
+    /// [`DefaultPublish`](crate::DefaultPublish) policy, so this call is a customisation and not a
+    /// requirement. It comes after [`max_attempts`](Self::max_attempts) and
+    /// [`dead_letter`](Self::dead_letter). The position is an `Out` slot like any other, so the
+    /// steps after it are the slot steps: [`codec`](Self::codec), [`transform`](Self::transform)
+    /// and a broker's own [`map_publisher`](MapPublisher::map_publisher) settings.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out_retry<Policy, Index>(
         self,
@@ -159,6 +163,118 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         Retry: OutPosition<Mount, R::Broker, Attach, Policy, Index>,
     {
         self.out(Retry, policy)
+    }
+
+    /// Caps the deliveries one message of this registration gets, counting the first.
+    ///
+    /// A delivery that has used them up is not retried: it goes to the destination
+    /// [`dead_letter`](Self::dead_letter) names, and where the registration names none it is
+    /// rejected, which keeps the broker's own dead-letter policy in play where one is configured.
+    /// The count is the broker's where the transport keeps one
+    /// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)), and the
+    /// framework's `x-ruststream-retry-count` header otherwise.
+    ///
+    /// Declared once per registration, before `out_retry(policy)` names the publisher the copies
+    /// leave through. Where the broker applies a delivery limit itself, the subscription
+    /// descriptor takes the declaration into its own topology and this process publishes nothing.
+    ///
+    /// An immediate [`retry`](crate::runtime::HandlerOutcome::retry) obeys the cap too. On a
+    /// transport that counts its own redeliveries it stays the broker's requeue; on one that
+    /// counts none the runtime republishes the delivery at once so the count travels with it, so
+    /// under a cap an immediate retry is no longer a broker requeue.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
+    /// use ruststream::{nonzero, subscriber};
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn reconcile(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::retry()
+    /// }
+    ///
+    /// fn routes() -> impl RouterDef<MemoryBroker> {
+    ///     Router::<MemoryBroker>::new()
+    ///         .include(reconcile)
+    ///         .max_attempts(nonzero!(5u32))
+    ///         .dead_letter("orders.dead")
+    ///         .build()
+    /// }
+    /// # }
+    /// ```
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn max_attempts(
+        self,
+        attempts: NonZeroU32,
+    ) -> RouterWith<Mount, R, Def, <Attach as DeclareCap>::Out, Last>
+    where
+        Attach: DeclareCap<Step: CapOpen>,
+    {
+        RouterWith::new(self.def, self.attach.declare_cap(attempts), self.router)
+    }
+
+    /// Names where a delivery of this registration goes once its attempts run out.
+    ///
+    /// A plain destination, the way a reply's is: a name template does not resolve here, because
+    /// nothing binds its placeholders. The delivery is republished there as it arrived - payload
+    /// and headers, with the retry-count header incremented - so a dead-letter consumer reads the
+    /// message the handler could not process. The generated `AsyncAPI` document reports it as a
+    /// channel this registration publishes to.
+    ///
+    /// Declared on its own, without [`max_attempts`](Self::max_attempts), it takes over every
+    /// copy: a handler that asks for a retry has its delivery sent there instead of back to the
+    /// subscription.
+    ///
+    /// Declared once per registration, before `out_retry(policy)`. Where the broker applies a
+    /// dead-letter destination itself, the subscription descriptor takes the declaration into its
+    /// own topology - and only when a cap is declared beside it, because a native dead-letter
+    /// policy needs both.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # fn build() {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
+    /// use ruststream::subscriber;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn reconcile(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn routes() -> impl RouterDef<MemoryBroker> {
+    ///     Router::<MemoryBroker>::new()
+    ///         .include(reconcile)
+    ///         .dead_letter("orders.dead")
+    ///         .build()
+    /// }
+    /// # }
+    /// ```
+    #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
+    pub fn dead_letter(
+        self,
+        destination: impl Into<Cow<'static, str>>,
+    ) -> RouterWith<Mount, R, Def, <Attach as DeclareDeadLetter>::Out, Last>
+    where
+        Attach: DeclareDeadLetter<Step: DeadLetterOpen>,
+    {
+        RouterWith::new(
+            self.def,
+            self.attach.declare_dead_letter(destination.into()),
+            self.router,
+        )
     }
 
     /// Encodes what leaves the position named last with `codec` instead of the registration

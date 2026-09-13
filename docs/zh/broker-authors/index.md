@@ -84,8 +84,9 @@ pub trait Subscribe: ConnectedBroker {
 --8<-- "src/memory/mod.rs:subscribe"
 ```
 
-`redelivery_address` 报出的是运行时发布延后重试所用的地址。回答了它，`#[subscriber("orders")]`
-在你的 Broker 上才能和挂载处的延后重试位（`.out_retry(policy)`）一起用。
+`redelivery_address` 报出的是运行时发布重试副本所用的地址。按名字订阅的源声明了它的副本由运行时
+发布，因此这个回答决定 `#[subscriber("orders")]` 在你的 Broker 上能不能起来：订阅说不出副本按哪个
+地址能到达它，这条注册就起不来，并报出是哪条订阅、以及这个方法。
 
 订阅名不是发布地址的地方，保留默认值。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的 topic，
 那里改由描述符回答。
@@ -131,6 +132,13 @@ pub trait IncomingMessage: Send + Sync {
     // Defaulted: None. Override (with the Partitioned capability) to feed the
     // runtime's keyed worker lanes, workers(n, by_key).
     fn partition_key(&self) -> Option<&[u8]>;
+
+    // Defaulted: None. Override where the transport counts its own deliveries
+    // (JetStream num_delivered, SQS ApproximateReceiveCount, Pub/Sub
+    // delivery_attempt): a registration's max_attempts(..) cap then counts the
+    // broker's redeliveries and not only the copies the runtime published.
+    // The first delivery of a message answers 1.
+    fn redelivery_count(&self) -> Option<u64>;
 }
 ```
 
@@ -138,11 +146,14 @@ pub trait IncomingMessage: Send + Sync {
 `false`，运行时一次也不会调用这个覆盖。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是按
 一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
-这三个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
-方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后发布一份副本，用的是挂载处通过
-`.out_retry(policy)` 占位时给出的那个策略，同时把重试计数消息头加一。这份副本发往
-[你的订阅给出的地址](#where-a-deferred-retry-is-published)。只有在这条注册没有给出这个策略的时候，
-延迟才退化成立即重新入队。按键分道的工作者池轮流分发没有键的消息。
+这四个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
+方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后经由这条注册的重试发布者发布一份副
+本，同时把重试计数消息头加一。这份副本发往[你的订阅给出的地址](#where-a-retry-copy-is-published)。
+按键分道的工作者池轮流分发没有键的消息。
+
+只要 `redelivery_count` 还返回 `None`，这个消息头就是唯一的计数，`max_attempts(..)` 的上限也按它来
+读。覆盖了这个方法，上限就连 Broker 自己的重新投递一起算上 - 有自己投递计数的 Broker，用户期待的正
+是这样。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：
@@ -254,11 +265,20 @@ pub trait DefaultPublish: ConnectedBroker {
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
+
+    // 这条订阅的重试所用的副本由谁发布：RuntimeCopies 表示由本进程发布，
+    // BrokerMoves 表示由服务端或客户端库自己搬走投递。
+    type Copies: CopyPath;
+
     fn name(&self) -> &str;
     fn subscribe(self, connected: &C) -> impl Future<Output = Result<Self::Subscriber, C::Error>> + Send;
 
+    // 默认返回原样的描述符。在这里读出这条注册的 max_attempts(..) 和
+    // dead_letter(..)，如果 Broker 有对应的机制，就把它们用到即将打开的订阅上。
+    fn declare_retry(self, declaration: &RetryDeclaration) -> Self;
+
     // 默认 Ok(None)。回答发布按哪个地址能重新到达这条订阅；只有活连接知道时，
-    // 就去问 Broker。
+    // 就去问 Broker。声明了 RuntimeCopies 的描述符必须给出答案。
     async fn redelivery_address(&self, connected: &C) -> Result<Option<RedeliveryAddress>, C::Error>;
 }
 ```
@@ -275,7 +295,30 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 给描述符派生 `Clone`：它是配置，挂载点为每次注册重新构造它，所以同一个定义可以同时挂到两个
 Broker 上。
 
-### 延后重试发往哪里 { #where-a-deferred-retry-is-published }
+### 谁来发布重试副本 { #who-publishes-a-retry-copy }
+
+每个描述符用 `type Copies` 在两者中声明一个。
+
+`RuntimeCopies` 表示重试需要的副本由本进程发布。运行时为这种描述符上的每条注册，从 Broker 的
+`DefaultPublish` 策略绑定一个重试发布者，挂载处可以用 `.out_retry(policy)` 把它替掉。subject、
+topic、流和队列 - 凡是服务自己能发布回去的东西，答案都是它。在没有 `DefaultPublish` 的 Broker 上
+声明它，代码编译不过。
+
+`BrokerMoves` 表示投递由服务端或客户端库自己搬走：带 `x-delivery-limit` 和 `x-dead-letter-exchange`
+的 quorum 队列、带死信策略的 Pub/Sub 订阅、SQS 的 redrive 策略、带 `DeadLetterPolicy` 的 Pulsar
+消费者。这时服务本身什么也不发布，因此在这个描述符的任何挂载处写 `.out_retry(..)` 都是编译错误，
+错误会报出这个描述符。
+
+原生与否取决于字段的取值而不是类型时 - 没有 `.delay(..)` 的 RabbitMQ 队列并没有自己的延迟投递 -
+把这条路径保持开放。
+
+### 注册声明了什么 { #what-the-registration-declares }
+
+`declare_retry` 把挂载处声明的上限和地址交给你，每条注册一次，并且在 `subscribe` 之前。自带机制的
+描述符在这里把它们变成拓扑，而且只在两者都声明时才这么做，因为原生的死信策略同时需要上限和地址。
+没有这种机制的描述符保留默认实现，声明改由运行时在重试路径上落实。
+
+### 重试副本发往哪里 { #where-a-retry-copy-is-published }
 
 没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往哪
 里，由你的描述符说出来。
@@ -290,8 +333,9 @@ topic，Redis 上是流的键。
 在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API 问
 出来。运行时只在启动时问一次。
 
-发布根本到不了你的订阅时，保留默认值。这样，把重试发布者接到这种订阅上的应用就起不来，错误会指明是
-哪条订阅、来自哪个来源。
+声明了 `RuntimeCopies` 的描述符必须给出答案：描述符返回 `None` 时，它上面的注册起不来，并报出是哪
+条订阅、哪个描述符，以及这个方法。否则 `retry_after` 在压力下就发布到虚无，那是一条丢失的消息。发布
+根本到不了你的订阅时，声明 `BrokerMoves`。
 
 `harness::lifecycle` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条订阅。
 

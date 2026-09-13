@@ -23,15 +23,26 @@ alwaysApply: false
   and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
   parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
   `FromName` when a name alone is enough to build it.
-- Both answer `redelivery_address`: the name a publisher on your broker uses to reach this
-  subscription again (a NATS subject, a Kafka topic, a Redis stream key). That is where the
-  runtime publishes the deferred copy when `retry_after` has no native delayed redelivery to ride.
-  Both default to "cannot say", which is the right answer wherever a subscribe name is not a
-  publish destination: a Google Pub/Sub subscription is read by its own name and published to
-  through its topic, so the descriptor asks the API. A registration that binds the deferred-retry
-  position (`.out_retry(policy)`) over a source that cannot say refuses to start, naming that
-  subscription - so a silent broker loses no message, it loses the fallback. `harness::lifecycle`
+- Every descriptor declares `type Copies`: `RuntimeCopies` where this process publishes the copies
+  a retry is made of (a subject, a topic, a stream, a queue), `BrokerMoves` where the server or the
+  client library moves the delivery itself (a delivery limit with a dead-letter exchange, a Pub/Sub
+  dead-letter policy, an SQS redrive policy). `BrokerMoves` makes `.out_retry(..)` a compile error
+  at every mount site of that descriptor; `RuntimeCopies` over a broker without `DefaultPublish`
+  does not compile either.
+- A `RuntimeCopies` descriptor owes `redelivery_address`: the name a publisher on your broker uses
+  to reach this subscription again (a NATS subject, a Kafka topic, a Redis stream key). That is
+  where the runtime publishes the copy. Both `Subscribe` and `SubscriptionSource` default to
+  "cannot say", and a registration over an open descriptor that answers so refuses to start, naming
+  the subscription, the descriptor and the method. A Google Pub/Sub subscription is read by its own
+  name and published to through its topic, so the descriptor asks the API. `harness::lifecycle`
   holds the answer to its promise.
+- `declare_retry` hands the descriptor the registration's `max_attempts(..)` and `dead_letter(..)`
+  before it subscribes. Apply them to your own topology where the broker has a mechanism for them,
+  and only when both are declared; keep the default otherwise and the runtime applies them.
+- Override `IncomingMessage::redelivery_count` where the transport counts its own deliveries
+  (JetStream `num_delivered`, SQS `ApproximateReceiveCount`, Pub/Sub `delivery_attempt`), so a
+  registration's cap counts the broker's redeliveries and not only the copies the runtime
+  published. The first delivery answers 1.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
@@ -280,6 +291,9 @@ impl Subscribe for ConnectedMyBroker {
 
 impl SubscriptionSource<ConnectedMyBroker> for MySubscribeOptions {
     type Subscriber = MySubscriber;
+    /// This process publishes the copies a retry of this subscription is made of.
+    type Copies = RuntimeCopies;
+
     fn name(&self) -> &str {
         &self.subject
     }

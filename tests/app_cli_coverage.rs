@@ -29,7 +29,7 @@ use ruststream::runtime::{
     RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
-use ruststream::{ConnectedBroker, DescribeServer, ServerSpec, SubscriptionSource};
+use ruststream::{ConnectedBroker, DescribeServer, RuntimeCopies, ServerSpec, SubscriptionSource};
 use tokio::sync::Notify;
 use tokio::time::timeout;
 use tracing_subscriber::EnvFilter;
@@ -275,6 +275,7 @@ struct RefusedSubscription;
 
 impl SubscriptionSource<ConnectedMemoryBroker> for RefusedSubscription {
     type Subscriber = MemorySubscriber;
+    type Copies = RuntimeCopies;
 
     // The returned lifetime is fixed by the trait, so it cannot be narrowed to `&'static str`.
     #[allow(clippy::unnecessary_literal_bound)]
