@@ -17,7 +17,6 @@ on:
       - scripts/doc_glossary.toml
       - .github/workflows/docs.yml
   pull_request:
-    branches: [main]
     # `labeled` / `unlabeled` are here for the translation-parity job below: applying its
     # escape-hatch label has to re-run the check, or the label leaves a stale red run
     # blocking the merge.
