@@ -946,9 +946,15 @@ async fn settle_retry<M: IncomingMessage>(
 /// or the copy the runtime publishes.
 ///
 /// When the broker reports native support (`supports_nack_after`), this defers to
-/// [`IncomingMessage::nack_after`] and nothing is published: the delivery never leaves the broker,
-/// so the registration's declaration is the subscription descriptor's to map onto the broker's own
-/// mechanism. Otherwise it captures the message, drops the original, and schedules a copy of it
+/// [`IncomingMessage::nack_after`] and nothing is published - unless the delivery is already at
+/// the registration's cap. The cap is read first, from the broker's own delivery count
+/// ([`IncomingMessage::redelivery_count`]), because the framework's header never increments on a
+/// path where the broker holds the message itself; a delivery at the cap goes to the declared
+/// dead-letter destination or is rejected, exactly as on the copy path. Where the transport
+/// reports no count of its own there is nothing to read, and the declaration is the subscription
+/// descriptor's to map onto the broker's own mechanism.
+///
+/// Without native support this captures the message, drops the original, and schedules a copy of it
 /// after the delay, with the [`RETRY_COUNT_HEADER`] incremented. The copy goes to the address the
 /// subscription's descriptor reported at startup, not to the subscription's name: the two differ
 /// wherever a subscription is a resource of its own. It leaves through the registration's retry
@@ -986,6 +992,29 @@ where
     M: IncomingMessage,
 {
     if msg.supports_nack_after() {
+        // The cap is read before the delay reaches the broker: a native redelivery would otherwise
+        // circle past a cap nothing in this process ever gets to apply. It is read only where the
+        // delivery carries the broker's own count - the framework's header never increments on
+        // this path, so there is nothing else to count with - and only where this process
+        // publishes the subscription's copies: a broker that moves a spent delivery itself
+        // applies the declaration itself.
+        if let Some(retry) = delivery.retry.as_ref()
+            && delivery.declaration.max_attempts().is_some()
+            && msg.redelivery_count().is_some()
+        {
+            match redelivery_of(&msg, &delivery.declaration) {
+                Redelivery::DeadLetter { destination, .. } => {
+                    warn_at_cap(name, attempt_of(&msg), Some(destination));
+                    let destination = Arc::from(destination);
+                    return publish_copy(msg, name, destination, None, retry, delivery).await;
+                }
+                Redelivery::Reject => {
+                    warn_at_cap(name, attempt_of(&msg), None);
+                    return msg.nack(false).await;
+                }
+                Redelivery::Subscription => {}
+            }
+        }
         return msg.nack_after(delay).await;
     }
 

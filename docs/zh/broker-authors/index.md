@@ -153,7 +153,8 @@ pub trait IncomingMessage: Send + Sync {
 
 只要 `redelivery_count` 还返回 `None`，这个消息头就是唯一的计数，`max_attempts(..)` 的上限也按它来
 读。覆盖了这个方法，上限就连 Broker 自己的重新投递一起算上 - 有自己投递计数的 Broker，用户期待的正
-是这样。
+是这样。在原生路径上它还是上限唯一能读到的计数：延迟由你自己兑现时，框架的消息头不会增加，正是
+`redelivery_count` 让 `retry_after` 不会绕过上限一直转下去。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：

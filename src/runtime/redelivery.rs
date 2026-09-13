@@ -11,6 +11,7 @@
 
 use std::any::type_name;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -390,14 +391,27 @@ fn announce(subscription: &str, declaration: &RetryDeclaration, retry: Option<&D
     if declaration.declares_nothing() {
         return;
     }
-    info!(
-        target: "ruststream::retry",
-        subscription = %subscription,
-        max_attempts = declaration.max_attempts().map(std::num::NonZeroU32::get),
-        dead_letter = declaration.dead_letter(),
-        applied_by = if retry.is_some() { "runtime" } else { "broker" },
-        "retry declaration",
-    );
+    let max_attempts = declaration.max_attempts().map(NonZeroU32::get);
+    if retry.is_some() {
+        info!(
+            target: "ruststream::retry",
+            subscription = %subscription,
+            max_attempts,
+            dead_letter = declaration.dead_letter(),
+            applied_by = "runtime",
+            "retry declaration; a cap applies to the copies this process publishes, and to a \
+             native delayed redelivery only through the broker's own delivery count",
+        );
+    } else {
+        info!(
+            target: "ruststream::retry",
+            subscription = %subscription,
+            max_attempts,
+            dead_letter = declaration.dead_letter(),
+            applied_by = "broker",
+            "retry declaration; the broker moves a spent delivery itself and applies it",
+        );
+    }
 }
 
 /// The delivery context for a subscriber mounted without a source: nothing describes where a

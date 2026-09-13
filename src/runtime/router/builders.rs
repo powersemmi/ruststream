@@ -178,6 +178,13 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// leave through. Where the broker applies a delivery limit itself, the subscription
     /// descriptor takes the declaration into its own topology and this process publishes nothing.
     ///
+    /// A broker with native delayed redelivery gets a `retry_after` delay only while the delivery
+    /// is below the cap: the count is read first, and a delivery at the cap goes to the
+    /// dead-letter destination or is rejected rather than coming back. The count read there is the
+    /// broker's own, because the framework's header never increments on a path where the broker
+    /// holds the message itself; a transport with no count of its own leaves that path to the
+    /// subscription descriptor.
+    ///
     /// An immediate [`retry`](crate::runtime::HandlerOutcome::retry) obeys the cap too. On a
     /// transport that counts its own redeliveries it stays the broker's requeue; on one that
     /// counts none the runtime republishes the delivery at once so the count travels with it, so

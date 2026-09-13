@@ -44,17 +44,25 @@ struct Delivered {
     count: u64,
 }
 
-/// How a delivery of one subscription answers
-/// [`IncomingMessage::redelivery_count`](ruststream::IncomingMessage::redelivery_count).
-trait CountMode: Send + Sync + 'static {
+/// What a delivery of one subscription reports about its own redeliveries: whether the transport
+/// can hold it back for a delay, and how many times the broker has already delivered it.
+trait DeliveryShape: Send + Sync + 'static {
+    /// Whether the transport honours a delay of its own
+    /// ([`IncomingMessage::supports_nack_after`](ruststream::IncomingMessage::supports_nack_after)).
+    const HOLDS_BACK: bool;
+
+    /// The broker's own delivery count, read from the header a test plants.
     fn count(headers: &HeaderMap) -> Option<u64>;
 }
 
-/// The transport counts nothing, so the framework's own header carries the count. Most brokers.
+/// The transport counts nothing and holds nothing back, so the framework's own header carries the
+/// count and the runtime publishes the copies. Most brokers.
 #[derive(Debug, Clone, Copy)]
 struct Uncounted;
 
-impl CountMode for Uncounted {
+impl DeliveryShape for Uncounted {
+    const HOLDS_BACK: bool = false;
+
     fn count(_headers: &HeaderMap) -> Option<u64> {
         None
     }
@@ -64,7 +72,9 @@ impl CountMode for Uncounted {
 #[derive(Debug, Clone, Copy)]
 struct Counted;
 
-impl CountMode for Counted {
+impl DeliveryShape for Counted {
+    const HOLDS_BACK: bool = false;
+
     fn count(headers: &HeaderMap) -> Option<u64> {
         headers
             .get_str(DELIVERY_COUNT)
@@ -72,8 +82,21 @@ impl CountMode for Counted {
     }
 }
 
-/// A subscription of a broker that holds no delivery back on its own: one name, and the runtime
-/// publishes whatever copies its retries need.
+/// The transport both holds a delivery back for the delay and counts its own deliveries, the way
+/// `JetStream`, SQS and Pub/Sub do.
+#[derive(Debug, Clone, Copy)]
+struct NativeCounted;
+
+impl DeliveryShape for NativeCounted {
+    const HOLDS_BACK: bool = true;
+
+    fn count(headers: &HeaderMap) -> Option<u64> {
+        Counted::count(headers)
+    }
+}
+
+/// A subscription of a broker whose deliveries this process publishes copies of: one name, and
+/// the shape of a delivery says what the transport does for itself.
 #[derive(Debug, Clone)]
 struct Queue<Mode> {
     name: &'static str,
@@ -89,8 +112,8 @@ impl<Mode> Queue<Mode> {
     }
 }
 
-impl<C: Subscribe, Mode: CountMode> SubscriptionSource<C> for Queue<Mode> {
-    type Subscriber = PlainSubscriber<C::Subscriber, Mode>;
+impl<C: Subscribe, Mode: DeliveryShape> SubscriptionSource<C> for Queue<Mode> {
+    type Subscriber = ShapedSubscriber<C::Subscriber, Mode>;
     type Copies = RuntimeCopies;
 
     fn name(&self) -> &str {
@@ -98,7 +121,7 @@ impl<C: Subscribe, Mode: CountMode> SubscriptionSource<C> for Queue<Mode> {
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
-        Ok(PlainSubscriber {
+        Ok(ShapedSubscriber {
             inner: connected.subscribe(self.name).await?,
             _mode: PhantomData,
         })
@@ -114,19 +137,19 @@ impl<C: Subscribe, Mode: CountMode> SubscriptionSource<C> for Queue<Mode> {
     }
 }
 
-/// The broker's subscriber with its native delayed redelivery taken away.
-struct PlainSubscriber<S, Mode> {
+/// The broker's subscriber, with its deliveries reshaped to the mode the descriptor names.
+struct ShapedSubscriber<S, Mode> {
     inner: S,
     _mode: PhantomData<fn() -> Mode>,
 }
 
-impl<S: Subscriber, Mode: CountMode> Subscriber for PlainSubscriber<S, Mode> {
-    type Message = PlainMessage<S::Message, Mode>;
+impl<S: Subscriber, Mode: DeliveryShape> Subscriber for ShapedSubscriber<S, Mode> {
+    type Message = ShapedMessage<S::Message, Mode>;
     type Error = S::Error;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
         self.inner.stream().map(|item| {
-            item.map(|inner| PlainMessage {
+            item.map(|inner| ShapedMessage {
                 inner,
                 _mode: PhantomData,
             })
@@ -134,14 +157,15 @@ impl<S: Subscriber, Mode: CountMode> Subscriber for PlainSubscriber<S, Mode> {
     }
 }
 
-/// A delivery that settles like the broker's own but keeps the trait default for
-/// `supports_nack_after`, which is what nearly every real broker ships.
-struct PlainMessage<M, Mode> {
+/// A delivery that settles like the broker's own and reports what its mode says: the trait default
+/// for `supports_nack_after`, which is what nearly every real broker ships, or the broker's own
+/// delayed redelivery where the mode keeps it.
+struct ShapedMessage<M, Mode> {
     inner: M,
     _mode: PhantomData<fn() -> Mode>,
 }
 
-impl<M: IncomingMessage, Mode: CountMode> IncomingMessage for PlainMessage<M, Mode> {
+impl<M: IncomingMessage, Mode: DeliveryShape> IncomingMessage for ShapedMessage<M, Mode> {
     fn payload(&self) -> &[u8] {
         self.inner.payload()
     }
@@ -152,6 +176,14 @@ impl<M: IncomingMessage, Mode: CountMode> IncomingMessage for PlainMessage<M, Mo
 
     fn redelivery_count(&self) -> Option<u64> {
         Mode::count(self.inner.headers())
+    }
+
+    fn supports_nack_after(&self) -> bool {
+        Mode::HOLDS_BACK && self.inner.supports_nack_after()
+    }
+
+    async fn nack_after(self, delay: Duration) -> Result<(), AckError> {
+        self.inner.nack_after(delay).await
     }
 
     async fn ack(self) -> Result<(), AckError> {
@@ -511,4 +543,93 @@ async fn the_declaration_reaches_the_descriptor_before_it_subscribes() {
     tb.broker::<MemoryBroker>()
         .subscriber("managed")
         .assert_called_once();
+}
+
+/// A subscription of a broker that holds a delivery back itself and counts its own deliveries.
+#[subscriber(Queue::<NativeCounted>::new("parcels"))]
+async fn never_ready_natively(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    HandlerOutcome::retry_after(RETRY_DELAY)
+}
+
+/// Where the transport holds the delivery back itself, the cap is still read before the delay
+/// reaches it: a delivery the broker has already delivered as many times as the registration
+/// allows goes to the dead-letter destination instead of coming back.
+#[tokio::test(start_paused = true)]
+async fn the_cap_applies_before_a_native_delayed_redelivery() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_natively)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("parcels.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("parcels", &Order { id: 11 }, &Delivered { count: 3 })
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_called_once()
+        .with(&Order { id: 11 });
+
+    // The broker's own timer never got the delivery, so nothing comes back.
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.broker::<MemoryBroker>()
+        .subscriber("parcels")
+        .assert_called_once();
+}
+
+/// The same path with no destination declared: the spent delivery is rejected, and the broker's
+/// own dead-letter policy is what takes it from there.
+#[tokio::test(start_paused = true)]
+async fn a_cap_without_a_destination_rejects_on_the_native_path() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_natively).max_attempts(nonzero!(3u32));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("parcels", &Order { id: 12 }, &Delivered { count: 3 })
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("parcels")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_not_called();
+}
+
+/// Below the cap the delay is the broker's again: it holds the delivery back and brings it round
+/// itself, with no copy published.
+#[tokio::test(start_paused = true)]
+async fn a_native_delayed_redelivery_stands_below_the_cap() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_natively)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("parcels.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("parcels", &Order { id: 13 }, &Delivered { count: 1 })
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("parcels")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_not_called();
 }
