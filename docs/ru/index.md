@@ -48,8 +48,8 @@
 - :material-download: **[Установка](getting-started/installation.md)** - фичи и подключение крейта.
 - :material-rocket-launch: **[Быстрый старт](getting-started/quickstart.md)** - заготовка сервиса через `cargo generate`.
 - :material-school: **[Учебник](getting-started/tutorial.md)** - сборка сервиса шаг за шагом.
-- :material-test-tube: **[Тестирование](guides/testing.md)** - тесты обработчиков прямо в процессе, сервер не нужен.
-- :material-web: **[HTTP-фреймворки](guides/http.md)** - работа рядом с axum и транзакционный outbox.
+- :material-test-tube: **[Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html)** - тесты обработчиков прямо в процессе, сервер не нужен.
+- :material-web: **[HTTP-фреймворки](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server)** - работа рядом с axum и транзакционный outbox.
 - :material-transit-connection-variant: **[Брокеры](brokers/index.md)** - in-memory брокер и крейты брокеров.
 - :material-server-network: **[Авторам брокеров](broker-authors/index.md)** - реализация контракта и прохождение проверок `conformance`.
 

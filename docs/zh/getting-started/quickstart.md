@@ -42,7 +42,7 @@ cargo run -- asyncapi gen
 ```
 
 该命令以 JSON 格式打印 AsyncAPI 文档。输出选项（`-o`、`--yaml`）和文档本身，参见
-[AsyncAPI 指南](../guides/asyncapi.md)。
+[`asyncapi` 模块](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html)。
 
 ## 入口点长什么样
 
@@ -63,5 +63,5 @@ cargo run -- asyncapi gen
 ## 下一步
 
 - 在[教程](tutorial.md)中理解每个部分。
-- 在[订阅者](../guides/subscribers.md)中了解处理器的各种写法。
-- 用 [CLI](../guides/cli.md) 管理服务。
+- 在[订阅者](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers)中了解处理器的各种写法。
+- 用 [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html) 管理服务。

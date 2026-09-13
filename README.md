@@ -180,7 +180,7 @@ tb.broker::<MemoryBroker>()
 ```
 
 Full compiling example: `examples/testing.rs`. See the
-[testing guide](https://powersemmi.github.io/ruststream/latest/guides/testing/).
+[`testing` module](https://docs.rs/ruststream/latest/ruststream/testing/index.html).
 
 ## Project documentation
 

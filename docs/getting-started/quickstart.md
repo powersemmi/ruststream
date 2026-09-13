@@ -43,7 +43,7 @@ cargo run -- asyncapi gen
 ```
 
 The command prints the AsyncAPI document as JSON. The output flags (`-o`, `--yaml`) and the
-document itself are covered in the [AsyncAPI guide](../guides/asyncapi.md).
+document itself are covered in the [`asyncapi` module](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html).
 
 ## What the entry point looks like
 
@@ -64,5 +64,5 @@ You write a function that builds the service; `#[ruststream::app]` turns it into
 ## Next
 
 - Understand each piece in the [tutorial](tutorial.md).
-- Learn the handler forms in [Subscribers](../guides/subscribers.md).
-- Drive everything from the [CLI](../guides/cli.md).
+- Learn the handler forms in [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers).
+- Drive everything from the [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).

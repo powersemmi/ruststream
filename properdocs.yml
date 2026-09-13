@@ -74,10 +74,64 @@ hooks:
 plugins:
   - search
   # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
-  # Pages that moved keep their old URLs alive; extend the map on any future move.
+  # Pages that moved keep their old URLs alive; extend the map on any future move. The guides
+  # moved to docs.rs, where each feature module documents itself, so every old guide URL in
+  # every language lands on the module that took the topic over. `latest` there is the newest
+  # stable release, so the sections appear once the 0.7 line is out of its release candidates.
   - redirects:
       redirect_maps:
         guides/templates.md: broker-authors/templates.md
+        guides/subscribers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers
+        guides/publishing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing
+        guides/routing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing
+        guides/codecs.md: https://docs.rs/ruststream/latest/ruststream/codec/index.html
+        guides/context.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state
+        guides/headers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#typed-headers
+        guides/lifespan.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle
+        guides/middleware.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware
+        guides/failure-policy.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#failure-policy
+        guides/http.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        guides/transactional-outbox.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        guides/logging.md: https://docs.rs/ruststream/latest/ruststream/logging/index.html
+        guides/metrics.md: https://docs.rs/ruststream/latest/ruststream/metrics/index.html
+        guides/opentelemetry.md: https://docs.rs/ruststream/latest/ruststream/otel/index.html
+        guides/asyncapi.md: https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html
+        guides/testing.md: https://docs.rs/ruststream/latest/ruststream/testing/index.html
+        guides/cli.md: https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html
+        ru/guides/subscribers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers
+        ru/guides/publishing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing
+        ru/guides/routing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing
+        ru/guides/codecs.md: https://docs.rs/ruststream/latest/ruststream/codec/index.html
+        ru/guides/context.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state
+        ru/guides/headers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#typed-headers
+        ru/guides/lifespan.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle
+        ru/guides/middleware.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware
+        ru/guides/failure-policy.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#failure-policy
+        ru/guides/http.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        ru/guides/transactional-outbox.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        ru/guides/logging.md: https://docs.rs/ruststream/latest/ruststream/logging/index.html
+        ru/guides/metrics.md: https://docs.rs/ruststream/latest/ruststream/metrics/index.html
+        ru/guides/opentelemetry.md: https://docs.rs/ruststream/latest/ruststream/otel/index.html
+        ru/guides/asyncapi.md: https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html
+        ru/guides/testing.md: https://docs.rs/ruststream/latest/ruststream/testing/index.html
+        ru/guides/cli.md: https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html
+        zh/guides/subscribers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers
+        zh/guides/publishing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing
+        zh/guides/routing.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing
+        zh/guides/codecs.md: https://docs.rs/ruststream/latest/ruststream/codec/index.html
+        zh/guides/context.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state
+        zh/guides/headers.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#typed-headers
+        zh/guides/lifespan.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle
+        zh/guides/middleware.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware
+        zh/guides/failure-policy.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#failure-policy
+        zh/guides/http.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        zh/guides/transactional-outbox.md: https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server
+        zh/guides/logging.md: https://docs.rs/ruststream/latest/ruststream/logging/index.html
+        zh/guides/metrics.md: https://docs.rs/ruststream/latest/ruststream/metrics/index.html
+        zh/guides/opentelemetry.md: https://docs.rs/ruststream/latest/ruststream/otel/index.html
+        zh/guides/asyncapi.md: https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html
+        zh/guides/testing.md: https://docs.rs/ruststream/latest/ruststream/testing/index.html
+        zh/guides/cli.md: https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html
   # Each translation is a tree of its own under `docs/<locale>/`, mirroring the English paths.
   # English stays at the docs root: a file outside a locale folder is the default language.
   # The alternative, a `<page>.<locale>.md` suffix beside each original, put a page and its
@@ -104,10 +158,6 @@ plugins:
           nav_translations:
             Home: Главная
             Getting started: Начало работы
-            Writing services: Разработка сервисов
-            Integrations: Интеграции
-            Observability: Наблюдаемость
-            Testing: Тестирование
             Brokers: Брокеры
             Benchmarks: Бенчмарки
             Broker authors: Авторам брокеров
@@ -118,10 +168,6 @@ plugins:
           nav_translations:
             Home: 首页
             Getting started: 快速开始
-            Writing services: 编写服务
-            Integrations: 集成
-            Observability: 可观测性
-            Testing: 测试
             Brokers: Broker
             Benchmarks: 基准测试
             Broker authors: Broker 作者
@@ -145,28 +191,6 @@ nav:
       - getting-started/installation.md
       - getting-started/quickstart.md
       - getting-started/tutorial.md
-  - Writing services:
-      - guides/subscribers.md
-      - guides/publishing.md
-      - guides/routing.md
-      - guides/codecs.md
-      - guides/context.md
-      - guides/headers.md
-      - guides/lifespan.md
-      - guides/middleware.md
-      - guides/failure-policy.md
-  - Integrations:
-      - guides/http.md
-      - guides/transactional-outbox.md
-  - Observability:
-      - guides/logging.md
-      - guides/metrics.md
-      - guides/opentelemetry.md
-      - guides/asyncapi.md
-  - Testing:
-      - guides/testing.md
-  - CLI:
-      - guides/cli.md
   - Brokers:
       - brokers/index.md
       - brokers/memory.md

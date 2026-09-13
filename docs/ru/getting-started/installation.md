@@ -33,13 +33,13 @@ serde = { version = "1", features = ["derive"] }
 | `macros` | ruststream-macros | `#[subscriber]`, `#[ruststream::app]` и derive-макросы (`Outgoing`, `OutSlot`, `OutMessages`, `Deserialized`, `Serialized`, `FromRef`, `MessageInfo`) |
 | `asyncapi` | schemars, serde_norway | генерация AsyncAPI и HTML-просмотрщик |
 | `metrics` | prometheus | middleware и экспортёр Prometheus |
-| `logging` | tracing-subscriber | `ruststream::logging`, цветной консольный логгер ([Логирование](../guides/logging.md)) |
-| `otel` | opentelemetry, opentelemetry-otlp | экспорт трасс и метрик по OTLP и передача trace-context по W3C ([OpenTelemetry](../guides/opentelemetry.md)) |
-| `testing` | inventory | `TestApp` и построители утверждений ([Тестирование](../guides/testing.md)) |
+| `logging` | tracing-subscriber | `ruststream::logging`, цветной консольный логгер ([Логирование](https://docs.rs/ruststream/latest/ruststream/logging/index.html)) |
+| `otel` | opentelemetry, opentelemetry-otlp | экспорт трасс и метрик по OTLP и передача trace-context по W3C ([OpenTelemetry](https://docs.rs/ruststream/latest/ruststream/otel/index.html)) |
+| `testing` | inventory | `TestApp` и построители утверждений ([Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html)) |
 | `conformance` | inventory | обвязка conformance для авторов брокеров |
 | `cli` | clap, anyhow | бинарник `ruststream` |
 
-В сервисе можно включить сразу несколько кодеков (см. [Кодеки](../guides/codecs.md)). Чтобы убрать
+В сервисе можно включить сразу несколько кодеков (см. [Кодеки](https://docs.rs/ruststream/latest/ruststream/codec/index.html)). Чтобы убрать
 встроенный JSON-кодек (например, в крейте брокера, которому нужны только трейты и рантайм),
 отключите фичи по умолчанию:
 
@@ -52,7 +52,7 @@ ruststream = { version = "0.7", default-features = false }
 
 Бинарник `ruststream` поставляется вместе с крейтом за фичей cargo `cli`. Он вызывает `cargo` с
 подкомандами фреймворка (`run`, `asyncapi gen`); установка и команды описаны в
-[руководстве по CLI](../guides/cli.md). Заготовку нового проекта создаёт `cargo generate` по
+модуле [`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html). Заготовку нового проекта создаёт `cargo generate` по
 шаблону, о чём рассказано в [быстром старте](quickstart.md).
 
 ## Конкретные брокеры

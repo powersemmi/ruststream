@@ -114,7 +114,7 @@ use ruststream::memory::prelude::*;
   старой оставшейся позицией. Действует перемотка на один экземпляр подписчика,
   а через дескриптор уже остановленной шины возвращает ошибку `MemoryError::ShutDown`. Внутри
   приложения `MemoryContext` содержит позицию сообщения и `MemorySeeker`, а обработчик читает их по
-  ключам `Position` и `SeekHandle` (см. [Перемотку](../guides/subscribers.md#seeking)). Пакетный
+  ключам `Position` и `SeekHandle` (см. [Перемотку](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#seeking)). Пакетный
   обработчик читает `MemoryBatchContext`: там есть `SeekHandle`, но нет `Position`, потому что пакет
   охватывает много доставок.
 - **Остановка.** `MemoryBroker::connect(self)` даёт `ConnectedMemoryBroker`, а его `shutdown`
@@ -148,10 +148,10 @@ use ruststream::memory::prelude::*;
 
 ## Для тестов
 
-Приложение на `MemoryBroker` вы проверяете обвязкой [`TestApp`](../guides/testing.md): соберите
+Приложение на `MemoryBroker` вы проверяете обвязкой [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html): соберите
 приложение, отдайте его в `TestApp::start`, публикуйте сообщения и проверяйте, какие сообщения
 получили и какие опубликовали обработчики. Полностью приём разобран в разделе
-[Тестирование](../guides/testing.md#unit-testing-a-service-with-testapp).
+[Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples).
 
 На время прогона обвязка записывает всё, что публикует сервис, поэтому проверки `published::<T>(..)`
 читают один и тот же список, на какой бы форме брокера приложение ни было собрано. Вне обвязки чтение

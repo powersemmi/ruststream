@@ -39,7 +39,7 @@ turns it into a subscriber definition named after the function.
     --8<-- "examples/manual/tutorial/orders.rs:order"
     ```
 
-A handler returns a [`HandlerOutcome`](../guides/subscribers.md#acking): an `ack`, or a `nack` that
+A handler returns a [`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): an `ack`, or a `nack` that
 drops or requeues the message. You can return `()` or `Result<(), E>` instead, where `Ok` acks and
 `Err` drops.
 
@@ -65,7 +65,7 @@ doc comment becomes the message description there. You need no extra dependency 
     `include` decodes with the default codec, so it needs no codec argument. The default is `json`
     when the feature is enabled, otherwise `cbor`, otherwise `msgpack`. You can set one codec for
     all the broker's handlers at once with `with_broker_codec(broker, codec, |b| ...)`. See
-    [Codecs](../guides/codecs.md) for the full resolution rules.
+    [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html) for the full resolution rules.
 
 Run it:
 
@@ -106,12 +106,12 @@ default publish policy and encoded with the default codec.
     ```
 
 Publishing from inside a handler and the other ways to publish are in
-[Publishing & replies](../guides/publishing.md).
+[Publishing & replies](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing).
 
 ## 5. Organize with a router
 
 As the number of handlers grows, keep them in their own module and collect them into a
-[`Router`](../guides/routing.md):
+[`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing):
 
 === "Macros"
 
@@ -128,7 +128,7 @@ As the number of handlers grows, keep them in their own module and collect them 
 `include` adds a plain handler to the router directly. A handler that publishes a reply hands back
 a mount chain instead: `.out_reply(..)` names the reply's publish policy, and `.build()` finishes
 the registration. Without `.out_reply(..)`, `.build()` takes the broker's default publish policy -
-the same one `include` took in step 4. [Routing](../guides/routing.md) covers the rest of the router
+the same one `include` took in step 4. [Routing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing) covers the rest of the router
 surface.
 
 === "Macros"
@@ -154,7 +154,7 @@ share the `orders` channel and get one operation each, because their subscriptio
 reply adds a `send` operation on `confirmations`.
 
 The document keeps the payload schemas under `components.messages`. The output flags (`-o`,
-`--yaml`) and the document itself are covered in [AsyncAPI](../guides/asyncapi.md).
+`--yaml`) and the document itself are covered in [AsyncAPI](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html).
 
 ## 7. Swap in a real broker
 
@@ -173,7 +173,7 @@ available brokers and the swap for each of them.
 
 ## Next steps
 
-- [Middleware](../guides/middleware.md) - cross-cutting logic around handlers.
-- [Lifespan](../guides/lifespan.md) - shared state and startup/shutdown hooks.
-- [Testing](../guides/testing.md) - test the handlers you just wrote, in-process.
-- [Metrics](../guides/metrics.md) - Prometheus counters and histograms.
+- [Middleware](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware) - cross-cutting logic around handlers.
+- [Lifespan](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle) - shared state and startup/shutdown hooks.
+- [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html) - test the handlers you just wrote, in-process.
+- [Metrics](https://docs.rs/ruststream/latest/ruststream/metrics/index.html) - Prometheus counters and histograms.

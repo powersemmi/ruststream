@@ -16,7 +16,7 @@ ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
 `conformance` feature 会连带引入 `testing`。因此你的 crate 只提供一个 `TestableBroker`，它既用于
-这里的 `run_suite`，也用于用户编写的 [`TestApp`](../guides/testing.md) 测试。
+这里的 `run_suite`，也用于用户编写的 [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) 测试。
 
 ## 路由套件
 

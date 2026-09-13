@@ -565,7 +565,7 @@ bounded by a batch size and an expiry. An empty fetch is retried, so a batch nev
 The Core arm of the same subscriber has no batching at the protocol level, so a batch there is
 whatever the client has already buffered locally, bounded only by the batch size. A broker that
 has neither leaves the capability unimplemented, and its users batch with the client-side
-[`buffered`](../guides/subscribers.md#batch-subscribers) adapter instead.
+[`buffered`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#batches) adapter instead.
 
 `DescribeServer` puts the broker in the generated AsyncAPI document. It is implemented on the
 **unconnected** broker, because the document is generated from a service that has not connected to

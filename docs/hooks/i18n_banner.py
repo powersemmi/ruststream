@@ -39,7 +39,7 @@ def _original_url(page_url: str, locale: str) -> str:
     """Relative URL from a translated page to its English original.
 
     `page_url` is the localized page's URL relative to the site root, so it starts with the
-    locale segment (`ru/guides/routing/`) and the English original is the same URL without
+    locale segment (`ru/getting-started/tutorial/`) and the English original is the same URL without
     that segment. Both are relative to the same root, so climbing out of the localized page's
     directory and walking back down gets there under any deployment prefix.
     """

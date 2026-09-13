@@ -549,7 +549,7 @@ JetStream 的拉取消费者在协议层面就按批取消息，所以 `BatchSub
 模拟出来的批。流里的一项就是一次拉取，由批大小和等待时限限定；拉取为空时会重试，所以批不会是空的。
 同一个订阅者的 Core 分支在协议层面没有批，那里的批就是客户端已经放进本地缓冲的内容，只受大小限制。
 两者都没有的 Broker 会让这项能力保持未实现，用户改用客户端侧的
-[`buffered`](../guides/subscribers.md#batch-subscribers) 适配器。
+[`buffered`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#batches) 适配器。
 
 `DescribeServer` 把该 Broker 写进生成的 AsyncAPI 文档。它实现在**未连接**的 Broker 上，因为文档由
 一个尚未连接的服务生成：该 trait 报告的是配置里的地址。服务端自己宣告的坐标（集群路由、发现到的

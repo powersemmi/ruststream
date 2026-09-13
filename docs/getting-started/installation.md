@@ -32,13 +32,13 @@ are always compiled. Everything else is an additive feature you enable when you 
 | `macros` | `ruststream-macros` | `#[subscriber]`, `#[ruststream::app]`, and the derives (`Outgoing`, `OutSlot`, `OutMessages`, `Deserialized`, `Serialized`, `FromRef`, `MessageInfo`) |
 | `asyncapi` | `schemars`, `serde_norway` | AsyncAPI generation and the HTML viewer |
 | `metrics` | `prometheus` | Prometheus middleware and exporter |
-| `logging` | `tracing-subscriber` | `ruststream::logging`, a colored console logger ([Logging](../guides/logging.md)) |
-| `otel` | `opentelemetry`, `opentelemetry-otlp` | OTLP export for traces and metrics, and W3C trace-context propagation ([OpenTelemetry](../guides/opentelemetry.md)) |
-| `testing` | `inventory` | `TestApp` and the assertion builders ([Testing](../guides/testing.md)) |
+| `logging` | `tracing-subscriber` | `ruststream::logging`, a colored console logger ([Logging](https://docs.rs/ruststream/latest/ruststream/logging/index.html)) |
+| `otel` | `opentelemetry`, `opentelemetry-otlp` | OTLP export for traces and metrics, and W3C trace-context propagation ([OpenTelemetry](https://docs.rs/ruststream/latest/ruststream/otel/index.html)) |
+| `testing` | `inventory` | `TestApp` and the assertion builders ([Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html)) |
 | `conformance` | `inventory` | the broker-author conformance harness |
 | `cli` | `clap`, `anyhow` | the `ruststream` binary |
 
-You can enable several codecs at once (see [Codecs](../guides/codecs.md)). To drop the bundled JSON
+You can enable several codecs at once (see [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html)). To drop the bundled JSON
 codec (for example in a broker crate that needs only the traits and the runtime), disable the
 default features:
 
@@ -51,7 +51,7 @@ ruststream = { version = "0.7", default-features = false }
 
 The `ruststream` binary ships with the crate behind the `cli` cargo feature. It runs `cargo` with
 the framework's subcommands (`run`, `asyncapi gen`); installation and commands are in the
-[CLI guide](../guides/cli.md). `cargo generate` scaffolds a new project from a template, covered in
+[`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html) module. `cargo generate` scaffolds a new project from a template, covered in
 the [quick start](quickstart.md).
 
 ## Concrete brokers

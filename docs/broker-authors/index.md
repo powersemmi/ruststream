@@ -227,12 +227,12 @@ redelivery - and the policy's settings apply.
 publish through an `Out` slot and hands them back to the test as this type. A service testing your
 broker then asserts on the value your `publish` received, not on the protocol field it became.
 Derive `Debug` and `PartialEq` as well, and the assertion reads `with_options(&YourOptions { .. })`
-([asserting on `Out` slots](../guides/testing.md#asserting-on-out-slots)).
+([asserting on `Out` slots](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)).
 
 `base_headers` is for a constant of the publisher itself: a tenant, a producer name, a schema id
 every message of this handle carries. The builder starts the outgoing headers from that base and
 writes the call site's headers over it key by key, so on a shared key the call site's value stays
-(see [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
+(see [where the headers come from](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)).
 
 `Transaction` names an `Options` of its own and carries the same defaulted `base_headers`. A
 transaction is a publish surface of its own, so it may honour settings the publisher it was opened
@@ -766,7 +766,7 @@ fn _q() {
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
 typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
 key types. A key binds a single field as a handler parameter through the
-[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs, and the
+[`Ctx<K>` extractor](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state). Keys are unit structs, and the
 delivery path carries no type-map and no heap allocation.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
@@ -942,7 +942,7 @@ The transport calls `Coordinator::enqueued` on every enqueue into a subscriber a
 reaction has settled. It routes delayed redeliveries through `Coordinator::schedule_redelivery`.
 
 That one type works with both `TestApp` and the conformance suite. See
-[Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
+[Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html) for the user-facing side, and [Conformance](conformance.md) to
 prove the implementation with `run_suite` and the `lifecycle` ladder check.
 
 ### Writing one you can trust
