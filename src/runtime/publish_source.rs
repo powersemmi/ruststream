@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use std::sync::Mutex;
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi::Bindings;
 use crate::runtime::lifecycle::ConnectedSlot;
 use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy};
 
@@ -221,6 +223,30 @@ where
 
     async fn pair(self, _connected: &C) -> Result<Self::Live, PairError> {
         pair_bound::<B2, S>(&self.slot, self.source).await
+    }
+
+    // The token's channel is the other broker's, so what describes it is the policy bound to
+    // that broker rather than the scope the token was included in. The channel's `servers` list
+    // is the one thing that does not follow: it names the scope's server, because the
+    // registration's label is what the runtime knows.
+    #[cfg(feature = "asyncapi")]
+    fn channel_bindings(&self) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::channel_bindings(&self.source)
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn operation_bindings(&self) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::operation_bindings(&self.source)
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn message_bindings(&self) -> Bindings {
+        <S as PublishPolicy<Connected<B2>>>::message_bindings(&self.source)
+    }
+
+    #[cfg(feature = "asyncapi")]
+    fn reply_address_location(&self) -> Option<&'static str> {
+        <S as PublishPolicy<Connected<B2>>>::reply_address_location(&self.source)
     }
 }
 

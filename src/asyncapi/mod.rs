@@ -21,7 +21,7 @@ use tracing::warn;
 mod bindings;
 mod viewer;
 
-pub use bindings::{Binding, BindingError, Bindings, SubscriptionBindings};
+pub use bindings::{Binding, BindingError, Bindings, PublishBindings, SubscriptionBindings};
 pub use viewer::{ViewerOptions, render_viewer_html};
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
@@ -178,7 +178,11 @@ pub struct Channel {
     /// The channel address (the broker name / subject). A templated address keeps its
     /// `{placeholder}` segments, and every one of them is declared in
     /// [`parameters`](Self::parameters).
-    pub address: String,
+    ///
+    /// `None` - rendered as `null`, which the specification reads as "decided at runtime" - on
+    /// the reply channel of a registration whose transform names the destination per delivery.
+    /// The operation's `reply.address.location` then says where a client reads it.
+    pub address: Option<String>,
     /// Messages on this channel, keyed by message name, referencing component definitions.
     pub messages: BTreeMap<String, Reference>,
     /// The address's parameters, one per `{placeholder}` segment; empty (and omitted) for a
@@ -250,10 +254,59 @@ pub struct Operation {
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct OperationReply {
+    /// Where the reply goes when the registration decides that per delivery, as a runtime
+    /// expression. Absent where the reply goes to the channel's own address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<ReplyAddress>,
     /// Reference to the channel the reply is published to.
     pub channel: Reference,
     /// The messages the reply carries.
     pub messages: Vec<Reference>,
+}
+
+/// Where a client finds the address a reply is published to: the `AsyncAPI` operation reply
+/// address object.
+///
+/// Filled from the publish policy's
+/// [`reply_address_location`](crate::PublishPolicy::reply_address_location), which a broker
+/// answers with the header carrying the address (`$message.header#/reply-to`).
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::asyncapi::ReplyAddress;
+///
+/// let address = ReplyAddress::new("$message.header#/reply-to");
+/// let json = serde_json::to_string(&address)?;
+///
+/// assert_eq!(json, r#"{"location":"$message.header#/reply-to"}"#);
+/// # Ok::<_, serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
+pub struct ReplyAddress {
+    /// The runtime expression naming the address, per the specification's grammar.
+    pub location: String,
+}
+
+impl ReplyAddress {
+    /// The address a reply is published to, as a runtime expression.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::asyncapi::ReplyAddress;
+    ///
+    /// let address = ReplyAddress::new("$message.header#/reply-to");
+    ///
+    /// assert_eq!(address.location, "$message.header#/reply-to");
+    /// ```
+    #[must_use]
+    pub fn new(location: impl Into<String>) -> Self {
+        Self {
+            location: location.into(),
+        }
+    }
 }
 
 /// What a registration declared about retrying a failed delivery, rendered under
@@ -409,6 +462,7 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
             .map(|outgoing| {
                 let refs = add_outgoing(outgoing, &on_servers, &mut channels, &mut messages);
                 OperationReply {
+                    address: outgoing.reply_address_location.map(ReplyAddress::new),
                     channel: refs.channel_ref(),
                     messages: vec![refs.message_ref()],
                 }
@@ -443,9 +497,7 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
                     reply: None,
                     tags: tags.clone(),
                     retry: None,
-                    // What a publish says about itself is the publish policy's to say, and a
-                    // policy is bound on the mount chain rather than in the declaration.
-                    bindings: Bindings::new(),
+                    bindings: outgoing.bindings.operation.clone(),
                 },
             );
         }
@@ -649,12 +701,15 @@ fn add_receive(
         .unwrap_or_else(|| message_name(handler.input_type));
 
     let channel = channels.entry(name.to_owned()).or_insert_with(|| Channel {
-        address: name.to_owned(),
+        address: Some(name.to_owned()),
         messages: BTreeMap::new(),
         parameters: BTreeMap::new(),
         servers: on_servers.to_vec(),
         bindings: Bindings::new(),
     });
+    // A subscription reads a real address, whatever a publish that reached this channel first
+    // said about its own destination.
+    channel.address = Some(name.to_owned());
     // A channel a publish created first carries no binding: the descriptor that reads it is what
     // describes it, and it may reach the channel second.
     channel.bindings.fill_from(&handler.bindings.channel);
@@ -864,10 +919,15 @@ fn add_outgoing(
     });
     let channel = outgoing.channel.as_ref();
 
-    channels
+    let entry = channels
         .entry(channel.to_owned())
         .or_insert_with(|| Channel {
-            address: channel.to_owned(),
+            // A destination named per delivery has no address to report: the operation's reply
+            // says where a client reads it instead.
+            address: outgoing
+                .reply_address_location
+                .is_none()
+                .then(|| channel.to_owned()),
             messages: BTreeMap::new(),
             // A templated address declares its placeholders, so the document says what the
             // segments are instead of showing an address nothing describes.
@@ -878,12 +938,12 @@ fn add_outgoing(
                 .collect(),
             servers: on_servers.to_vec(),
             bindings: Bindings::new(),
-        })
-        .messages
-        .insert(
-            name.clone(),
-            Reference::new(format!("#/components/messages/{name}")),
-        );
+        });
+    entry.bindings.fill_from(&outgoing.bindings.channel);
+    entry.messages.insert(
+        name.clone(),
+        Reference::new(format!("#/components/messages/{name}")),
+    );
 
     merge_message(
         messages,
@@ -891,14 +951,14 @@ fn add_outgoing(
             name: name.clone(),
             title,
             description,
-            // The media type of what leaves through a publish position is named on the mount
-            // chain, not in the declaration; a message also received somewhere takes it from
-            // the receiving side.
-            content_type: None,
+            // The media type comes from the codec the mount chain bound on this position; a
+            // message also received somewhere contributes the receiving side's too, and the
+            // first contributor wins.
+            content_type: outgoing.content_type.map(str::to_owned),
             payload,
             headers,
             schemaless: outgoing.serialized,
-            bindings: Bindings::new(),
+            bindings: outgoing.bindings.message.clone(),
         },
         channel,
     );

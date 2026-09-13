@@ -863,6 +863,34 @@ an `x-` extension sits at the same level and carries no `bindingVersion`.
 Bindings come from a descriptor, so a subscription opened by bare name carries none: there is
 nothing bound to it to describe. A broker that wants bindings ships a `SubscriptionSource` type.
 
+Your publish policies fill the same three names on the other side. A reply, an `Out` slot and the
+publisher a dead-lettered delivery leaves through are each a `PublishPolicy`, and each describes
+the channel it publishes to.
+
+```rust
+--8<-- "tests/asyncapi.rs:policy_bindings"
+```
+
+The three rules hold unchanged here. One thing does not carry over: a reply has no `send` operation
+of its own, so `operation_bindings` on a reply's policy reaches no document. A slot and a
+dead-letter destination each have one.
+
+A fourth method belongs to the reply alone. `reply_address_location` is where a client reads the
+address of an answer your broker routes through a reply-to header:
+
+```rust
+--8<-- "tests/asyncapi.rs:reply_address"
+```
+
+The document then reports the reply channel with `address: null` and puts the expression in the
+`receive` operation's `reply.address.location`. It is read only where the mount site composes a
+transform that names the destination per delivery; otherwise the reply goes to the declared name,
+and that is what the document says.
+
+A protocol the specification does not list has no publish-side binding to fill either. The
+in-memory broker is the example: `memory` is not a key, so `MemoryPublish` stays silent rather than
+inventing one.
+
 The hooks are gated on the core's `asyncapi` feature. Forward it from your crate:
 
 ```toml

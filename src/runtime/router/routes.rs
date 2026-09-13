@@ -423,13 +423,15 @@ where
         // The apply-and-push tail: the app's stack wraps through `BlanketLayer::apply`, whose
         // return type cannot be named, so this one step stays here rather than in a helper.
         let handler = global.apply::<SourceMessage<B, S>, Cx, State, H>(self.handler);
+        let mut meta = self.meta;
+        let setup = setup.resolve::<S::Copies, _>(retry_pipeline, &mut meta);
         sink.push_subscribe_workers(
             self.source,
             handler,
-            self.meta,
+            meta,
             self.policies,
             self.workers,
-            setup.resolve::<S::Copies, _>(retry_pipeline),
+            setup,
         );
     }
 }
@@ -461,14 +463,16 @@ where
     {
         // Per-message layers cannot wrap a whole-batch handler, so neither the app-global stack
         // nor the router's own layers apply to batch registrations.
+        let mut meta = self.meta;
+        let setup = setup.resolve::<S::Copies, _>(retry_pipeline, &mut meta);
         sink.push_subscribe_batch::<_, _, Cx>(
             self.source,
             self.handler,
-            self.meta,
+            meta,
             self.policies,
             self.workers,
             self.batch_size,
-            setup.resolve::<S::Copies, _>(retry_pipeline),
+            setup,
         );
     }
 }

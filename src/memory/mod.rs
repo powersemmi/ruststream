@@ -547,6 +547,10 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 /// [`PublishPolicy`] position where a richer broker carries real options (an exchange, a queue
 /// timeout, a transactional id).
 ///
+/// It adds nothing to the generated `AsyncAPI` document. The specification's protocol keys are a
+/// closed list and `memory` is not one of them, so there is no lawful binding to fill; an `x-`
+/// extension would describe a transport that never leaves the process.
+///
 /// # Examples
 ///
 /// ```

@@ -318,6 +318,39 @@ pub struct SubscriptionBindings {
     pub message: Bindings,
 }
 
+/// What one publish position contributes to the document, one set per level.
+///
+/// Assembled by the runtime at mount time from the [`PublishPolicy`](crate::PublishPolicy) bound
+/// on the mount chain - a reply, an [`Out`](crate::runtime::Out) slot, the publisher a dead-lettered
+/// delivery leaves through - and carried in the registration's metadata until the document is
+/// built.
+///
+/// A reply has no `send` operation of its own (it is the `reply` of the operation it answers, and
+/// the specification gives that object no bindings), so on a reply the operation set is dropped
+/// and the channel and message sets apply.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::asyncapi::PublishBindings;
+///
+/// let bindings = PublishBindings::default();
+///
+/// assert!(bindings.channel.is_empty());
+/// assert!(bindings.operation.is_empty());
+/// assert!(bindings.message.is_empty());
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PublishBindings {
+    /// What the policy says about the channel it publishes to.
+    pub channel: Bindings,
+    /// What it says about the `send` operation.
+    pub operation: Bindings,
+    /// What it says about the messages that leave through it.
+    pub message: Bindings,
+}
+
 /// Why a value is not a [`Binding`].
 #[derive(Debug, Error)]
 #[non_exhaustive]
