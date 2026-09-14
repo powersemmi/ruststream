@@ -195,7 +195,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.87.8
+        uses: taiki-e/install-action@v2.87.11
         with:
           tool: cargo-hack
 
@@ -232,7 +232,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.87.8
+        uses: taiki-e/install-action@v2.87.11
         with:
           tool: cargo-hack
 
@@ -323,7 +323,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.87.8
+        uses: taiki-e/install-action@v2.87.11
         with:
           tool: cargo-llvm-cov
 
@@ -443,7 +443,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-generate
-        uses: taiki-e/install-action@v2.87.8
+        uses: taiki-e/install-action@v2.87.11
         with:
           tool: cargo-generate
 
