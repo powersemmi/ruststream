@@ -198,9 +198,12 @@ destinations ([`NamedCopies`](crate::NamedCopies)) makes the mount site name one
 
 Two steps right after `include` end a message that keeps coming back. `max_attempts(n)`
 counts the deliveries one message gets, and `dead_letter(name)` is where a spent delivery is
-republished as it arrived. A cap without a destination rejects the delivery instead. Where
-the broker moves the delivery itself (a queue with a delivery limit and a dead-letter
-exchange), the declaration reaches the descriptor and `.out_retry(..)` does not compile.
+republished as it arrived. A cap without a destination rejects the delivery instead. The
+count is the broker's own where the transport keeps one and the framework's header where it
+keeps none, never both, and an immediate `retry()` obeys the same cap. Where the broker moves
+the delivery itself (a queue with a delivery limit and a dead-letter exchange), the
+declaration reaches the descriptor, `.out_retry(..)` does not compile, and a `retry()` stays
+the broker's own requeue, cap or no cap.
 
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
