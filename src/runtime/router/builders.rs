@@ -301,6 +301,11 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// registration commits when the statement ends, so there the refusal is the subscription's
     /// at startup.
     ///
+    /// A name given here is a channel the registration sends to, and the generated `AsyncAPI`
+    /// document reports it with a `send` operation. The address a descriptor takes its own
+    /// copies back at is not reported: it is the subscription's own channel, which the document
+    /// already carries.
+    ///
     /// # Examples
     ///
     /// ```no_run

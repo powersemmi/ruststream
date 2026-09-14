@@ -736,8 +736,9 @@ fn every_handler_on_a_shared_channel_gets_its_own_receive_operation() {
     }
 }
 
-/// A registration that names a dead-letter destination publishes to it, so the generated document
-/// reports it as a channel of the service rather than leaving it to a runbook.
+/// A registration that names where a delivery goes - out of attempts, or back after a delay -
+/// publishes there, so the generated document reports it as a channel of the service rather than
+/// leaving it to a runbook.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod dead_letter {
     use super::*;
@@ -787,6 +788,82 @@ mod dead_letter {
         let spec = build_spec(&app);
 
         assert!(!spec.channels.contains_key("orders.dead"));
+    }
+
+    /// Every deferred copy of a delivery goes to the destination the mount site named, which is
+    /// traffic to a channel of the service: a reader sees the channel, the `send` operation and
+    /// the name on the receive operation's retry extension.
+    #[test]
+    fn a_named_retry_destination_is_a_send_operation() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile).out_retry(Publish).to("orders.retry");
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.channels["orders.retry"].address.as_deref(),
+            Some("orders.retry")
+        );
+        assert_eq!(spec.operations["send_orders_orders_retry"].action, "send");
+        let retry = spec.operations["receive_orders"]
+            .retry
+            .as_ref()
+            .expect("a named destination reaches the document");
+        assert_eq!(retry.retry_destination.as_deref(), Some("orders.retry"));
+    }
+
+    /// A subscription that takes its copies back at its own address names nothing, so nothing is
+    /// added: that address is the subscription's channel, which the document already carries.
+    #[test]
+    fn copies_taken_back_at_the_subscriptions_address_add_no_channel() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile).out_retry(Publish);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(spec.channels.len(), 1);
+        assert!(spec.channels.contains_key("orders"));
+        assert!(spec.operations["receive_orders"].retry.is_none());
+    }
+
+    /// The two destinations of one registration are two channels: a delivery coming back after a
+    /// delay and a delivery out of attempts do not go to the same place.
+    #[test]
+    fn a_dead_letter_and_a_named_retry_destination_are_two_channels() {
+        let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(reconcile)
+                    .max_attempts(nonzero!(5u32))
+                    .dead_letter("orders.dead")
+                    .out_retry(Publish)
+                    .to("orders.retry");
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(spec.operations["send_orders_orders_dead"].action, "send");
+        assert_eq!(spec.operations["send_orders_orders_retry"].action, "send");
+        assert_eq!(
+            spec.channels["orders.dead"].address.as_deref(),
+            Some("orders.dead")
+        );
+        assert_eq!(
+            spec.channels["orders.retry"].address.as_deref(),
+            Some("orders.retry")
+        );
+        let retry = spec.operations["receive_orders"]
+            .retry
+            .as_ref()
+            .expect("both destinations reach the document");
+        assert_eq!(retry.dead_letter.as_deref(), Some("orders.dead"));
+        assert_eq!(retry.retry_destination.as_deref(), Some("orders.retry"));
     }
 }
 

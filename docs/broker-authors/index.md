@@ -414,6 +414,10 @@ On NATS `JetStream` a consumer is bound to a stream rather than to a subject, so
 subject that stream is published on, and a descriptor built from the stream name asks the server
 for it. The runtime asks once, at startup, and a `.to(name)` at the mount site overrides it.
 
+A `.to(name)` names a channel the registration sends to, so the generated document reports it with
+a `send` operation. The address you answer with is not reported: it is the subscription's own
+channel, which the document already carries.
+
 `harness::redelivery_address` checks the answer you give: a publish to the reported address must
 arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and
 `harness::lifecycle` covers the rest of the ladder for both.

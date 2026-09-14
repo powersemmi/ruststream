@@ -194,7 +194,9 @@ policy. `.out_retry(policy)` replaces it, and the steps after it are the slot st
 `.codec(..)` and `.transform(..)`. The copy goes where the subscription says it is reached
 again ([`RedeliveryAddressed`](crate::RedeliveryAddressed)). A subscription reading many
 destinations ([`NamedCopies`](crate::NamedCopies)) makes the mount site name one with
-`.to(name)`, or a transform names it per delivery.
+`.to(name)`, or a transform names it per delivery. A name given with `.to(name)` is a channel
+the registration sends to, and the generated document reports it; the address a subscription
+takes its own copies back at is not reported, being the subscription's own channel.
 
 Two steps right after `include` end a message that keeps coming back. `max_attempts(n)`
 counts the deliveries one message gets, and `dead_letter(name)` is where a spent delivery is

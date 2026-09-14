@@ -19,9 +19,7 @@ use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
 use crate::runtime::input::{DecodeWith, Provided};
-use crate::runtime::metadata::{
-    HandlerMetadata, OutgoingKind, OutgoingMessageMetadata, PublishDescription,
-};
+use crate::runtime::metadata::{HandlerMetadata, OutgoingKind, PublishDescription};
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
     FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline, PublishIdentity,
@@ -986,7 +984,7 @@ impl<B, Head, Tail, C, Layers, Pipe, Policy, Transforms, Enc, Dest>
     for Router<B, (Head, Tail), C, Layers, Pipe>
 where
     B: Broker + 'static,
-    Head: RetryOpen + RouteSubscription<B, Context: Send + Sync + 'static>,
+    Head: RetryOpen + RouteMetadata + RouteSubscription<B, Context: Send + Sync + 'static>,
     // The descriptor decides whether there is a publisher of this process's to name at all: where
     // the broker moves the delivery itself, this is the bound that refuses the position and names
     // the descriptor.
@@ -1043,7 +1041,15 @@ where
         // nothing and is dropped; what is kept is the policy and the transforms.
         let (policy, transforms, _codec) = slot.into_parts();
         let policy = <RetryUse<Transforms, Policy, B, Head> as NarrowToUse<Policy>>::narrow(policy);
-        let (head, tail) = self.routes;
+        let (mut head, tail) = self.routes;
+        // A destination named here is traffic to a channel of the service, so the document
+        // reports it the way it reports a dead-letter one. A descriptor that takes its copies
+        // back at its own address names nothing and adds no channel: that address is the
+        // subscription's, which the document already carries.
+        if let Some(destination) = destination.clone() {
+            head.metadata_mut()
+                .declare_copy(destination, OutgoingKind::RetryCopy);
+        }
         Router {
             routes: (
                 RetriedRoute::new(
@@ -1112,12 +1118,8 @@ where
         // A dead-lettered delivery is the registration's input leaving the service, so the
         // document reports it under the input's own schema on the declared channel.
         if let Some(destination) = declaration.dead_letter() {
-            let meta = head.metadata_mut();
-            let entry = OutgoingMessageMetadata::new(destination.to_owned(), meta.input_type)
-                .with_payload_schema(meta.payload_schema.clone())
-                .with_headers_schema(meta.headers_schema.clone())
-                .with_kind(OutgoingKind::DeadLetter);
-            meta.outgoing.push(entry);
+            head.metadata_mut()
+                .declare_copy(destination.to_owned().into(), OutgoingKind::DeadLetter);
         }
         // The declaration itself rides the metadata too: the cap is what the document reports
         // next to the dead-letter channel, and a cap without a destination is still a fact
