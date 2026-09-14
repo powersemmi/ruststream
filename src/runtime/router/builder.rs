@@ -1062,11 +1062,11 @@ where
     }
 }
 
-/// What one bound slot contributes to the document: the destinations its marker declares, and
-/// what its policy and codec say about them. Produced by
+/// What one bound slot contributes to the document: what its policy and codec say about each
+/// destination its marker declares. Produced by
 /// [`OutAttachment::describe`](crate::runtime::OutAttachment) at the commit, before wiring
 /// consumes the attachment.
-pub(super) type SlotDescription = (Vec<Cow<'static, str>>, PublishDescription);
+pub(super) type SlotDescription = Vec<(Cow<'static, str>, PublishDescription)>;
 
 impl<B, Head, Tail, C, Layers, Pipe> Router<B, (Head, Tail), C, Layers, Pipe>
 where
@@ -1076,8 +1076,8 @@ where
     /// commit just added.
     pub(super) fn describing_slots(mut self, slots: &[SlotDescription]) -> Self {
         let meta = self.routes.0.metadata_mut();
-        for (channels, description) in slots {
-            meta.describe_slot(channels, description);
+        for described in slots {
+            meta.describe_slot(described);
         }
         self
     }

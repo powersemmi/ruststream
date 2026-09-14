@@ -264,11 +264,14 @@ where
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         // The reply's own description: the mount chain fixed the codec and the transforms, so
         // what the document says about the reply channel is settled here, once.
-        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
-            &publisher,
-            Some(ReplyCodec::CONTENT_TYPE),
-            <ReplyUse<Transforms, Def::Context, Leaf::Options> as NamesDestination>::NAMES,
-        ));
+        meta.describe_reply(|channel| {
+            PublishDescription::of::<Connected<B>, ReplySource>(
+                &publisher,
+                Some(ReplyCodec::CONTENT_TYPE),
+                <ReplyUse<Transforms, Def::Context, Leaf::Options> as NamesDestination>::NAMES,
+                channel,
+            )
+        });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
@@ -372,9 +375,9 @@ where
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         // A byte-for-byte reply carries its own wire format and no transform stack, so the
         // position names no media type and settles no destination of its own.
-        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
-            &publisher, None, false,
-        ));
+        meta.describe_reply(|channel| {
+            PublishDescription::of::<Connected<B>, ReplySource>(&publisher, None, false, channel)
+        });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown, token| {
@@ -478,11 +481,14 @@ where
         } = self;
         // A batch's replies answer many deliveries at once, so the position never offers a
         // transform the right to name where one goes; what it does fix is the codec.
-        meta.describe_reply(&PublishDescription::of::<Connected<B>, ReplySource>(
-            &publisher,
-            Some(<BatchReply as ReplyPublisher<Def::Context>>::Codec::CONTENT_TYPE),
-            false,
-        ));
+        meta.describe_reply(|channel| {
+            PublishDescription::of::<Connected<B>, ReplySource>(
+                &publisher,
+                Some(<BatchReply as ReplyPublisher<Def::Context>>::Codec::CONTENT_TYPE),
+                false,
+                channel,
+            )
+        });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
