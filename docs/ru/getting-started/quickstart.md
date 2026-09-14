@@ -44,7 +44,7 @@ cargo run -- asyncapi gen
 ```
 
 Команда печатает AsyncAPI-документ в формате JSON. Флаги вывода (`-o`, `--yaml`) и сам документ
-разобраны в [руководстве по AsyncAPI](../guides/asyncapi.md).
+разобраны в [модуле `asyncapi`](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html).
 
 ## Как выглядит точка входа
 
@@ -65,5 +65,5 @@ cargo run -- asyncapi gen
 ## Что дальше
 
 - Разобраться в каждой части по [учебнику](tutorial.md).
-- Изучить формы обработчиков в разделе [Подписчики](../guides/subscribers.md).
-- Управлять сервисом из [CLI](../guides/cli.md).
+- Изучить формы обработчиков в разделе [Подписчики](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers).
+- Управлять сервисом из [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).

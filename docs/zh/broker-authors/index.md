@@ -78,6 +78,11 @@ pub trait Subscribe: ConnectedBroker {
     type Copies: CopyPath;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // 默认实现：用这个名字挂载的注册对自己的重试声明了什么。如果 Broker 有对应的机
+    // 制，就把上限和地址映射到这个名字打开的那条订阅上。
+    fn declare_retry(&self, name: &str, declaration: &RetryDeclaration)
+        -> Result<(), DeclareRetryError>;
 }
 ```
 
@@ -91,8 +96,9 @@ pub trait Subscribe: ConnectedBroker {
 决定：答 `AddressedCopies` 时名字本身就是地址，别的什么也不用写；答 `NamedCopies` 时副本发往哪里
 由挂载处说出来。
 
-订阅名不是发布地址的地方，答 `NamedCopies`。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的
-topic；MQTT 的过滤器读很多 topic。更完整的答案由你自己的描述符给出。
+订阅名不是发布地址的地方，答 `NamedCopies`。MQTT 的主题过滤器就是这样：`devices/+/telemetry` 读每
+台设备的 topic，却一个也没有说出来，于是副本发往哪里由挂载处说出 - 用 `.out_retry(policy).to(name)`
+固定下来，或者用发布变换为每次投递各自命名。只有一个名字还不够的订阅，要用你自己的描述符。
 
 ### `Subscriber`
 
@@ -207,11 +213,11 @@ pub trait Publisher: Send + Sync {
 `Clone` 和 `'static` 是测试套件对这个类型的要求：它把经由 `Out` 槽位的一次发布所带的设置复制一份，
 再以这个类型交回给测试。于是，测试你这个 Broker 的服务断言的是你的 `publish` 收到的值，而不是它
 变成的那个协议字段。再派生 `Debug` 和 `PartialEq`，断言就写成 `with_options(&YourOptions { .. })`
-（见[对 Out 槽位做断言](../guides/testing.md#asserting-on-out-slots)）。
+（见[对 Out 槽位做断言](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)）。
 
 `base_headers` 留给发布者自身的常量：租户、producer 名字、这个句柄每条消息都带的 schema id。构建器以
 这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
-（参见[消息头从哪里来](../guides/publishing.md#where-the-headers-come-from)）。
+（参见[消息头从哪里来](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)）。
 
 `Transaction` 指定自己的 `Options`，也带同样的默认 `base_headers`。事务是一个独立的发布面，所以它
 认可的设置可以和开启它的发布者不同。多数 Broker 在这里写的就是发布者的设置类型。自身没有常量的句
@@ -339,6 +345,16 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 描述符在这里把它们变成拓扑，而且只在两者都声明时才这么做，因为原生的死信策略同时需要上限和地址。
 没有这种机制的描述符保留默认实现，声明改由运行时在重试路径上落实。
 
+用一个光名字挂载的注册声明的是同一件事，而它拿到的描述符是核心的 `Name`，里面没有可以安放声明的拓
+扑。这时改由你的 Broker 在 `Subscribe::declare_retry` 里接住它：时机相同，对象是它即将打开的那个名
+字。在那里按描述符的做法映射它，并且只在两半都声明时才映射。
+
+默认实现接受什么也没声明的注册。只要你的 `type Copies` 说副本由本进程发布，它也接受任何声明：上限
+和地址由运行时落实。在 `BrokerMoves` 的 Broker 上，它在启动时拒绝非空的声明，并报出这条订阅和声明
+该写的地方：再没有别人会落实它，而上限悄悄消失的消息会活过自己的死信策略。光名字能够到的机制，就把
+这个方法实现出来 - Pub/Sub 的死信策略、SQS 的 redrive 策略、Pulsar 消费者的 `DeadLetterPolicy` -
+其余情况不要碰它。
+
 ### 重试副本发往哪里 { #where-a-retry-copy-is-published }
 
 没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
@@ -351,8 +367,9 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
 topic，Redis 上是流的键。
 
-在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API
-问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答案。
+在 NATS `JetStream` 上，消费者绑定的是流而不是 subject，所以答案是这个流所发布的某个 subject，由
+流名构造出来的描述符要向服务端问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答
+案。
 
 `harness::redelivery_address` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条
 订阅。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由 `harness::lifecycle`
@@ -690,7 +707,7 @@ fn _q() {
 
 Broker 有原生的投递元数据（一个分区、一个偏移量、一个流序号）时，把它作为类型化的单条投递上下文
 暴露出来：一个由订阅者指明的 `#[non_exhaustive]` 结构体，外加若干 `ContextField` 键类型。处理器
-按键用 [`Ctx<K>` 提取器](../guides/context.md#per-delivery-context)把单个字段绑定成参数。键是空
+按键用 [`Ctx<K>` 提取器](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state)把单个字段绑定成参数。键是空
 结构体，投递路径上既没有 type-map，也没有堆分配。
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
@@ -785,6 +802,13 @@ SQS 队列的 ARN，都不可能从这里报出来。
 --8<-- "tests/asyncapi.rs:policy_bindings"
 ```
 
+每个方法拿到的，是挂载点解析出来的目的地。回复拿到的是回复类型自己的名字，或者注册上的
+`publish("dest")` 子句；槽位条目拿到的是它自己的名字；死信投递拿到的是 `dead_letter("dlq")` 声明。
+SNS 主题和 SQS 队列由各自绑定里必填的 `name` 指名，这个名字就从这里来：策略持有的是你的 Broker 的
+设置，从来不是目的地。转换逐条投递指定目的地时，通道报不出地址，方法拿到的是挂载点的后备名字。
+
+描述符这一侧没有这个参数：它知道自己描述的是哪个订阅。
+
 那三条规则在这里原样成立。有一点不适用：回复没有自己的 `send` 操作，所以回复策略上的
 `operation_bindings` 到不了文档。槽位和死信目的地各有一个。
 
@@ -846,7 +870,7 @@ asyncapi = ["ruststream/asyncapi"]
 `Coordinator::schedule_redelivery` 去路由。
 
 同一个类型既适用于 `TestApp`，也适用于 conformance 校验套件。面向用户的那一侧参见
-[测试](../guides/testing.md)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
+[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
 转移链检查证明你的实现。
 
 ### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }

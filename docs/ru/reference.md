@@ -1,14 +1,15 @@
 # Справочник API
 
-Полный справочник по Rust API генерирует rustdoc, а публикует его docs.rs. Этот сайт объясняет
-концепции и даёт руководства.
+Полный справочник по Rust API генерирует rustdoc, а публикует его docs.rs. Этот сайт описывает
+установку, учебник, брокеры и контракт для авторов брокеров; каждый модуль с фичей
+документирует себя на docs.rs.
 
 - **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Модули AsyncAPI, метрик и
   conformance видны только в сборке с их фичами:
   [docs.rs/ruststream (все фичи)](https://docs.rs/crate/ruststream/latest/features).
 
 Командная утилита `ruststream` поставляется в том же крейте за фичей `cli`. См.
-[руководство по CLI](guides/cli.md).
+[`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).
 
 ## Локальная сборка справочника
 

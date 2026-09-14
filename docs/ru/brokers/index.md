@@ -117,4 +117,4 @@
 Параметры подключения каждый крейт брокера документирует сам. Если подписке нужны
 специфичные для брокера опции (группы консьюмеров, durable-имена), вы можете указать дескриптор
 этого брокера в атрибуте `#[subscriber(..)]`; см.
-[дескрипторы конкретных брокеров](../guides/subscribers.md#broker-specific-descriptors).
+[дескрипторы конкретных брокеров](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#the-subscription-source).

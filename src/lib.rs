@@ -2,6 +2,58 @@
 //! framework: broker-agnostic traits, message types, codecs, router runtime, and a
 //! conformance harness for broker authors.
 //!
+//! # A service
+//!
+//! A handler is an `async fn` over a decoded payload. The application object mounts it on a
+//! broker, and the attribute writes the `main`:
+//!
+//! ```
+//! # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+//! # mod demo {
+//! use ruststream::memory::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Order {
+//!     id: u64,
+//! }
+//!
+//! #[subscriber("orders")]
+//! async fn handle(order: &Order) -> HandlerOutcome {
+//!     println!("got order {}", order.id);
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! #[ruststream::app]
+//! fn app() -> RustStream {
+//!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+//!         b.include(handle);
+//!     })
+//! }
+//! # }
+//! # fn main() {}
+//! ```
+//!
+//! `cargo run -- run` starts it. The broker here is the in-process one; a real broker is a
+//! crate of its own with the same shape, and its prelude replaces `memory::prelude`.
+//!
+//! # Where things are
+//!
+//! * [`runtime`]: everything a service is made of. Subscribers and what a handler may take,
+//!   replies and `Out` slots, routers, the per-delivery context and the shared state, typed
+//!   headers, lifecycle hooks, middleware, failure policies, running beside another server.
+//! * [`codec`]: how payload bytes become values and back, where a codec is chosen, and the byte
+//!   lanes that need none.
+//! * [`memory`]: the in-process broker, a real broker and the reference implementation.
+//! * [`testing`]: unit-testing a service in process, without a server.
+//! * [`asyncapi`]: the generated document. [`metrics`], [`logging`], [`otel`]: observability.
+//! * [`runtime::cli`]: the generated entry point and the `ruststream` command.
+//! * [`conformance`]: the contract suite a broker crate runs against itself.
+//!
+//! The broker crates document their own descriptors and publish policies. Installation, the
+//! tutorial and the list of brokers are on the site:
+//! <https://powersemmi.github.io/ruststream/>.
+//!
 //! # Cargo features
 //!
 //! The core traits, the [`runtime::RustStream`] application object, middleware, and dispatch are
@@ -79,7 +131,7 @@ pub use capability::{
     Transaction, TransactionalPublisher,
 };
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
-pub use error::AckError;
+pub use error::{AckError, DeclareRetryError};
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
 pub use message::{IncomingMessage, OutgoingMessage, RawMessage};

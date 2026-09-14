@@ -46,8 +46,8 @@ the service, and `cargo run -- asyncapi gen` prints its AsyncAPI document.
 - :material-download: **[Installation](getting-started/installation.md)** - features and crate setup.
 - :material-rocket-launch: **[Quick start](getting-started/quickstart.md)** - scaffold a service with `cargo generate`.
 - :material-school: **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
-- :material-test-tube: **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
-- :material-web: **[HTTP frameworks](guides/http.md)** - run beside axum with a transactional outbox.
+- :material-test-tube: **[Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html)** - test handlers in-process, no server needed.
+- :material-web: **[HTTP frameworks](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server)** - run beside axum with a transactional outbox.
 - :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker and the broker crates.
 - :material-server-network: **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
 

@@ -116,4 +116,4 @@ The examples below differ only in the line that constructs the broker.
 Each broker crate documents its own connection options. When a subscription needs broker-specific
 options (consumer groups, durable names), you can write that broker's descriptor in the
 `#[subscriber(..)]` attribute; see
-[broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors).
+[broker-specific descriptors](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#the-subscription-source).

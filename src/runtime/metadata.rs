@@ -203,7 +203,12 @@ pub(crate) struct PublishDescription {
 }
 
 impl PublishDescription {
-    /// Reads the description off `policy`, against the broker it pairs with.
+    /// Reads the description off `policy`, against the broker it pairs with, for the one channel
+    /// the position publishes to.
+    ///
+    /// `channel` is the destination the mount site resolved, which is what the document reports
+    /// as the channel's address; a position whose transform names the destination per delivery
+    /// reports none, and the mount site's fallback name is what the policy is asked about.
     ///
     /// `names_destination` is what the mount site's transform stack declared: only a position
     /// that names the destination per delivery has a reply address to report, because every
@@ -212,12 +217,13 @@ impl PublishDescription {
         policy: &P,
         content_type: Option<&'static str>,
         names_destination: bool,
+        channel: &str,
     ) -> Self
     where
         C: ConnectedBroker,
         P: PublishPolicy<C> + ?Sized,
     {
-        let _ = (policy, names_destination);
+        let _ = (policy, names_destination, channel);
         #[cfg(not(feature = "asyncapi"))]
         let description = Self {
             content_type,
@@ -230,9 +236,9 @@ impl PublishDescription {
                 .then(|| policy.reply_address_location())
                 .flatten(),
             bindings: PublishBindings {
-                channel: policy.channel_bindings(),
-                operation: policy.operation_bindings(),
-                message: policy.message_bindings(),
+                channel: policy.channel_bindings(channel),
+                operation: policy.operation_bindings(channel),
+                message: policy.message_bindings(channel),
             },
         };
         description
@@ -424,9 +430,13 @@ impl HandlerMetadata {
     }
 
     /// Writes what the reply position's policy says onto the entry the reply declared.
-    pub(crate) fn describe_reply(&mut self, description: &PublishDescription) {
+    ///
+    /// The policy is asked about the destination that entry names, so a broker whose binding
+    /// carries the channel's own name fills it from the mount site rather than from itself.
+    pub(crate) fn describe_reply(&mut self, describe: impl Fn(&str) -> PublishDescription) {
         for entry in &mut self.outgoing {
             if entry.kind == OutgoingKind::Answer {
+                let description = describe(entry.channel.as_ref());
                 description.apply(entry);
             }
         }
@@ -434,13 +444,16 @@ impl HandlerMetadata {
 
     /// Writes what one slot's policy says onto the entries its marker declared, matched by the
     /// destination each entry names.
-    pub(crate) fn describe_slot(
-        &mut self,
-        channels: &[Cow<'static, str>],
-        description: &PublishDescription,
-    ) {
+    ///
+    /// A slot's dictionary names several destinations and one policy answers for each of them,
+    /// so `described` carries the policy's answer per destination.
+    pub(crate) fn describe_slot(&mut self, described: &[(Cow<'static, str>, PublishDescription)]) {
         for entry in &mut self.outgoing {
-            if entry.kind == OutgoingKind::SlotEntry && channels.contains(&entry.channel) {
+            if entry.kind == OutgoingKind::SlotEntry
+                && let Some((_, description)) = described
+                    .iter()
+                    .find(|(channel, _)| *channel == entry.channel)
+            {
                 description.apply(entry);
             }
         }
@@ -450,10 +463,11 @@ impl HandlerMetadata {
     ///
     /// The copy carries the delivery's own bytes, so the media type stays the one the
     /// subscription decodes rather than anything the retry publisher would encode.
-    pub(crate) fn describe_dead_letter(&mut self, description: &PublishDescription) {
+    pub(crate) fn describe_dead_letter(&mut self, describe: impl Fn(&str) -> PublishDescription) {
         let content_type = self.content_type;
         for entry in &mut self.outgoing {
             if entry.kind == OutgoingKind::DeadLetter {
+                let description = describe(entry.channel.as_ref());
                 description.apply(entry);
                 entry.content_type = content_type;
             }

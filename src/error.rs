@@ -34,3 +34,36 @@ pub enum AckError {
     #[error("acknowledgement timed out")]
     Timeout,
 }
+
+/// Errors returned by [`Subscribe::declare_retry`], where a registration mounted by a bare
+/// subscription name declares how its deliveries retry.
+///
+/// [`Subscribe::declare_retry`]: crate::Subscribe::declare_retry
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum DeclareRetryError {
+    /// The broker moves a spent delivery itself and maps no declaration made over a bare name,
+    /// so the cap and the destination would reach nobody.
+    ///
+    /// What the default answers on a [`BrokerMoves`](crate::BrokerMoves) broker. A broker with a
+    /// native mechanism implements the method and answers `Ok` for the subscription it maps the
+    /// declaration onto.
+    #[error(
+        "broker `{broker}` moves a spent delivery itself and maps no retry declaration made over \
+         a bare subscription name, so the cap and the destination declared here reach nobody: \
+         declare the cap and the destination on this broker's own descriptor, which maps them \
+         onto the subscription"
+    )]
+    Unsupported {
+        /// The connected broker that maps no declaration for a bare name.
+        broker: &'static str,
+    },
+
+    /// The broker rejected the declaration: an unknown subscription, a destination its topology
+    /// has no room for, half a declaration where its mechanism needs both halves.
+    ///
+    /// The reason rides the message rather than the cause alone, because a startup refusal is
+    /// read as one line.
+    #[error("broker rejected the retry declaration: {0}")]
+    Broker(#[source] Box<dyn StdError + Send + Sync>),
+}

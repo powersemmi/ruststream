@@ -86,6 +86,12 @@ pub trait Subscribe: ConnectedBroker {
     type Copies: CopyPath;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // Defaulted: what a registration mounted by this name declared about its retries.
+    // Map the cap and the destination onto the subscription the name opens, where the
+    // broker has a mechanism for them.
+    fn declare_retry(&self, name: &str, declaration: &RetryDeclaration)
+        -> Result<(), DeclareRetryError>;
 }
 ```
 
@@ -99,9 +105,11 @@ Opening a subscription and saying where a publish reaches it is all it has to do
 `#[subscriber("orders")]` retries here: with `AddressedCopies` the name is the address and nothing
 else is written, with `NamedCopies` the mount site names where a copy goes.
 
-Answer `NamedCopies` where a subscribe name is not a publish destination. A Google Pub/Sub
-subscription is subscribed to by its own name and published to through its topic, and an MQTT
-filter reads many topics; a descriptor of your own then carries the richer answer.
+Answer `NamedCopies` where a subscribe name is not a publish destination. An MQTT topic filter is
+one: `devices/+/telemetry` reads every device's topic and names none of them, so the mount site
+names where a copy goes, with `.out_retry(policy).to(name)` or a publish transform that names one
+per delivery. A subscription that needs more than a name to exist takes a descriptor of your own
+instead.
 
 ### `Subscriber`
 
@@ -227,12 +235,12 @@ redelivery - and the policy's settings apply.
 publish through an `Out` slot and hands them back to the test as this type. A service testing your
 broker then asserts on the value your `publish` received, not on the protocol field it became.
 Derive `Debug` and `PartialEq` as well, and the assertion reads `with_options(&YourOptions { .. })`
-([asserting on `Out` slots](../guides/testing.md#asserting-on-out-slots)).
+([asserting on `Out` slots](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)).
 
 `base_headers` is for a constant of the publisher itself: a tenant, a producer name, a schema id
 every message of this handle carries. The builder starts the outgoing headers from that base and
 writes the call site's headers over it key by key, so on a shared key the call site's value stays
-(see [where the headers come from](../guides/publishing.md#where-the-headers-come-from)).
+(see [where the headers come from](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)).
 
 `Transaction` names an `Options` of its own and carries the same defaulted `base_headers`. A
 transaction is a publish surface of its own, so it may honour settings the publisher it was opened
@@ -377,6 +385,19 @@ topology there, and only when both are declared, because a native dead-letter po
 limit and the address together. A descriptor without one keeps the default and the runtime applies
 the declaration on the retry path.
 
+A registration mounted by a bare name declares the same thing, and the descriptor it gets is the
+core's `Name`, which carries no topology to put it in. `Subscribe::declare_retry` is where your
+broker takes it instead, at the same point and for the name it is about to open. Map it there the
+way your descriptor does, and only when both halves are declared.
+
+The default accepts a registration that declared nothing. It accepts any declaration where your
+`type Copies` says this process publishes the copies, because the runtime applies the cap and the
+destination itself there. On a `BrokerMoves` broker it refuses a non-empty one at startup, naming
+the subscription and where the declaration belongs: nothing else would apply it, and a message
+whose cap silently went missing outlives its own dead-letter policy. Implement the method where
+the broker has a mechanism a bare name reaches - a Pub/Sub dead-letter policy, an SQS redrive
+policy, a Pulsar `DeadLetterPolicy` - and leave it alone everywhere else.
+
 ### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
@@ -389,9 +410,9 @@ message once the delay is over. An `AddressedCopies` descriptor says where that 
 Answer with the name a publisher bound to your broker uses to reach this subscription again: the
 subject on NATS, the topic on Kafka, the stream key on Redis.
 
-On Google Pub/Sub a subscription and a topic are separate resources, so the answer is the topic the
-subscription is bound to, and the descriptor asks the API for it. The runtime asks once, at
-startup, and a `.to(name)` at the mount site overrides it.
+On NATS `JetStream` a consumer is bound to a stream rather than to a subject, so the answer is a
+subject that stream is published on, and a descriptor built from the stream name asks the server
+for it. The runtime asks once, at startup, and a `.to(name)` at the mount site overrides it.
 
 `harness::redelivery_address` checks the answer you give: a publish to the reported address must
 arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and
@@ -766,7 +787,7 @@ fn _q() {
 A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it as a
 typed per-delivery context: a `#[non_exhaustive]` struct the subscriber names, plus `ContextField`
 key types. A key binds a single field as a handler parameter through the
-[`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs, and the
+[`Ctx<K>` extractor](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state). Keys are unit structs, and the
 delivery path carries no type-map and no heap allocation.
 
 <!-- inline-rust: sketch; the real trait lives in src/field.rs -->
@@ -874,6 +895,16 @@ the channel it publishes to.
 --8<-- "tests/asyncapi.rs:policy_bindings"
 ```
 
+Each hook is handed the destination the mount site resolved. For a reply that is the reply type's
+own name or the registration's `publish("dest")` clause, for a slot entry its own name, for a
+dead-lettered delivery the `dead_letter("dlq")` declaration. An SNS topic and an SQS queue are
+named by the required `name` of their binding, and that name comes from here: a policy holds your
+broker's settings and never a destination. Where a transform names the destination per delivery
+the channel reports no address, and the hook is handed the mount site's fallback name instead.
+
+A descriptor's hooks take no such parameter: a subscription source knows the subscription it
+describes.
+
 The three rules hold unchanged here. One thing does not carry over: a reply has no `send` operation
 of its own, so `operation_bindings` on a reply's policy reaches no document. A slot and a
 dead-letter destination each have one.
@@ -942,7 +973,7 @@ The transport calls `Coordinator::enqueued` on every enqueue into a subscriber a
 reaction has settled. It routes delayed redeliveries through `Coordinator::schedule_redelivery`.
 
 That one type works with both `TestApp` and the conformance suite. See
-[Testing](../guides/testing.md) for the user-facing side, and [Conformance](conformance.md) to
+[Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html) for the user-facing side, and [Conformance](conformance.md) to
 prove the implementation with `run_suite` and the `lifecycle` ladder check.
 
 ### Writing one you can trust

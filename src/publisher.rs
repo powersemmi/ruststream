@@ -209,8 +209,9 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     ///
     /// The publish-side mirror of
     /// [`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings), and
-    /// the same three rules bound it. The value is computed from this policy alone, because the
-    /// document is built before anything connects. A credential never goes in, for the reason
+    /// the same three rules bound it. The value is computed from the policy and the name it is
+    /// handed, because the document is built before anything connects, so a Kafka topic's real
+    /// partition count cannot come from here. A credential never goes in, for the reason
     /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
     /// binding for goes in [`Binding::extension`](crate::asyncapi::Binding::extension).
     ///
@@ -220,6 +221,14 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// it carries, so a cross-broker publish is described by the broker it reaches. The channel's
     /// `servers` list does not follow it: that comes from the label the registration's own broker
     /// was registered under, which is the only broker the runtime can name for a channel.
+    ///
+    /// `channel` is the destination the mount site resolved for that position - the reply type's
+    /// own name or the `publish("dest")` clause, the slot entry's name, the `dead_letter("dlq")`
+    /// declaration - and it is what the document reports as the channel's `address`. An SNS topic
+    /// and an SQS queue are named by their binding's required `name` field, and this is where
+    /// that name comes from: a policy declares a broker's settings and never a destination. Where
+    /// a naming transform decides the destination per delivery, the document reports no address
+    /// and the mount site's fallback name arrives here instead.
     ///
     /// The default says nothing, and a policy that says nothing changes no document.
     ///
@@ -232,38 +241,30 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
-    /// struct AmqpChannel {
-    ///     exchange: Exchange,
-    /// }
-    ///
-    /// #[derive(Serialize)]
-    /// struct Exchange {
+    /// struct SnsChannel {
     ///     name: String,
-    ///     durable: bool,
     /// }
     ///
-    /// # struct RabbitPublish { exchange: String }
-    /// # impl RabbitPublish {
-    /// fn channel_bindings(&self) -> Bindings {
-    ///     let body = AmqpChannel {
-    ///         exchange: Exchange { name: self.exchange.clone(), durable: true },
-    ///     };
+    /// # struct SnsPublish;
+    /// # impl SnsPublish {
+    /// fn channel_bindings(&self, channel: &str) -> Bindings {
+    ///     let body = SnsChannel { name: channel.to_owned() };
     ///     // A binding that fails to build is a binding the document goes without: a broker
     ///     // never holds up a service over a description of itself.
-    ///     match Binding::new("amqp", "0.3.0", &body) {
+    ///     match Binding::new("sns", "0.1.0", &body) {
     ///         Ok(binding) => Bindings::new().with(binding),
     ///         Err(_) => Bindings::new(),
     ///     }
     /// }
     /// # }
-    /// # let policy = RabbitPublish { exchange: "orders".into() };
-    /// # assert!(!policy.channel_bindings().is_empty());
+    /// # assert!(!SnsPublish.channel_bindings("orders").is_empty());
     /// # Ok(())
     /// # }
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    fn channel_bindings(&self) -> Bindings {
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        let _ = channel;
         Bindings::new()
     }
 
@@ -271,7 +272,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     ///
     /// The producer's own settings live here rather than on the channel: a Kafka client id, an
     /// MQTT `QoS`, an SQS delay. The rules of [`channel_bindings`](Self::channel_bindings) apply
-    /// unchanged.
+    /// unchanged, `channel` included: it is the same resolved destination.
     ///
     /// A reply has no `send` operation - it is the `reply` of the operation it answers, and the
     /// specification gives that object no bindings - so what this returns reaches the document
@@ -286,28 +287,41 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
-    /// struct KafkaOperation {
-    ///     #[serde(rename = "clientId")]
-    ///     client_id: String,
+    /// struct SqsOperation {
+    ///     queues: Vec<SqsQueue>,
     /// }
     ///
-    /// let body = KafkaOperation { client_id: "billing".into() };
-    /// let bindings = Bindings::new().with(Binding::new("kafka", "0.5.0", &body)?);
+    /// #[derive(Serialize)]
+    /// struct SqsQueue {
+    ///     name: String,
+    /// }
     ///
-    /// assert!(!bindings.is_empty());
+    /// # struct SqsPublish;
+    /// # impl SqsPublish {
+    /// fn operation_bindings(&self, channel: &str) -> Bindings {
+    ///     let body = SqsOperation { queues: vec![SqsQueue { name: channel.to_owned() }] };
+    ///     match Binding::new("sqs", "0.3.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # assert!(!SqsPublish.operation_bindings("orders").is_empty());
     /// # Ok(())
     /// # }
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    fn operation_bindings(&self) -> Bindings {
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        let _ = channel;
         Bindings::new()
     }
 
     /// What a publish through this policy adds to the messages that leave through it.
     ///
     /// A Kafka record's key schema, a Pub/Sub ordering key. The rules of
-    /// [`channel_bindings`](Self::channel_bindings) apply unchanged.
+    /// [`channel_bindings`](Self::channel_bindings) apply unchanged, `channel` included: it is
+    /// the same resolved destination.
     ///
     /// # Examples
     ///
@@ -323,16 +337,24 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     ///     ordering_key: &'static str,
     /// }
     ///
-    /// let body = GooglePubSubMessage { ordering_key: "tenant" };
-    /// let bindings = Bindings::new().with(Binding::new("googlepubsub", "0.2.0", &body)?);
-    ///
-    /// assert!(!bindings.is_empty());
+    /// # struct PubSubPublish;
+    /// # impl PubSubPublish {
+    /// fn message_bindings(&self, _channel: &str) -> Bindings {
+    ///     let body = GooglePubSubMessage { ordering_key: "tenant" };
+    ///     match Binding::new("googlepubsub", "0.2.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # assert!(!PubSubPublish.message_bindings("orders").is_empty());
     /// # Ok(())
     /// # }
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    fn message_bindings(&self) -> Bindings {
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        let _ = channel;
         Bindings::new()
     }
 

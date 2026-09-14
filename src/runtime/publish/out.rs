@@ -155,18 +155,18 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
     }
 
     #[cfg(feature = "asyncapi")]
-    fn channel_bindings(&self) -> Bindings {
-        self.0.channel_bindings()
+    fn channel_bindings(&self, channel: &str) -> Bindings {
+        self.0.channel_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn operation_bindings(&self) -> Bindings {
-        self.0.operation_bindings()
+    fn operation_bindings(&self, channel: &str) -> Bindings {
+        self.0.operation_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]
-    fn message_bindings(&self) -> Bindings {
-        self.0.message_bindings()
+    fn message_bindings(&self, channel: &str) -> Bindings {
+        self.0.message_bindings(channel)
     }
 
     #[cfg(feature = "asyncapi")]

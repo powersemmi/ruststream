@@ -39,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
     --8<-- "examples/manual/tutorial/orders.rs:order"
     ```
 
-Обработчик возвращает [`HandlerOutcome`](../guides/subscribers.md#acking): либо `ack`, либо `nack`,
+Обработчик возвращает [`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): либо `ack`, либо `nack`,
 который отбрасывает сообщение или возвращает его в очередь. Вместо исхода можно вернуть `()` или
 `Result<(), E>`, где `Ok` подтверждает, а `Err` отбрасывает.
 
@@ -66,7 +66,7 @@ serde = { version = "1", features = ["derive"] }
     умолчанию берётся `json`, если фича включена, иначе `cbor`, иначе `msgpack`. Другой кодек для
     всех обработчиков брокера вы можете задать один раз через
     `with_broker_codec(broker, codec, |b| ...)`. Полные правила выбора - в разделе
-    [Кодеки](../guides/codecs.md).
+    [Кодеки](https://docs.rs/ruststream/latest/ruststream/codec/index.html).
 
 Запустите:
 
@@ -107,12 +107,12 @@ cargo run -- run
     ```
 
 Публикацию изнутри обработчика и остальные способы разбирает раздел
-[Публикация и ответы](../guides/publishing.md).
+[Публикация и ответы](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing).
 
 ## 5. Наведите порядок роутером
 
 Когда обработчиков становится много, держите их в отдельном модуле и собирайте в
-[`Router`](../guides/routing.md):
+[`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing):
 
 === "Макросы"
 
@@ -129,7 +129,7 @@ cargo run -- run
 Обработчик с ответом монтируется на роутер цепочкой: `.out_reply(..)` задаёт политику публикации
 ответа, а `.build()` фиксирует регистрацию. Без `.out_reply(..)` `.build()` берёт ту же политику
 публикации брокера по умолчанию, что и `include` в шаге 4. Остальные возможности роутера разбирает
-раздел [Роутинг](../guides/routing.md).
+раздел [Роутинг](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing).
 
 === "Макросы"
 
@@ -154,7 +154,7 @@ cargo run -- asyncapi gen
 `confirmations` операцию `send`.
 
 Схемы полезных нагрузок документ хранит в `components.messages`. Флаги вывода (`-o`, `--yaml`) и
-сам документ разобраны в [руководстве по AsyncAPI](../guides/asyncapi.md).
+сам документ разобраны в [руководстве по AsyncAPI](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html).
 
 ## 7. Перейдите на настоящий брокер
 
@@ -173,7 +173,7 @@ cargo run -- asyncapi gen
 
 ## Что дальше
 
-- [Middleware](../guides/middleware.md) - сквозная логика вокруг обработчиков.
-- [Жизненный цикл](../guides/lifespan.md) - разделяемое состояние и хуки старта и остановки.
-- [Тестирование](../guides/testing.md) - тесты только что написанных обработчиков прямо в процессе.
-- [Метрики](../guides/metrics.md) - счётчики и гистограммы Prometheus.
+- [Middleware](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#middleware) - сквозная логика вокруг обработчиков.
+- [Жизненный цикл](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#lifecycle) - разделяемое состояние и хуки старта и остановки.
+- [Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html) - тесты только что написанных обработчиков прямо в процессе.
+- [Метрики](https://docs.rs/ruststream/latest/ruststream/metrics/index.html) - счётчики и гистограммы Prometheus.
