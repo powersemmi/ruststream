@@ -22,7 +22,10 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
-use ruststream::memory::{MemoryBroker, MemoryPublish};
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
+    MemoryPublisher, MemorySubscriber,
+};
 use ruststream::runtime::{
     AppInfo, ForReply, HandlerOutcome, Names, Outgoing, PublishContext, PublishTransform,
     RETRY_COUNT_HEADER, Reads, Router, RustStream, State,
@@ -30,8 +33,8 @@ use ruststream::runtime::{
 use ruststream::testing::TestApp;
 use ruststream::{
     AckError, AddressedCopies, BrokerMoves, FromRef, HeaderMap, IncomingMessage, NamedCopies,
-    RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, Subscribe, Subscriber,
-    SubscriptionSource, nonzero, subscriber,
+    OutgoingMessage, Publisher, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration,
+    Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 use serde::Serialize;
 
@@ -54,6 +57,16 @@ struct Routed {
 struct Delivered {
     #[serde(rename = "x-delivery-count")]
     count: u64,
+}
+
+/// Both counts on one delivery, so a test can show which of the two a cap reads: the broker's
+/// own, and the framework's own from the copies published for the message.
+#[derive(Debug, Serialize)]
+struct BothCounts {
+    #[serde(rename = "x-delivery-count")]
+    count: u64,
+    #[serde(rename = "x-ruststream-retry-count")]
+    retries: u64,
 }
 
 /// What a delivery of one subscription reports about its own redeliveries: whether the transport
@@ -724,6 +737,204 @@ async fn a_native_delayed_redelivery_stands_below_the_cap() {
 
     tb.broker::<MemoryBroker>()
         .publish_with_headers("parcels", &Order { id: 13 }, &Delivered { count: 1 })
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("parcels")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("parcels.dead")
+        .assert_not_called();
+}
+
+/// The framework's own count on a delivery, read the way the runtime reads it.
+fn retry_count(headers: &HeaderMap) -> u64 {
+    headers
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// A subscription of a broker whose crate honours a delay itself, by sending a copy of the
+/// delivery round a wait queue: `RabbitMQ`'s `.delay(..)` scheme, where the server counts no
+/// delivery of its own and the crate is what increments the framework's header on the copy.
+#[derive(Debug, Clone)]
+struct WaitQueue {
+    name: &'static str,
+}
+
+impl SubscriptionSource<ConnectedMemoryBroker> for WaitQueue {
+    type Subscriber = WaitQueueSubscriber;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> Result<Self::Subscriber, MemoryError> {
+        Ok(WaitQueueSubscriber {
+            inner: connected.subscribe(self.name).await?,
+            publisher: connected.publisher(),
+            name: self.name,
+        })
+    }
+}
+
+impl RedeliveryAddressed<ConnectedMemoryBroker> for WaitQueue {
+    // One subject is both ends of the bus, so no lookup stands between the descriptor and the
+    // answer.
+    fn redelivery_address(
+        &self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name)))
+    }
+}
+
+/// The broker's subscriber, with the handle its deliveries republish their delayed copies
+/// through.
+struct WaitQueueSubscriber {
+    inner: MemorySubscriber,
+    publisher: MemoryPublisher,
+    name: &'static str,
+}
+
+impl Subscriber for WaitQueueSubscriber {
+    type Message = WaitQueueMessage;
+    type Error = <MemorySubscriber as Subscriber>::Error;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        let publisher = self.publisher.clone();
+        let name = self.name;
+        self.inner.stream().map(move |item| {
+            item.map(|inner| WaitQueueMessage {
+                inner,
+                publisher: publisher.clone(),
+                name,
+            })
+        })
+    }
+}
+
+/// A delivery the transport holds back itself and counts nothing for: its delay is honoured by a
+/// copy that carries the framework's count forward.
+struct WaitQueueMessage {
+    inner: MemoryMessage,
+    publisher: MemoryPublisher,
+    name: &'static str,
+}
+
+impl IncomingMessage for WaitQueueMessage {
+    fn payload(&self) -> &[u8] {
+        self.inner.payload()
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        self.inner.headers()
+    }
+
+    fn redelivery_count(&self) -> Option<u64> {
+        None
+    }
+
+    fn supports_nack_after(&self) -> bool {
+        true
+    }
+
+    /// Sends the copy round the wait queue, with the framework's header incremented, and drops
+    /// the delivery it copies. The copy comes back at once: this suite is about the cap, not
+    /// about the timer, and the copy is published before the original is dropped so the harness
+    /// never sees the reaction go quiet between the two.
+    async fn nack_after(self, _delay: Duration) -> Result<(), AckError> {
+        let mut headers = self.inner.headers().clone();
+        headers.insert(RETRY_COUNT_HEADER, (retry_count(&headers) + 1).to_string());
+        let copy = OutgoingMessage::new(self.name, self.inner.payload()).with_headers(headers);
+        self.publisher
+            .publish(copy, None)
+            .await
+            .expect("the wait queue lost the copy");
+        self.inner.nack(false).await
+    }
+
+    async fn ack(self) -> Result<(), AckError> {
+        self.inner.ack().await
+    }
+
+    async fn nack(self, requeue: bool) -> Result<(), AckError> {
+        self.inner.nack(requeue).await
+    }
+}
+
+/// Never ready while the wait queue keeps bringing the message round, with a window of its own:
+/// past the sixth copy it settles, so a cap that failed to hold shows up as extra deliveries
+/// rather than as an endless reaction.
+#[subscriber(WaitQueue { name: "returns" })]
+async fn never_ready_in_the_wait_queue(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let _ = order.id;
+    if retry_count(ctx.headers()) < 6 {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// A broker that honours the delay by publishing the copy itself counts nothing on the server,
+/// and the cap still holds: the framework's header travels on the copy, and the third delivery is
+/// the last one the cap allows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_cap_applies_where_a_native_delay_counts_through_the_header() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_in_the_wait_queue)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("returns.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 14 })
+        .to("returns")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("returns")
+        .assert_called(3);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("returns.dead")
+        .assert_called_once()
+        .with(&Order { id: 14 });
+}
+
+/// Where the transport counts, that count is the whole answer and the framework's header is not
+/// added to it. A delivery the broker calls its first carries a header worth three copies, and it
+/// is still one attempt against a cap of three: the delay is the broker's, and nothing is
+/// published.
+#[tokio::test(start_paused = true)]
+async fn a_native_count_is_the_only_count() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_natively)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("parcels.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers(
+            "parcels",
+            &Order { id: 15 },
+            &BothCounts {
+                count: 1,
+                retries: 3,
+            },
+        )
         .await
         .expect("publish");
     tb.advance(RETRY_DELAY).await.expect("settle");

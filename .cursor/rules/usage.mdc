@@ -135,11 +135,13 @@ delivery; a registration that names neither is a compile error on a `Router` cha
 start on a scope. Each step is declared once. Below the cap a copy goes back to the subscription; at the cap it goes to
 the dead-letter destination, or the delivery is rejected where none is named. A destination
 declared without a cap takes over every copy. The count is the broker's own where the transport
-keeps one (`IncomingMessage::redelivery_count`), the framework's `x-ruststream-retry-count` header
-otherwise, and an immediate `retry()` obeys the same cap. A broker with native delayed redelivery
-gets the delay only below the cap: the broker's own count is read first, and a delivery at the cap
-is carried away instead of coming back. The generated `AsyncAPI` document reports
-the dead-letter destination as a channel the registration publishes to.
+keeps one (`IncomingMessage::redelivery_count`) and the framework's `x-ruststream-retry-count`
+header otherwise, never both, and an immediate `retry()` obeys the same cap. A broker with native
+delayed redelivery gets the delay only below the cap: the count is read first, and a delivery at
+the cap is carried away instead of coming back - on a transport that counts its own deliveries and
+on one whose crate honours the delay by publishing a copy that carries the header. The generated
+`AsyncAPI` document reports the dead-letter destination as a channel the registration publishes
+to.
 
 ## Post-settle work (`and_after`)
 

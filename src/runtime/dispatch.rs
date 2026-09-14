@@ -38,8 +38,9 @@ use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in
 /// The runtime increments it on every copy of a delivery it publishes, and reads it back where the
 /// transport counts nothing of its own
 /// ([`IncomingMessage::redelivery_count`](crate::IncomingMessage::redelivery_count)): that is what
-/// a registration's [`max_attempts`](super::RouterWith::max_attempts) cap counts there. A handler
-/// can read it too, to tell a first delivery from a redelivery.
+/// a registration's [`max_attempts`](super::RouterWith::max_attempts) cap counts there, on the
+/// runtime's copy path and on a delay a broker crate honours by publishing a copy of its own
+/// alike. A handler can read it too, to tell a first delivery from a redelivery.
 ///
 /// # Examples
 ///
@@ -869,9 +870,10 @@ enum Redelivery<'a> {
 
 /// How many times this message has been delivered, counting this delivery.
 ///
-/// The broker's own count where the transport keeps one, the framework's header otherwise - which
-/// starts absent and is incremented on every copy the runtime publishes, so the first delivery
-/// counts as one either way.
+/// The broker's own count where the transport keeps one, the framework's header otherwise, never
+/// both. A transport that counts its deliveries answers for all of them, the ones a delay or a
+/// requeue brought round included. The header starts absent and is incremented on every copy
+/// published for the delivery, so the first delivery counts as one either way.
 fn attempt_of<M: IncomingMessage>(msg: &M) -> u64 {
     msg.redelivery_count()
         .unwrap_or_else(|| current_retry_count(msg.headers()) + 1)
@@ -973,12 +975,12 @@ where
 ///
 /// When the broker reports native support (`supports_nack_after`), this defers to
 /// [`IncomingMessage::nack_after`] and nothing is published - unless the delivery is already at
-/// the registration's cap. The cap is read first, from the broker's own delivery count
-/// ([`IncomingMessage::redelivery_count`]), because the framework's header never increments on a
-/// path where the broker holds the message itself; a delivery at the cap goes to the declared
-/// dead-letter destination or is rejected, exactly as on the copy path. Where the transport
-/// reports no count of its own there is nothing to read, and the declaration is the subscription
-/// descriptor's to map onto the broker's own mechanism.
+/// the registration's cap. The cap is read first, from the one count the transport has (see
+/// [`attempt_of`]): the broker's own where it keeps one, the framework's header otherwise, never
+/// both. A delivery at the cap goes to the declared dead-letter destination or is rejected,
+/// exactly as on the copy path.
+/// Where the broker moves a spent delivery itself the cap is not read here at all: the
+/// declaration is the subscription descriptor's to map onto the broker's own mechanism.
 ///
 /// Without native support this captures the message, drops the original, and schedules a copy of it
 /// after the delay, with the [`RETRY_COUNT_HEADER`] incremented. The copy goes to the address the
@@ -1021,14 +1023,13 @@ where
 {
     if msg.supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
-        // circle past a cap nothing in this process ever gets to apply. It is read only where the
-        // delivery carries the broker's own count - the framework's header never increments on
-        // this path, so there is nothing else to count with - and only where this process
-        // publishes the subscription's copies: a broker that moves a spent delivery itself
-        // applies the declaration itself.
+        // circle past a cap nothing in this process ever gets to apply. It is read wherever this
+        // process publishes the subscription's copies, because a crate that honours the delay by
+        // republishing the delivery increments the header the cap counts with where the transport
+        // counts nothing; a broker that moves a spent delivery itself applies the declaration
+        // itself.
         if let Some(retry) = delivery.retry.as_ref()
             && delivery.declaration.max_attempts().is_some()
-            && msg.redelivery_count().is_some()
         {
             match redelivery_of(&msg, &delivery.declaration) {
                 Redelivery::DeadLetter { destination, .. } => {

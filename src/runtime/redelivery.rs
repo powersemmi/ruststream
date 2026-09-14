@@ -612,7 +612,8 @@ fn announce<Cx>(
             dead_letter = declaration.dead_letter(),
             applied_by = "runtime",
             "retry declaration; a cap applies to the copies this process publishes, and to a \
-             native delayed redelivery only through the broker's own delivery count",
+             native delayed redelivery through the broker's delivery count where the transport \
+             keeps one and the framework's retry-count header otherwise, never both",
         );
     } else {
         info!(

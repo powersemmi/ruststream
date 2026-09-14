@@ -244,13 +244,15 @@ delivery carried away rather than sent back.
 
 The count is the broker's own where the transport keeps one - JetStream's `num_delivered`, SQS's
 `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt` - and the framework's retry-count header
-otherwise.
+where it keeps none. Never both: a broker that counts answers for all of its own redeliveries, and
+a delay scheme its count does not grow is the broker's behaviour, stated in the broker's own
+documentation.
 
 A broker with native delayed redelivery gets the delay only while the delivery is below the cap.
 The count is read first, and a delivery at the cap goes to the dead-letter destination, or is
-rejected where none is declared, instead of coming back. The count read there is the broker's own:
-the framework's header never increments on a path where the broker holds the message itself, so a
-transport that counts nothing leaves that path to its subscription descriptor.
+rejected where none is declared, instead of coming back. That holds on both kinds of transport: the
+one that counts its own deliveries, and the one that counts none whose crate sends the delayed copy
+round a wait queue with the header on it.
 
 An immediate `retry()` obeys the same cap. On a transport that counts its own redeliveries it stays
 the broker's requeue; on one that counts none the runtime republishes the delivery at once so the
