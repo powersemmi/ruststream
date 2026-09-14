@@ -78,6 +78,11 @@ pub trait Subscribe: ConnectedBroker {
     type Copies: CopyPath;
 
     async fn subscribe(&self, name: &str) -> Result<Self::Subscriber, Self::Error>;
+
+    // 默认实现：用这个名字挂载的注册对自己的重试声明了什么。如果 Broker 有对应的机
+    // 制，就把上限和地址映射到这个名字打开的那条订阅上。
+    fn declare_retry(&self, name: &str, declaration: &RetryDeclaration)
+        -> Result<(), DeclareRetryError>;
 }
 ```
 
@@ -91,8 +96,9 @@ pub trait Subscribe: ConnectedBroker {
 决定：答 `AddressedCopies` 时名字本身就是地址，别的什么也不用写；答 `NamedCopies` 时副本发往哪里
 由挂载处说出来。
 
-订阅名不是发布地址的地方，答 `NamedCopies`。Google Pub/Sub 的订阅按自己的名字订阅，发布走它背后的
-topic；MQTT 的过滤器读很多 topic。更完整的答案由你自己的描述符给出。
+订阅名不是发布地址的地方，答 `NamedCopies`。MQTT 的主题过滤器就是这样：`devices/+/telemetry` 读每
+台设备的 topic，却一个也没有说出来，于是副本发往哪里由挂载处说出 - 用 `.out_retry(policy).to(name)`
+固定下来，或者用发布变换为每次投递各自命名。只有一个名字还不够的订阅，要用你自己的描述符。
 
 ### `Subscriber`
 
@@ -339,6 +345,16 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 描述符在这里把它们变成拓扑，而且只在两者都声明时才这么做，因为原生的死信策略同时需要上限和地址。
 没有这种机制的描述符保留默认实现，声明改由运行时在重试路径上落实。
 
+用一个光名字挂载的注册声明的是同一件事，而它拿到的描述符是核心的 `Name`，里面没有可以安放声明的拓
+扑。这时改由你的 Broker 在 `Subscribe::declare_retry` 里接住它：时机相同，对象是它即将打开的那个名
+字。在那里按描述符的做法映射它，并且只在两半都声明时才映射。
+
+默认实现接受什么也没声明的注册。只要你的 `type Copies` 说副本由本进程发布，它也接受任何声明：上限
+和地址由运行时落实。在 `BrokerMoves` 的 Broker 上，它在启动时拒绝非空的声明，并报出这条订阅和声明
+该写的地方：再没有别人会落实它，而上限悄悄消失的消息会活过自己的死信策略。光名字能够到的机制，就把
+这个方法实现出来 - Pub/Sub 的死信策略、SQS 的 redrive 策略、Pulsar 消费者的 `DeadLetterPolicy` -
+其余情况不要碰它。
+
 ### 重试副本发往哪里 { #where-a-retry-copy-is-published }
 
 没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
@@ -351,8 +367,9 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
 topic，Redis 上是流的键。
 
-在 Google Pub/Sub 上，订阅和 topic 是两种资源，所以答案是订阅所绑定的那个 topic，描述符要向 API
-问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答案。
+在 NATS `JetStream` 上，消费者绑定的是流而不是 subject，所以答案是这个流所发布的某个 subject，由
+流名构造出来的描述符要向服务端问出来。运行时只在启动时问一次，挂载处的 `.to(name)` 会覆盖这个答
+案。
 
 `harness::redelivery_address` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条
 订阅。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由 `harness::lifecycle`

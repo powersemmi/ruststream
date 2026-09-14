@@ -4,6 +4,7 @@
 //! depends on a capability adds it as a bound, leaving brokers that do not support it free of
 //! emulation cost.
 
+use std::any::type_name;
 use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Duration};
 
 use futures::Stream;
@@ -11,9 +12,10 @@ use futures::Stream;
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
 
+use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
-    Broker, ConnectedBroker, CopyPath, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
-    Subscriber,
+    Broker, ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage,
+    OutgoingMessage, Publisher, RetryDeclaration, Subscriber,
 };
 
 /// A subscriber that delivers messages in batches.
@@ -484,6 +486,60 @@ pub trait Subscribe: ConnectedBroker {
         &self,
         name: &str,
     ) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> + Send;
+
+    /// Takes what a registration mounted by a bare name declared about its retries, before the
+    /// subscription opens.
+    ///
+    /// Called once per registration whose source is the [`Name`](crate::Name) one, with what the
+    /// mount site declared with `max_attempts(..)` and `dead_letter(..)`, at the point a
+    /// descriptor is handed the same through
+    /// [`SubscriptionSource::declare_retry`](crate::SubscriptionSource::declare_retry). A broker
+    /// that applies a delivery limit and a dead-letter destination itself maps them onto the
+    /// subscription `name` opens - a Pub/Sub dead-letter policy, an SQS redrive policy, a Pulsar
+    /// `DeadLetterPolicy` - and only when both are declared, because a native dead-letter policy
+    /// needs the limit and the address together.
+    ///
+    /// The default accepts a registration that declared nothing, and accepts any declaration
+    /// where [`Copies`](Self::Copies) says this process publishes the copies: the runtime applies
+    /// the cap and the destination there. On a [`BrokerMoves`](crate::BrokerMoves) broker it
+    /// refuses a non-empty one, because nothing in this process would apply it and a bare name
+    /// carries nowhere else to declare it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeclareRetryError::Unsupported`] from the default on a
+    /// [`BrokerMoves`](crate::BrokerMoves) broker, and [`DeclareRetryError::Broker`] where an
+    /// implementation of your own rejects the declaration. Either fails the registration at
+    /// startup.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe, nonzero};
+    ///
+    /// fn cap<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
+    ///     let declared = RetryDeclaration::new()
+    ///         .with_max_attempts(nonzero!(5u32))
+    ///         .with_dead_letter("orders.dead");
+    ///     connected.declare_retry("orders", &declared)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    fn declare_retry(
+        &self,
+        name: &str,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        let _ = name;
+        if declaration.declares_nothing() {
+            return Ok(());
+        }
+        // Which arm this is comes from the copy-path type, at compile time. What cannot be
+        // settled there is the name: a bare-name registration carries no descriptor for the mount
+        // site to read an answer off, so a declaration this broker maps nowhere is refused at
+        // startup.
+        <Self::Copies as CopyPathDeclares>::declared_by_name(type_name::<Self>())
+    }
 }
 
 /// How to reach a broker, for the `servers` section of an `AsyncAPI` document.

@@ -20,7 +20,7 @@ use std::{
 
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
-use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
+use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe, Subscriber};
 
 /// Who publishes the copies a subscription's retries are made of, and who names where they go.
 ///
@@ -47,13 +47,39 @@ use crate::{ConnectedBroker, Seekable, Seeker, Subscribe, Subscriber};
 /// ```
 pub trait CopyPath: copy_path::Sealed {}
 
-mod copy_path {
-    /// Keeps the set of copy paths at the three the runtime knows how to act on.
-    pub trait Sealed {}
+pub(crate) mod copy_path {
+    use crate::DeclareRetryError;
 
-    impl Sealed for super::AddressedCopies {}
-    impl Sealed for super::NamedCopies {}
-    impl Sealed for super::BrokerMoves {}
+    /// Keeps the set of copy paths at the three the runtime knows how to act on, and answers for
+    /// each of them what a registration mounted by a bare subscription name may declare on a
+    /// broker that maps no declaration of its own.
+    pub trait Sealed {
+        /// Whether a non-empty retry declaration survives on this copy path when nothing but the
+        /// default takes it.
+        fn declared_by_name(broker: &'static str) -> Result<(), DeclareRetryError>;
+    }
+
+    impl Sealed for super::AddressedCopies {
+        /// The runtime publishes this subscription's copies, so it applies the declaration.
+        fn declared_by_name(_broker: &'static str) -> Result<(), DeclareRetryError> {
+            Ok(())
+        }
+    }
+
+    impl Sealed for super::NamedCopies {
+        /// The same: the mount site names where the copies go, and the runtime publishes them.
+        fn declared_by_name(_broker: &'static str) -> Result<(), DeclareRetryError> {
+            Ok(())
+        }
+    }
+
+    impl Sealed for super::BrokerMoves {
+        /// Nothing in this process moves a spent delivery here, so a declaration nobody maps is a
+        /// declaration nobody applies.
+        fn declared_by_name(broker: &'static str) -> Result<(), DeclareRetryError> {
+            Err(DeclareRetryError::Unsupported { broker })
+        }
+    }
 }
 
 /// The copy path of a subscription whose retries this process publishes, to a destination the
@@ -368,6 +394,48 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     {
         let _ = declaration;
         self
+    }
+
+    /// Carries the registration's declaration to the broker, at the same point and before the
+    /// subscription opens.
+    ///
+    /// A descriptor of your own reads the declaration in [`declare_retry`](Self::declare_retry)
+    /// and turns it into topology there, so it leaves this one at its default, which carries
+    /// nothing. The core's [`Name`] source is the one descriptor that overrides it: a name alone
+    /// says nothing about what a cap and a dead-letter destination mean for the subscription, so
+    /// it hands both to [`Subscribe::declare_retry`], where the broker answers for the name it is
+    /// about to open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeclareRetryError`] when the broker refuses the declaration, which fails the
+    /// registration at startup, naming the subscription.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{ConnectedBroker, DeclareRetryError, RetryDeclaration, SubscriptionSource};
+    ///
+    /// fn declare<C, S>(
+    ///     source: &S,
+    ///     connected: &C,
+    ///     declaration: &RetryDeclaration,
+    /// ) -> Result<(), DeclareRetryError>
+    /// where
+    ///     C: ConnectedBroker,
+    ///     S: SubscriptionSource<C>,
+    /// {
+    ///     source.declare_retry_on(connected, declaration)?;
+    ///     Ok(())
+    /// }
+    /// ```
+    fn declare_retry_on(
+        &self,
+        connected: &C,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        let _ = (connected, declaration);
+        Ok(())
     }
 
     /// What this subscription adds to its channel in the generated `AsyncAPI` document.
@@ -739,6 +807,16 @@ impl<C: Subscribe> SubscriptionSource<C> for Name {
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
         connected.subscribe(&self.0).await
     }
+
+    /// A name carries no topology of its own, so what the registration declared is the broker's
+    /// to take: it answers for the subscription this name opens.
+    fn declare_retry_on(
+        &self,
+        connected: &C,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        connected.declare_retry(&self.0, declaration)
+    }
 }
 
 /// Where the broker says a subscribe name is also a publish destination, the name is the address,
@@ -894,6 +972,16 @@ where
 
     fn declare_retry(self, declaration: &RetryDeclaration) -> Self {
         self.map_inner(|inner| inner.declare_retry(declaration))
+    }
+
+    /// A start position changes where the subscription opens, not what the broker is told about
+    /// its retries.
+    fn declare_retry_on(
+        &self,
+        connected: &C,
+        declaration: &RetryDeclaration,
+    ) -> Result<(), DeclareRetryError> {
+        self.inner.declare_retry_on(connected, declaration)
     }
 
     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
