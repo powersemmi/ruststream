@@ -20,7 +20,6 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(SCRIPTS))
 
 import bench_comment
-from bench_comment import FIGURE, KEY
 
 
 def measured(fixture="bench-summary.json"):
@@ -32,14 +31,18 @@ def rendered(fixture="bench-summary.json", head="1111111aaaaaaa", base="2222222b
 
 
 def charted(text):
-    """The scenario lines of the chart block, without its heading or its allocation lines."""
-    block = text.split("```")[1].strip("\n").splitlines()
-    rows = []
-    for line in block[2:]:
-        if not line.strip():
-            break
-        rows.append(line)
-    return rows
+    """The Mermaid source of the chart, by directive."""
+    block = text.split("```mermaid")[1].split("```")[0].strip("\n").splitlines()
+    drawn = {"kind": block[0].strip()}
+    for line in block[1:]:
+        keyword, _, rest = line.strip().partition(" ")
+        drawn[keyword] = rest.strip()
+    return drawn
+
+
+def series(value):
+    """The numbers of a `bar` or `line` directive."""
+    return [float(number) for number in value.strip("[]").split(",")]
 
 
 def row(text, scenario):
@@ -87,9 +90,10 @@ class Table(unittest.TestCase):
         self.assertIn("there is no total. Gate: pass.", text)
 
     def test_the_chart_reads_worst_move_first(self):
-        """A reader looks at the top of the block and sees what moved most."""
+        """A reader looks at the top of the chart and sees what moved most."""
+        drawn = charted(rendered())
         self.assertEqual(
-            [line.split()[0] for line in charted(rendered())],
+            [key.strip().strip('"') for key in drawn["x-axis"].strip("[]").split(",")],
             [
                 "lane",
                 "out-slot",
@@ -106,44 +110,39 @@ class Table(unittest.TestCase):
             ],
         )
 
-    def test_a_drop_a_rise_and_a_move_too_small_for_a_bar(self):
-        """The sign carries the direction, and a bar is drawn above the run-to-run noise."""
-        drawn = {line.split()[0]: line for line in charted(rendered())}
-        self.assertEqual(drawn["lane"], "lane        -3.0%  " + "#" * 28)
-        self.assertEqual(drawn["out-slot"], "out-slot    +3.0%  " + "#" * 28)
-        self.assertEqual(drawn["json"], "json        -0.5%")
-        self.assertEqual(drawn["batch64"], "batch64      0.0%")
-
-    def test_the_block_is_ascii_so_the_columns_hold(self):
-        """A block element is not single-width in the font GitHub falls back to for it."""
-        block = rendered().split("```")[1]
-        self.assertTrue(block.isascii(), block)
-
-    def test_every_percentage_ends_and_every_bar_starts_at_one_column(self):
-        """The figures read down the block, whatever the name and the size of the move."""
+    def test_a_bar_per_scenario_in_the_order_the_names_are_drawn(self):
+        """The bar and its name are read together, so the two lists move as one."""
         drawn = charted(rendered())
-        self.assertEqual({line.index("%") for line in drawn}, {16})
-        self.assertEqual({line.index("#") for line in drawn if "#" in line}, {19})
+        self.assertEqual(drawn["kind"], "xychart-beta horizontal")
+        self.assertEqual(series(drawn["bar"])[:4], [-3.0, 3.0, -0.5, -0.2])
         self.assertEqual(
-            {len(line) for line in drawn if "#" not in line}, {KEY + FIGURE}
+            len(series(drawn["bar"])), len(drawn["x-axis"].strip("[]").split(","))
         )
 
-    def test_the_bars_are_scaled_to_the_largest_move(self):
-        """The widest bar is the worst scenario, whatever the size of the worst move."""
-        widths = [line.count("#") for line in charted(rendered())]
-        self.assertEqual(max(widths), 28)
-        self.assertEqual([width for width in widths if width], [28, 28])
+    def test_the_axis_carries_zero_and_the_gate(self):
+        """A bar is read against zero, and a range stopping short of the limit hides it."""
+        self.assertEqual(charted(rendered())["y-axis"], '"change, %" -5 --> 5')
 
-    def test_the_heading_names_the_metric_and_the_gate(self):
+    def test_the_axis_reaches_past_the_largest_move(self):
+        """Rounded outwards, so the worst bar is inside the chart rather than on its edge."""
+        self.assertEqual(bench_comment.axis_range([-25.8, -2.3], 2.0), (-30, 5))
+        self.assertEqual(bench_comment.axis_range([0.4], 2.0), (0, 5))
+
+    def test_the_limit_is_drawn_as_a_line_across_the_chart(self):
+        """One value per scenario, all at the limit: a bar past it is over the gate."""
+        drawn = charted(rendered())
+        self.assertEqual(series(drawn["line"]), [2.0] * len(series(drawn["bar"])))
+
+    def test_the_title_names_the_metric_and_the_gate(self):
         """The limit comes from the benchmarks themselves, so it cannot drift from the gate."""
-        self.assertIn(
-            "Instructions per message, head against base (gate 2%):", rendered()
+        self.assertEqual(
+            charted(rendered())["title"],
+            '"Instructions per message, head against base (gate 2%)"',
         )
 
     def test_every_allocation_change_is_named_however_small(self):
         """Allocations are counted, not sampled: a difference is the code, never the run."""
-        block = rendered().split("```")[1]
-        self.assertIn("Allocations:\nout-slot   15.0 -> 17.0", block)
+        self.assertIn("Allocation changes: out-slot 15.0 -> 17.0.", rendered())
 
     def test_a_run_that_allocated_the_same_says_so(self):
         """The line is always there, so its absence never has to be read as an omission."""
@@ -154,7 +153,7 @@ class Table(unittest.TestCase):
         text = rendered()
         self.assertIn("<details>\n<summary>Every scenario</summary>\n\n| Scenario |", text)
         self.assertTrue(text.rstrip().endswith("</details>"))
-        self.assertLess(text.index("Instructions per message"), text.index("<details>"))
+        self.assertLess(text.index("```mermaid"), text.index("<details>"))
 
     def test_the_header_names_both_commits_and_what_the_base_run_was(self):
         """The base is the target branch's library under this pull request's own suite."""

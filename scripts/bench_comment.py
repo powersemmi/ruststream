@@ -15,6 +15,7 @@ scenario is present is the published document's gate, not this one's.
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -237,12 +238,6 @@ def line(cells):
     return "| " + " | ".join(cells) + " |"
 
 
-# What counts as a move worth naming in the summary. Below this an instruction count is the
-# scheduling of the run, not the code: the same binaries measured twice differ by about a percent
-# on the cheapest scenarios.
-NOTABLE = 1.0
-
-
 def percentage(head, base):
     """One total against the other, or nothing where the run cannot say."""
     if head is None or base is None:
@@ -281,16 +276,14 @@ def failing(found):
     ]
 
 
-# The chart is ASCII and nothing else. A block element or an arrow is not single-width in the
-# font GitHub falls back to for it, so a column of them lines up nowhere and the bars come out
-# striped; the sign carries the direction instead. The widest bar is this many cells across.
-BAR = "#"
-CELLS = 28
+# The chart is a Mermaid diagram, which GitHub renders natively in a comment. A drawing made of
+# characters does not survive the renderer: the run of spaces that aligned its columns is
+# collapsed, and the block elements it was drawn with are not single-width in the font that gets
+# them. A diagram is laid out by the renderer instead, so nothing here depends on a font.
+CHART_TITLE = "Instructions per message, head against base"
 
-# The column the short scenario names are written in, and the field the percentage is right
-# aligned in. Every line puts its percentage in the same columns, so the numbers read down.
-KEY = 11
-FIGURE = 6
+# The value axis rounds outwards to a multiple of this, so it reads in steady ticks.
+TICK = 5
 
 
 def gate_percent():
@@ -321,23 +314,7 @@ def moves(found, metric):
     return moved
 
 
-def bars(moved):
-    """One line per scenario: the name, how far it went and which way, and the bar."""
-    widest = max((abs(percent) for _, percent in moved if abs(percent) >= NOTABLE), default=0)
-    lines = []
-    for key, percent in moved:
-        # A sign on a figure that rounds to nothing reads as a typo, not as a direction.
-        shown = f"{percent:+.1f}%" if round(percent, 1) else "0.0%"
-        figure = f"{shown:>{FIGURE}}"
-        if abs(percent) < NOTABLE:
-            lines.append(f"{key:<{KEY}}{figure}")
-            continue
-        cells = max(1, round(abs(percent) / widest * CELLS))
-        lines.append(f"{key:<{KEY}}{figure}  {BAR * cells}")
-    return lines
-
-
-def allocation_lines(found):
+def allocation_line(found):
     """The scenarios whose allocations per message differ from the base at all.
 
     Allocations on the delivery path are counted, not sampled, so any difference is the code and
@@ -351,30 +328,48 @@ def allocation_lines(found):
         head, base = measured["head"]["allocations"], measured["base"]["allocations"]
         if head is None or base is None or head == base:
             continue
-        moved.append(f"{scenario.key:<{KEY}}{base} -> {head}")
+        moved.append(f"{scenario.key} {base} -> {head}")
     if not moved:
-        return ["Allocations: no change."]
-    return ["Allocations:", *moved]
+        return "Allocations: no change."
+    return "Allocation changes: " + "; ".join(moved) + "."
+
+
+def axis_range(values, gate):
+    """The value axis: outwards to a whole tick, and always carrying zero and the limit.
+
+    Zero is what a bar is read against, and a chart whose range stops short of the limit hides
+    the one line a reader is looking for.
+    """
+    span = [*values, 0.0] + ([gate] if gate is not None else [])
+    low = math.floor(min(span) / TICK) * TICK
+    high = math.ceil(max(span) / TICK) * TICK
+    return int(low), int(high)
 
 
 def chart(found):
-    """The drift, drawn: a monospace block a reader takes in without reading a sentence."""
+    """The drift, drawn: one bar per scenario, worst first, against the limit that gates them."""
     moved = moves(found, "instructions")
     if not moved:
         return []
     gate = gate_percent()
-    heading = "Instructions per message, head against base"
-    if gate is not None:
-        heading += f" (gate {gate:g}%)"
-    return [
-        "```",
-        f"{heading}:",
-        "",
-        *bars(moved),
-        "",
-        *allocation_lines(found),
-        "```",
+    title = CHART_TITLE + (f" (gate {gate:g}%)" if gate is not None else "")
+    # `or 0.0` turns a negative zero, which a rounded tiny drop leaves behind, into a plain one.
+    values = [round(percent, 1) or 0.0 for _, percent in moved]
+    low, high = axis_range(values, gate)
+    lines = [
+        "```mermaid",
+        "xychart-beta horizontal",
+        f'    title "{title}"',
+        "    x-axis [" + ", ".join(f'"{key}"' for key, _ in moved) + "]",
+        f'    y-axis "change, %" {low} --> {high}',
+        "    bar [" + ", ".join(f"{value}" for value in values) + "]",
     ]
+    if gate is not None:
+        # A flat series at the limit: a bar past it is over the gate, and the eye finds that
+        # without reading a number.
+        lines.append("    line [" + ", ".join(f"{gate:g}" for _ in values) + "]")
+    lines.append("```")
+    return lines
 
 
 def summary(found):
@@ -391,7 +386,7 @@ def summary(found):
             f"Instructions across the gated scenarios: {instructions} against the base. "
             f"Allocations: {allocations}. Gate: {gate}."
         )
-    return [headline, "", *chart(found)]
+    return [headline, "", *chart(found), "", allocation_line(found)]
 
 
 def comment(found, head, base):
