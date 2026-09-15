@@ -3,7 +3,7 @@
 use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
 
 /// A `serde_json`-based [`Codec`]. Stateless; clone freely.
 #[derive(Debug, Clone, Copy, Default)]
@@ -13,8 +13,9 @@ impl Codec for JsonCodec {
     const CONTENT_TYPE: &'static str = "application/json";
 
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
-        let mut buf = BytesMut::new();
+        // Serialize straight into the BytesMut writer: one buffer, sized once, and no
+        // Vec-to-Bytes hop.
+        let mut buf = BytesMut::with_capacity(ENCODE_CAPACITY);
         serde_json::to_writer((&mut buf).writer(), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))?;
         Ok(buf)

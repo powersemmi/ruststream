@@ -76,7 +76,9 @@ two runs; the cold start is measured on its own, over a single delivery.
 
 Allocations are counted per message, and on the delivery path the figure is zero: once the service
 is running, a message goes from the queue to the handler body without the framework asking the
-allocator for anything. The publish path is not there yet, and the table says so.
+allocator for anything. On the publish path the figure is what the broker takes to own the message
+it is handed, and nothing above it: the framework's column and the hand-written one are the same
+number on every publish scenario in the table.
 
 ## Methodology
 

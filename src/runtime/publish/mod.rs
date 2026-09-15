@@ -23,15 +23,52 @@ pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError
 ///
 /// The [`name`](Self::name) is a [`Cow`]: the macro reply path borrows a string literal
 /// (`reply_name(&self) -> &str`), so the common case carries the destination without an
-/// allocation; a computed name moves in owned. The [`payload`](Self::payload_mut) is a
-/// [`BytesMut`]: codec output moves in directly (no copy), and middleware can still mutate it in
-/// place (for example wrapping it in an envelope). Middleware may change the name, transform the
-/// payload, and enrich the [`headers`](Self::headers_mut) before the message is sent.
+/// allocation; a computed name moves in owned. The payload behaves the same way: codec output
+/// moves in whole, a rebuilt message lends the bytes it was given, and the first
+/// [`payload_mut`](Self::payload_mut) or [`set_payload`](Self::set_payload) is what makes the
+/// buffer this message's own. Middleware may change the name, transform the payload, and enrich
+/// the [`headers`](Self::headers_mut) before the message is sent.
 #[derive(Debug, Clone)]
 pub struct Outgoing<'a> {
     name: Cow<'a, str>,
-    payload: BytesMut,
+    payload: Payload<'a>,
     headers: HeaderMap,
+}
+
+/// An [`Outgoing`] payload: the bytes as they arrived, until something writes to them.
+///
+/// The [`Cow`] of the payload position. A publish whose stages only read it - which every
+/// transform that stamps a header or a setting does - travels on the buffer that is already
+/// there, and the copy happens where a stage actually asks to write.
+#[derive(Debug, Clone)]
+pub(crate) enum Payload<'a> {
+    /// The caller's bytes, valid as long as the message is.
+    Lent(&'a [u8]),
+    /// A buffer of this message's own: codec output, or the copy a write asked for.
+    Owned(BytesMut),
+}
+
+impl Payload<'_> {
+    /// The bytes, wherever they live.
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Lent(bytes) => bytes,
+            Self::Owned(buf) => buf,
+        }
+    }
+
+    /// The buffer, making it this message's own on the first call.
+    fn to_mut(&mut self) -> &mut BytesMut {
+        if let Self::Lent(bytes) = *self {
+            *self = Self::Owned(BytesMut::from(bytes));
+        }
+        match self {
+            Self::Owned(buf) => buf,
+            // The branch above leaves nothing lent, which the borrow checker cannot carry across
+            // this match; `Cow::to_mut` in the standard library is written the same way.
+            Self::Lent(_) => unreachable!(),
+        }
+    }
 }
 
 impl<'a> Outgoing<'a> {
@@ -44,7 +81,17 @@ impl<'a> Outgoing<'a> {
     pub fn new(name: impl Into<Cow<'a, str>>, payload: impl Into<BytesMut>) -> Self {
         Self {
             name: name.into(),
-            payload: payload.into(),
+            payload: Payload::Owned(payload.into()),
+            headers: HeaderMap::new(),
+        }
+    }
+
+    /// The same over bytes the caller keeps alive: what a publish stage rebuilding a message
+    /// starts from, so a message nothing writes to is never copied.
+    pub(crate) fn lending(name: impl Into<Cow<'a, str>>, payload: &'a [u8]) -> Self {
+        Self {
+            name: name.into(),
+            payload: Payload::Lent(payload),
             headers: HeaderMap::new(),
         }
     }
@@ -63,17 +110,19 @@ impl<'a> Outgoing<'a> {
     /// The payload bytes.
     #[must_use]
     pub fn payload(&self) -> &[u8] {
-        &self.payload
+        self.payload.as_slice()
     }
 
     /// The payload bytes, mutably (for envelope wrapping).
+    ///
+    /// A message that is still lending the bytes it was built from copies them here, once.
     pub fn payload_mut(&mut self) -> &mut BytesMut {
-        &mut self.payload
+        self.payload.to_mut()
     }
 
     /// Replaces the payload.
     pub fn set_payload(&mut self, payload: impl Into<BytesMut>) {
-        self.payload = payload.into();
+        self.payload = Payload::Owned(payload.into());
     }
 
     /// The outgoing headers.
@@ -85,6 +134,14 @@ impl<'a> Outgoing<'a> {
     /// The outgoing headers, mutably.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
+    }
+
+    /// The name, the payload and the header map, taken apart.
+    ///
+    /// What the last stage of a publish uses to hand the message on: the map the transforms
+    /// filled travels into the broker's message rather than being cloned into it.
+    pub(crate) fn into_parts(self) -> (Cow<'a, str>, Payload<'a>, HeaderMap) {
+        (self.name, self.payload, self.headers)
     }
 }
 

@@ -3,7 +3,7 @@
 use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
 
 /// A `ciborium`-based [`Codec`]. Stateless; clone freely.
 #[derive(Debug, Clone, Copy, Default)]
@@ -13,8 +13,9 @@ impl Codec for CborCodec {
     const CONTENT_TYPE: &'static str = "application/cbor";
 
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
-        let mut buf = BytesMut::new();
+        // Serialize straight into the BytesMut writer: one buffer, sized once, and no
+        // Vec-to-Bytes hop.
+        let mut buf = BytesMut::with_capacity(ENCODE_CAPACITY);
         ciborium::into_writer(value, (&mut buf).writer())
             .map_err(|err| CodecError::Encode(Box::new(err)))?;
         Ok(buf)

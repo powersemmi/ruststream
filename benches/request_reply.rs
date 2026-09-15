@@ -99,7 +99,7 @@ fn step(payload: &[u8], latch: &Latch) -> Vec<u8> {
     .expect("an encodable reply")
 }
 
-#[library_benchmark(config = common::config(42027))]
+#[library_benchmark(config = common::config(40027))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

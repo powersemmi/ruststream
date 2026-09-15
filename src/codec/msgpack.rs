@@ -3,7 +3,7 @@
 use bytes::{BufMut, BytesMut};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
 
 /// An `rmp-serde`-based [`Codec`]. Stateless; clone freely.
 #[derive(Debug, Clone, Copy, Default)]
@@ -13,8 +13,9 @@ impl Codec for MsgpackCodec {
     const CONTENT_TYPE: &'static str = "application/msgpack";
 
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        // Serialize straight into the BytesMut writer: one buffer, no Vec-to-Bytes hop.
-        let mut buf = BytesMut::new();
+        // Serialize straight into the BytesMut writer: one buffer, sized once, and no
+        // Vec-to-Bytes hop.
+        let mut buf = BytesMut::with_capacity(ENCODE_CAPACITY);
         rmp_serde::encode::write(&mut (&mut buf).writer(), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))?;
         Ok(buf)

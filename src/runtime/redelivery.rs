@@ -15,7 +15,6 @@ use std::future::{Future, ready};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use bytes::BytesMut;
 use thiserror::Error;
 use tokio_util::task::TaskTracker;
 use tracing::info;
@@ -91,20 +90,26 @@ where
         Box::pin(async move {
             // The publisher's own constants sit under the delivery's headers, as they do under
             // any publish through it; the transforms then see the message as it will be sent.
-            let mut out = Outgoing::new(msg.name(), BytesMut::from(msg.payload()));
-            let headers = out.headers_mut();
+            let (name, payload, delivered) = msg.into_parts();
+            let mut out = Outgoing::lending(name, payload);
             if let Some(base) = self.live.base_headers() {
+                let headers = out.headers_mut();
                 for (key, value) in base.iter() {
                     headers.insert(key.to_owned(), value.to_owned());
                 }
-            }
-            for (key, value) in msg.headers().iter() {
-                headers.insert(key.to_owned(), value.to_owned());
+                for (key, value) in delivered.iter() {
+                    headers.insert(key.to_owned(), value.to_owned());
+                }
+            } else {
+                // With nothing to sit over, the delivery's map is the outgoing one.
+                *out.headers_mut() = delivered;
             }
             let mut options: Option<Live::Options> = None;
             self.stack.apply(&mut out, &mut options, cx);
-            let sent =
-                OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
+            // The copy is dead once the leaf has it, so what the transforms wrote moves on rather
+            // than being copied on.
+            let (name, payload, headers) = out.into_parts();
+            let sent = OutgoingMessage::new(&name, payload.as_slice()).with_headers(headers);
             self.pipeline
                 .send(&self.live, sent, options.as_ref())
                 .await

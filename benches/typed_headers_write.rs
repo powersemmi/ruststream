@@ -82,7 +82,7 @@ fn step(message: &MemoryMessage, latch: &Latch) -> Vec<u8> {
     .expect("an encodable event")
 }
 
-#[library_benchmark(config = common::config(32028))]
+#[library_benchmark(config = common::config(30028))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
