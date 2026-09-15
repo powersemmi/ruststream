@@ -27,6 +27,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       dist: ${{ steps.filter.outputs.dist }}
+      bench: ${{ steps.filter.outputs.bench }}
       templates: ${{ steps.filter.outputs.templates }}
     steps:
       - uses: actions/checkout@v7
@@ -51,6 +52,14 @@ jobs:
             dist:
               - 'src/**'
               - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            bench:
+              - 'src/**'
+              - 'crates/**'
+              - 'benches/**'
+              - 'scripts/bench_results.py'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
@@ -409,6 +418,88 @@ jobs:
       - name: Drop the packaging scratch tree
         if: always()
         run: rm -rf target/package
+
+  bench:
+    name: Cost of the code
+    needs: changes
+    if: ${{ needs.changes.outputs.bench == 'true' }}
+    runs-on: ubuntu-latest
+    # A machine-specific `-C target-cpu=native` would make the numbers incomparable and valgrind
+    # abort on instructions it does not model; the empty value is also what `just bench` uses.
+    env:
+      RUSTFLAGS: ""
+      FEATURES: memory,macros,json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # The comparison needs the base commit of the pull request, not just its merge result.
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      # The runner has to match the crate exactly, so the version here moves with the
+      # dev-dependency in Cargo.toml.
+      - name: Install the benchmark runner
+        run: cargo install --locked gungraun-runner --version =0.19.4
+
+      # The baseline: the same benchmark code against the library as it stands on the target
+      # branch. Best effort - a pull request that changes the surface the benchmarks use cannot
+      # build them against the base, and then the run below reports without comparing rather than
+      # failing on something it cannot measure.
+      - name: Measure the merge base
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          git checkout --detach "${{ github.event.pull_request.base.sha }}"
+          git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
+          cargo bench --bench dispatch --bench publishing --features "$FEATURES" -- \
+            --save-baseline=base
+
+      - name: Restore the pull request
+        if: github.event_name == 'pull_request'
+        run: git checkout --force "${{ github.sha }}"
+
+      # Fails on more than two percent more instructions in a gated scenario, and on any
+      # allocation above the count the scenario declares.
+      - name: Measure
+        run: |
+          cargo bench --bench dispatch --bench publishing --features "$FEATURES" -- \
+            ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
+            --output-format=json > bench-summary.json
+
+      # Wall time, printed and never gated.
+      - name: Wall clock
+        run: cargo bench --bench wall_clock --features "$FEATURES"
+
+      # Rebuilds the published document from this run and fails when a scenario disappeared or
+      # collapsed, neither of which the benchmark output itself shows.
+      - name: Check the published results
+        run: |
+          python3 scripts/bench_results.py bench-summary.json bench-results.json | tee table.txt
+          {
+            echo '## Cost of the code'
+            echo
+            echo '```'
+            cat table.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the measurement
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-summary
+          path: bench-summary.json
 
   security:
     name: Security scans
