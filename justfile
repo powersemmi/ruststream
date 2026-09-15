@@ -3,6 +3,11 @@ set dotenv-load := false
 
 export PATH := env("HOME") + "/.cargo/bin:" + env("HOME") + "/.local/bin:" + env("PATH")
 
+# The scenarios that count instructions and allocations, one benchmark file each. The wall-clock
+# one is not in the list: it runs under a different harness, which takes none of the arguments
+# below.
+cost_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy"
+
 default: check
 
 check:
@@ -47,7 +52,7 @@ test:
 # Extra arguments reach the benchmark runner: `just bench --save-baseline=main` records a
 # baseline, `just bench --baseline=main` measures against it.
 bench *ARGS:
-    RUSTFLAGS="" cargo bench --bench dispatch --bench publishing \
+    RUSTFLAGS="" cargo bench {{ cost_benches }} \
         --features memory,macros,json -- --output-format=json {{ ARGS }} \
         > target/bench-summary.json
     RUSTFLAGS="" cargo bench --bench wall_clock --features memory,macros,json

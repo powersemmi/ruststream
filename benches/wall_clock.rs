@@ -1,37 +1,35 @@
-// The harness macros generate the registration items and their paths; the crate's lints are
-// written for the library surface, not for generated benchmark scaffolding.
-#![allow(missing_docs, unused_qualifications, unreachable_pub)]
+// The harness macros generate the group module, its items and the paths between them, and a
+// benchmark function takes its setup value by value because the harness owns the drop; the
+// crate's lints are written for the library surface, not for generated benchmark scaffolding.
+#![allow(
+    missing_docs,
+    unused_qualifications,
+    unreachable_pub,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value
+)]
 //! Wall time per message over the in-process transport, framework against a hand-written loop.
 //!
 //! Informational, never a gate. It shows what an instruction count cannot - caches, branch
 //! prediction, the scheduler - and it is noisy enough on a busy machine that a percent of
-//! difference means nothing. The numbers that gate a change are the ones in `dispatch` and
-//! `publishing`.
+//! difference means nothing. The numbers that gate a change are the ones the other benchmarks
+//! here produce.
 
 mod common;
 
-use std::convert::Infallible;
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES};
+use common::{Latch, MESSAGES, Order, Queue, Service};
 use divan::Bencher;
 use divan::counter::ItemsCount;
 use futures::StreamExt;
+use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublisher, MemorySubscriber};
-use ruststream::runtime::RunningApp;
-use ruststream::{IncomingMessage, OutgoingMessage, Subscriber};
-use serde::{Deserialize, Serialize};
-use tokio::runtime::Runtime;
+use ruststream::{IncomingMessage, Subscriber};
+use serde::Serialize;
 
 fn main() {
     divan::main();
-}
-
-#[derive(Debug, Deserialize)]
-struct Order {
-    id: u64,
-    quantity: u32,
 }
 
 #[derive(Debug, Serialize, Outgoing)]
@@ -42,7 +40,7 @@ struct Confirmation {
 
 #[subscriber("orders")]
 async fn consume(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutcome {
-    black_box(order.id);
+    black_box((order.id, order.quantity));
     ctx.state().arrived();
     HandlerOutcome::ack()
 }
@@ -55,58 +53,25 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
     }
 }
 
-struct Service {
-    runtime: Runtime,
-    latch: Latch,
-    _app: RunningApp,
+fn consuming() -> Service {
+    common::service(MESSAGES, 0, |b| {
+        b.include(consume);
+    })
 }
 
-struct Queue {
-    runtime: Runtime,
-    subscriber: MemorySubscriber,
-    publisher: MemoryPublisher,
-}
-
-fn service(replying: bool) -> Service {
-    let runtime = common::runtime();
-    let latch = Latch::default();
-    let broker = MemoryBroker::new();
-    let state = latch.clone();
-    let app = RustStream::new(AppInfo::new("bench", "0.0.0"))
-        .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(broker.clone(), |b| {
-            if replying {
-                b.include(confirm);
-            } else {
-                b.include(consume);
-            }
-        });
-    let running = runtime.block_on(app.start()).expect("the service starts");
-    latch.expect(MESSAGES);
-    common::fill(&broker.publisher(), &runtime, "orders", MESSAGES, 0);
-    Service {
-        runtime,
-        latch,
-        _app: running,
-    }
+fn replying() -> Service {
+    common::service(MESSAGES, 0, |b| {
+        b.include(confirm);
+    })
 }
 
 fn queue() -> Queue {
-    let runtime = common::runtime();
-    let broker = MemoryBroker::new();
-    let subscriber = broker.subscribe("orders");
-    let publisher = broker.publisher();
-    common::fill(&publisher, &runtime, "orders", MESSAGES, 0);
-    Queue {
-        runtime,
-        subscriber,
-        publisher,
-    }
+    common::queue(MESSAGES, 0)
 }
 
 fn decode_by_hand(message: &MemoryMessage) -> Order {
     let order: Order = serde_json::from_slice(message.payload()).expect("a decodable body");
-    black_box(order.quantity);
+    black_box((order.id, order.quantity));
     order
 }
 
@@ -114,10 +79,8 @@ fn decode_by_hand(message: &MemoryMessage) -> Order {
 fn consume_json(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
-        .with_inputs(|| service(false))
-        .bench_local_values(|service| {
-            service.runtime.block_on(service.latch.drained());
-        });
+        .with_inputs(consuming)
+        .bench_local_values(|app| common::drain(&app));
 }
 
 #[divan::bench]
@@ -145,10 +108,8 @@ fn consume_json_hand(bencher: Bencher) {
 fn reply(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
-        .with_inputs(|| service(true))
-        .bench_local_values(|service| {
-            service.runtime.block_on(service.latch.drained());
-        });
+        .with_inputs(replying)
+        .bench_local_values(|app| common::drain(&app));
 }
 
 #[divan::bench]
@@ -168,11 +129,7 @@ fn reply_hand(bencher: Bencher) {
                     let order = decode_by_hand(&message);
                     let body = serde_json::to_vec(&Confirmation { id: order.id })
                         .expect("an encodable reply");
-                    queue
-                        .publisher
-                        .publish(OutgoingMessage::new("confirmations", &body), None)
-                        .await
-                        .expect("an in-process publish");
+                    common::send_by_hand(&queue.publisher, "confirmations", &body, &[]).await;
                     message.ack().await.expect("the ack");
                 }
             });

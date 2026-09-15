@@ -506,13 +506,61 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
+# One scenario per file, each with the hand-written twin it is compared against; `benches/common`
+# is the shared setup. `just bench` and the CI job name them, so a new file is added in three
+# places and `scripts/bench_results.py` fails loudly when one of them is missed.
 [[bench]]
-name = "dispatch"
+name = "consume_json"
 harness = false
 required-features = ["memory", "json", "macros"]
 
 [[bench]]
-name = "publishing"
+name = "consume_json_kilobyte"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "consume_lane"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "middleware"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "batch"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "reply"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "out_slot"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "typed_headers_write"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "typed_headers_read"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "request_reply"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "retry_copy"
 harness = false
 required-features = ["memory", "json", "macros"]
 

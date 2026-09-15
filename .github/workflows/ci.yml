@@ -429,6 +429,10 @@ jobs:
     env:
       RUSTFLAGS: ""
       FEATURES: memory,macros,json
+      # One benchmark file per scenario; the wall-clock one runs on its own below. Keep the list
+      # in step with the `cost_benches` variable in the justfile.
+      COST_BENCHES: >-
+        --bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy
     steps:
       - uses: actions/checkout@v7
         with:
@@ -462,8 +466,7 @@ jobs:
         run: |
           git checkout --detach "${{ github.event.pull_request.base.sha }}"
           git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
-          cargo bench --bench dispatch --bench publishing --features "$FEATURES" -- \
-            --save-baseline=base
+          cargo bench $COST_BENCHES --features "$FEATURES" -- --save-baseline=base
 
       - name: Restore the pull request
         if: github.event_name == 'pull_request'
@@ -473,7 +476,7 @@ jobs:
       # allocation above the count the scenario declares.
       - name: Measure
         run: |
-          cargo bench --bench dispatch --bench publishing --features "$FEATURES" -- \
+          cargo bench $COST_BENCHES --features "$FEATURES" -- \
             ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
             --output-format=json > bench-summary.json
 

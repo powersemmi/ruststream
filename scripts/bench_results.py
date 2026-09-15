@@ -49,66 +49,67 @@ class Scenario:
         self.note = note
 
 
-# The table, in reading order. Each half names a benchmark as `function/id`.
+# The table, in reading order. Each half names a benchmark as `file/function/id`: one scenario
+# per benchmark file, the framework half in `service` and the hand-written one in `by_hand`.
 SCENARIOS = [
     Scenario(
         "consume, JSON decode into a small struct",
-        "consume_json/small",
-        "consume_json_hand/small",
+        "consume_json/service/small",
+        "consume_json/by_hand/small",
     ),
     Scenario(
         "consume, JSON decode of a 1 KB body",
-        "consume_json/kilobyte",
-        "consume_json_hand/kilobyte",
+        "consume_json_kilobyte/service/kilobyte",
+        "consume_json_kilobyte/by_hand/kilobyte",
     ),
     Scenario(
         "consume on the byte lane, no codec",
-        "consume_lane/bytes",
-        "consume_lane_hand/bytes",
+        "consume_lane/service/bytes",
+        "consume_lane/by_hand/bytes",
     ),
     Scenario(
         "consume through a middleware stack of one",
-        "middleware/one",
-        "consume_json_hand/small",
+        "middleware/service/one",
+        "middleware/by_hand/plain",
     ),
     Scenario(
         "consume through a middleware stack of four",
-        "middleware/four",
-        "consume_json_hand/small",
+        "middleware/service/four",
+        "middleware/by_hand/plain",
     ),
     Scenario(
         "consume in batches of 64",
-        "consume_batch_64/of_64",
-        "consume_batch_64_hand/of_64",
+        "batch/service/of_64",
+        "batch/by_hand/of_64",
     ),
     Scenario(
         "reply, encoded to a declared destination",
-        "reply/json",
-        "reply_hand/json",
+        "reply/service/json",
+        "reply/by_hand/json",
     ),
     Scenario(
         "publish through an Out slot with one transform",
-        "out_slot/one_transform",
-        "out_slot_hand/one_transform",
+        "out_slot/service/one_transform",
+        "out_slot/by_hand/one_transform",
     ),
     Scenario(
         "publish with a typed header contract",
-        "typed_headers_write/write",
-        "typed_headers_write_hand/write",
+        "typed_headers_write/service/write",
+        "typed_headers_write/by_hand/write",
     ),
     Scenario(
         "read a typed header contract, then publish",
-        "typed_headers_read/read",
-        "typed_headers_read_hand/read",
+        "typed_headers_read/service/read",
+        "typed_headers_read/by_hand/read",
     ),
     Scenario(
         "request and reply, one round trip",
-        "request_reply/round_trip",
-        "request_reply_hand/round_trip",
+        "request_reply/service/round_trip",
+        "request_reply/by_hand/round_trip",
     ),
     Scenario(
         "a delivery that asks to be redelivered, and the copy",
-        "retry_copy/once",
+        "retry_copy/service/once",
         None,
         gated=False,
         note="cold path: measured and reported, never gated",
@@ -123,20 +124,27 @@ def metric(summary, tool, name):
         if not metrics or name not in metrics:
             continue
         values = metrics[name]["metrics"]
-        entry = values["Both"][0] if "Both" in values else values["New"]
+        # A benchmark with nothing to compare against - a first run, or one whose baseline was
+        # taken before it existed - reports the new value alone under a different key.
+        entry = values["Both"][0] if "Both" in values else next(iter(values.values()))
         return int(entry["Int"])
     return None
 
 
 def measurements(path):
-    """Every benchmark in the run, keyed by `function/id`."""
+    """Every benchmark in the run, keyed by `file/function/id`.
+
+    The file is part of the key because one scenario per file means the same two function names
+    in every one of them.
+    """
     found = {}
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line:
             continue
         summary = json.loads(line)
-        key = f"{summary['function_name']}/{summary['id']}"
+        scenario = Path(summary["benchmark_file"]).stem
+        key = f"{scenario}/{summary['function_name']}/{summary['id']}"
         found[key] = {
             "instructions": metric(summary, "Callgrind", "Ir"),
             "allocations": metric(summary, "Dhat", "TotalBlocks"),
