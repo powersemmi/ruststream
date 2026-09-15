@@ -30,6 +30,7 @@ import platform
 import re
 import subprocess
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -191,6 +192,35 @@ def cpu_model():
     return platform.processor() or "unknown"
 
 
+# What cargo compiles a release with when the manifest says nothing. The benchmark profile
+# inherits release, so this is where its description starts.
+RELEASE_DEFAULTS = {"opt-level": 3, "lto": False, "codegen-units": 16, "debug": False}
+
+
+def profile():
+    """The profile the benchmarks are built with, as it actually resolves."""
+    manifest = tomllib.loads((REPO / "Cargo.toml").read_text())
+    profiles = manifest.get("profile", {})
+    resolved = dict(RELEASE_DEFAULTS)
+    resolved.update(profiles.get("release", {}))
+    resolved.update(profiles.get("bench", {}))
+    resolved.pop("inherits", None)
+    settings = ", ".join(
+        f"{key} = {str(value).lower() if isinstance(value, bool) else value}"
+        for key, value in resolved.items()
+    )
+    return f"bench, inheriting release ({settings})"
+
+
+def features():
+    """The feature list the benchmarks are built with, read where it is defined."""
+    justfile = (REPO / "justfile").read_text()
+    match = re.search(r'^bench_features := "([^"]+)"', justfile, re.MULTILINE)
+    if not match:
+        sys.exit("cannot read bench_features from the justfile")
+    return f"--no-default-features --features {match.group(1)}"
+
+
 def environment():
     valgrind = command("valgrind", "--version")
     cores = command("nproc")
@@ -199,7 +229,8 @@ def environment():
         "os": f"{platform.system()} {platform.release()}",
         "rustc": command("rustc", "--version").split()[1],
         "valgrind": valgrind.removeprefix("valgrind-"),
-        "profile": "bench (release), default codegen flags",
+        "profile": profile(),
+        "features": features(),
         "rustflags": "",
     }
 

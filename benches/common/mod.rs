@@ -519,3 +519,11 @@ pub async fn send_by_hand(
         .await
         .expect("an in-process publish");
 }
+
+// A benchmark measures what ships. With the harness feature on, every delivery records what the
+// handler saw and every handler call runs inside a task-local scope, so a number taken with it
+// compiled in is not the production path.
+#[cfg(feature = "testing")]
+compile_error!(
+    "benchmarks must be built without the `testing` feature; run them through `just bench`"
+);

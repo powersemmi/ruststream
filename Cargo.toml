@@ -589,6 +589,13 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 gungraun = "=0.19.4"
 divan = "0.1.21"
 
+# The benchmarks measure what ships, so they are built the way a release is: the profile inherits
+# it whole, and the only addition is the line tables a profile needs to name functions. Debug
+# information is metadata and changes no codegen decision.
+[profile.bench]
+inherits = "release"
+debug = "line-tables-only"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"

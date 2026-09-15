@@ -102,22 +102,32 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: cargo fmt --all -- --check
 
+      # The benchmarks are not in the all-features legs: they are built with the production
+      # feature set, and the harness feature is a compile error in them. The `Cost of the code`
+      # job builds and runs them.
       - name: cargo clippy
         if: matrix.toolchain == 'stable'
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+            -- -D warnings
+          cargo check --locked --benches --no-default-features --features memory,macros,json
 
       # Advisory, not a gate: surfaces a lint added by the next clippy release six weeks
       # before it turns the build red.
       - name: cargo clippy (beta, advisory)
         if: matrix.toolchain == 'beta'
         continue-on-error: true
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+        run: |
+          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+            -- -D warnings
 
       - name: cargo check (no default features)
         run: cargo check --locked --workspace --no-default-features
 
       - name: cargo check (all features)
-        run: cargo check --locked --workspace --all-targets --all-features
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo check --locked --benches --no-default-features --features memory,macros,json
 
       # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
       # on, so neither the all-features build nor the all-features tests ever compile them. Build
@@ -261,7 +271,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.88"
         run: |
-          cargo check --locked --workspace --all-targets --all-features
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
           cargo test --locked --workspace --all-features --no-fail-fast
 
       # Everything above still sees dev-dependencies, which raise shared floors before the library
@@ -428,6 +438,8 @@ jobs:
     # abort on instructions it does not model; the empty value is also what `just bench` uses.
     env:
       RUSTFLAGS: ""
+      # The production surface of the service the scenarios measure, and nothing else; the same
+      # list as `bench_features` in the justfile. Default features are off, so `json` is named.
       FEATURES: memory,macros,json
       # One benchmark file per scenario; the wall-clock one runs on its own below. Keep the list
       # in step with the `cost_benches` variable in the justfile.
@@ -466,7 +478,8 @@ jobs:
         run: |
           git checkout --detach "${{ github.event.pull_request.base.sha }}"
           git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
-          cargo bench $COST_BENCHES --features "$FEATURES" -- --save-baseline=base
+          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
+            --save-baseline=base
 
       - name: Restore the pull request
         if: github.event_name == 'pull_request'
@@ -476,13 +489,13 @@ jobs:
       # allocation above the count the scenario declares.
       - name: Measure
         run: |
-          cargo bench $COST_BENCHES --features "$FEATURES" -- \
+          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
             ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
             --output-format=json > bench-summary.json
 
       # Wall time, printed and never gated.
       - name: Wall clock
-        run: cargo bench --bench wall_clock --features "$FEATURES"
+        run: cargo bench --bench wall_clock --no-default-features --features "$FEATURES"
 
       # Rebuilds the published document from this run and fails when a scenario disappeared or
       # collapsed, neither of which the benchmark output itself shows.

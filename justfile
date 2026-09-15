@@ -3,6 +3,11 @@ set dotenv-load := false
 
 export PATH := env("HOME") + "/.cargo/bin:" + env("HOME") + "/.local/bin:" + env("PATH")
 
+# What the benchmarks are built with: the production surface of a service that consumes JSON over
+# the in-memory broker, and nothing else. `testing` in particular is a compile error in the
+# benchmarks - it compiles a recording branch into every delivery.
+bench_features := "memory,macros,json"
+
 # The scenarios that count instructions and allocations, one benchmark file each. The wall-clock
 # one is not in the list: it runs under a different harness, which takes none of the arguments
 # below.
@@ -12,8 +17,14 @@ default: check
 
 check:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
-    cargo check --workspace --all-targets --all-features
+    # The benchmarks are left out of the all-features legs on purpose: they are built with the
+    # production feature set, and the harness feature is a compile error in them. Their own leg
+    # follows.
+    cargo clippy --workspace --lib --bins --tests --examples --all-features -- -D warnings
+    # Compilation only: this feature combination has lints of its own that no gate has ever run,
+    # and cleaning them is not what a benchmark change is for.
+    cargo check --benches --no-default-features --features {{ bench_features }}
+    cargo check --workspace --lib --bins --tests --examples --all-features
     cargo check --workspace --no-default-features
     # The codec-free build. A codec is optional, so the self-carrying lanes
     # (`Serialized` / `Deserialized`) and the typed publish entry point over them must stand with
@@ -53,9 +64,10 @@ test:
 # baseline, `just bench --baseline=main` measures against it.
 bench *ARGS:
     RUSTFLAGS="" cargo bench {{ cost_benches }} \
-        --features memory,macros,json -- --output-format=json {{ ARGS }} \
-        > target/bench-summary.json
-    RUSTFLAGS="" cargo bench --bench wall_clock --features memory,macros,json
+        --no-default-features --features {{ bench_features }} \
+        -- --output-format=json {{ ARGS }} > target/bench-summary.json
+    RUSTFLAGS="" cargo bench --bench wall_clock \
+        --no-default-features --features {{ bench_features }}
     python3 scripts/bench_results.py target/bench-summary.json docs/benchmarks/results.json
 
 fmt:

@@ -13,7 +13,9 @@ use std::{
 
 use bytes::Bytes;
 
-use crate::{HeaderMap, RawMessage};
+use crate::HeaderMap;
+#[cfg(any(feature = "testing", test))]
+use crate::RawMessage;
 
 /// How much of one name's publish log a retaining broker keeps.
 ///
@@ -129,6 +131,7 @@ pub(super) enum LogState {
 /// cannot make a test pass where production would fail.
 pub(super) enum Budget {
     Bounded(Retention),
+    #[cfg(feature = "testing")]
     Unbounded,
 }
 
@@ -143,6 +146,7 @@ impl LogState {
 
     /// Starts recording without a bound, for the length of a harness run. Returns whether this
     /// call is what turned recording on; a log that already records keeps the bound it has.
+    #[cfg(feature = "testing")]
     pub(super) fn record_for_harness(&mut self) -> bool {
         if matches!(self, Self::Recording { .. }) {
             return false;
@@ -237,6 +241,7 @@ impl NameLog {
     }
 
     /// The retained messages as owned values, for the harness assertions.
+    #[cfg(any(feature = "testing", test))]
     pub(super) fn messages(&self, name: &str) -> Vec<RawMessage> {
         self.entries
             .iter()
@@ -252,6 +257,9 @@ impl NameLog {
         let seq = self.next_seq();
         self.bytes += entry.payload.len();
         self.entries.push_back(entry);
+        // `Budget` has one variant without the harness feature, which makes the match
+        // irrefutable there; the shape stays as it is because the other variant exists with it.
+        #[cfg_attr(not(feature = "testing"), allow(irrefutable_let_patterns))]
         if let Budget::Bounded(retention) = budget {
             // The newest message always stays: a payload wider than a byte bound is retained
             // alone, rather than evicted by the same publish that produced it.
