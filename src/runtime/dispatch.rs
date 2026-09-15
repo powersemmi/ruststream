@@ -265,7 +265,14 @@ where
         loop {
             match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
                 Turn::Delivery(Ok(msg)) => {
-                    dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
+                    // Pinned rather than awaited in place: a delivery's future carries the
+                    // context, the handler's own state and the settle path, and awaiting the
+                    // call expression makes the loop build it on the stack and copy it into
+                    // its own state on every delivery.
+                    let handling = std::pin::pin!(dispatch(
+                        &*handler, msg, &name, &state, &delivery, &failure
+                    ));
+                    handling.await;
                 }
                 Turn::Delivery(Err(err)) => {
                     error!(
@@ -731,7 +738,10 @@ async fn dispatch<H, M, C, St>(
     }
     drop(ctx);
     if let Some(mut s) = settle {
-        settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C).await;
+        // Named for the same reason as the delivery's own future above: the settle path is
+        // built where it is polled instead of being copied into this future's state.
+        let settling = settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C);
+        settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
