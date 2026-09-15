@@ -15,7 +15,6 @@ use std::future::{Future, ready};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use bytes::BytesMut;
 use thiserror::Error;
 use tokio_util::task::TaskTracker;
 use tracing::info;
@@ -92,7 +91,7 @@ where
             // The publisher's own constants sit under the delivery's headers, as they do under
             // any publish through it; the transforms then see the message as it will be sent.
             let (name, payload, delivered) = msg.into_parts();
-            let mut out = Outgoing::new(name, BytesMut::from(payload));
+            let mut out = Outgoing::lending(name, payload);
             if let Some(base) = self.live.base_headers() {
                 let headers = out.headers_mut();
                 for (key, value) in base.iter() {
@@ -110,7 +109,7 @@ where
             // The copy is dead once the leaf has it, so what the transforms wrote moves on rather
             // than being copied on.
             let (name, payload, headers) = out.into_parts();
-            let sent = OutgoingMessage::new(&name, &payload).with_headers(headers);
+            let sent = OutgoingMessage::new(&name, payload.as_slice()).with_headers(headers);
             self.pipeline
                 .send(&self.live, sent, options.as_ref())
                 .await

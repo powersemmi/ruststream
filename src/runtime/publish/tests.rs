@@ -303,6 +303,24 @@ fn payload_mutates_in_place() {
 }
 
 #[test]
+fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
+    // What a publish stage rebuilding a message starts from: a transform that stamps a header
+    // reads the payload and never copies it, and the copy happens at the first write.
+    let body = b"body".to_vec();
+    let mut out = Outgoing::lending("t", &body);
+    assert!(matches!(out.payload, Payload::Lent(_)));
+    assert_eq!(out.payload(), b"body");
+
+    out.payload_mut().extend_from_slice(b"!");
+    assert!(matches!(out.payload, Payload::Owned(_)));
+    assert_eq!(out.payload(), b"body!");
+    assert_eq!(body, b"body", "the bytes it was lent are left as they were");
+
+    out.set_payload(b"fresh".as_slice());
+    assert_eq!(out.payload(), b"fresh");
+}
+
+#[test]
 fn set_name_and_headers() {
     let mut out = Outgoing::new("a", b"".as_slice());
     out.set_name("b");

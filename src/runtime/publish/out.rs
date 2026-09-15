@@ -20,7 +20,6 @@
 use std::error::Error as StdError;
 use std::future::Future;
 
-use bytes::BytesMut;
 use thiserror::Error;
 
 use super::{
@@ -293,7 +292,7 @@ impl<W, Head: PublishLayer, Tail: PublishPipeline> OutPipeline<W> for PublishSta
         // The pipeline mutates the message, so the borrowed publish takes ownership of its parts
         // here; only a slot that actually has middleware pays for that.
         let (name, payload, headers) = msg.into_parts();
-        let mut out = Outgoing::new(name, BytesMut::from(payload));
+        let mut out = Outgoing::lending(name, payload);
         *out.headers_mut() = headers;
         self.run(&mut out, leaf, options)
             .await
@@ -329,7 +328,7 @@ where
         // The transforms mutate the message and the call's settings, so both are taken by value
         // here; only a slot that actually mounts one pays for that.
         let (name, payload, headers) = msg.into_parts();
-        let mut out = Outgoing::new(name, BytesMut::from(payload));
+        let mut out = Outgoing::lending(name, payload);
         *out.headers_mut() = headers;
         let mut resolved = options.cloned();
         self.stack
@@ -337,7 +336,7 @@ where
         // The rebuilt message is dead once the leaf has it, so what the transforms wrote moves on
         // rather than being copied on.
         let (name, payload, headers) = out.into_parts();
-        let sent = OutgoingMessage::new(&name, &payload).with_headers(headers);
+        let sent = OutgoingMessage::new(&name, payload.as_slice()).with_headers(headers);
         self.pipeline.send(leaf, sent, resolved.as_ref()).await
     }
 }
