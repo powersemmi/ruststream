@@ -240,6 +240,11 @@ def comment(found, head, base):
     text = ["## Cost of the code", ""]
     if compared(found):
         text.append(f"Head `{head[:7]}` against base `{base[:7]}`.")
+        text.append("")
+        text.append(
+            f"Base: the sources of `{base[:7]}` measured with this pull request's suite and "
+            "profile, so the two sides differ in library code alone."
+        )
     else:
         text.append(
             f"Head `{head[:7]}`, measured without a baseline: the base branch produced none, so "
@@ -251,16 +256,35 @@ def comment(found, head, base):
     return "\n".join(text) + "\n"
 
 
+def tripped(found):
+    """One line per scenario that went over a limit, for the step that fails the job."""
+    lines = []
+    for scenario in SCENARIOS:
+        phrases = limits(found, scenario)
+        if phrases:
+            lines.append(f"{scenario.name}: {'; '.join(phrases)}")
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path, help="the JSON the benchmark run wrote")
     parser.add_argument("--head", default="", help="the commit that was measured")
     parser.add_argument("--base", default="", help="the commit it was measured against")
+    parser.add_argument(
+        "--limits",
+        action="store_true",
+        help="list the scenarios that went over a limit instead of writing the table",
+    )
     args = parser.parse_args()
 
     found = runs(args.summary)
     if not found:
         sys.exit("the run produced no measurement to report")
+    if args.limits:
+        for report in tripped(found):
+            print(report)
+        return
     sys.stdout.write(comment(found, args.head, args.base))
 
 

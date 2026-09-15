@@ -512,30 +512,39 @@ jobs:
       - name: Install the benchmark runner
         run: cargo install --locked gungraun-runner --version =0.19.4
 
-      # The baseline: the same benchmark code against the library as it stands on the target
-      # branch. Best effort - a pull request that changes the surface the benchmarks use cannot
-      # build them against the base, and then the run below reports without comparing rather than
-      # failing on something it cannot measure.
+      # The baseline: the target branch's library, measured by this pull request's own suite,
+      # profile and lock file. The suite lives in the pull request (the target branch may carry
+      # none, or an older one), so taking it along is what makes the two sides comparable: one set
+      # of benchmark binaries, differing in the library code they call. Best effort - a pull
+      # request that changes the surface the benchmarks use cannot build them against the base,
+      # and then the run below reports without comparing rather than failing on something it
+      # cannot measure.
       - name: Measure the merge base
         if: github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           git checkout --detach "${{ github.event.pull_request.base.sha }}"
           git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
-          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
+          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
             --save-baseline=base
 
       - name: Restore the pull request
         if: github.event_name == 'pull_request'
         run: git checkout --force "${{ github.sha }}"
 
-      # Fails on more than two percent more instructions in a gated scenario, and on any
-      # allocation above the count the scenario declares.
+      # More than two percent more instructions in a gated scenario is a failure, and so is any
+      # allocation above the count the scenario declares. Neither stops the run: --no-fail-fast
+      # keeps cargo going through the remaining benchmark binaries, the runner's own default
+      # carries each binary to its end, and the verdict is applied by the last step of the job.
+      # A run that stopped at the first tripped limit reported one scenario and left the other
+      # eleven unmeasured, which is the opposite of what a regression needs.
       - name: Measure
         run: |
-          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
+          set +e
+          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
             ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
             --output-format=json > bench-summary.json
+          echo "MEASURE_STATUS=$?" >> "$GITHUB_ENV"
 
       # Wall time, printed and never gated.
       - name: Wall clock
@@ -580,6 +589,18 @@ jobs:
         with:
           name: bench-summary
           path: bench-summary.json
+
+      # The verdict, after everything has been measured, published and posted: the job goes red
+      # for a tripped limit, naming every scenario that tripped one. The exit code is the
+      # measurement's own, so a run that failed for another reason - a crashed benchmark, a
+      # missing valgrind - fails here too instead of passing on an empty list.
+      - name: Gate on the limits
+        if: always()
+        run: |
+          if [ -s bench-summary.json ]; then
+            python3 scripts/bench_comment.py bench-summary.json --limits
+          fi
+          exit "${MEASURE_STATUS:-1}"
 
   scripts:
     name: Report formatters

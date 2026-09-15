@@ -63,7 +63,7 @@ test:
 # Extra arguments reach the benchmark runner: `just bench --save-baseline=main` records a
 # baseline, `just bench --baseline=main` measures against it.
 bench *ARGS:
-    RUSTFLAGS="" cargo bench {{ cost_benches }} \
+    RUSTFLAGS="" cargo bench {{ cost_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
         -- --output-format=json {{ ARGS }} > target/bench-summary.json
     RUSTFLAGS="" cargo bench --bench wall_clock \
