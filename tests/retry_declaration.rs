@@ -4,6 +4,9 @@
 //! own, which is what puts the runtime on the retry path: the deliveries are the in-memory
 //! broker's with the native `nack_after` taken away. One shape reports no delivery count, as most
 //! transports do, and the other reports the broker's own, as `JetStream`, SQS and Pub/Sub do.
+//!
+//! The last suites drop the shape and mount on the in-memory broker itself, which holds a
+//! delivery back for the delay and counts what it has delivered.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -1445,4 +1448,116 @@ async fn a_bare_name_that_declares_nothing_opens_where_the_broker_moves_deliveri
         },
     );
     let _tb = TestApp::start(app).await.expect("startup failed");
+}
+
+/// A subscription of the reference broker itself, with nothing reshaped: the in-memory broker
+/// holds the delivery back for the delay and counts what it has delivered.
+#[subscriber("crates")]
+async fn never_ready_in_memory(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    HandlerOutcome::retry_after(RETRY_DELAY)
+}
+
+/// The reference broker counts its own deliveries, so a cap declared over its native delayed
+/// redelivery is spent on it: the third delivery is the last, and it goes to the declared
+/// destination.
+#[tokio::test(start_paused = true)]
+async fn the_cap_is_spent_on_the_reference_brokers_native_redelivery() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_in_memory)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("crates.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 31 })
+        .to("crates")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("crates")
+        .assert_called(3);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("crates.dead")
+        .assert_called_once()
+        .with(&Order { id: 31 });
+
+    // The delivery at the cap was carried away, so the broker's timer holds nothing.
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.broker::<MemoryBroker>()
+        .subscriber("crates")
+        .assert_called(3);
+}
+
+/// The same path with no destination declared: the spent delivery is terminated where it is, and
+/// the broker holds nothing back.
+#[tokio::test(start_paused = true)]
+async fn a_cap_without_a_destination_terminates_on_the_reference_broker() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_in_memory)
+                .max_attempts(nonzero!(2u32));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 32 })
+        .to("crates")
+        .publish()
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("crates")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("crates.dead")
+        .assert_not_called();
+}
+
+/// The same subscription without a delay. The broker's own requeue is the immediate retry, and
+/// its count carries the attempt forward, so no copy is published and no delivery carries the
+/// framework's header.
+#[subscriber("tarballs")]
+async fn never_ready_now_in_memory(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let _ = order.id;
+    assert!(
+        ctx.headers().get_str(RETRY_COUNT_HEADER).is_none(),
+        "the broker counts its own redeliveries, so nothing republishes the delivery",
+    );
+    HandlerOutcome::retry()
+}
+
+/// An immediate retry on the reference broker is its own requeue, and the cap is spent on it:
+/// the count rises across redeliveries that no copy of this process carried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_immediate_retry_is_requeued_natively_and_still_capped() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_now_in_memory)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("tarballs.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 33 })
+        .to("tarballs")
+        .publish()
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("tarballs")
+        .assert_called(3);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("tarballs.dead")
+        .assert_called_once()
+        .with(&Order { id: 33 });
 }

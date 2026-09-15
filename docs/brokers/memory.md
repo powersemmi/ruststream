@@ -73,6 +73,11 @@ alone.
 - **Fan-out.** Every subscriber of a topic receives every message published to it after the
   subscription.
 - **Ack is a no-op; `nack(requeue: true)` redelivers** the same payload to the same subscriber.
+- **`retry_after` is the broker's own.** The delivery comes back to the same subscriber once the
+  delay has elapsed, and nothing is republished in the meantime.
+- **Deliveries are counted.** Every delivery reports how many times the broker has handed that
+  subscriber the message, the first one included, so a registration's `max_attempts(n)` is spent on
+  these redeliveries and the delivery that spends it reaches the `dead_letter(name)` destination.
 - **Shared ownership.** `MemoryBroker` is a reference-counted handle: all its owners work with one
   state, so a clone held by a test sees everything the application publishes.
 
