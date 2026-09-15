@@ -324,10 +324,10 @@ impl<B: Broker + 'static, Cx> RetrySetup<B, Cx> {
     }
 
     /// Fills in the broker's default publisher where the mount site named none, per the
-    /// descriptor's copy path, and tells `meta` what that publisher says about the dead-letter
-    /// channel.
+    /// descriptor's copy path, and tells `meta` what that publisher says about the channels the
+    /// copies go to.
     ///
-    /// The description travels with the pairing, so a dead-letter channel is described the same
+    /// The description travels with the pairing, so a declared channel is described the same
     /// whether the mount site named a publisher or took the broker's default.
     #[must_use]
     pub(crate) fn resolve<Copies, Pipeline>(
@@ -343,7 +343,7 @@ impl<B: Broker + 'static, Cx> RetrySetup<B, Cx> {
             self.publisher = Copies::pairing(pipeline.clone());
         }
         if let Some(publisher) = &self.publisher {
-            meta.describe_dead_letter(|channel| publisher.describe(channel));
+            meta.describe_copies(|channel| publisher.describe(channel));
         }
         self
     }
@@ -370,11 +370,12 @@ impl<B: Broker, Cx> fmt::Debug for RetryPairing<B, Cx> {
 /// publish pipeline.
 ///
 /// The policy itself is erased rather than a closure over it, because the two things asked of it
-/// come at different times. The document asks what the policy says about the dead-letter channel
-/// once the registration's own `dead_letter(..)` declaration has named it, which is after the
-/// position is bound; pairing consumes the policy later still, at startup.
+/// come at different times. The document asks what the policy says about a channel once the
+/// registration has named it - a `dead_letter(..)` destination, or the one a `.to(name)` gave the
+/// copies - which is after the position is bound; pairing consumes the policy later still, at
+/// startup.
 trait BoundRetry<B: Broker, Cx>: Send {
-    /// What the bound policy says about the channel a dead-lettered delivery leaves for.
+    /// What the bound policy says about a channel a copy of the delivery leaves for.
     fn describe(&self, channel: &str) -> PublishDescription;
 
     /// Pairs it against the connected broker, producing the publisher a copy leaves through.
@@ -432,9 +433,9 @@ where
 // Asked from the registration's commit, where the delivery context carries no bounds yet, so it
 // stands apart from the pairing block below.
 impl<B: Broker, Cx> RetryPairing<B, Cx> {
-    /// What the bound policy says about the dead-letter channel this registration declared.
+    /// What the bound policy says about a channel this registration declared for its copies.
     ///
-    /// Asked once the declaration has named the channel, which is what a binding that carries
+    /// Asked once the registration has named the channel, which is what a binding that carries
     /// the destination's own name is filled from.
     pub(crate) fn describe(&self, channel: &str) -> PublishDescription {
         self.0.describe(channel)

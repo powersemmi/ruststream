@@ -77,8 +77,11 @@
 //! * The media type comes from the codec that decodes or encodes the message,
 //!   [`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE). One format everywhere is also
 //!   the root `defaultContentType`; two formats leave the root field out.
-//! * A retry cap and a dead-letter destination appear on the operation as the extension
-//!   `x-ruststream-retry`, and the dead-letter channel gets a `send` operation.
+//! * A retry cap, a dead-letter destination and a named retry destination appear on the
+//!   operation as the extension `x-ruststream-retry`, and each of the two destinations gets a
+//!   channel with a `send` operation: the registration publishes there. The address a
+//!   subscription takes its own copies back at is not reported - it is the subscription's
+//!   channel, which the document already carries.
 //! * A channel says which servers it lives on, from the label the broker was registered under.
 //!
 //! # Servers and security
@@ -416,6 +419,12 @@ pub struct RetryExtension {
     /// operation: the traffic is real.
     #[serde(rename = "deadLetter", skip_serializing_if = "Option::is_none")]
     pub dead_letter: Option<String>,
+    /// Where the registration publishes a deferred copy of a delivery, when the mount site named
+    /// a destination for its retry copies. That channel is in the document too, with a `send`
+    /// operation. Absent where the copies go back to the subscription's own address, which is a
+    /// channel the document already carries.
+    #[serde(rename = "retryDestination", skip_serializing_if = "Option::is_none")]
+    pub retry_destination: Option<String>,
 }
 
 /// Reusable `AsyncAPI` components.
@@ -574,7 +583,8 @@ pub fn build_spec<A: App>(app: &A) -> Spec {
         );
 
         // One `send` operation per remaining declared outgoing message: every Out slot
-        // dictionary entry, and the dead-letter destination of a `dead_letter(..)` declaration.
+        // dictionary entry, the dead-letter destination of a `dead_letter(..)` declaration, and
+        // the destination a `.to(name)` gave the registration's retry copies.
         // A channel several messages flow through lists them all; the message component is
         // shared with any handler that receives it.
         for outgoing in &handler.outgoing {
@@ -824,7 +834,7 @@ fn add_receive(
             description: handler.description.as_ref().map(ToString::to_string),
             reply,
             tags: tags.to_vec(),
-            retry: retry_extension(&handler.retry),
+            retry: retry_extension(handler),
             bindings: handler.bindings.operation.clone(),
         },
     );
@@ -854,15 +864,23 @@ fn add_receive(
     );
 }
 
-/// Renders a registration's retry declaration as the `x-ruststream-retry` extension, or nothing
-/// when it declared nothing.
-fn retry_extension(declaration: &crate::RetryDeclaration) -> Option<RetryExtension> {
-    if declaration.declares_nothing() {
+/// Renders what a registration declared about retrying as the `x-ruststream-retry` extension, or
+/// nothing when it declared nothing: the cap, where a spent delivery is dead-lettered, and where
+/// the deferred copies go when the mount site named a destination for them.
+fn retry_extension(handler: &crate::runtime::HandlerMetadata) -> Option<RetryExtension> {
+    let retry_destination = handler
+        .outgoing
+        .iter()
+        .find(|outgoing| outgoing.kind == OutgoingKind::RetryCopy)
+        .map(|outgoing| outgoing.channel.as_ref().to_owned());
+    let declaration = &handler.retry;
+    if declaration.declares_nothing() && retry_destination.is_none() {
         return None;
     }
     Some(RetryExtension {
         max_attempts: declaration.max_attempts().map(NonZeroU32::get),
         dead_letter: declaration.dead_letter().map(str::to_owned),
+        retry_destination,
     })
 }
 

@@ -9,10 +9,11 @@ use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource
 
 /// What a declared outgoing message is to the registration declaring it.
 ///
-/// The three kinds document differently: an answer replies to the delivery being handled, a slot
-/// entry is a destination the handler body writes to, and a dead-lettered delivery is the input
-/// giving up. `build_spec` reads this to put a reply on the `receive` operation instead of a
-/// `send` operation of its own, and to tell a dead-letter channel from a business destination.
+/// The kinds document differently: an answer replies to the delivery being handled, a slot entry
+/// is a destination the handler body writes to, a dead-lettered delivery is the input giving up,
+/// and a retry copy is the input coming back after a delay. `build_spec` reads this to put a
+/// reply on the `receive` operation instead of a `send` operation of its own, and to tell a
+/// dead-letter channel from a business destination.
 ///
 /// The variants are named apart from the mount-position markers [`Reply`](crate::runtime::Reply)
 /// and [`Slot`](crate::runtime::Slot): a position is where a policy is bound, a kind is what the
@@ -40,6 +41,10 @@ pub enum OutgoingKind {
     /// The destination a `dead_letter(..)` declaration names: a delivery out of attempts leaves
     /// the service there.
     DeadLetter,
+    /// The destination a `.to(name)` after `out_retry(policy)` names: every deferred copy of a
+    /// delivery is published there. A subscription that takes its copies back at its own address
+    /// declares nothing and gets no entry - that address is not a channel of the service.
+    RetryCopy,
 }
 
 /// One message a handler publishes, as declared for the `AsyncAPI` document.
@@ -459,19 +464,36 @@ impl HandlerMetadata {
         }
     }
 
-    /// Writes what the retry publisher's policy says onto the dead-letter entry.
+    /// Writes what the retry publisher's policy says onto the entries that publisher owns: the
+    /// dead-letter destination, and the destination a `.to(name)` gave the retry copies.
     ///
-    /// The copy carries the delivery's own bytes, so the media type stays the one the
-    /// subscription decodes rather than anything the retry publisher would encode.
-    pub(crate) fn describe_dead_letter(&mut self, describe: impl Fn(&str) -> PublishDescription) {
+    /// Both carry the delivery's own bytes, so the media type stays the one the subscription
+    /// decodes rather than anything the retry publisher would encode.
+    pub(crate) fn describe_copies(&mut self, describe: impl Fn(&str) -> PublishDescription) {
         let content_type = self.content_type;
         for entry in &mut self.outgoing {
-            if entry.kind == OutgoingKind::DeadLetter {
+            if matches!(
+                entry.kind,
+                OutgoingKind::DeadLetter | OutgoingKind::RetryCopy
+            ) {
                 let description = describe(entry.channel.as_ref());
                 description.apply(entry);
                 entry.content_type = content_type;
             }
         }
+    }
+
+    /// Declares a channel this registration republishes a delivery to, under the input's own
+    /// name and schema: the copy is the delivery, byte for byte.
+    ///
+    /// Both destinations a retry can name come through here - where a spent delivery is
+    /// dead-lettered, and where a deferred copy is published - so the two are documented alike.
+    pub(crate) fn declare_copy(&mut self, destination: Cow<'static, str>, kind: OutgoingKind) {
+        let entry = OutgoingMessageMetadata::new(destination, self.input_type)
+            .with_payload_schema(self.payload_schema.clone())
+            .with_headers_schema(self.headers_schema.clone())
+            .with_kind(kind);
+        self.outgoing.push(entry);
     }
 
     /// Records what the subscription descriptor adds to the generated document.
