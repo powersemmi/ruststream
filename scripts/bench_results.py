@@ -4,7 +4,14 @@
 Input is the machine-readable summary `cargo bench -- --output-format=json` writes, one JSON
 object per benchmark. Output is `docs/benchmarks/results.json` (schema 2): the `code` section,
 one entry per scenario, with instructions and allocations per message for the framework and for
-the hand-written loop it is compared against.
+the hand-written loop it is compared against, plus what starting the service cost once.
+
+Every scenario is measured three times: over one delivery, over MESSAGES of them, and over twice
+MESSAGES. The slope between the last two is the steady-state cost of a message - everything that
+happens once is in both totals and cancels in the subtraction. The one-delivery run is the cold
+start itself: starting the service and handling the first delivery, measured rather than derived,
+because the intercept of a line through two totals of several million carries the noise of both
+and comes out negative as easily as not.
 
 Two things are checked while converting, because both failures are silent in the benchmark
 output itself:
@@ -33,8 +40,11 @@ REPO = Path(__file__).resolve().parent.parent
 MESSAGES = 1000
 
 # An instruction count below this on a 1000-message run means the measurement broke, not that the
-# code got faster: the cheapest scenario here costs a thousand times more.
+# code got faster: the cheapest scenario here costs a thousand times more. The cold run handles
+# one delivery, so it is held to a much lower floor - but not to none, because a collapsed
+# measurement reports nearly nothing at all.
 FLOOR = 100_000
+COLD_FLOOR = 1_000
 
 
 class Scenario:
@@ -49,67 +59,73 @@ class Scenario:
         self.note = note
 
 
-# The table, in reading order. Each half names a benchmark as `file/function/id`: one scenario
-# per benchmark file, the framework half in `service` and the hand-written one in `by_hand`.
+# The three runs of every scenario, by the benchmark id that carries each: the cold start on its
+# own, and the two counts whose difference is the steady state.
+COLD = "first"
+COUNTS = ("base", "twice")
+
+# The table, in reading order. Each half names a benchmark as `file/function`: one scenario per
+# benchmark file, the framework half in `service` and the hand-written one in `by_hand`, each
+# measured at both counts.
 SCENARIOS = [
     Scenario(
         "consume, JSON decode into a small struct",
-        "consume_json/service/small",
-        "consume_json/by_hand/small",
+        "consume_json/service",
+        "consume_json/by_hand",
     ),
     Scenario(
         "consume, JSON decode of a 1 KB body",
-        "consume_json_kilobyte/service/kilobyte",
-        "consume_json_kilobyte/by_hand/kilobyte",
+        "consume_json_kilobyte/service",
+        "consume_json_kilobyte/by_hand",
     ),
     Scenario(
         "consume on the byte lane, no codec",
-        "consume_lane/service/bytes",
-        "consume_lane/by_hand/bytes",
+        "consume_lane/service",
+        "consume_lane/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of one",
-        "middleware/service/one",
-        "middleware/by_hand/plain",
+        "middleware/service_one",
+        "middleware/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of four",
-        "middleware/service/four",
-        "middleware/by_hand/plain",
+        "middleware/service_four",
+        "middleware/by_hand",
     ),
     Scenario(
         "consume in batches of 64",
-        "batch/service/of_64",
-        "batch/by_hand/of_64",
+        "batch/service",
+        "batch/by_hand",
     ),
     Scenario(
         "reply, encoded to a declared destination",
-        "reply/service/json",
-        "reply/by_hand/json",
+        "reply/service",
+        "reply/by_hand",
     ),
     Scenario(
         "publish through an Out slot with one transform",
-        "out_slot/service/one_transform",
-        "out_slot/by_hand/one_transform",
+        "out_slot/service",
+        "out_slot/by_hand",
     ),
     Scenario(
         "publish with a typed header contract",
-        "typed_headers_write/service/write",
-        "typed_headers_write/by_hand/write",
+        "typed_headers_write/service",
+        "typed_headers_write/by_hand",
     ),
     Scenario(
         "read a typed header contract, then publish",
-        "typed_headers_read/service/read",
-        "typed_headers_read/by_hand/read",
+        "typed_headers_read/service",
+        "typed_headers_read/by_hand",
     ),
     Scenario(
         "request and reply, one round trip",
-        "request_reply/service/round_trip",
-        "request_reply/by_hand/round_trip",
+        "request_reply/service",
+        "request_reply/by_hand",
     ),
     Scenario(
         "a delivery that asks to be redelivered, and the copy",
-        "retry_copy/service/once",
+        "retry_copy/service",
         None,
         gated=False,
         note="cold path: measured and reported, never gated",
@@ -196,33 +212,56 @@ def crate_version():
     return match.group(1)
 
 
-def half(found, key):
-    if key is None:
-        return None
-    if key not in found:
-        sys.exit(f"benchmark {key} is not in the run: rename it here or in benches/")
-    measured = found[key]
-    if measured["instructions"] is None or measured["instructions"] < FLOOR:
+def totals(found, key, count, floor=FLOOR):
+    """One benchmark's totals, checked for the two ways this measurement fails silently."""
+    full = f"{key}/{count}"
+    if full not in found:
+        sys.exit(f"benchmark {full} is not in the run: rename it here or in benches/")
+    measured = found[full]
+    if measured["instructions"] is None or measured["instructions"] < floor:
         sys.exit(
-            f"benchmark {key} reports {measured['instructions']} instructions, which is below "
-            f"the floor of {FLOOR}: collection did not cover the measured region"
+            f"benchmark {full} reports {measured['instructions']} instructions, which is below "
+            f"the floor of {floor}: collection did not cover the measured region"
         )
-    return {
-        "instructions": per_message(measured["instructions"]),
-        "allocations": per_message(measured["allocations"]),
-    }
+    return measured
+
+
+def half(found, key):
+    """The steady state and the cold start of one half of a pair.
+
+    The slope between the two counts is what a message costs once the service is running; the
+    one-delivery run is what starting it and taking that delivery cost.
+    """
+    if key is None:
+        return None, None
+    base = totals(found, key, COUNTS[0])
+    twice = totals(found, key, COUNTS[1])
+    if twice["instructions"] <= base["instructions"]:
+        sys.exit(
+            f"benchmark {key} does not grow with the message count "
+            f"({base['instructions']} -> {twice['instructions']}): the two runs measured the "
+            f"same work, so the slope means nothing"
+        )
+    first = totals(found, key, COLD, COLD_FLOOR)
+    steady = {}
+    for metric_name in ("instructions", "allocations"):
+        per = (twice[metric_name] - base[metric_name]) / MESSAGES
+        steady[metric_name] = round(per, 3) if abs(per) < 1 else round(per, 1)
+    cold = {name: first[name] for name in ("instructions", "allocations")}
+    return steady, cold
 
 
 def build(found):
     rows = []
     for scenario in SCENARIOS:
-        framework = half(found, scenario.framework)
-        hand = half(found, scenario.hand)
+        framework, cold = half(found, scenario.framework)
+        hand, _ = half(found, scenario.hand)
         row = {
             "name": scenario.name,
             "messages": MESSAGES,
             "framework": framework,
             "hand_written": hand,
+            "cold": cold,
             "gated": scenario.gated,
         }
         if hand:
@@ -231,7 +270,7 @@ def build(found):
                     framework["instructions"] - hand["instructions"], 1
                 ),
                 "allocations": round(
-                    framework["allocations"] - hand["allocations"], 2
+                    framework["allocations"] - hand["allocations"], 3
                 ),
             }
         if scenario.note:
@@ -242,21 +281,30 @@ def build(found):
 
 def report(rows):
     """The same table the page publishes, for a terminal and for a CI job summary."""
-    header = f"{'scenario':<52}{'framework':>12}{'by hand':>12}{'overhead':>12}{'allocations':>13}"
+    header = (
+        f"{'scenario':<52}{'framework':>11}{'by hand':>10}{'overhead':>10}"
+        f"{'alloc':>8}{'cold instr':>12}{'cold alloc':>12}"
+    )
     print(header)
     print("-" * len(header))
     for row in rows:
         hand = row["hand_written"]
         overhead = row.get("overhead", {})
+        cold = row["cold"]
         print(
             f"{row['name']:<52}"
-            f"{row['framework']['instructions']:>12}"
-            f"{hand['instructions'] if hand else '-':>12}"
-            f"{overhead.get('instructions', '-'):>12}"
-            f"{row['framework']['allocations']:>13}"
+            f"{row['framework']['instructions']:>11}"
+            f"{hand['instructions'] if hand else '-':>10}"
+            f"{overhead.get('instructions', '-'):>10}"
+            f"{row['framework']['allocations']:>8}"
+            f"{cold['instructions']:>12}"
+            f"{cold['allocations']:>12}"
         )
     print()
-    print("instructions and allocations per message; overhead is the difference")
+    print(
+        "instructions and allocations per message in the steady state; cold is what starting the"
+    )
+    print("service and handling the first delivery cost once")
 
 
 def main():

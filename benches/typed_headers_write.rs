@@ -15,7 +15,7 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Queue, Service};
+use common::{Feed, Latch, MESSAGES, Order, Pending};
 use futures::StreamExt;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::MemoryMessage;
@@ -67,8 +67,8 @@ async fn stamp(
     HandlerOutcome::ack()
 }
 
-fn app(messages: usize) -> Service {
-    common::service(messages, 0, |b| {
+fn app(messages: usize) -> Pending {
+    common::pending(messages, 0, |b| {
         b.include(stamp).out(Stamps, Publish).build();
     })
 }
@@ -82,28 +82,27 @@ fn step(message: &MemoryMessage, latch: &Latch) -> Vec<u8> {
     .expect("an encodable event")
 }
 
-#[library_benchmark(config = common::config(15991))]
-#[bench::write(app(MESSAGES))]
-fn service(app: Service) {
-    common::drain(&app);
+#[library_benchmark(config = common::config(32028))]
+#[bench::first(app(1))]
+#[bench::base(app(MESSAGES))]
+#[bench::twice(app(2 * MESSAGES))]
+fn service(app: Pending) {
+    common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(15001))]
-#[bench::write(common::queue(MESSAGES, 0))]
-fn by_hand(queue: Queue) {
-    let Queue {
-        runtime,
-        mut subscriber,
-        publisher,
-        messages,
-        ..
-    } = queue;
+#[library_benchmark(config = common::config(30001))]
+#[bench::first(common::feed(1, 0))]
+#[bench::base(common::feed(MESSAGES, 0))]
+#[bench::twice(common::feed(2 * MESSAGES, 0))]
+fn by_hand(feed: Feed) {
+    let mut subscriber = feed.subscribed();
+    let publisher = feed.publisher();
     let latch = Latch::default();
-    latch.expect(messages);
+    latch.expect(feed.messages);
     common::measure(|| {
-        runtime.block_on(async {
+        feed.runtime.block_on(async {
             let mut stream = std::pin::pin!(subscriber.stream());
-            for _ in 0..messages {
+            for _ in 0..feed.messages {
                 let message = stream
                     .next()
                     .await

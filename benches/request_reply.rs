@@ -17,13 +17,13 @@ mod common;
 use std::hint::black_box;
 use std::time::Duration;
 
-use common::{Latch, MESSAGES, Order, Queue};
+use common::{Feed, Latch, MESSAGES, Order};
 use futures::StreamExt;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{MemoryBroker, MemoryRequester};
 use ruststream::runtime::{
-    ForReply, Names, Outgoing as OutgoingMessageView, PublishContext, PublishTransform, RunningApp,
+    ForReply, Names, Outgoing as OutgoingMessageView, PublishContext, PublishTransform,
 };
 use ruststream::{IncomingMessage, OutgoingMessage, RequestReply, Subscriber};
 use serde::Serialize;
@@ -67,12 +67,12 @@ async fn answer(order: &Order) -> Answer {
     }
 }
 
-/// The request side: a requester and the service that answers it.
+/// The request side: a requester and the service that answers it, not started yet.
 struct Requests {
     runtime: Runtime,
     requester: MemoryRequester,
     messages: usize,
-    _app: RunningApp,
+    app: RustStream,
 }
 
 fn app(messages: usize) -> Requests {
@@ -81,12 +81,11 @@ fn app(messages: usize) -> Requests {
     let app = RustStream::new(AppInfo::new("bench", "0.0.0")).with_broker(broker.clone(), |b| {
         b.include(answer).out_reply(Publish).transform(ReplyTo);
     });
-    let app = runtime.block_on(app.start()).expect("the service starts");
     Requests {
         runtime,
         requester: broker.requester(),
         messages,
-        _app: app,
+        app,
     }
 }
 
@@ -100,44 +99,48 @@ fn step(payload: &[u8], latch: &Latch) -> Vec<u8> {
     .expect("an encodable reply")
 }
 
-#[library_benchmark(config = common::config(20001))]
-#[bench::round_trip(app(MESSAGES))]
+#[library_benchmark(config = common::config(42027))]
+#[bench::first(app(1))]
+#[bench::base(app(MESSAGES))]
+#[bench::twice(app(2 * MESSAGES))]
 fn service(requests: Requests) {
     let Requests {
         runtime,
         requester,
         messages,
-        ..
+        app,
     } = requests;
-    let body = common::json_body(1, 0);
+    let running = common::measure(|| runtime.block_on(app.start()).expect("the service starts"));
+    let request = common::json_body(0);
     common::measure(|| {
         runtime.block_on(async {
             for _ in 0..messages {
                 let reply = requester
-                    .request(OutgoingMessage::new(common::INPUT, &body), REPLY_TIMEOUT)
+                    .request(OutgoingMessage::new(common::INPUT, &request), REPLY_TIMEOUT)
                     .await
                     .expect("a reply");
                 black_box(reply.payload()[0]);
             }
         });
     });
+    drop(running);
 }
 
-#[library_benchmark(config = common::config(20002))]
-#[bench::round_trip(common::queue_unfilled(MESSAGES))]
-fn by_hand(queue: Queue) {
-    let Queue {
-        runtime,
-        mut subscriber,
-        publisher,
-        requester,
-        messages,
-    } = queue;
+#[library_benchmark(config = common::config(40002))]
+#[bench::first(common::feed(1, 0))]
+#[bench::base(common::feed(MESSAGES, 0))]
+#[bench::twice(common::feed(2 * MESSAGES, 0))]
+fn by_hand(feed: Feed) {
+    // Nothing is published into the queue here: the requests below are the input, one at a time.
+    let mut subscriber = common::measure(|| feed.broker.subscribe(common::INPUT));
+    let publisher = feed.publisher();
+    let requester = feed.requester();
     let latch = Latch::default();
-    latch.expect(messages);
-    let request = common::json_body(1, 0);
+    latch.expect(feed.messages);
+    let request = common::json_body(0);
+    let messages = feed.messages;
     common::measure(|| {
-        runtime.block_on(async {
+        feed.runtime.block_on(async {
             // The answering loop is driven beside the requester rather than after it: a requester
             // waiting for a reply cannot also be serving the queue.
             let serving = async {

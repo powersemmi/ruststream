@@ -135,6 +135,7 @@
     labels.byHand,
     labels.overhead,
     labels.allocations,
+    labels.cold,
   ];
   for (const column of columns) {
     head.appendChild(text("th", column));
@@ -152,6 +153,15 @@
         text("td", scenario.overhead ? "+" + number(scenario.overhead.instructions, lang) : "-"),
       );
       row.appendChild(text("td", number(scenario.framework.allocations, lang)));
+      // Two numbers in one cell: what starting cost in instructions, and in allocations.
+      row.appendChild(
+        text(
+          "td",
+          scenario.cold
+            ? number(scenario.cold.instructions, lang) + " / " + number(scenario.cold.allocations, lang)
+            : "-",
+        ),
+      );
     }
   }
   return element;

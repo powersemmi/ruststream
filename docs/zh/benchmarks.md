@@ -18,14 +18,17 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 数值是交替配对的中位数，括号里是观察到的波动范围。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
 ### 代码的开销 { #cost-of-the-code }
 
-每条消息的指令数和内存分配次数，在进程内传输上测得。“开销”一列是框架比旁边那个手写循环多付的
-部分。
+稳态下每条消息的指令数和内存分配次数，在进程内传输上测得。“开销”一列是框架比旁边那个手写循环多
+付的部分。
 
 <div id="benchmark-code"></div>
+
+“冷启动”一列是启动服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一
+次，不按消息计。
 
 ## 这些数字是什么 { #what-the-numbers-are }
 
@@ -51,8 +54,12 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 “开销”一列就是结果本身。框架那一行和手写那一行跑同一个场景、读同一条进程内队列、把同样的载荷
 解码成同一个类型、读一个字段、以同样的方式确认投递。两者之差就是框架，此外别无他物。
 
-内存分配按每条消息统计，投递路径上的预期值是零：消息从队列走到处理器函数体，框架一次也没有向
-分配器要过内存。发布路径还没有做到这一点，表格如实呈现。
+每条消息的数字都是稳态。启动服务的开销只付一次：连接、建立订阅，以及它们背后的首批内存分配。
+把它摊到一次运行的消息上，等于把一次性的价钱当成每条消息的价钱公布出去。因此每个场景测两次，
+一千条和两千条，一条消息的开销就是两次运行之差；冷启动单独测，只投递一条消息。
+
+内存分配按每条消息统计，投递路径上是零：服务跑起来之后，消息从队列走到处理器函数体，框架一次
+也没有向分配器要过内存。发布路径还没有做到这一点，表格如实呈现。
 
 ## 方法论 { #methodology }
 
@@ -114,11 +121,14 @@ Broker 会在自己的页面上说明。
   首批内存分配。
 - **采集只覆盖测量区间，不越界。** 准备和收尾跑在同一个进程里，走的是同一份框架代码，把它们也
   算进去的测量，会把填满队列的开销当成清空队列的开销报出来。
+- **每个场景跑三次，各有各的用处。** 一条消息、一千条、两千条。后两次之差是服务跑起来之后一条
+  消息的开销，只投递一条的那次就是冷启动。运行途中不需要关掉任何东西，正是这一点让这个办法对
+  内存分配计数器也成立 —— 它根本没有开关。
 - **每个场景三个数字。** callgrind 给出的指令数是精确的，作为门禁；DHAT 给出的内存分配次数是
   精确的，作为门禁；单独一次运行给出的时钟时间有噪声，仅供参考。
 - **门禁看变化，不看数值。** pull request 与目标分支上同一套基准测试的结果对照：受门禁的场景里
-  指令数多出两个百分点以上，就通不过；超出该场景声明的内存分配次数，同样通不过。时钟时间的差异
-  只打印出来。
+  指令数多出两个百分点以上，就通不过；超出该场景声明的内存分配次数，同样通不过。冷启动和时钟
+  时间只打印出来。
 
 ## 如何公布结果 { #publishing-results }
 
@@ -168,9 +178,10 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
     {
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
-      "framework": { "instructions": 2860.0, "allocations": 0.001 },
-      "hand_written": { "instructions": 1871.1, "allocations": 0.001 },
-      "overhead": { "instructions": 988.9, "allocations": 0.0 },
+      "framework": { "instructions": 2839.8, "allocations": 0.0 },
+      "hand_written": { "instructions": 1934.4, "allocations": 0.0 },
+      "overhead": { "instructions": 905.4, "allocations": 0.0 },
+      "cold": { "instructions": 19219, "allocations": 26 },
       "gated": true
     }
   ]
@@ -181,7 +192,8 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`。`overhead_percent` 两种情况都记录，
 只在判定为 `measured` 时展示。`broker_bound` 标记那些由 Broker 而不是消费者决定节奏的运行。
 
-`code` 是第二张表，每个场景一条记录，其中每个数值都是每条消息的量。没有对照的场景不带
+`code` 是第二张表，每个场景一条记录。`framework`、`hand_written` 和 `overhead` 是稳态下每条消息
+的量，`cold` 则是启动服务加第一条消息的全部开销，没有除以任何东西。没有对照的场景不带
 `hand_written` 字段；`gated` 说明该场景出现回归时 CI 是否失败。只公布 `scenarios` 的 crate
 声明 `schema` 为 1，仍然保留自己在第一张表里的行。
 

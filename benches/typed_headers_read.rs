@@ -15,7 +15,7 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Queue, Service};
+use common::{Feed, Latch, MESSAGES, Order, Pending};
 use futures::StreamExt;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::MemoryMessage;
@@ -65,8 +65,8 @@ async fn read_meta(
     HandlerOutcome::ack()
 }
 
-fn app(messages: usize) -> Service {
-    common::service_with_headers(messages, &HEADERS, |b| {
+fn app(messages: usize) -> Pending {
+    common::pending_with_headers(messages, &HEADERS, |b| {
         b.include(read_meta).out(Audit, Publish).build();
     })
 }
@@ -96,28 +96,27 @@ fn step(message: &MemoryMessage, latch: &Latch) -> Vec<u8> {
     .expect("an encodable event")
 }
 
-#[library_benchmark(config = common::config(5991))]
-#[bench::read(app(MESSAGES))]
-fn service(app: Service) {
-    common::drain(&app);
+#[library_benchmark(config = common::config(12028))]
+#[bench::first(app(1))]
+#[bench::base(app(MESSAGES))]
+#[bench::twice(app(2 * MESSAGES))]
+fn service(app: Pending) {
+    common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(5001))]
-#[bench::read(common::queue_with_headers(MESSAGES, &HEADERS))]
-fn by_hand(queue: Queue) {
-    let Queue {
-        runtime,
-        mut subscriber,
-        publisher,
-        messages,
-        ..
-    } = queue;
+#[library_benchmark(config = common::config(10001))]
+#[bench::first(common::feed_with_headers(1, &HEADERS))]
+#[bench::base(common::feed_with_headers(MESSAGES, &HEADERS))]
+#[bench::twice(common::feed_with_headers(2 * MESSAGES, &HEADERS))]
+fn by_hand(feed: Feed) {
+    let mut subscriber = feed.subscribed();
+    let publisher = feed.publisher();
     let latch = Latch::default();
-    latch.expect(messages);
+    latch.expect(feed.messages);
     common::measure(|| {
-        runtime.block_on(async {
+        feed.runtime.block_on(async {
             let mut stream = std::pin::pin!(subscriber.stream());
-            for _ in 0..messages {
+            for _ in 0..feed.messages {
                 let message = stream
                     .next()
                     .await

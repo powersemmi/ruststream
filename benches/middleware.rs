@@ -16,7 +16,7 @@ mod common;
 use std::convert::Infallible;
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Queue, Service};
+use common::{Feed, Latch, MESSAGES, Order, Pending};
 use futures::StreamExt;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::prelude::*;
@@ -66,7 +66,7 @@ impl BlanketLayer for Passthrough {
 
 // The stack is part of the application type, so each depth builds its own app rather than taking
 // the shared one.
-fn one(messages: usize) -> Service {
+fn one(messages: usize) -> Pending {
     let runtime = common::runtime();
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -77,20 +77,10 @@ fn one(messages: usize) -> Service {
         .with_broker(broker.clone(), |b| {
             b.include(consume);
         });
-    let app = runtime.block_on(app.start()).expect("the service starts");
-    common::filled(
-        runtime,
-        latch,
-        app,
-        &broker.publisher(),
-        messages,
-        |publisher, runtime| {
-            common::fill(publisher, runtime, common::INPUT, messages, 0);
-        },
-    )
+    common::built(runtime, latch, broker, app, messages, 0)
 }
 
-fn four(messages: usize) -> Service {
+fn four(messages: usize) -> Pending {
     let runtime = common::runtime();
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -104,17 +94,7 @@ fn four(messages: usize) -> Service {
         .with_broker(broker.clone(), |b| {
             b.include(consume);
         });
-    let app = runtime.block_on(app.start()).expect("the service starts");
-    common::filled(
-        runtime,
-        latch,
-        app,
-        &broker.publisher(),
-        messages,
-        |publisher, runtime| {
-            common::fill(publisher, runtime, common::INPUT, messages, 0);
-        },
-    )
+    common::built(runtime, latch, broker, app, messages, 0)
 }
 
 fn step(message: &MemoryMessage, latch: &Latch) {
@@ -123,29 +103,35 @@ fn step(message: &MemoryMessage, latch: &Latch) {
     latch.arrived();
 }
 
-#[library_benchmark(config = common::config(1))]
-#[bench::one(one(MESSAGES))]
-#[bench::four(four(MESSAGES))]
-fn service(app: Service) {
-    common::drain(&app);
+#[library_benchmark(config = common::config(27))]
+#[bench::first(one(1))]
+#[bench::base(one(MESSAGES))]
+#[bench::twice(one(2 * MESSAGES))]
+fn service_one(app: Pending) {
+    common::start_and_drain(app);
+}
+
+#[library_benchmark(config = common::config(27))]
+#[bench::first(four(1))]
+#[bench::base(four(MESSAGES))]
+#[bench::twice(four(2 * MESSAGES))]
+fn service_four(app: Pending) {
+    common::start_and_drain(app);
 }
 
 // The twin of both depths: the same delivery with no stack at all.
 #[library_benchmark(config = common::config(1))]
-#[bench::plain(common::queue(MESSAGES, 0))]
-fn by_hand(queue: Queue) {
-    let Queue {
-        runtime,
-        mut subscriber,
-        messages,
-        ..
-    } = queue;
+#[bench::first(common::feed(1, 0))]
+#[bench::base(common::feed(MESSAGES, 0))]
+#[bench::twice(common::feed(2 * MESSAGES, 0))]
+fn by_hand(feed: Feed) {
+    let mut subscriber = feed.subscribed();
     let latch = Latch::default();
-    latch.expect(messages);
+    latch.expect(feed.messages);
     common::measure(|| {
-        runtime.block_on(async {
+        feed.runtime.block_on(async {
             let mut stream = std::pin::pin!(subscriber.stream());
-            for _ in 0..messages {
+            for _ in 0..feed.messages {
                 let message = stream
                     .next()
                     .await
@@ -158,5 +144,5 @@ fn by_hand(queue: Queue) {
     });
 }
 
-library_benchmark_group!(name = middleware; benchmarks = service, by_hand);
+library_benchmark_group!(name = middleware; benchmarks = service_one, service_four, by_hand);
 main!(library_benchmark_groups = middleware);

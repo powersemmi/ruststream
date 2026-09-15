@@ -21,14 +21,17 @@ next time it publishes its documentation.
 
 Medians over interleaved pairs, with the observed spread in parentheses.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations", "cold": "Cold start"}'></div>
 
 ### Cost of the code
 
-Instructions and allocations per message, measured on the in-process transport. `Overhead` is what
-the framework adds over the hand-written loop next to it.
+Instructions and allocations per message in the steady state, measured on the in-process
+transport. `Overhead` is what the framework adds over the hand-written loop next to it.
 
 <div id="benchmark-code"></div>
+
+`Cold start` is what starting the service and handling the first delivery cost together,
+instructions and allocations, and a service pays it once rather than per message.
 
 ## What the numbers are
 
@@ -61,9 +64,15 @@ for.
 over the same in-process queue, decode the same payload into the same type, read a field and settle
 the delivery the same way. The difference between them is the framework, and nothing else.
 
-Allocations are counted per message, and on the delivery path the expected figure is zero: a
-message goes from the queue to the handler body without the framework asking the allocator for
-anything. The publish path is not there yet, and the table says so.
+Every per-message figure is the steady state. Starting a service costs what it costs once - the
+connect, the subscription, the first allocations behind them - and dividing that over the messages
+of a run would publish it as a price per message it is not. So a scenario is measured over a
+thousand deliveries and over two thousand, and what a message costs is the difference between the
+two runs; the cold start is measured on its own, over a single delivery.
+
+Allocations are counted per message, and on the delivery path the figure is zero: once the service
+is running, a message goes from the queue to the handler body without the framework asking the
+allocator for anything. The publish path is not there yet, and the table says so.
 
 ## Methodology
 
@@ -140,13 +149,17 @@ benchmark runner pinned to the version the crate depends on.
 - **Collection covers the measured region and nothing around it.** Setup and teardown run in the
   same process and through the same framework code, so a measurement that counted them would report
   the queue being filled as the cost of draining it.
+- **Three runs per scenario, and what they are for.** One delivery, a thousand, and two thousand.
+  The difference between the last two is what a message costs once the service is running; the
+  single delivery is the cold start. Nothing has to be switched off part way through a run, which
+  is what makes this work for the allocation counter, whose counting cannot be toggled at all.
 - **Three numbers per scenario.** Instructions from callgrind, which is exact and the gate;
   allocations from DHAT, which is exact and the gate; wall time from a separate run, which is noisy
   and informational.
 - **A gate on the change, not on the value.** A pull request is measured against the same
   benchmarks run on the target branch: more than two percent of instructions in a gated scenario
-  fails it, and so does an allocation above what the scenario declares. A wall-clock difference
-  only prints.
+  fails it, and so does an allocation above what the scenario declares. The cold start and the
+  wall clock only print.
 
 ## Publishing results
 
@@ -198,9 +211,10 @@ it. The broker sites share this site's origin, so this page reads them directly.
     {
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
-      "framework": { "instructions": 2860.0, "allocations": 0.001 },
-      "hand_written": { "instructions": 1871.1, "allocations": 0.001 },
-      "overhead": { "instructions": 988.9, "allocations": 0.0 },
+      "framework": { "instructions": 2839.8, "allocations": 0.0 },
+      "hand_written": { "instructions": 1934.4, "allocations": 0.0 },
+      "overhead": { "instructions": 905.4, "allocations": 0.0 },
+      "cold": { "instructions": 19219, "allocations": 26 },
       "gated": true
     }
   ]
@@ -212,9 +226,10 @@ the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`.
 `broker_bound` marks a run the broker paced rather than the consumer.
 
-`code` is the second table, one entry per scenario, and every figure in it is per message.
-`hand_written` is absent on a scenario measured without a twin, and `gated` says whether CI fails
-on a regression in it. A crate that publishes `scenarios` alone declares `schema` 1 and keeps its
+`code` is the second table, one entry per scenario. `framework`, `hand_written` and `overhead` are
+per message in the steady state; `cold` is the whole cost of starting the service and taking the
+first delivery, not divided by anything. `hand_written` is absent on a scenario measured without a
+twin, and `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios` alone declares `schema` 1 and keeps its
 row in the first table.
 
 A document that does not load, or that declares a `schema` this page does not know, leaves its

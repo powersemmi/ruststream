@@ -14,8 +14,28 @@
 //! settlement, with no framework between the queue and the body. The difference between the two
 //! is what the framework costs per message.
 //!
-//! The setup fills the queue before the measured region opens and the body drains it, so a
-//! scenario measures steady-state delivery, never the first connect or the subscription open.
+//! # Steady state and cold start
+//!
+//! Starting a service costs what it costs once: the connect, the subscription, the first
+//! allocations behind them, and whatever the first delivery touches for the first time. Dividing
+//! that over the messages of a run would report it as a per-message price it is not.
+//!
+//! So every scenario is measured twice in the same binary, over [`MESSAGES`] deliveries and over
+//! twice as many, and the two totals are read as a line:
+//!
+//! ```text
+//! per message = (total(2M) - total(M)) / M
+//! cold        = total(M) - M * per message
+//! ```
+//!
+//! Everything that happens once is in both totals and cancels in the subtraction, so the
+//! per-message figure is the steady state and the remainder is the cold start, reported on its
+//! own. No warm-up run is needed, and nothing has to be switched off part way through - which
+//! matters for DHAT, whose counting cannot be toggled at all.
+//!
+//! What a body measures is therefore the start and the drain, in two regions, with the queue
+//! filled between them and never counted: producing the messages is not what the scenario is
+//! about.
 //!
 //! # What is counted
 //!
@@ -74,6 +94,10 @@ use tokio::sync::Notify;
 /// The name every scenario delivers on. A handler names it in its own `#[subscriber(..)]`
 /// attribute, which takes a literal.
 pub const INPUT: &str = "orders";
+
+/// The values every body carries. Fixed, so that every delivery of a run costs the same.
+const ID: u64 = 1_000_000;
+const QUANTITY: u32 = 37;
 
 /// The payload every scenario decodes: two integer fields, so a decode allocates nothing and the
 /// number is about the framework rather than about `serde_json`'s string handling.
@@ -207,8 +231,13 @@ impl Latch {
 
 /// A JSON body with the two fields a handler reads, padded with fields it ignores until it
 /// reaches roughly `size` bytes. A zero pad leaves the bare object.
-pub fn json_body(id: u64, size: usize) -> Vec<u8> {
-    let mut body = format!("{{\"id\":{id},\"quantity\":{}", id % 97);
+///
+/// Every delivery of a run carries the same bytes, and that is the point: a body whose numbers
+/// grew with the message index would cost a digit more to parse - and to print again on the
+/// publish paths - in the second half of a run, and the two-point method would read that growth
+/// as a steeper per-message cost and a negative cold start.
+pub fn json_body(size: usize) -> Vec<u8> {
+    let mut body = format!("{{\"id\":{ID},\"quantity\":{QUANTITY}");
     let mut field = 0u32;
     while body.len() + 2 < size {
         write!(body, ",\"f{field}\":\"{field:016}\"").expect("writing to a String");
@@ -226,9 +255,9 @@ pub fn fill_with_headers(
     count: usize,
     headers: &[(&str, &str)],
 ) {
+    let body = json_body(0);
     runtime.block_on(async move {
-        for index in 0..count {
-            let body = json_body(index as u64, 0);
+        for _ in 0..count {
             let mut map = HeaderMap::new();
             for (key, value) in headers {
                 map.insert(*key, (*value).to_owned());
@@ -246,9 +275,9 @@ pub fn fill_with_headers(
 /// Part of every setup, never of a measured region: the deliveries are in the queue before the
 /// body runs, so what the body pays for is delivery, not production.
 pub fn fill(publisher: &MemoryPublisher, runtime: &Runtime, name: &str, count: usize, size: usize) {
+    let body = json_body(size);
     runtime.block_on(async move {
-        for index in 0..count {
-            let body = json_body(index as u64, size);
+        for _ in 0..count {
             publisher
                 .publish(OutgoingMessage::new(name, &body), None)
                 .await
@@ -257,41 +286,31 @@ pub fn fill(publisher: &MemoryPublisher, runtime: &Runtime, name: &str, count: u
     });
 }
 
-/// A started service whose queue is already full, with the latch its handler counts down.
-pub struct Service {
+/// A service that is built but not started, and what its queue will hold.
+///
+/// The start is part of the measurement rather than of the setup, because the cold number is
+/// what starting costs. It is held as a boxed call so that a scenario with a layer stack or a
+/// state of its own hands over the same type as every other one; the one indirect call it adds
+/// lands in the cold number and nowhere else.
+pub struct Pending {
     pub runtime: Runtime,
     pub latch: Latch,
-    // Held so the service outlives the measured region; the handle is dropped with it.
-    _app: RunningApp,
+    pub broker: MemoryBroker,
+    start: Box<dyn FnOnce(&Runtime) -> RunningApp>,
+    pub messages: usize,
+    pub size: usize,
+    /// Handler calls to wait for, which is the message count except where a delivery is handled
+    /// more than once.
+    pub expected: usize,
+    /// The header contract every delivery carries, empty where a scenario reads none.
+    pub headers: &'static [(&'static str, &'static str)],
 }
 
 /// The mount a scenario passes in: what `with_broker` does with the scope.
 pub type Mount<'a> = &'a mut BrokerScope<MemoryBroker, Identity, (), Latch>;
 
-/// Starts a one-handler service on a fresh in-memory broker and fills its queue with `messages`
-/// bodies of `size` bytes.
-pub fn service(messages: usize, size: usize, mount: impl FnOnce(Mount<'_>)) -> Service {
-    started(messages, mount, |publisher, runtime| {
-        fill(publisher, runtime, INPUT, messages, size);
-    })
-}
-
-/// The same with a header contract on every delivery, for the scenarios that read one.
-pub fn service_with_headers(
-    messages: usize,
-    headers: &[(&str, &str)],
-    mount: impl FnOnce(Mount<'_>),
-) -> Service {
-    started(messages, mount, |publisher, runtime| {
-        fill_with_headers(publisher, runtime, INPUT, messages, headers);
-    })
-}
-
-fn started(
-    messages: usize,
-    mount: impl FnOnce(Mount<'_>),
-    fill: impl FnOnce(&MemoryPublisher, &Runtime),
-) -> Service {
+/// Builds a one-handler service on a fresh in-memory broker, ready to be started by the body.
+pub fn pending(messages: usize, size: usize, mount: impl FnOnce(Mount<'_>)) -> Pending {
     let runtime = runtime();
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -299,89 +318,188 @@ fn started(
     let app = RustStream::new(AppInfo::new("bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
         .with_broker(broker.clone(), mount);
-    let app = runtime.block_on(app.start()).expect("the service starts");
-    filled(
-        runtime,
-        latch,
-        app,
-        &broker.publisher(),
-        messages,
-        |publisher, runtime| {
-            fill(publisher, runtime);
-        },
-    )
+    built(runtime, latch, broker, app, messages, size)
 }
 
-/// Arms the latch and fills the queue behind a service that is already running.
-///
-/// The scenarios whose application type is their own - a layer stack, a state of their own -
-/// build and start the app themselves and finish here.
-pub fn filled(
-    runtime: Runtime,
-    latch: Latch,
-    app: RunningApp,
-    publisher: &MemoryPublisher,
+/// The same with a header contract on every delivery, for the scenarios that read one.
+pub fn pending_with_headers(
     messages: usize,
-    fill: impl FnOnce(&MemoryPublisher, &Runtime),
-) -> Service {
-    latch.expect(messages);
-    fill(publisher, &runtime);
-    assert_eq!(
-        latch.remaining(),
-        messages,
-        "the queue was consumed while it was being filled, so the measured region would be short"
-    );
-    Service {
-        runtime,
-        latch,
-        _app: app,
+    headers: &'static [(&'static str, &'static str)],
+    mount: impl FnOnce(Mount<'_>),
+) -> Pending {
+    Pending {
+        headers,
+        ..pending(messages, 0, mount)
     }
 }
 
-/// Drains the service inside the measured region. Every framework half of a pair is this call.
-pub fn drain(service: &Service) {
-    measure(|| service.runtime.block_on(service.latch.drained()));
+/// The same for a scenario whose application type is its own - a layer stack, a state of its own -
+/// and which therefore builds the app itself.
+pub fn built<Layers, State, Pipeline, Phase>(
+    runtime: Runtime,
+    latch: Latch,
+    broker: MemoryBroker,
+    app: RustStream<Layers, State, Pipeline, Phase>,
+    messages: usize,
+    size: usize,
+) -> Pending
+where
+    Layers: Send + 'static,
+    State: Send + Sync + 'static,
+    Pipeline: 'static,
+    Phase: 'static,
+{
+    Pending {
+        runtime,
+        latch,
+        broker,
+        start: Box::new(move |runtime| runtime.block_on(app.start()).expect("the service starts")),
+        messages,
+        size,
+        expected: messages,
+        headers: &[],
+    }
 }
 
-/// The hand-written side: the subscription, a publisher for what the loop sends on, a requester
-/// for the round-trip scenario, and the count.
-///
-/// The subscription is opened before the queue is filled, because an in-memory subscription
-/// receives what is published after it, exactly as a broker's does.
-pub struct Queue {
+impl Pending {
+    /// Starts the service and fills its queue, for a caller that measures neither - the
+    /// wall-clock runs, whose harness times the closure it is given rather than a region.
+    #[must_use]
+    pub fn ready(self) -> Ready {
+        let running = (self.start)(&self.runtime);
+        self.latch.expect(self.expected);
+        if self.headers.is_empty() {
+            fill(
+                &self.broker.publisher(),
+                &self.runtime,
+                INPUT,
+                self.messages,
+                self.size,
+            );
+        } else {
+            fill_with_headers(
+                &self.broker.publisher(),
+                &self.runtime,
+                INPUT,
+                self.messages,
+                self.headers,
+            );
+        }
+        Ready {
+            runtime: self.runtime,
+            latch: self.latch,
+            _app: running,
+        }
+    }
+}
+
+/// A started service with its queue already full.
+pub struct Ready {
     pub runtime: Runtime,
-    pub subscriber: MemorySubscriber,
-    pub publisher: MemoryPublisher,
-    pub requester: MemoryRequester,
-    pub messages: usize,
+    pub latch: Latch,
+    // Held so the service outlives the run.
+    _app: RunningApp,
 }
 
-/// A subscription with `messages` bodies of `size` bytes already in it.
-pub fn queue(messages: usize, size: usize) -> Queue {
-    let queue = queue_unfilled(messages);
-    fill(&queue.publisher, &queue.runtime, INPUT, messages, size);
-    queue
+/// Starts the service, fills its queue, and drains it: the framework half of every pair.
+///
+/// Two measured regions, and the fill between them is in neither. The first region is the cold
+/// start - connect, subscription, the allocations behind them - and the second is the deliveries.
+pub fn start_and_drain(pending: Pending) {
+    let Pending {
+        runtime,
+        latch,
+        broker,
+        start,
+        messages,
+        size,
+        expected,
+        headers,
+    } = pending;
+    let running = measure(|| start(&runtime));
+    latch.expect(expected);
+    if headers.is_empty() {
+        fill(&broker.publisher(), &runtime, INPUT, messages, size);
+    } else {
+        fill_with_headers(&broker.publisher(), &runtime, INPUT, messages, headers);
+    }
+    assert_eq!(
+        latch.remaining(),
+        expected,
+        "the queue was consumed while it was being filled, so the measured region would be short"
+    );
+    measure(|| runtime.block_on(latch.drained()));
+    drop(running);
+}
+
+/// The hand-written side before it opens its subscription: the broker, the runtime and what the
+/// queue will hold.
+///
+/// The subscription opens inside the body, which is where the framework half starts its service,
+/// so both halves pay their cold start in the same place.
+pub struct Feed {
+    pub runtime: Runtime,
+    pub broker: MemoryBroker,
+    pub messages: usize,
+    pub size: usize,
+    pub headers: &'static [(&'static str, &'static str)],
+}
+
+/// A broker whose queue will hold `messages` bodies of `size` bytes.
+pub fn feed(messages: usize, size: usize) -> Feed {
+    Feed {
+        runtime: runtime(),
+        broker: MemoryBroker::new(),
+        messages,
+        size,
+        headers: &[],
+    }
 }
 
 /// The same with a header contract on every delivery.
-pub fn queue_with_headers(messages: usize, headers: &[(&str, &str)]) -> Queue {
-    let queue = queue_unfilled(messages);
-    fill_with_headers(&queue.publisher, &queue.runtime, INPUT, messages, headers);
-    queue
+pub fn feed_with_headers(
+    messages: usize,
+    headers: &'static [(&'static str, &'static str)],
+) -> Feed {
+    Feed {
+        headers,
+        ..feed(messages, 0)
+    }
 }
 
-/// A subscription with nothing in it yet: the round-trip scenario publishes its input from the
-/// measured body, one request at a time.
-pub fn queue_unfilled(messages: usize) -> Queue {
-    let runtime = runtime();
-    let broker = MemoryBroker::new();
-    let subscriber = broker.subscribe(INPUT);
-    Queue {
-        runtime,
-        subscriber,
-        publisher: broker.publisher(),
-        requester: broker.requester(),
-        messages,
+impl Feed {
+    /// Opens the subscription inside a measured region, the way the framework half starts its
+    /// service there, and returns it with the queue already filled.
+    pub fn subscribed(&self) -> MemorySubscriber {
+        let subscriber = measure(|| self.broker.subscribe(INPUT));
+        if self.headers.is_empty() {
+            fill(
+                &self.broker.publisher(),
+                &self.runtime,
+                INPUT,
+                self.messages,
+                self.size,
+            );
+        } else {
+            fill_with_headers(
+                &self.broker.publisher(),
+                &self.runtime,
+                INPUT,
+                self.messages,
+                self.headers,
+            );
+        }
+        subscriber
+    }
+
+    /// A requester on the same broker, for the round-trip scenario.
+    pub fn requester(&self) -> MemoryRequester {
+        self.broker.requester()
+    }
+
+    /// A publisher on the same broker, for what a hand-written loop sends on.
+    pub fn publisher(&self) -> MemoryPublisher {
+        self.broker.publisher()
     }
 }
 

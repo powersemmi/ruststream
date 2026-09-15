@@ -19,7 +19,7 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Latch, MESSAGES, Order, Service};
+use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::MemoryBroker;
 use ruststream::memory::prelude::*;
@@ -61,7 +61,7 @@ async fn consume(order: &Order, ctx: &mut Context<'_, (), Retrying>) -> HandlerO
 
 /// Every published message is handled twice: once as it arrives, once as the copy its retry
 /// brought back, so the latch waits for twice the published count.
-fn app(messages: usize) -> Service {
+fn app(messages: usize) -> Pending {
     let runtime = common::runtime();
     let latch = Latch::default();
     let broker = MemoryBroker::new();
@@ -74,25 +74,19 @@ fn app(messages: usize) -> Service {
         .with_broker(broker.clone(), |b| {
             b.include(consume);
         });
-    let app = runtime.block_on(app.start()).expect("the service starts");
-    let service = common::filled(
-        runtime,
-        latch,
-        app,
-        &broker.publisher(),
-        messages,
-        |publisher, runtime| {
-            common::fill(publisher, runtime, common::INPUT, messages, 0);
-        },
-    );
-    service.latch.expect(messages * 2);
-    service
+    let mut pending = common::built(runtime, latch, broker, app, messages, 0);
+    // Every published message is handled twice: once as it arrives, once as the copy its retry
+    // brought back.
+    pending.expected = messages * 2;
+    pending
 }
 
 #[library_benchmark(config = common::config_ungated())]
-#[bench::once(app(MESSAGES))]
-fn service(app: Service) {
-    common::drain(&app);
+#[bench::first(app(1))]
+#[bench::base(app(MESSAGES))]
+#[bench::twice(app(2 * MESSAGES))]
+fn service(app: Pending) {
+    common::start_and_drain(app);
 }
 
 library_benchmark_group!(name = retry_copy; benchmarks = service);

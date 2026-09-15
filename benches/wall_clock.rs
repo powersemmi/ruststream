@@ -19,12 +19,12 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Queue, Service};
+use common::{Feed, Latch, MESSAGES, Order, Ready};
 use divan::Bencher;
 use divan::counter::ItemsCount;
 use futures::StreamExt;
-use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
+use ruststream::memory::{MemoryMessage, MemorySubscriber};
 use ruststream::{IncomingMessage, Subscriber};
 use serde::Serialize;
 
@@ -53,20 +53,26 @@ async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmatio
     }
 }
 
-fn consuming() -> Service {
-    common::service(MESSAGES, 0, |b| {
+// The wall-clock harness times the closure it is handed, so the service is started and the queue
+// filled here, outside the timing, rather than inside it as the instruction counts do it.
+fn consuming() -> Ready {
+    common::pending(MESSAGES, 0, |b| {
         b.include(consume);
     })
+    .ready()
 }
 
-fn replying() -> Service {
-    common::service(MESSAGES, 0, |b| {
+fn replying() -> Ready {
+    common::pending(MESSAGES, 0, |b| {
         b.include(confirm);
     })
+    .ready()
 }
 
-fn queue() -> Queue {
-    common::queue(MESSAGES, 0)
+fn queue() -> (Feed, MemorySubscriber) {
+    let feed = common::feed(MESSAGES, 0);
+    let subscriber = feed.subscribed();
+    (feed, subscriber)
 }
 
 fn decode_by_hand(message: &MemoryMessage) -> Order {
@@ -80,7 +86,7 @@ fn consume_json(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(consuming)
-        .bench_local_values(|app| common::drain(&app));
+        .bench_local_values(|ready| ready.runtime.block_on(ready.latch.drained()));
 }
 
 #[divan::bench]
@@ -88,9 +94,9 @@ fn consume_json_hand(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(queue)
-        .bench_local_values(|mut queue| {
-            queue.runtime.block_on(async {
-                let mut stream = std::pin::pin!(queue.subscriber.stream());
+        .bench_local_values(|(feed, mut subscriber)| {
+            feed.runtime.block_on(async {
+                let mut stream = std::pin::pin!(subscriber.stream());
                 for _ in 0..MESSAGES {
                     let message = stream
                         .next()
@@ -109,7 +115,7 @@ fn reply(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(replying)
-        .bench_local_values(|app| common::drain(&app));
+        .bench_local_values(|ready| ready.runtime.block_on(ready.latch.drained()));
 }
 
 #[divan::bench]
@@ -117,9 +123,10 @@ fn reply_hand(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(queue)
-        .bench_local_values(|mut queue| {
-            queue.runtime.block_on(async {
-                let mut stream = std::pin::pin!(queue.subscriber.stream());
+        .bench_local_values(|(feed, mut subscriber)| {
+            let publisher = feed.publisher();
+            feed.runtime.block_on(async {
+                let mut stream = std::pin::pin!(subscriber.stream());
                 for _ in 0..MESSAGES {
                     let message = stream
                         .next()
@@ -129,7 +136,7 @@ fn reply_hand(bencher: Bencher) {
                     let order = decode_by_hand(&message);
                     let body = serde_json::to_vec(&Confirmation { id: order.id })
                         .expect("an encodable reply");
-                    common::send_by_hand(&queue.publisher, "confirmations", &body, &[]).await;
+                    common::send_by_hand(&publisher, "confirmations", &body, &[]).await;
                     message.ack().await.expect("the ack");
                 }
             });
