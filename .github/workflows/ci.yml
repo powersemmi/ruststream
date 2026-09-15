@@ -29,6 +29,7 @@ jobs:
       dist: ${{ steps.filter.outputs.dist }}
       bench: ${{ steps.filter.outputs.bench }}
       templates: ${{ steps.filter.outputs.templates }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,8 +61,12 @@ jobs:
               - 'crates/**'
               - 'benches/**'
               - 'scripts/bench_results.py'
+              - 'scripts/bench_comment.py'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+            scripts:
+              - 'scripts/**'
               - '.github/workflows/ci.yml'
             templates:
               - 'templates/**'
@@ -331,6 +336,15 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
+    # The job leaves its report on the pull request, which the workflow's read-only default
+    # cannot do. A job that writes nothing keeps the default.
+    permissions:
+      contents: read
+      pull-requests: write
+    # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile together
+    # if coverage climbs further.
+    env:
+      COVERAGE_GATE: "95"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -359,13 +373,12 @@ jobs:
       - name: Run tests under coverage
         run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
 
-      # Line-coverage gate, sitting at the 95% DoD target. Raise it here and in the justfile
-      # together if coverage climbs further. The summary is written before the gate's exit code
-      # propagates, so it shows up even on a failure.
+      # The summary is written before the gate's exit code propagates, so it shows up even on a
+      # failure.
       - name: Coverage summary and gate
         run: |
           set +e
-          cargo llvm-cov report --summary-only --fail-under-lines 95 | tee coverage.txt
+          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
           rc=${PIPESTATUS[0]}
           {
             echo '## Coverage'
@@ -375,6 +388,25 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
+
+      # Posted whether or not the gate held: a comment naming the files that hold the uncovered
+      # lines is what a red run is for. The values reach the shell through the environment,
+      # because a pull request's own fields are attacker-controlled input.
+      - name: Report the coverage on the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ ! -s coverage.txt ]; then
+            echo "The run produced no coverage summary to report."
+            exit 0
+          fi
+          python3 scripts/coverage_comment.py coverage.txt \
+            --gate "$COVERAGE_GATE" --head "$HEAD_SHA" > coverage-comment.md
+          bash scripts/pr_comment.sh ruststream:coverage coverage-comment.md
 
       - name: Export lcov report
         if: always()
@@ -432,8 +464,20 @@ jobs:
   bench:
     name: Cost of the code
     needs: changes
-    if: ${{ needs.changes.outputs.bench == 'true' }}
+    # Ten minutes of valgrind, twice over on a pull request: the head and the branch it targets.
+    # On `main` that is worth paying whenever the measured code changes. On a pull request it
+    # waits for the `run-bench` label, so a series of commits is not measured one by one; without
+    # the label the job is skipped rather than failed, and the pull request stays mergeable.
+    if: >-
+      needs.changes.outputs.bench == 'true'
+      && (github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'run-bench'))
     runs-on: ubuntu-latest
+    # The job leaves its report on the pull request, which the workflow's read-only default
+    # cannot do.
+    permissions:
+      contents: read
+      pull-requests: write
     # A machine-specific `-C target-cpu=native` would make the numbers incomparable and valgrind
     # abort on instructions it does not model; the empty value is also what `just bench` uses.
     env:
@@ -468,30 +512,39 @@ jobs:
       - name: Install the benchmark runner
         run: cargo install --locked gungraun-runner --version =0.19.4
 
-      # The baseline: the same benchmark code against the library as it stands on the target
-      # branch. Best effort - a pull request that changes the surface the benchmarks use cannot
-      # build them against the base, and then the run below reports without comparing rather than
-      # failing on something it cannot measure.
+      # The baseline: the target branch's library, measured by this pull request's own suite,
+      # profile and lock file. The suite lives in the pull request (the target branch may carry
+      # none, or an older one), so taking it along is what makes the two sides comparable: one set
+      # of benchmark binaries, differing in the library code they call. Best effort - a pull
+      # request that changes the surface the benchmarks use cannot build them against the base,
+      # and then the run below reports without comparing rather than failing on something it
+      # cannot measure.
       - name: Measure the merge base
         if: github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           git checkout --detach "${{ github.event.pull_request.base.sha }}"
           git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
-          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
+          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
             --save-baseline=base
 
       - name: Restore the pull request
         if: github.event_name == 'pull_request'
         run: git checkout --force "${{ github.sha }}"
 
-      # Fails on more than two percent more instructions in a gated scenario, and on any
-      # allocation above the count the scenario declares.
+      # More than two percent more instructions in a gated scenario is a failure, and so is any
+      # allocation above the count the scenario declares. Neither stops the run: --no-fail-fast
+      # keeps cargo going through the remaining benchmark binaries, the runner's own default
+      # carries each binary to its end, and the verdict is applied by the last step of the job.
+      # A run that stopped at the first tripped limit reported one scenario and left the other
+      # eleven unmeasured, which is the opposite of what a regression needs.
       - name: Measure
         run: |
-          cargo bench $COST_BENCHES --no-default-features --features "$FEATURES" -- \
+          set +e
+          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
             ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
             --output-format=json > bench-summary.json
+          echo "MEASURE_STATUS=$?" >> "$GITHUB_ENV"
 
       # Wall time, printed and never gated.
       - name: Wall clock
@@ -510,12 +563,60 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Posted whether or not a limit failed the run: a comment naming the scenario that moved,
+      # and by how much, is what a red run is for. The values reach the shell through the
+      # environment, because a pull request's own fields are attacker-controlled input.
+      - name: Report the drift on the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ ! -s bench-summary.json ]; then
+            echo "The run produced no measurement to report."
+            exit 0
+          fi
+          python3 scripts/bench_comment.py bench-summary.json \
+            --head "$HEAD_SHA" --base "$BASE_SHA" > bench-comment.md
+          bash scripts/pr_comment.sh ruststream:cost bench-comment.md
+
       - name: Upload the measurement
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: bench-summary
           path: bench-summary.json
+
+      # The verdict, after everything has been measured, published and posted: the job goes red
+      # for a tripped limit, naming every scenario that tripped one. The exit code is the
+      # measurement's own, so a run that failed for another reason - a crashed benchmark, a
+      # missing valgrind - fails here too instead of passing on an empty list.
+      - name: Gate on the limits
+        if: always()
+        run: |
+          if [ -s bench-summary.json ]; then
+            python3 scripts/bench_comment.py bench-summary.json --limits
+          fi
+          exit "${MEASURE_STATUS:-1}"
+
+  scripts:
+    name: Report formatters
+    needs: changes
+    if: ${{ needs.changes.outputs.scripts == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The two report formatters against recorded runs. They read what the benchmark and
+      # coverage jobs produce, and neither job can be the place their formatting is checked: the
+      # benchmark one runs on demand, and a formatter that drops a column fails nothing there.
+      - name: Unit-test the report formatters
+        run: python3 -m unittest discover --start-directory scripts/tests
 
   security:
     name: Security scans

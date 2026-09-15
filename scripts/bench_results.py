@@ -170,6 +170,15 @@ def measurements(path):
     return found
 
 
+def rounded(figure):
+    """A per-message figure at the precision the published tables read it in.
+
+    A cost that falls below one per message is shown to three places, so that "nothing per
+    message, one allocation for the whole run" does not read as a flat zero.
+    """
+    return round(figure, 3) if abs(figure) < 1 else round(figure, 1)
+
+
 def per_message(value):
     """A run total as a per-message figure, rounded the way a reader reads it."""
     if value is None:
@@ -416,8 +425,7 @@ def half(found, key):
     first = totals(found, key, COLD, COLD_FLOOR)
     steady = {}
     for metric_name in ("instructions", "allocations"):
-        per = (twice[metric_name] - base[metric_name]) / MESSAGES
-        steady[metric_name] = round(per, 3) if abs(per) < 1 else round(per, 1)
+        steady[metric_name] = rounded((twice[metric_name] - base[metric_name]) / MESSAGES)
     cold = {name: first[name] for name in ("instructions", "allocations")}
     return steady, cold
 

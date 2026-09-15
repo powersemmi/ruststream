@@ -160,10 +160,11 @@ benchmark runner pinned to the version the crate depends on.
 - **Three numbers per scenario.** Instructions from callgrind, which is exact and the gate;
   allocations from DHAT, which is exact and the gate; wall time from a separate run, which is noisy
   and informational.
-- **A gate on the change, not on the value.** A pull request is measured against the same
-  benchmarks run on the target branch: more than two percent of instructions in a gated scenario
-  fails it, and so does an allocation above what the scenario declares. The cold start and the
-  wall clock only print.
+- **A gate on the change, not on the value.** A pull request carrying the `run-bench` label is
+  measured against the same benchmarks run on the target branch: more than two percent of
+  instructions in a gated scenario fails it, and so does an allocation above what the scenario
+  declares. The table lands as a comment on the pull request. The cold start and the wall clock
+  only print.
 
 ## Publishing results
 
