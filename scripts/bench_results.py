@@ -51,10 +51,16 @@ COLD_FLOOR = 1_000
 
 class Scenario:
     """One published row: what it is called, which benchmark measured each half, and whether a
-    regression in it fails CI."""
+    regression in it fails CI.
 
-    def __init__(self, name, framework, hand, gated=True, note=None):
+    `key` is the short name a narrow report writes instead of the sentence: the chart in the
+    pull request comment is read in one column, and a scenario has to be recognisable in ten
+    characters. The sentence stays everywhere there is room for it.
+    """
+
+    def __init__(self, name, key, framework, hand, gated=True, note=None):
         self.name = name
+        self.key = key
         self.framework = framework
         self.hand = hand
         self.gated = gated
@@ -72,61 +78,73 @@ COUNTS = ("base", "twice")
 SCENARIOS = [
     Scenario(
         "consume, JSON decode into a small struct",
+        "json",
         "consume_json/service",
         "consume_json/by_hand",
     ),
     Scenario(
         "consume, JSON decode of a 1 KB body",
+        "json-1kb",
         "consume_json_kilobyte/service",
         "consume_json_kilobyte/by_hand",
     ),
     Scenario(
         "consume on the byte lane, no codec",
+        "lane",
         "consume_lane/service",
         "consume_lane/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of one",
+        "mw1",
         "middleware/service_one",
         "middleware/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of four",
+        "mw4",
         "middleware/service_four",
         "middleware/by_hand",
     ),
     Scenario(
         "consume in batches of 64",
+        "batch64",
         "batch/service",
         "batch/by_hand",
     ),
     Scenario(
         "reply, encoded to a declared destination",
+        "reply",
         "reply/service",
         "reply/by_hand",
     ),
     Scenario(
         "publish through an Out slot with one transform",
+        "out-slot",
         "out_slot/service",
         "out_slot/by_hand",
     ),
     Scenario(
         "publish with a typed header contract",
+        "hdr-write",
         "typed_headers_write/service",
         "typed_headers_write/by_hand",
     ),
     Scenario(
         "read a typed header contract, then publish",
+        "hdr-read",
         "typed_headers_read/service",
         "typed_headers_read/by_hand",
     ),
     Scenario(
         "request and reply, one round trip",
+        "req-reply",
         "request_reply/service",
         "request_reply/by_hand",
     ),
     Scenario(
         "a delivery that asks to be redelivered, and the copy",
+        "retry",
         "retry_copy/service",
         None,
         gated=False,

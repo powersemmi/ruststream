@@ -30,6 +30,17 @@ def rendered(fixture="bench-summary.json", head="1111111aaaaaaa", base="2222222b
     return bench_comment.comment(measured(fixture), head, base)
 
 
+def charted(text):
+    """The scenario lines of the chart block, without its heading or its allocation lines."""
+    block = text.split("```")[1].strip("\n").splitlines()
+    rows = []
+    for line in block[2:]:
+        if not line.strip():
+            break
+        rows.append(line)
+    return rows
+
+
 def row(text, scenario):
     for line in text.splitlines():
         if line.startswith(f"| {scenario} |"):
@@ -64,7 +75,7 @@ class Table(unittest.TestCase):
     def test_the_summary_totals_the_gated_scenarios_and_carries_the_verdict(self):
         """What a reader gets without opening anything: the move, and whether it failed."""
         self.assertIn(
-            "Instructions across the gated scenarios: +0.28% against the base. "
+            "Instructions across the gated scenarios: +0.24% against the base. "
             "Allocations: +3.12%. Gate: fail on publish through an Out slot with one transform.",
             rendered(),
         )
@@ -74,32 +85,60 @@ class Table(unittest.TestCase):
         text = rendered("bench-summary-partial.json")
         self.assertIn("there is no total. Gate: pass.", text)
 
-    def test_the_scenarios_that_moved_more_than_a_percent_are_named(self):
-        """Below a percent an instruction count is the scheduling of the run, not the code."""
-        self.assertIn(
-            "Changes above 1%: publish through an Out slot with one transform +3.00%.",
-            rendered(),
+    def test_the_chart_reads_worst_move_first(self):
+        """A reader looks at the top of the block and sees what moved most."""
+        self.assertEqual(
+            [line.split()[0] for line in charted(rendered())],
+            [
+                "lane",
+                "out-slot",
+                "json",
+                "hdr-write",
+                "mw4",
+                "reply",
+                "req-reply",
+                "retry",
+                "json-1kb",
+                "mw1",
+                "hdr-read",
+                "batch64",
+            ],
         )
 
-    def test_a_run_that_moved_nothing_says_none(self):
-        """The line is always there, so its absence never has to be read as an omission."""
-        text = rendered("bench-summary-partial.json")
-        self.assertIn("Changes above 1%: none.", text)
-        self.assertIn("Allocation changes: none.", text)
+    def test_a_drop_a_rise_and_a_move_too_small_to_be_either(self):
+        """Three marks, and a bar only where the move is larger than the run-to-run noise."""
+        drawn = {line.split()[0]: line for line in charted(rendered())}
+        self.assertEqual(drawn["lane"], "lane       \u25bc  3.0%  " + "\u2588" * 28)
+        self.assertEqual(drawn["out-slot"], "out-slot   \u25b2  3.0%  " + "\u2588" * 28)
+        self.assertEqual(drawn["json"], "json       \u00b7  0.5%")
+
+    def test_the_bars_are_scaled_to_the_largest_move(self):
+        """The widest bar is the worst scenario, whatever the size of the worst move."""
+        widths = [line.count("\u2588") for line in charted(rendered())]
+        self.assertEqual(max(widths), 28)
+        self.assertEqual([width for width in widths if width], [28, 28])
+
+    def test_the_heading_names_the_metric_and_the_gate(self):
+        """The limit comes from the benchmarks themselves, so it cannot drift from the gate."""
+        self.assertIn(
+            "Instructions per message, head against base (gate 2%):", rendered()
+        )
 
     def test_every_allocation_change_is_named_however_small(self):
         """Allocations are counted, not sampled: a difference is the code, never the run."""
-        self.assertIn(
-            "Allocation changes: publish through an Out slot with one transform 15.0 -> 17.0.",
-            rendered(),
-        )
+        block = rendered().split("```")[1]
+        self.assertIn("Allocations:\nout-slot   15.0 -> 17.0", block)
+
+    def test_a_run_that_allocated_the_same_says_so(self):
+        """The line is always there, so its absence never has to be read as an omission."""
+        self.assertIn("Allocations: no change.", rendered("bench-summary-partial.json"))
 
     def test_the_table_is_folded_under_the_summary(self):
         """The comment reads short by default and keeps every row one click away."""
         text = rendered()
         self.assertIn("<details>\n<summary>Every scenario</summary>\n\n| Scenario |", text)
         self.assertTrue(text.rstrip().endswith("</details>"))
-        self.assertLess(text.index("Changes above 1%"), text.index("<details>"))
+        self.assertLess(text.index("Instructions per message"), text.index("<details>"))
 
     def test_the_header_names_both_commits_and_what_the_base_run_was(self):
         """The base is the target branch's library under this pull request's own suite."""

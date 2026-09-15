@@ -15,10 +15,11 @@ scenario is present is the published document's gate, not this one's.
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
-from bench_results import COLD, COUNTS, MESSAGES, SCENARIOS, rounded
+from bench_results import COLD, COUNTS, MESSAGES, REPO, SCENARIOS, rounded
 
 # The two metrics of the table, under the tool and the key each is reported by.
 INSTRUCTIONS = ("Callgrind", "Ir")
@@ -280,23 +281,59 @@ def failing(found):
     ]
 
 
-def notable(found):
-    """Scenarios whose instruction count moved further than the run-to-run noise."""
+# The chart: a drop, a rise, and a move too small to be either. The bar is drawn in full blocks,
+# the widest one this many cells across.
+DOWN, UP, FLAT, BAR = "\u25bc", "\u25b2", "\u00b7", "\u2588"
+CELLS = 28
+
+# The column the short scenario names are written in.
+KEY = 11
+
+
+def gate_percent():
+    """The limit a gated scenario is held to, read where the benchmarks declare it.
+
+    A number copied into this file would drift from the one that fails the run; where the
+    declaration cannot be read the heading says nothing rather than something stale.
+    """
+    try:
+        source = (REPO / "benches" / "common" / "mod.rs").read_text()
+    except OSError:
+        return None
+    match = re.search(r"soft_limits\(\[\(EventKind::Ir,\s*([\d.]+)f64\)\]\)", source)
+    return float(match.group(1)) if match else None
+
+
+def moves(found, metric):
+    """What each scenario did to one metric, by short name, worst move first."""
     moved = []
     for scenario in SCENARIOS:
         measured = steady(found, scenario.framework)
         if measured is None:
             continue
-        percent = percentage(
-            measured["head"]["instructions"], measured["base"]["instructions"]
-        )
-        if percent is not None and abs(percent) > NOTABLE:
-            moved.append(f"{scenario.name} {percent:+.2f}%")
+        percent = percentage(measured["head"][metric], measured["base"][metric])
+        if percent is not None:
+            moved.append((scenario.key, percent))
+    moved.sort(key=lambda row: -abs(row[1]))
     return moved
 
 
-def allocation_moves(found):
-    """Scenarios whose allocations per message differ from the base at all.
+def bars(moved):
+    """One line per scenario: the name, which way it went, how far, and the bar."""
+    widest = max((abs(percent) for _, percent in moved if abs(percent) >= NOTABLE), default=0)
+    lines = []
+    for key, percent in moved:
+        if abs(percent) < NOTABLE:
+            lines.append(f"{key:<{KEY}}{FLAT} {abs(percent):>4.1f}%")
+            continue
+        mark = DOWN if percent < 0 else UP
+        cells = max(1, round(abs(percent) / widest * CELLS))
+        lines.append(f"{key:<{KEY}}{mark} {abs(percent):>4.1f}%  {BAR * cells}")
+    return lines
+
+
+def allocation_lines(found):
+    """The scenarios whose allocations per message differ from the base at all.
 
     Allocations on the delivery path are counted, not sampled, so any difference is the code and
     worth naming however small it looks.
@@ -309,12 +346,30 @@ def allocation_moves(found):
         head, base = measured["head"]["allocations"], measured["base"]["allocations"]
         if head is None or base is None or head == base:
             continue
-        moved.append(f"{scenario.name} {base} -> {head}")
-    return moved
+        moved.append(f"{scenario.key:<{KEY}}{base} -> {head}")
+    if not moved:
+        return ["Allocations: no change."]
+    return ["Allocations:", *moved]
 
 
-def listing(label, entries):
-    return f"{label}: " + ("; ".join(entries) if entries else "none") + "."
+def chart(found):
+    """The drift, drawn: a monospace block a reader takes in without reading a sentence."""
+    moved = moves(found, "instructions")
+    if not moved:
+        return []
+    gate = gate_percent()
+    heading = "Instructions per message, head against base"
+    if gate is not None:
+        heading += f" (gate {gate:g}%)"
+    return [
+        "```",
+        f"{heading}:",
+        "",
+        *bars(moved),
+        "",
+        *allocation_lines(found),
+        "```",
+    ]
 
 
 def summary(found):
@@ -331,13 +386,7 @@ def summary(found):
             f"Instructions across the gated scenarios: {instructions} against the base. "
             f"Allocations: {allocations}. Gate: {gate}."
         )
-    return [
-        headline,
-        "",
-        listing("Changes above 1%", notable(found)),
-        "",
-        listing("Allocation changes", allocation_moves(found)),
-    ]
+    return [headline, "", *chart(found)]
 
 
 def comment(found, head, base):
