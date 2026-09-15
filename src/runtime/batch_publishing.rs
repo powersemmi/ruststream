@@ -189,7 +189,7 @@ where
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, D::Context, S>) {
-        let subscription = ctx.name().to_owned();
+        let subscription = ctx.subscription();
         let (values, accepted) =
             decode_batch::<M, D::Input, C, D::Context, S>(batch, &self.codec, self.decode, ctx)
                 .await;
@@ -223,7 +223,7 @@ where
             }
             Err(result) => result,
         };
-        settle_batch(accepted, result, &subscription, ctx.delivery()).await;
+        settle_batch(accepted, result, subscription, ctx.delivery()).await;
     }
 }
 

@@ -44,7 +44,7 @@ fn step(message: &MemoryMessage, latch: &Latch) {
     latch.arrived();
 }
 
-#[library_benchmark(config = common::config(316, 30))]
+#[library_benchmark(config = common::config(252, 30))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

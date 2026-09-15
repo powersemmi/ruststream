@@ -141,7 +141,7 @@ where
     State: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<Msg>, ctx: &mut Context<'_, Def::Context, State>) {
-        let subscription = ctx.name().to_owned();
+        let subscription = ctx.subscription();
         let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State>(
             batch,
             &self.codec,
@@ -154,7 +154,7 @@ where
         }
         let delivery = ctx.delivery();
         let result = self.def.call(&values, &self.injections, ctx).await;
-        settle_batch(accepted, result, &subscription, delivery).await;
+        settle_batch(accepted, result, subscription, delivery).await;
     }
 }
 

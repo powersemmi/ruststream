@@ -368,7 +368,7 @@ where
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
-        let subscription = ctx.name().to_owned();
+        let subscription = ctx.subscription();
         let (values, accepted) =
             decode_batch::<M, Input, DecodeCodec, C, S>(batch, &self.codec, self.decode, ctx).await;
         if accepted.is_empty() {
@@ -376,7 +376,7 @@ where
         }
         let delivery = ctx.delivery();
         let result = self.inner.handle_slice(&values, ctx).await;
-        settle_batch(accepted, result, &subscription, delivery).await;
+        settle_batch(accepted, result, subscription, delivery).await;
     }
 }
 
@@ -429,7 +429,7 @@ where
     S: Send + Sync,
 {
     async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
-        let subscription = ctx.name().to_owned();
+        let subscription = ctx.subscription();
         if batch.is_empty() {
             return;
         }
@@ -459,7 +459,7 @@ where
         }
         #[cfg(feature = "otel")]
         if !values.is_empty() {
-            record_batch_size(&subscription, values.len());
+            record_batch_size(subscription, values.len());
         }
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
@@ -467,7 +467,7 @@ where
             self.inner.handle_slice(&values, ctx).await
         };
         drop(values);
-        settle_split_batch(batch, rejected, result, &subscription, delivery).await;
+        settle_split_batch(batch, rejected, result, subscription, delivery).await;
     }
 }
 
@@ -705,7 +705,7 @@ where
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
-    let subscription = ctx.name().to_owned();
+    let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
     // demand `Context: Sync` (see the signature's note).
     let delivery = ctx.delivery();
@@ -729,7 +729,7 @@ where
                 settle_outcome(
                     msg,
                     outcome,
-                    &subscription,
+                    subscription,
                     delivery,
                     <C as BuildBatchContext<M>>::build as fn(&M) -> C,
                 )
@@ -741,7 +741,7 @@ where
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
     if !accepted.is_empty() {
-        record_batch_size(&subscription, values.len());
+        record_batch_size(subscription, values.len());
     }
     (values, accepted)
 }
