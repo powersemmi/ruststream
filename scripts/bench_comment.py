@@ -281,13 +281,16 @@ def failing(found):
     ]
 
 
-# The chart: a drop, a rise, and a move too small to be either. The bar is drawn in full blocks,
-# the widest one this many cells across.
-DOWN, UP, FLAT, BAR = "\u25bc", "\u25b2", "\u00b7", "\u2588"
+# The chart is ASCII and nothing else. A block element or an arrow is not single-width in the
+# font GitHub falls back to for it, so a column of them lines up nowhere and the bars come out
+# striped; the sign carries the direction instead. The widest bar is this many cells across.
+BAR = "#"
 CELLS = 28
 
-# The column the short scenario names are written in.
+# The column the short scenario names are written in, and the field the percentage is right
+# aligned in. Every line puts its percentage in the same columns, so the numbers read down.
 KEY = 11
+FIGURE = 6
 
 
 def gate_percent():
@@ -319,16 +322,18 @@ def moves(found, metric):
 
 
 def bars(moved):
-    """One line per scenario: the name, which way it went, how far, and the bar."""
+    """One line per scenario: the name, how far it went and which way, and the bar."""
     widest = max((abs(percent) for _, percent in moved if abs(percent) >= NOTABLE), default=0)
     lines = []
     for key, percent in moved:
+        # A sign on a figure that rounds to nothing reads as a typo, not as a direction.
+        shown = f"{percent:+.1f}%" if round(percent, 1) else "0.0%"
+        figure = f"{shown:>{FIGURE}}"
         if abs(percent) < NOTABLE:
-            lines.append(f"{key:<{KEY}}{FLAT} {abs(percent):>4.1f}%")
+            lines.append(f"{key:<{KEY}}{figure}")
             continue
-        mark = DOWN if percent < 0 else UP
         cells = max(1, round(abs(percent) / widest * CELLS))
-        lines.append(f"{key:<{KEY}}{mark} {abs(percent):>4.1f}%  {BAR * cells}")
+        lines.append(f"{key:<{KEY}}{figure}  {BAR * cells}")
     return lines
 
 

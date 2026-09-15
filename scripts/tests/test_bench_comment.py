@@ -20,6 +20,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(SCRIPTS))
 
 import bench_comment
+from bench_comment import FIGURE, KEY
 
 
 def measured(fixture="bench-summary.json"):
@@ -105,16 +106,31 @@ class Table(unittest.TestCase):
             ],
         )
 
-    def test_a_drop_a_rise_and_a_move_too_small_to_be_either(self):
-        """Three marks, and a bar only where the move is larger than the run-to-run noise."""
+    def test_a_drop_a_rise_and_a_move_too_small_for_a_bar(self):
+        """The sign carries the direction, and a bar is drawn above the run-to-run noise."""
         drawn = {line.split()[0]: line for line in charted(rendered())}
-        self.assertEqual(drawn["lane"], "lane       \u25bc  3.0%  " + "\u2588" * 28)
-        self.assertEqual(drawn["out-slot"], "out-slot   \u25b2  3.0%  " + "\u2588" * 28)
-        self.assertEqual(drawn["json"], "json       \u00b7  0.5%")
+        self.assertEqual(drawn["lane"], "lane        -3.0%  " + "#" * 28)
+        self.assertEqual(drawn["out-slot"], "out-slot    +3.0%  " + "#" * 28)
+        self.assertEqual(drawn["json"], "json        -0.5%")
+        self.assertEqual(drawn["batch64"], "batch64      0.0%")
+
+    def test_the_block_is_ascii_so_the_columns_hold(self):
+        """A block element is not single-width in the font GitHub falls back to for it."""
+        block = rendered().split("```")[1]
+        self.assertTrue(block.isascii(), block)
+
+    def test_every_percentage_ends_and_every_bar_starts_at_one_column(self):
+        """The figures read down the block, whatever the name and the size of the move."""
+        drawn = charted(rendered())
+        self.assertEqual({line.index("%") for line in drawn}, {16})
+        self.assertEqual({line.index("#") for line in drawn if "#" in line}, {19})
+        self.assertEqual(
+            {len(line) for line in drawn if "#" not in line}, {KEY + FIGURE}
+        )
 
     def test_the_bars_are_scaled_to_the_largest_move(self):
         """The widest bar is the worst scenario, whatever the size of the worst move."""
-        widths = [line.count("\u2588") for line in charted(rendered())]
+        widths = [line.count("#") for line in charted(rendered())]
         self.assertEqual(max(widths), 28)
         self.assertEqual([width for width in widths if width], [28, 28])
 
