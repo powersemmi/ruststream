@@ -156,6 +156,14 @@ impl<'a> OutgoingMessage<'a> {
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+
+    /// The borrowed name and payload, and the header map this message owns.
+    ///
+    /// A publish stage that has to rebuild the message takes the map here instead of cloning
+    /// what the caller is about to drop.
+    pub(crate) fn into_parts(self) -> (&'a str, &'a [u8], HeaderMap) {
+        (self.name, self.payload, self.headers)
+    }
 }
 
 /// A message delivered by a [`Subscriber`].

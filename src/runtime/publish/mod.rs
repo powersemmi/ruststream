@@ -86,6 +86,14 @@ impl<'a> Outgoing<'a> {
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
     }
+
+    /// The name, the payload and the header map, taken apart.
+    ///
+    /// What the last stage of a publish uses to hand the message on: the map the transforms
+    /// filled travels into the broker's message rather than being cloned into it.
+    pub(crate) fn into_parts(self) -> (Cow<'a, str>, BytesMut, HeaderMap) {
+        (self.name, self.payload, self.headers)
+    }
 }
 
 mod sealed {
