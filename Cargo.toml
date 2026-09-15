@@ -589,6 +589,12 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 gungraun = "=0.19.4"
 divan = "0.1.21"
 
+# What ships is optimized across crate boundaries: the framework is generic to the point where a
+# dispatch path is only as cheap as the inlining it gets, and a build that stops at each crate
+# boundary is not the one to publish numbers from.
+[profile.release]
+lto = "fat"
+
 # The benchmarks measure what ships, so they are built the way a release is: the profile inherits
 # it whole, and the only addition is the line tables a profile needs to name functions. Debug
 # information is metadata and changes no codegen decision.

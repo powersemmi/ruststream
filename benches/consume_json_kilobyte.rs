@@ -53,7 +53,7 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(1))]
+#[library_benchmark(config = common::config(8))]
 #[bench::first(common::feed(1, BODY))]
 #[bench::base(common::feed(MESSAGES, BODY))]
 #[bench::twice(common::feed(2 * MESSAGES, BODY))]

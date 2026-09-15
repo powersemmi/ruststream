@@ -126,7 +126,7 @@ fn service(requests: Requests) {
     drop(running);
 }
 
-#[library_benchmark(config = common::config(40002))]
+#[library_benchmark(config = common::config(40009))]
 #[bench::first(common::feed(1, 0))]
 #[bench::base(common::feed(MESSAGES, 0))]
 #[bench::twice(common::feed(2 * MESSAGES, 0))]

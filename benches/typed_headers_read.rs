@@ -104,7 +104,7 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(10001))]
+#[library_benchmark(config = common::config(10008))]
 #[bench::first(common::feed_with_headers(1, &HEADERS))]
 #[bench::base(common::feed_with_headers(MESSAGES, &HEADERS))]
 #[bench::twice(common::feed_with_headers(2 * MESSAGES, &HEADERS))]
