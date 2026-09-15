@@ -18,12 +18,13 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 数值是交替配对的中位数，括号里是观察到的波动范围。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配", "cold": "冷启动"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配，RustStream", "cold": "冷启动", "allocationsByHand": "内存分配，手写"}'></div>
 
 ### 代码的开销 { #cost-of-the-code }
 
-稳态下每条消息的指令数和内存分配次数，在进程内传输上测得。“开销”一列是框架比旁边那个手写循环多
-付的部分。
+稳态下每条消息的指令数和内存分配次数，在进程内传输上测得。前三列数字是指令数，后两列是内存分配
+次数，两种量都给出框架和手写两边，差值因此读法一致：“开销”一列是框架比旁边那个手写循环多付的
+部分。
 
 <div id="benchmark-code"></div>
 

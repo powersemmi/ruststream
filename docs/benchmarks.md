@@ -21,12 +21,14 @@ next time it publishes its documentation.
 
 Medians over interleaved pairs, with the observed spread in parentheses.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations", "cold": "Cold start"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations, RustStream", "cold": "Cold start", "allocationsByHand": "Allocations, by hand"}'></div>
 
 ### Cost of the code
 
 Instructions and allocations per message in the steady state, measured on the in-process
-transport. `Overhead` is what the framework adds over the hand-written loop next to it.
+transport. The first three number columns are instructions, the two after them are allocations,
+and each of the two is shown for both halves so the difference reads the same way: `Overhead` is
+what the framework adds over the hand-written loop next to it.
 
 <div id="benchmark-code"></div>
 
