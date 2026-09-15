@@ -1,0 +1,216 @@
+{
+  "schema": 2,
+  "crate": "ruststream",
+  "crate_version": "0.7.0-rc.7",
+  "core_version": "0.7.0-rc.7",
+  "measured_at": "2026-09-15",
+  "environment": {
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor, 24 cores",
+    "os": "Linux 7.2.4-x64v3-xanmod1-1",
+    "rustc": "1.98.1",
+    "valgrind": "3.25.1",
+    "profile": "bench (release), default codegen flags",
+    "rustflags": ""
+  },
+  "scenarios": [],
+  "code": [
+    {
+      "name": "consume, JSON decode into a small struct",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2866.3,
+        "allocations": 0.001
+      },
+      "hand_written": {
+        "instructions": 1882.1,
+        "allocations": 0.001
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 984.2,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "consume, JSON decode of a 1 KB body",
+      "messages": 1000,
+      "framework": {
+        "instructions": 18774.7,
+        "allocations": 0.001
+      },
+      "hand_written": {
+        "instructions": 17777.2,
+        "allocations": 0.001
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 997.5,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "consume on the byte lane, no codec",
+      "messages": 1000,
+      "framework": {
+        "instructions": 1985.1,
+        "allocations": 0.001
+      },
+      "hand_written": {
+        "instructions": 1012.4,
+        "allocations": 0.001
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 972.7,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "consume through a middleware stack of one",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2903.3,
+        "allocations": 0.001
+      },
+      "hand_written": {
+        "instructions": 1882.1,
+        "allocations": 0.001
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 1021.2,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "consume through a middleware stack of four",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2928.6,
+        "allocations": 0.001
+      },
+      "hand_written": {
+        "instructions": 1882.1,
+        "allocations": 0.001
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 1046.5,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "consume in batches of 64",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2125.7,
+        "allocations": 0.162
+      },
+      "hand_written": {
+        "instructions": 1921.3,
+        "allocations": 0.097
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 204.4,
+        "allocations": 0.07
+      }
+    },
+    {
+      "name": "reply, encoded to a declared destination",
+      "messages": 1000,
+      "framework": {
+        "instructions": 5192.5,
+        "allocations": 5.99
+      },
+      "hand_written": {
+        "instructions": 3456.2,
+        "allocations": 5.0
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 1736.3,
+        "allocations": 0.99
+      }
+    },
+    {
+      "name": "publish through an Out slot with one transform",
+      "messages": 1000,
+      "framework": {
+        "instructions": 7706.5,
+        "allocations": 15.0
+      },
+      "hand_written": {
+        "instructions": 4914.5,
+        "allocations": 11.0
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 2792.0,
+        "allocations": 4.0
+      }
+    },
+    {
+      "name": "publish with a typed header contract",
+      "messages": 1000,
+      "framework": {
+        "instructions": 7886.6,
+        "allocations": 16.0
+      },
+      "hand_written": {
+        "instructions": 5954.6,
+        "allocations": 15.0
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 1932.0,
+        "allocations": 1.0
+      }
+    },
+    {
+      "name": "read a typed header contract, then publish",
+      "messages": 1000,
+      "framework": {
+        "instructions": 7507.9,
+        "allocations": 5.99
+      },
+      "hand_written": {
+        "instructions": 5548.6,
+        "allocations": 5.0
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 1959.3,
+        "allocations": 0.99
+      }
+    },
+    {
+      "name": "request and reply, one round trip",
+      "messages": 1000,
+      "framework": {
+        "instructions": 13631.3,
+        "allocations": 20.0
+      },
+      "hand_written": {
+        "instructions": 11393.3,
+        "allocations": 20.0
+      },
+      "gated": true,
+      "overhead": {
+        "instructions": 2238.0,
+        "allocations": 0.0
+      }
+    },
+    {
+      "name": "a delivery that asks to be redelivered, and the copy",
+      "messages": 1000,
+      "framework": {
+        "instructions": 8544.1,
+        "allocations": 1.01
+      },
+      "hand_written": null,
+      "gated": false,
+      "note": "cold path: measured and reported, never gated"
+    }
+  ]
+}
