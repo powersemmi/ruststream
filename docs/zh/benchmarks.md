@@ -29,7 +29,8 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 <div id="benchmark-code"></div>
 
 “冷启动”一列是启动服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一
-次，不按消息计。
+次，不按消息计。表格下面那一行是跑出这些数字的机器，一直写到内存：只有知道两台机器上编译的是
+同一份代码，指令数才能互相比较。
 
 ## 这些数字是什么 { #what-the-numbers-are }
 
@@ -155,11 +156,18 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
   "core_version": "0.7.0",
   "measured_at": "2026-08-20",
   "environment": {
-    "cpu": "AMD Ryzen 9 5950X, 16 cores",
+    "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+    "architecture": "x86_64 (x86-64-v3)",
+    "cpu_frequency": "base 3400 MHz, max 4900 MHz",
+    "cores": "16 physical, 32 logical",
+    "memory": "62.7 GiB",
+    "memory_speed": "DDR4, 3600 MT/s",
     "os": "Linux 6.16.7",
     "broker": "nats:2.10-alpine in Docker on localhost",
     "rustc": "1.90.0",
-    "profile": "release, lto = thin, codegen-units = 1",
+    "valgrind": "3.25.1",
+    "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
+    "features": "--no-default-features --features memory,macros,json",
     "rustflags": "-C target-cpu=native"
   },
   "scenarios": [
@@ -192,6 +200,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 `schema` 是这份文档的版本。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`。`overhead_percent` 两种情况都记录，
 只在判定为 `measured` 时展示。`broker_bound` 标记那些由 Broker 而不是消费者决定节奏的运行。
+
+`environment` 描述机器和构建。`cpu`、`architecture`、`cpu_frequency`、`cores`、`memory` 和
+`memory_speed` 说的是机器，`profile` 和 `features` 说的是基准测试用什么构建。机器不公布的字段写
+成 `unknown`，不去猜：内存速率来自 DMI 表，而多数系统只让 root 读它。除 `cpu`、`os` 和 `rustc`
+之外都是可选的，因此 schema 为 1 的文档照样可读。
 
 `code` 是第二张表，每个场景一条记录。`framework`、`hand_written` 和 `overhead` 是稳态下每条消息
 的量，`cold` 则是启动服务加第一条消息的全部开销，没有除以任何东西。没有对照的场景不带

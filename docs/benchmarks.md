@@ -33,7 +33,9 @@ what the framework adds over the hand-written loop next to it.
 <div id="benchmark-code"></div>
 
 `Cold start` is what starting the service and handling the first delivery cost together,
-instructions and allocations, and a service pays it once rather than per message.
+instructions and allocations, and a service pays it once rather than per message. The line under
+the table is the machine the run was taken on, down to the memory, because an instruction count is
+comparable across machines only once you know they ran the same code.
 
 ## What the numbers are
 
@@ -189,11 +191,18 @@ it. The broker sites share this site's origin, so this page reads them directly.
   "core_version": "0.7.0",
   "measured_at": "2026-08-20",
   "environment": {
-    "cpu": "AMD Ryzen 9 5950X, 16 cores",
+    "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+    "architecture": "x86_64 (x86-64-v3)",
+    "cpu_frequency": "base 3400 MHz, max 4900 MHz",
+    "cores": "16 physical, 32 logical",
+    "memory": "62.7 GiB",
+    "memory_speed": "DDR4, 3600 MT/s",
     "os": "Linux 6.16.7",
     "broker": "nats:2.10-alpine in Docker on localhost",
     "rustc": "1.90.0",
-    "profile": "release, lto = thin, codegen-units = 1",
+    "valgrind": "3.25.1",
+    "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
+    "features": "--no-default-features --features memory,macros,json",
     "rustflags": "-C target-cpu=native"
   },
   "scenarios": [
@@ -227,6 +236,12 @@ it. The broker sites share this site's origin, so this page reads them directly.
 the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`.
 `broker_bound` marks a run the broker paced rather than the consumer.
+
+`environment` describes the machine and the build. `cpu`, `architecture`, `cpu_frequency`,
+`cores`, `memory` and `memory_speed` are the machine; `profile` and `features` are what the
+benchmarks were built with. A field the machine does not publish is written as `unknown` rather
+than guessed: memory speed comes from the DMI tables, which most systems only let root read.
+Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays readable.
 
 `code` is the second table, one entry per scenario. `framework`, `hand_written` and `overhead` are
 per message in the steady state; `cold` is the whole cost of starting the service and taking the

@@ -33,7 +33,9 @@
 <div id="benchmark-code"></div>
 
 Колонка «Холодный старт» - во что обошлись запуск сервиса и обработка первого сообщения вместе,
-инструкции и выделения памяти; сервис платит это один раз, а не на каждом сообщении.
+инструкции и выделения памяти; сервис платит это один раз, а не на каждом сообщении. Строка под
+таблицей - машина, на которой сделан прогон, вплоть до памяти: счётчик инструкций сравним между
+машинами только тогда, когда известно, что на них собран один и тот же код.
 
 ## Что означают эти числа {#what-the-numbers-are}
 
@@ -190,11 +192,18 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
   "core_version": "0.7.0",
   "measured_at": "2026-08-20",
   "environment": {
-    "cpu": "AMD Ryzen 9 5950X, 16 cores",
+    "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+    "architecture": "x86_64 (x86-64-v3)",
+    "cpu_frequency": "base 3400 MHz, max 4900 MHz",
+    "cores": "16 physical, 32 logical",
+    "memory": "62.7 GiB",
+    "memory_speed": "DDR4, 3600 MT/s",
     "os": "Linux 6.16.7",
     "broker": "nats:2.10-alpine in Docker on localhost",
     "rustc": "1.90.0",
-    "profile": "release, lto = thin, codegen-units = 1",
+    "valgrind": "3.25.1",
+    "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
+    "features": "--no-default-features --features memory,macros,json",
     "rustflags": "-C target-cpu=native"
   },
   "scenarios": [
@@ -228,6 +237,12 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 предложение. `verdict` принимает значение `measured` или `indistinguishable` по правилу выше;
 `overhead_percent` записывается в обоих случаях, а показывается только при вердикте `measured`.
 `broker_bound` помечает прогон, темп которого задавал брокер, а не консьюмер.
+
+`environment` описывает машину и сборку. Поля `cpu`, `architecture`, `cpu_frequency`, `cores`,
+`memory` и `memory_speed` - это машина, `profile` и `features` - то, чем собраны бенчмарки. Поле,
+которого машина не сообщает, пишется как `unknown`, а не выдумывается: скорость памяти берётся из
+таблиц DMI, а их на большинстве систем читает только root. Всё, кроме `cpu`, `os` и `rustc`,
+необязательно, поэтому документ схемы 1 остаётся читаемым.
 
 `code` - вторая таблица, по записи на сценарий. Поля `framework`, `hand_written` и `overhead` даны
 на сообщение в установившемся режиме, а `cold` - это целиком стоимость запуска сервиса и первой

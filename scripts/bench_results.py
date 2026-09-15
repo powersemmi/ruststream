@@ -28,6 +28,7 @@ import argparse
 import json
 import platform
 import re
+import os
 import subprocess
 import sys
 import tomllib
@@ -185,11 +186,126 @@ def command(*args):
     return subprocess.run(args, capture_output=True, text=True, check=True).stdout.strip()
 
 
+def read(path, default=None):
+    """One line of a sysfs or proc file, or `default` where the file is not there."""
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return default
+
+
+def proc_cpuinfo():
+    return read("/proc/cpuinfo", "") or ""
+
+
 def cpu_model():
-    for line in Path("/proc/cpuinfo").read_text().splitlines():
+    for line in proc_cpuinfo().splitlines():
         if line.startswith("model name"):
             return line.split(":", 1)[1].strip()
     return platform.processor() or "unknown"
+
+
+# The feature sets the x86-64 levels are defined by, coarsest first. A level is claimed only when
+# every flag of it and of the levels below is present, so this names what the binary could have
+# been built for rather than guessing a marketing name for the chip.
+X86_LEVELS = [
+    ("x86-64-v2", ["sse4_2", "popcnt", "ssse3"]),
+    ("x86-64-v3", ["avx2", "bmi1", "bmi2", "fma", "movbe"]),
+    ("x86-64-v4", ["avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"]),
+]
+
+
+def architecture():
+    machine = platform.machine()
+    flags = set()
+    for line in proc_cpuinfo().splitlines():
+        if line.startswith("flags"):
+            flags = set(line.split(":", 1)[1].split())
+            break
+    level = None
+    for name, needed in X86_LEVELS:
+        if all(flag in flags for flag in needed):
+            level = name
+        else:
+            break
+    return f"{machine} ({level})" if level else machine
+
+
+def megahertz(path):
+    value = read(path)
+    try:
+        return round(int(value) / 1000)
+    except (TypeError, ValueError):
+        return None
+
+
+def cpu_frequency():
+    """Base and maximum clock, as the kernel reports them.
+
+    A CPU whose firmware does not publish a base clock (every AMD one here) says so rather than
+    having a number invented for it.
+    """
+    cpufreq = "/sys/devices/system/cpu/cpu0/cpufreq"
+    base = megahertz(f"{cpufreq}/base_frequency")
+    top = megahertz(f"{cpufreq}/cpuinfo_max_freq")
+    bottom = megahertz(f"{cpufreq}/cpuinfo_min_freq")
+    parts = [f"base {base} MHz" if base else "base unknown"]
+    if bottom:
+        parts.append(f"min {bottom} MHz")
+    parts.append(f"max {top} MHz" if top else "max unknown")
+    return ", ".join(parts)
+
+
+def cores():
+    """Physical and logical count, counted off the topology the kernel publishes."""
+    physical = set()
+    package = core = None
+    for line in proc_cpuinfo().splitlines():
+        if line.startswith("physical id"):
+            package = line.split(":", 1)[1].strip()
+        elif line.startswith("core id"):
+            core = line.split(":", 1)[1].strip()
+            physical.add((package, core))
+    logical = os.cpu_count() or 0
+    count = len(physical) or logical
+    return f"{count} physical, {logical} logical"
+
+
+def memory():
+    for line in (read("/proc/meminfo", "") or "").splitlines():
+        if line.startswith("MemTotal"):
+            kib = int(line.split()[1])
+            return f"{kib / 1024 / 1024:.1f} GiB"
+    return "unknown"
+
+
+def memory_speed():
+    """Module speed and type, out of the DMI tables where they can be read at all.
+
+    They are root-only on most Linux systems, and a benchmark run is not worth a root shell, so
+    `unknown` is the honest answer rather than a guess.
+    """
+    try:
+        dmi = subprocess.run(
+            ["dmidecode", "--type", "memory"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    if dmi.returncode != 0:
+        return "unknown"
+    speeds = set()
+    kinds = set()
+    for line in dmi.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("Configured Memory Speed:") or line.startswith("Speed:"):
+            value = line.split(":", 1)[1].strip()
+            if value and "Unknown" not in value:
+                speeds.add(value)
+        elif line.startswith("Type:") and "Unknown" not in line:
+            kinds.add(line.split(":", 1)[1].strip())
+    if not speeds:
+        return "unknown"
+    return ", ".join(sorted(kinds | speeds))
 
 
 # What cargo compiles a release with when the manifest says nothing. The benchmark profile
@@ -222,10 +338,15 @@ def features():
 
 
 def environment():
+    """The machine and the build, so a number can be read against what produced it."""
     valgrind = command("valgrind", "--version")
-    cores = command("nproc")
     return {
-        "cpu": f"{cpu_model()}, {cores} cores",
+        "cpu": cpu_model(),
+        "architecture": architecture(),
+        "cpu_frequency": cpu_frequency(),
+        "cores": cores(),
+        "memory": memory(),
+        "memory_speed": memory_speed(),
         "os": f"{platform.system()} {platform.release()}",
         "rustc": command("rustc", "--version").split()[1],
         "valgrind": valgrind.removeprefix("valgrind-"),

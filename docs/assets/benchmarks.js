@@ -191,11 +191,45 @@ function provenance(published, labels) {
     return list;
   }
 
-  function renderCode(container, labels, lang, loaded) {
+  // The machine a set of code numbers was taken on, in the order the fields are documented. Values
+// come from the document as they were written; the page adds no words of its own to them.
+const MACHINE = [
+  "cpu",
+  "architecture",
+  "cpu_frequency",
+  "cores",
+  "memory",
+  "memory_speed",
+  "os",
+  "rustc",
+  "valgrind",
+  "profile",
+  "features",
+];
+
+function machine(published, labels) {
+  const list = document.createElement("ul");
+  for (const { broker, results } of published) {
+    const environment = results.environment || {};
+    const parts = MACHINE.map((field) => environment[field]).filter(Boolean);
+    const item = document.createElement("li");
+    item.appendChild(text("strong", broker.name));
+    item.appendChild(
+      document.createTextNode(
+        " - " + parts.join(", ") + ". " + labels.measured + " " + results.measured_at + ".",
+      ),
+    );
+    list.appendChild(item);
+  }
+  return list;
+}
+
+function renderCode(container, labels, lang, loaded) {
   const published = loaded.filter((entry) => entry.results && entry.results.code?.length);
   container.replaceChildren();
   if (published.length) {
     container.appendChild(code(published, labels, lang));
+    container.appendChild(machine(published, labels));
   } else {
     container.appendChild(text("p", labels.pending.replace("{brokers}", CORE.name)));
   }
