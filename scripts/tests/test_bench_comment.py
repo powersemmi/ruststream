@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""What the benchmark comment says, against a run recorded in CI.
+
+The fixture is a real run of the suite against a baseline, cut to four benchmarks and to the two
+metrics the table reports, with one scenario edited to cost three percent more than its base and
+to trip both of its limits.
+"""
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+# The formatters are scripts rather than a package, so the directory holding them goes on the path
+# and they are imported the way the workflow runs them.
+sys.path.insert(0, str(SCRIPTS))
+
+import bench_comment
+
+
+def rendered(fixture, head="1111111aaaaaaa", base="2222222bbbbbbb"):
+    found = bench_comment.runs(FIXTURES / fixture)
+    return bench_comment.comment(found, head, base)
+
+
+def row(text, scenario):
+    for line in text.splitlines():
+        if line.startswith(f"| {scenario} |"):
+            return [cell.strip() for cell in line.strip("|").split("|")]
+    raise AssertionError(f"no row for {scenario}")
+
+
+class Table(unittest.TestCase):
+    def test_a_scenario_reports_both_halves_and_the_cold_start(self):
+        """The pair, the per-message figures and the start-up cost the run measured."""
+        cells = row(rendered("bench-summary.json"), "consume, JSON decode into a small struct")
+        self.assertEqual(
+            cells,
+            [
+                "consume, JSON decode into a small struct",
+                "2378.1",
+                "1653.9",
+                "0.0",
+                "0.0",
+                "-0.50%",
+                "18891 / 26",
+                "pass",
+            ],
+        )
+
+    def test_the_header_names_both_commits(self):
+        """A reader has to see which two trees produced the numbers."""
+        self.assertIn(
+            "Head `1111111` against base `2222222`.", rendered("bench-summary.json")
+        )
+
+    def test_a_tripped_limit_is_reported_with_its_metric(self):
+        """A failing gate says which limit went and by how much, not just that it went."""
+        cells = row(
+            rendered("bench-summary.json"), "publish through an Out slot with one transform"
+        )
+        self.assertEqual(cells[5], "+3.00%")
+        self.assertEqual(
+            cells[7],
+            "fail: instructions +3.00% over 2%; allocations 32028 over 30028",
+        )
+
+    def test_a_scenario_measured_without_a_gate_says_so(self):
+        """The cold path is published and never fails the run."""
+        cells = row(
+            rendered("bench-summary.json"),
+            "a delivery that asks to be redelivered, and the copy",
+        )
+        self.assertEqual(cells[2], "-")
+        self.assertEqual(cells[7], "not gated")
+
+    def test_a_scenario_the_run_does_not_carry_is_left_empty(self):
+        """A comment is posted after a run that may have failed part way through."""
+        cells = row(rendered("bench-summary.json"), "consume in batches of 64")
+        self.assertEqual(cells[1:], ["-"] * 7)
+
+    def test_without_a_baseline_the_change_column_is_empty(self):
+        """A run with nothing to compare against must not read as a run that did not move."""
+        text = rendered("bench-summary-no-baseline.json", base="")
+        self.assertIn("measured without a baseline", text)
+        cells = row(text, "consume, JSON decode into a small struct")
+        self.assertEqual(cells[1], "2378.1")
+        self.assertEqual(cells[5], "-")
+
+    def test_a_half_written_line_is_skipped(self):
+        """A run a failing limit cut short still reports everything measured before it."""
+        complete = (FIXTURES / "bench-summary.json").read_text()
+        with tempfile.TemporaryDirectory() as scratch:
+            cut = Path(scratch) / "bench-summary.json"
+            cut.write_text(complete + '{"benchmark_file": "benches/re')
+            found = bench_comment.runs(cut)
+        self.assertEqual(len(found), len(bench_comment.runs(FIXTURES / "bench-summary.json")))
+
+
+if __name__ == "__main__":
+    unittest.main()
