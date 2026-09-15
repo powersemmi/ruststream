@@ -119,6 +119,12 @@ pub const MESSAGES: usize = 1_000;
 /// allocation on the hot path" into something CI can hold the code to. The instruction limit is
 /// relative, so it needs a baseline to compare against (`--save-baseline` on `main`,
 /// `--baseline` on the pull request); without one the run only reports.
+///
+/// On a consume scenario the number is the cold start and nothing else. On a publish scenario it
+/// is the hand-written half's own count: the blocks the queue takes to own the message it keeps,
+/// with nothing of the framework's above them. Either way the limit is a floor the code is held
+/// to rather than a budget it may spend, so a number that goes up is a defect and a number that
+/// goes down is lowered here in the same change.
 pub fn config(allocations: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config
