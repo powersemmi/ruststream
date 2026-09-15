@@ -16,6 +16,14 @@
 //! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
 //! [`MemorySeeker`] over the per-name publish log.
 //!
+//! A [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome is this broker's own
+//! affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is
+//! republished. Every delivery carries the count of what the broker has handed that subscriber,
+//! the first delivery included, and [`MemoryMessage`] reports it through
+//! [`IncomingMessage::redelivery_count`]. A registration's `max_attempts(..)` is therefore spent
+//! on these redeliveries, and the delivery that spends it goes to the `dead_letter(..)`
+//! destination, or is terminated where the registration named none.
+//!
 //! How much a broker keeps is its own declaration. [`MemoryBroker::new`] keeps nothing: memory
 //! does not grow with the message count, and repositioning a subscription does not compile.
 //! [`MemoryBroker::retaining`] keeps the newest messages of every name within a [`Retention`]
@@ -43,6 +51,7 @@ use std::{
     fmt,
     future::{Future, ready},
     marker::PhantomData,
+    num::NonZeroU64,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -89,6 +98,22 @@ struct MemoryDelivery {
     /// Zero-based index of this message in its name's publish log. Stable across requeues, so
     /// a redelivered message reports the same [`MemoryPosition`].
     seq: usize,
+    /// How many times this copy has been handed to its subscriber, counting the delivery it is
+    /// about to make. One at fanout, one more on every requeue and every delayed redelivery,
+    /// which is what [`IncomingMessage::redelivery_count`] reports and what a registration's
+    /// `max_attempts(..)` is spent against.
+    ///
+    /// Per copy, not per published message: fanout hands every subscriber its own delivery, and
+    /// a replay after a seek is a fresh one, so neither inherits another subscription's count.
+    deliveries: NonZeroU64,
+}
+
+impl MemoryDelivery {
+    /// The same delivery on its way back to the subscriber it came from.
+    fn redelivered(mut self) -> Self {
+        self.deliveries = self.deliveries.saturating_add(1);
+        self
+    }
 }
 
 /// The subscriber bus: alive with its registrations, or terminally shut down.
@@ -234,6 +259,7 @@ impl MemoryState {
                 payload,
                 headers,
                 seq,
+                deliveries: NonZeroU64::MIN,
             };
             self.send_to(subscribers, &delivery);
         }
@@ -1040,6 +1066,13 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
             .map_or_else(|| EMPTY.get_or_init(HeaderMap::new), |d| &d.headers)
     }
 
+    /// This broker counts what it delivers, so a registration's `max_attempts(..)` is spent on
+    /// its own requeues and delayed redeliveries rather than only on the copies the runtime
+    /// publishes. The first delivery of a message answers one.
+    fn redelivery_count(&self) -> Option<u64> {
+        self.delivery.as_ref().map(|d| d.deliveries.get())
+    }
+
     fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
         self.delivery.take();
         ready(Ok(()))
@@ -1048,7 +1081,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self.delivery.take().expect("delivery already consumed");
         if requeue {
-            let sent = self.requeue.send(delivery);
+            let sent = self.requeue.send(delivery.redelivered());
             // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
             // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
             #[cfg(feature = "testing")]
@@ -1068,9 +1101,13 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     }
 
     /// Native delayed redelivery: the message returns to the same subscriber's queue once
-    /// `delay` has elapsed, not immediately.
+    /// `delay` has elapsed, not immediately, and counts as one more delivery.
     fn nack_after(mut self, delay: Duration) -> impl Future<Output = Result<(), AckError>> {
-        let delivery = self.delivery.take().expect("delivery already consumed");
+        let delivery = self
+            .delivery
+            .take()
+            .expect("delivery already consumed")
+            .redelivered();
         let requeue = self.requeue.clone();
         // Under the harness, register the redelivery with the coordinator so the in-flight count is
         // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
