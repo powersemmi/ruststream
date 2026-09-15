@@ -506,6 +506,69 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
+# One scenario per file, each with the hand-written twin it is compared against; `benches/common`
+# is the shared setup. `just bench` and the CI job name them, so a new file is added in three
+# places and `scripts/bench_results.py` fails loudly when one of them is missed.
+[[bench]]
+name = "consume_json"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "consume_json_kilobyte"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "consume_lane"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "middleware"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "batch"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "reply"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "out_slot"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "typed_headers_write"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "typed_headers_read"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "request_reply"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "retry_copy"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "wall_clock"
+harness = false
+required-features = ["memory", "json", "macros"]
+
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -523,6 +586,21 @@ trybuild = "1"
 prost = "0.14"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
+gungraun = "=0.19.4"
+divan = "0.1.21"
+
+# What ships is optimized across crate boundaries: the framework is generic to the point where a
+# dispatch path is only as cheap as the inlining it gets, and a build that stops at each crate
+# boundary is not the one to publish numbers from.
+[profile.release]
+lto = "fat"
+
+# The benchmarks measure what ships, so they are built the way a release is: the profile inherits
+# it whole, and the only addition is the line tables a profile needs to name functions. Debug
+# information is metadata and changes no codegen decision.
+[profile.bench]
+inherits = "release"
+debug = "line-tables-only"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

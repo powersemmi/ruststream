@@ -1,6 +1,7 @@
 /*
- * Renders the summary table on the Benchmarks page from the results every broker crate publishes
- * with its own documentation site.
+ * Renders the two summary tables on the Benchmarks page: what the framework costs against a raw
+ * client, which every broker crate measures on its own broker, and what its code costs per
+ * message, which the core and every broker crate measure on themselves.
  *
  * The numbers are fetched in the reader's browser instead of being copied into this repository:
  * a broker remeasures on its own schedule, and a copy here would be stale from the moment it
@@ -33,12 +34,16 @@
     { name: "AWS Kinesis", repo: "ruststream-kinesis" },
   ];
 
+  // The core measures no broker of its own, so it appears in the second table only.
+  const CORE = { name: "RustStream", repo: "ruststream" };
+
   const SITE = "https://powersemmi.github.io/";
   // `mike set-default latest` makes the site root a redirect page, so the versioned alias is
   // part of the stable path rather than an implementation detail of the deploy.
   const RESULTS = "/latest/benchmarks/results.json";
   const PAGE = "/latest/benchmarks/";
-  const SCHEMA = 1;
+  // Schema 2 added the `code` section; a schema 1 document still renders in the first table.
+  const SCHEMAS = [1, 2];
   const TIMEOUT_MS = 8000;
 
   const text = (tag, value) => {
@@ -63,8 +68,8 @@
       }
       const results = await response.json();
       // A future schema revision may reorder or retype fields, and rendering it as if it were
-      // this one would print wrong numbers rather than no numbers.
-      return results && results.schema === SCHEMA ? results : null;
+      // one of these would print wrong numbers rather than no numbers.
+      return results && SCHEMAS.includes(results.schema) ? results : null;
     } catch {
       return null;
     } finally {
@@ -120,7 +125,53 @@
     return element;
   }
 
-  function provenance(published, labels) {
+  function code(published, labels, lang) {
+  const element = document.createElement("table");
+  const head = element.createTHead().insertRow();
+  const columns = [
+    labels.crate,
+    labels.scenario,
+    labels.framework,
+    labels.byHand,
+    labels.overhead,
+    labels.allocations,
+    labels.allocationsByHand,
+    labels.cold,
+  ];
+  for (const column of columns) {
+    head.appendChild(text("th", column));
+  }
+  const body = element.createTBody();
+  for (const { broker, results } of published) {
+    for (const [index, scenario] of results.code.entries()) {
+      const row = body.insertRow();
+      // One name per crate however many scenarios it measured, as in the table above.
+      row.appendChild(text("td", index === 0 ? broker.name : ""));
+      row.appendChild(text("td", scenario.name));
+      row.appendChild(text("td", number(scenario.framework.instructions, lang)));
+      row.appendChild(text("td", scenario.hand_written ? number(scenario.hand_written.instructions, lang) : "-"));
+      row.appendChild(
+        text("td", scenario.overhead ? "+" + number(scenario.overhead.instructions, lang) : "-"),
+      );
+      row.appendChild(text("td", number(scenario.framework.allocations, lang)));
+      row.appendChild(
+        text("td", scenario.hand_written ? number(scenario.hand_written.allocations, lang) : "-"),
+      );
+      // Two numbers in one cell: what starting cost in instructions, and in allocations.
+      row.appendChild(
+        text(
+          "td",
+          scenario.cold
+            ? number(scenario.cold.instructions, lang) + " / " + number(scenario.cold.allocations, lang)
+            : "-",
+        ),
+      );
+    }
+  }
+  return element;
+}
+
+function provenance(published, labels) {
     const list = document.createElement("ul");
     for (const { broker, results } of published) {
       const environment = results.environment || {};
@@ -140,7 +191,51 @@
     return list;
   }
 
-  function render(container, labels, lang, loaded) {
+  // The machine a set of code numbers was taken on, in the order the fields are documented. Values
+// come from the document as they were written; the page adds no words of its own to them.
+const MACHINE = [
+  "cpu",
+  "architecture",
+  "cpu_frequency",
+  "cores",
+  "memory",
+  "memory_speed",
+  "os",
+  "rustc",
+  "valgrind",
+  "profile",
+  "features",
+];
+
+function machine(published, labels) {
+  const list = document.createElement("ul");
+  for (const { broker, results } of published) {
+    const environment = results.environment || {};
+    const parts = MACHINE.map((field) => environment[field]).filter(Boolean);
+    const item = document.createElement("li");
+    item.appendChild(text("strong", broker.name));
+    item.appendChild(
+      document.createTextNode(
+        " - " + parts.join(", ") + ". " + labels.measured + " " + results.measured_at + ".",
+      ),
+    );
+    list.appendChild(item);
+  }
+  return list;
+}
+
+function renderCode(container, labels, lang, loaded) {
+  const published = loaded.filter((entry) => entry.results && entry.results.code?.length);
+  container.replaceChildren();
+  if (published.length) {
+    container.appendChild(code(published, labels, lang));
+    container.appendChild(machine(published, labels));
+  } else {
+    container.appendChild(text("p", labels.pending.replace("{brokers}", CORE.name)));
+  }
+}
+
+function render(container, labels, lang, loaded) {
     const published = loaded.filter((entry) => entry.results && entry.results.scenarios?.length);
     const pending = loaded.filter((entry) => !published.includes(entry));
 
@@ -159,16 +254,30 @@
 
   async function main() {
     const container = document.getElementById("benchmark-results");
-    if (!container) {
+    const codeContainer = document.getElementById("benchmark-code");
+    if (!container && !codeContainer) {
       return;
     }
-    const labels = JSON.parse(container.dataset.benchmarkLabels);
     const lang = document.documentElement.lang || "en";
-    container.replaceChildren(text("p", labels.loading));
+    // One label set per page, carried by whichever container the page put it on.
+    const source = container?.dataset.benchmarkLabels ? container : codeContainer;
+    const labels = JSON.parse(source.dataset.benchmarkLabels);
+    for (const element of [container, codeContainer]) {
+      element?.replaceChildren(text("p", labels.loading));
+    }
     const loaded = await Promise.all(
-      BROKERS.map(async (broker) => ({ broker, results: await load(broker) })),
+      [...BROKERS, CORE].map(async (broker) => ({ broker, results: await load(broker) })),
     );
-    render(container, labels, lang, loaded);
+    // The core publishes no pair measurement, so it is not one of the crates the first table
+    // waits for; it leads the second one.
+    const brokers = loaded.filter((entry) => entry.broker !== CORE);
+    if (container) {
+      render(container, labels, lang, brokers);
+    }
+    if (codeContainer) {
+      const core = loaded.filter((entry) => entry.broker === CORE);
+      renderCode(codeContainer, labels, lang, [...core, ...brokers]);
+    }
   }
 
   // Material swaps page content without a reload, so the table is built on every navigation
