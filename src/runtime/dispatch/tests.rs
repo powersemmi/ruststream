@@ -1,10 +1,12 @@
 use std::future::ready;
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use futures::StreamExt;
+use futures::{StreamExt, poll, stream};
+use tokio::sync::Notify;
+use tokio::time::timeout;
 
 use super::*;
 use crate::runtime::redelivery::bare_retry_publisher;
@@ -123,10 +125,52 @@ impl Subscriber for ScriptedSubscriber {
     type Message = PlainMessage;
     type Error = StreamFault;
 
-    fn stream(
-        &mut self,
-    ) -> impl futures::Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        futures::stream::iter(std::mem::take(&mut self.items))
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        stream::iter(std::mem::take(&mut self.items))
+    }
+}
+
+/// A backlog long enough that a loop reaching the end of it has plainly drained the
+/// subscription rather than stopped on the shutdown signal.
+const BACKLOG: usize = 10_000;
+
+/// A subscriber with a long backlog, every delivery ready on the first poll: the loop never
+/// waits on it, so the shutdown signal is the only thing that can stop it early.
+struct SaturatedSubscriber;
+
+impl Subscriber for SaturatedSubscriber {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        stream::repeat_with(|| {
+            Ok(PlainMessage {
+                payload: Bytes::from_static(b"body"),
+                headers: HeaderMap::new(),
+                settled: Arc::new(AtomicU8::new(0)),
+                settlement: Settlement::Accepted,
+            })
+        })
+        .take(BACKLOG)
+    }
+}
+
+/// A subscriber with one delivery and then nothing: the loop is parked on an empty subscription
+/// by the time the test signals shutdown.
+struct QuietSubscriber;
+
+impl Subscriber for QuietSubscriber {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        stream::once(ready(Ok(PlainMessage {
+            payload: Bytes::from_static(b"body"),
+            headers: HeaderMap::new(),
+            settled: Arc::new(AtomicU8::new(0)),
+            settlement: Settlement::Accepted,
+        })))
+        .chain(stream::pending())
     }
 }
 
@@ -249,6 +293,88 @@ async fn a_stream_error_does_not_stop_the_keyed_lanes() {
     );
 }
 
+/// Counts deliveries and wakes the test on the first one. Unlike `ReportingHandler` it keeps
+/// nothing per delivery, so a loop that ignores the shutdown signal spins instead of filling
+/// memory until the test's timeout.
+struct CountingHandler {
+    handled: Arc<AtomicUsize>,
+    first: Arc<Notify>,
+}
+
+impl Handler<PlainMessage, (), ()> for CountingHandler {
+    fn handle(
+        &self,
+        _msg: &PlainMessage,
+        _ctx: &mut Context<'_, (), ()>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        let handled = Arc::clone(&self.handled);
+        let first = Arc::clone(&self.first);
+        async move {
+            if handled.fetch_add(1, Ordering::Relaxed) == 0 {
+                first.notify_one();
+            }
+            HandlerOutcome::ack()
+        }
+    }
+}
+
+/// Drives `subscriber`, signals shutdown once the first delivery has been handled, and reports
+/// how many deliveries the loop handled before it stopped - or `None` where it never stopped.
+async fn handled_before_shutdown<S>(subscriber: S) -> Option<usize>
+where
+    S: Subscriber<Message = PlainMessage> + Send + 'static,
+{
+    let shutdown = CancellationToken::new();
+    let first = Arc::new(Notify::new());
+    let handled = Arc::new(AtomicUsize::new(0));
+    let joined = spawn_dispatch(
+        subscriber,
+        Arc::new(CountingHandler {
+            handled: Arc::clone(&handled),
+            first: Arc::clone(&first),
+        }),
+        shutdown.clone(),
+        Arc::from("orders"),
+        Arc::new(()),
+        Arc::new(Delivery::empty()),
+        dispatch_failure(),
+    );
+    // One delivery in, so the loop is running rather than about to start.
+    first.notified().await;
+    shutdown.cancel();
+    timeout(Duration::from_secs(5), joined)
+        .await
+        .ok()
+        .map(|joined| {
+            joined.expect("dispatch task should not panic");
+            handled.load(Ordering::Acquire)
+        })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_stops_a_loop_whose_subscription_never_runs_dry() {
+    // A saturated subscription: every poll has a delivery ready, so the loop never waits for
+    // anything. A loop that consulted the token only where the stream had nothing ready would
+    // work through the whole backlog before it noticed.
+    let handled = handled_before_shutdown(SaturatedSubscriber)
+        .await
+        .expect("the loop kept consuming after the shutdown signal");
+    assert!(
+        handled < BACKLOG,
+        "the loop drained the subscription instead of stopping: {handled} deliveries",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
+    // The other edge: nothing more is delivered, so the loop is parked when the signal arrives
+    // and the token's own wait future is what has to wake it.
+    assert!(
+        handled_before_shutdown(QuietSubscriber).await.is_some(),
+        "the parked loop never woke on the shutdown signal",
+    );
+}
+
 #[tokio::test]
 async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
     // Settlement is best-effort: a broker that rejects the ack must not take the loop down.
@@ -356,7 +482,7 @@ async fn fallback_defers_republish_to_the_reported_address_with_incremented_retr
 
     // Nothing is republished before the delay elapses.
     let mut stream = std::pin::pin!(sub.stream());
-    assert!(futures::poll!(stream.next()).is_pending());
+    assert!(poll!(stream.next()).is_pending());
 
     tokio::time::advance(Duration::from_secs(30)).await;
     tokio::task::yield_now().await;
@@ -425,7 +551,7 @@ async fn a_rejected_settle_aborts_the_fallback() {
 
     // The original is still the broker's to redeliver, so a deferred copy would duplicate it.
     let mut stream = std::pin::pin!(sub.stream());
-    assert!(futures::poll!(stream.next()).is_pending());
+    assert!(poll!(stream.next()).is_pending());
 }
 
 #[tokio::test(start_paused = true)]
