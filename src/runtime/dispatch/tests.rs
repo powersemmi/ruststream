@@ -294,8 +294,8 @@ async fn a_stream_error_does_not_stop_the_keyed_lanes() {
 }
 
 /// Counts deliveries and wakes the test on the first one. Unlike `ReportingHandler` it keeps
-/// nothing per delivery, so a loop that ignores the shutdown signal spins instead of filling
-/// memory until the test's timeout.
+/// nothing per delivery, so a loop that missed the shutdown signal works through the backlog and
+/// fails the count rather than filling memory.
 struct CountingHandler {
     handled: Arc<AtomicUsize>,
     first: Arc<Notify>,
