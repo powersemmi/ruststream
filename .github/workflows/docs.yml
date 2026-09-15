@@ -17,10 +17,11 @@ on:
       - scripts/doc_glossary.toml
       - .github/workflows/docs.yml
   pull_request:
+    # `ready_for_review` is here because a draft runs nothing, as in the CI workflow.
     # `labeled` / `unlabeled` are here for the translation-parity job below: applying its
     # escape-hatch label has to re-run the check, or the label leaves a stale red run
     # blocking the merge.
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths: *docs-paths
   workflow_dispatch:
 
@@ -34,10 +35,10 @@ concurrency:
 jobs:
   build:
     name: Build site
-    # A pull request against `main` runs on its own; one against another branch runs under the
-    # `run-ci` label, as in the CI workflow.
+    # A draft pull request runs nothing until it is marked ready for review, as in the CI
+    # workflow.
     if: >-
-      github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci')
+      github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -67,7 +68,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request'
       && !contains(github.event.pull_request.labels.*.name, 'docs-single-language')
-      && (github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci'))
+      && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

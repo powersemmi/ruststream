@@ -4,11 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
-    # A pull request against `main` runs on its own. One against any other branch (a stacked
-    # pull request) runs when the `run-ci` label is applied: the label is the button, and
-    # `labeled` is here so applying it starts the run. A first pull request from outside the
-    # organisation waits for the approval GitHub asks for, which is a repository setting.
-    types: [opened, synchronize, reopened, labeled]
+    # A pull request runs on every base. A draft runs nothing until it is marked ready for
+    # review, which is what `ready_for_review` is here for: an agent opens its work as a draft,
+    # and the maintainer decides when CI spends its time on it. `labeled` is here for the cost
+    # job below, which a pull request runs under the `run-bench` label. A first pull request
+    # from outside the organisation waits for the approval GitHub asks for, which is a
+    # repository setting.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
@@ -20,9 +22,9 @@ concurrency:
 jobs:
   changes:
     name: Detect changes
-    # Every other job needs this one, so the gate lives here: a skipped gate skips them all.
+    # Every other job needs this one, so the draft gate lives here: a skipped gate skips them all.
     if: >-
-      github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci')
+      github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
@@ -597,7 +599,7 @@ jobs:
   security:
     name: Security scans
     if: >-
-      github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'run-ci')
+      github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
