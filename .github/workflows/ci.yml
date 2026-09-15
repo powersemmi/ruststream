@@ -336,11 +336,6 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
-    # The job leaves its report on the pull request, which the workflow's read-only default
-    # cannot do. A job that writes nothing keeps the default.
-    permissions:
-      contents: read
-      pull-requests: write
     # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile together
     # if coverage climbs further.
     env:
@@ -388,25 +383,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
-
-      # Posted whether or not the gate held: a comment naming the files that hold the uncovered
-      # lines is what a red run is for. The values reach the shell through the environment,
-      # because a pull request's own fields are attacker-controlled input.
-      - name: Report the coverage on the pull request
-        if: always() && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_FORK: ${{ github.event.pull_request.head.repo.fork }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ ! -s coverage.txt ]; then
-            echo "The run produced no coverage summary to report."
-            exit 0
-          fi
-          python3 scripts/coverage_comment.py coverage.txt \
-            --gate "$COVERAGE_GATE" --head "$HEAD_SHA" > coverage-comment.md
-          bash scripts/pr_comment.sh ruststream:coverage coverage-comment.md
 
       - name: Export lcov report
         if: always()

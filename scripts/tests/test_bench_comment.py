@@ -61,6 +61,46 @@ class Table(unittest.TestCase):
             ],
         )
 
+    def test_the_summary_totals_the_gated_scenarios_and_carries_the_verdict(self):
+        """What a reader gets without opening anything: the move, and whether it failed."""
+        self.assertIn(
+            "Instructions across the gated scenarios: +0.28% against the base. "
+            "Allocations: +3.12%. Gate: fail on publish through an Out slot with one transform.",
+            rendered(),
+        )
+
+    def test_a_run_missing_a_gated_scenario_reports_no_total(self):
+        """A total over eleven of twelve scenarios would read as a measurement it is not."""
+        text = rendered("bench-summary-partial.json")
+        self.assertIn("there is no total. Gate: pass.", text)
+
+    def test_the_scenarios_that_moved_more_than_a_percent_are_named(self):
+        """Below a percent an instruction count is the scheduling of the run, not the code."""
+        self.assertIn(
+            "Changes above 1%: publish through an Out slot with one transform +3.00%.",
+            rendered(),
+        )
+
+    def test_a_run_that_moved_nothing_says_none(self):
+        """The line is always there, so its absence never has to be read as an omission."""
+        text = rendered("bench-summary-partial.json")
+        self.assertIn("Changes above 1%: none.", text)
+        self.assertIn("Allocation changes: none.", text)
+
+    def test_every_allocation_change_is_named_however_small(self):
+        """Allocations are counted, not sampled: a difference is the code, never the run."""
+        self.assertIn(
+            "Allocation changes: publish through an Out slot with one transform 15.0 -> 17.0.",
+            rendered(),
+        )
+
+    def test_the_table_is_folded_under_the_summary(self):
+        """The comment reads short by default and keeps every row one click away."""
+        text = rendered()
+        self.assertIn("<details>\n<summary>Every scenario</summary>\n\n| Scenario |", text)
+        self.assertTrue(text.rstrip().endswith("</details>"))
+        self.assertLess(text.index("Changes above 1%"), text.index("<details>"))
+
     def test_the_header_names_both_commits_and_what_the_base_run_was(self):
         """The base is the target branch's library under this pull request's own suite."""
         text = rendered()

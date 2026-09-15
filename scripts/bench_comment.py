@@ -236,6 +236,110 @@ def line(cells):
     return "| " + " | ".join(cells) + " |"
 
 
+# What counts as a move worth naming in the summary. Below this an instruction count is the
+# scheduling of the run, not the code: the same binaries measured twice differ by about a percent
+# on the cheapest scenarios.
+NOTABLE = 1.0
+
+
+def percentage(head, base):
+    """One total against the other, or nothing where the run cannot say."""
+    if head is None or base is None:
+        return None
+    if base == 0:
+        return 0.0 if head == 0 else None
+    return (head - base) / base * 100
+
+
+def totals(found, metric):
+    """The framework's total over the gated scenarios, head and base."""
+    sides = {"head": 0.0, "base": 0.0}
+    for scenario in SCENARIOS:
+        if not scenario.gated:
+            continue
+        measured = steady(found, scenario.framework)
+        for side in sides:
+            if measured is None or measured[side][metric] is None:
+                return None, None
+            sides[side] += measured[side][metric]
+    return sides["head"], sides["base"]
+
+
+def overall(found, metric):
+    """What the gated scenarios together did to one metric, as a percentage."""
+    moved = percentage(*totals(found, metric))
+    return EMPTY if moved is None else f"{moved:+.2f}%"
+
+
+def failing(found):
+    """The gated scenarios that went over a limit."""
+    return [
+        scenario.name
+        for scenario in SCENARIOS
+        if scenario.gated and limits(found, scenario)
+    ]
+
+
+def notable(found):
+    """Scenarios whose instruction count moved further than the run-to-run noise."""
+    moved = []
+    for scenario in SCENARIOS:
+        measured = steady(found, scenario.framework)
+        if measured is None:
+            continue
+        percent = percentage(
+            measured["head"]["instructions"], measured["base"]["instructions"]
+        )
+        if percent is not None and abs(percent) > NOTABLE:
+            moved.append(f"{scenario.name} {percent:+.2f}%")
+    return moved
+
+
+def allocation_moves(found):
+    """Scenarios whose allocations per message differ from the base at all.
+
+    Allocations on the delivery path are counted, not sampled, so any difference is the code and
+    worth naming however small it looks.
+    """
+    moved = []
+    for scenario in SCENARIOS:
+        measured = steady(found, scenario.framework)
+        if measured is None:
+            continue
+        head, base = measured["head"]["allocations"], measured["base"]["allocations"]
+        if head is None or base is None or head == base:
+            continue
+        moved.append(f"{scenario.name} {base} -> {head}")
+    return moved
+
+
+def listing(label, entries):
+    return f"{label}: " + ("; ".join(entries) if entries else "none") + "."
+
+
+def summary(found):
+    """The three lines a reader gets before opening the table."""
+    tripped_names = failing(found)
+    gate = "pass" if not tripped_names else "fail on " + "; ".join(tripped_names)
+    instructions, allocations = overall(found, "instructions"), overall(found, "allocations")
+    if EMPTY in (instructions, allocations):
+        headline = (
+            f"The run does not carry every gated scenario, so there is no total. Gate: {gate}."
+        )
+    else:
+        headline = (
+            f"Instructions across the gated scenarios: {instructions} against the base. "
+            f"Allocations: {allocations}. Gate: {gate}."
+        )
+    return [
+        headline,
+        "",
+        listing("Changes above 1%", notable(found)),
+        "",
+        listing("Allocation changes", allocation_moves(found)),
+    ]
+
+
 def comment(found, head, base):
     text = ["## Cost of the code", ""]
     if compared(found):
@@ -250,9 +354,11 @@ def comment(found, head, base):
             f"Head `{head[:7]}`, measured without a baseline: the base branch produced none, so "
             "the change column is empty and only the allocation limits were checked."
         )
-    text.extend(["", line(HEADER), line(ALIGNMENT)])
+    text.extend(["", *summary(found)])
+    text.extend(["", "<details>", "<summary>Every scenario</summary>", ""])
+    text.extend([line(HEADER), line(ALIGNMENT)])
     text.extend(line(cells) for cells in rows(found))
-    text.extend(["", LEGEND])
+    text.extend(["", LEGEND, "", "</details>"])
     return "\n".join(text) + "\n"
 
 
