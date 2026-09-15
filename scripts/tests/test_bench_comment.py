@@ -58,14 +58,14 @@ class Table(unittest.TestCase):
         )
 
     def test_a_tripped_limit_is_reported_with_its_metric(self):
-        """A failing gate says which limit went and by how much, not just that it went."""
+        """A failing gate names each limit once, however many of the scenario's runs tripped it."""
         cells = row(
             rendered("bench-summary.json"), "publish through an Out slot with one transform"
         )
         self.assertEqual(cells[5], "+3.00%")
         self.assertEqual(
             cells[7],
-            "fail: instructions +3.00% over 2%; allocations 32028 over 30028",
+            "fail: instructions over the 2% limit; allocations 32028 over 30028",
         )
 
     def test_a_scenario_measured_without_a_gate_says_so(self):

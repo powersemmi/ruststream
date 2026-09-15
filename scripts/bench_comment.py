@@ -68,21 +68,25 @@ def metric_word(kind):
 
 
 def exceeded(summary):
-    """Every limit this benchmark tripped, one phrase each."""
-    phrases = []
+    """Every limit this benchmark tripped: the metric, how far it went over, and the phrase.
+
+    A limit declared on a scenario holds for each of its three runs, so the same metric trips in
+    more than one of them; how far over is carried so that the report can keep the worst.
+    """
+    tripped = []
     for profile in summary["profiles"]:
         for regression in profile["summaries"]["total"]["regressions"]:
             for shape, body in regression.items():
                 word = metric_word(body["metric"])
                 if shape == "Soft":
-                    phrases.append(
-                        f"{word} {float(body['diff_pct']):+.2f}% over {body['limit']}%"
+                    # The size of the move is the table's own column; the phrase names the limit.
+                    tripped.append(
+                        (word, float(body["diff_pct"]), f"{word} over the {body['limit']}% limit")
                     )
                 else:
-                    phrases.append(
-                        f"{word} {number(body['new'])} over {number(body['limit'])}"
-                    )
-    return phrases
+                    new, limit = number(body["new"]), number(body["limit"])
+                    tripped.append((word, new - limit, f"{word} {new} over {limit}"))
+    return tripped
 
 
 def runs(path):
@@ -134,14 +138,16 @@ def steady(found, key):
 
 
 def limits(found, scenario):
-    """Every limit the scenario's own benchmarks tripped, both halves and all three runs."""
-    phrases = []
+    """The limits the scenario tripped, one phrase per metric: the run that went furthest over."""
+    worst = {}
     for key in (scenario.framework, scenario.hand):
         if key is None:
             continue
         for count in (COLD, *COUNTS):
-            phrases.extend(found.get(f"{key}/{count}", {}).get("exceeded", []))
-    return phrases
+            for word, over, phrase in found.get(f"{key}/{count}", {}).get("exceeded", []):
+                if word not in worst or over > worst[word][0]:
+                    worst[word] = (over, phrase)
+    return [phrase for _, phrase in worst.values()]
 
 
 def change(measured):
