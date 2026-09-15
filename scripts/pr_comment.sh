@@ -20,7 +20,9 @@ if [ "${PR_FORK:-false}" = "true" ]; then
   exit 0
 fi
 
-payload=$(jq -n --arg hidden "$hidden" --rawfile body "$body_file" '{body: $hidden + "\n" + $body}')
+# The parentheses are not decoration: jq 1.7 reads an object value up to the first operator and
+# rejects the concatenation without them.
+payload=$(jq -n --arg hidden "$hidden" --rawfile body "$body_file" '{body: ($hidden + "\n" + $body)}')
 
 # --slurp hands jq one array of pages, so a pull request past its first hundred comments still
 # finds the comment it wrote earlier instead of opening a second one.
