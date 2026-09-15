@@ -279,20 +279,23 @@ def memory():
     return "unknown"
 
 
-def memory_speed():
+def memory_speed(previous=None):
     """Module speed and type, out of the DMI tables where they can be read at all.
 
-    They are root-only on most Linux systems, and a benchmark run is not worth a root shell, so
-    `unknown` is the honest answer rather than a guess.
+    They are root-only on most Linux systems, and a benchmark run is not worth a root shell. A
+    value a run cannot read is not lost, though: where the document already published one and the
+    machine still looks like the one it was published from, it is carried over, so an ordinary run
+    does not overwrite what a privileged one found. Otherwise the answer is `unknown` rather than
+    a guess.
     """
     try:
         dmi = subprocess.run(
             ["dmidecode", "--type", "memory"], capture_output=True, text=True, timeout=10
         )
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
+        return previous or "unknown"
     if dmi.returncode != 0:
-        return "unknown"
+        return previous or "unknown"
     speeds = set()
     kinds = set()
     for line in dmi.stdout.splitlines():
@@ -304,7 +307,7 @@ def memory_speed():
         elif line.startswith("Type:") and "Unknown" not in line:
             kinds.add(line.split(":", 1)[1].strip())
     if not speeds:
-        return "unknown"
+        return previous or "unknown"
     return ", ".join(sorted(kinds | speeds))
 
 
@@ -337,7 +340,23 @@ def features():
     return f"--no-default-features --features {match.group(1)}"
 
 
-def environment():
+def published_memory_speed(output):
+    """The memory speed the document already carries, when it describes this machine.
+
+    Matched on the processor and the memory size: a document written on another machine says
+    nothing about this one's modules.
+    """
+    try:
+        previous = json.loads(output.read_text()).get("environment", {})
+    except (OSError, ValueError):
+        return None
+    if previous.get("cpu") != cpu_model() or previous.get("memory") != memory():
+        return None
+    speed = previous.get("memory_speed")
+    return None if speed in (None, "unknown") else speed
+
+
+def environment(output):
     """The machine and the build, so a number can be read against what produced it."""
     valgrind = command("valgrind", "--version")
     return {
@@ -346,7 +365,7 @@ def environment():
         "cpu_frequency": cpu_frequency(),
         "cores": cores(),
         "memory": memory(),
-        "memory_speed": memory_speed(),
+        "memory_speed": memory_speed(published_memory_speed(output)),
         "os": f"{platform.system()} {platform.release()}",
         "rustc": command("rustc", "--version").split()[1],
         "valgrind": valgrind.removeprefix("valgrind-"),
@@ -472,7 +491,7 @@ def main():
         "crate_version": version,
         "core_version": version,
         "measured_at": datetime.now(timezone.utc).date().isoformat(),
-        "environment": environment(),
+        "environment": environment(args.output),
         "scenarios": [],
         "code": build(measurements(args.summary)),
     }
