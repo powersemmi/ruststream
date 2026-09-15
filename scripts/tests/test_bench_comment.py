@@ -31,13 +31,16 @@ def rendered(fixture="bench-summary.json", head="1111111aaaaaaa", base="2222222b
 
 
 def charted(text):
-    """The Mermaid source of the chart, by directive."""
-    block = text.split("```mermaid")[1].split("```")[0].strip("\n").splitlines()
-    drawn = {"kind": block[0].strip()}
-    for line in block[1:]:
-        keyword, _, rest = line.strip().partition(" ")
-        drawn[keyword] = rest.strip()
-    return drawn
+    """The Mermaid source of the chart, line by line, without its fences."""
+    return text.split("```mermaid")[1].split("```")[0].strip("\n").splitlines()
+
+
+def directive(lines, keyword):
+    """What the line opening with this keyword carries after it."""
+    for line in lines:
+        if line.strip().startswith(keyword):
+            return line.strip()[len(keyword) :].strip()
+    raise AssertionError(f"no {keyword} in the chart")
 
 
 def series(value):
@@ -91,9 +94,9 @@ class Table(unittest.TestCase):
 
     def test_the_chart_reads_worst_move_first(self):
         """A reader looks at the top of the chart and sees what moved most."""
-        drawn = charted(rendered())
+        axis = directive(charted(rendered()), "x-axis")
         self.assertEqual(
-            [key.strip().strip('"') for key in drawn["x-axis"].strip("[]").split(",")],
+            [key.strip().strip('"') for key in axis.strip("[]").split(",")],
             [
                 "lane",
                 "out-slot",
@@ -110,33 +113,51 @@ class Table(unittest.TestCase):
             ],
         )
 
-    def test_a_bar_per_scenario_in_the_order_the_names_are_drawn(self):
-        """The bar and its name are read together, so the two lists move as one."""
-        drawn = charted(rendered())
-        self.assertEqual(drawn["kind"], "xychart-beta horizontal")
-        self.assertEqual(series(drawn["bar"])[:4], [-3.0, 3.0, -0.5, -0.2])
+    def test_a_scenario_shows_one_bar_in_the_series_of_its_direction(self):
+        """Magnitudes in two series: the direction is the colour, so the bar grows from zero."""
+        lines = charted(rendered())
+        self.assertEqual(lines[1], "xychart-beta horizontal")
+        fewer = series(directive(lines, 'bar "fewer"'))
+        more = series(directive(lines, 'bar "more"'))
+        self.assertEqual(fewer[:4], [3.0, 0.0, 0.5, 0.2])
+        self.assertEqual(more[:4], [0.0, 3.0, 0.0, 0.0])
+        self.assertTrue(all(value >= 0 for value in fewer + more))
+        self.assertTrue(all(not (one and other) for one, other in zip(fewer, more)))
+        names = directive(lines, "x-axis").strip("[]").split(",")
+        self.assertEqual(len(fewer), len(names))
+        self.assertEqual(len(more), len(names))
+
+    def test_the_axis_starts_at_zero_and_clears_the_gate(self):
+        """Mermaid grows a bar from the floor of the range, so the floor has to be zero."""
         self.assertEqual(
-            len(series(drawn["bar"])), len(drawn["x-axis"].strip("[]").split(","))
+            directive(charted(rendered()), "y-axis"),
+            '"change, % (green: fewer instructions, red: more)" 0 --> 5',
         )
 
-    def test_the_axis_carries_zero_and_the_gate(self):
-        """A bar is read against zero, and a range stopping short of the limit hides it."""
-        self.assertEqual(charted(rendered())["y-axis"], '"change, %" -5 --> 5')
+    def test_the_axis_top_rounds_outwards_and_never_hides_the_limit(self):
+        """The worst bar sits inside the chart, and the limit line is always on it."""
+        self.assertEqual(bench_comment.axis_top([-25.8, -2.3], 2.0), 30)
+        self.assertEqual(bench_comment.axis_top([-0.4], 2.0), 5)
+        self.assertEqual(bench_comment.axis_top([0.0], None), 5)
 
-    def test_the_axis_reaches_past_the_largest_move(self):
-        """Rounded outwards, so the worst bar is inside the chart rather than on its edge."""
-        self.assertEqual(bench_comment.axis_range([-25.8, -2.3], 2.0), (-30, 5))
-        self.assertEqual(bench_comment.axis_range([0.4], 2.0), (0, 5))
+    def test_the_colours_come_from_an_init_directive(self):
+        """Green for cheaper and red for dearer, in the order the series are declared."""
+        first = charted(rendered())[0]
+        self.assertTrue(first.startswith("%%{init:"), first)
+        self.assertIn('"plotColorPalette": "#2da44e, #cf222e, #cf222e"', first)
 
     def test_the_limit_is_drawn_as_a_line_across_the_chart(self):
         """One value per scenario, all at the limit: a bar past it is over the gate."""
-        drawn = charted(rendered())
-        self.assertEqual(series(drawn["line"]), [2.0] * len(series(drawn["bar"])))
+        lines = charted(rendered())
+        self.assertEqual(
+            series(directive(lines, "line")),
+            [2.0] * len(series(directive(lines, 'bar "fewer"'))),
+        )
 
     def test_the_title_names_the_metric_and_the_gate(self):
         """The limit comes from the benchmarks themselves, so it cannot drift from the gate."""
         self.assertEqual(
-            charted(rendered())["title"],
+            directive(charted(rendered()), "title"),
             '"Instructions per message, head against base (gate 2%)"',
         )
 

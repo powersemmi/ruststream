@@ -285,6 +285,17 @@ CHART_TITLE = "Instructions per message, head against base"
 # The value axis rounds outwards to a multiple of this, so it reads in steady ticks.
 TICK = 5
 
+# Every bar is drawn as a magnitude from zero, and the direction is the colour of the series it
+# sits in: a chart whose range holds negatives grows its bars from the bottom of the range rather
+# than from zero (mermaid-js/mermaid#5618), which reads as the opposite of what happened. The
+# palette is handed to the series in order: cheaper green, dearer red, and the limit line red.
+FEWER, MORE = "fewer", "more"
+PALETTE = (
+    '%%{init: {"themeVariables": {"xyChart": '
+    '{"plotColorPalette": "#2da44e, #cf222e, #cf222e"}}}}%%'
+)
+AXIS = "change, % (green: fewer instructions, red: more)"
+
 
 def gate_percent():
     """The limit a gated scenario is held to, read where the benchmarks declare it.
@@ -334,16 +345,14 @@ def allocation_line(found):
     return "Allocation changes: " + "; ".join(moved) + "."
 
 
-def axis_range(values, gate):
-    """The value axis: outwards to a whole tick, and always carrying zero and the limit.
+def axis_top(values, gate):
+    """Where the value axis ends: outwards to a whole tick, and never short of the limit.
 
-    Zero is what a bar is read against, and a chart whose range stops short of the limit hides
-    the one line a reader is looking for.
+    It starts at zero, because that is what a bar is read against; a range that stopped short of
+    the limit would hide the one line a reader is looking for.
     """
-    span = [*values, 0.0] + ([gate] if gate is not None else [])
-    low = math.floor(min(span) / TICK) * TICK
-    high = math.ceil(max(span) / TICK) * TICK
-    return int(low), int(high)
+    span = [abs(value) for value in values] + [gate or 0.0]
+    return int(math.ceil(max(span) / TICK) * TICK) or TICK
 
 
 def chart(found):
@@ -355,14 +364,17 @@ def chart(found):
     title = CHART_TITLE + (f" (gate {gate:g}%)" if gate is not None else "")
     # `or 0.0` turns a negative zero, which a rounded tiny drop leaves behind, into a plain one.
     values = [round(percent, 1) or 0.0 for _, percent in moved]
-    low, high = axis_range(values, gate)
+    fewer = [abs(value) if value < 0 else 0.0 for value in values]
+    more = [value if value > 0 else 0.0 for value in values]
     lines = [
         "```mermaid",
+        PALETTE,
         "xychart-beta horizontal",
         f'    title "{title}"',
         "    x-axis [" + ", ".join(f'"{key}"' for key, _ in moved) + "]",
-        f'    y-axis "change, %" {low} --> {high}',
-        "    bar [" + ", ".join(f"{value}" for value in values) + "]",
+        f'    y-axis "{AXIS}" 0 --> {axis_top(values, gate)}',
+        f'    bar "{FEWER}" [' + ", ".join(f"{value}" for value in fewer) + "]",
+        f'    bar "{MORE}" [' + ", ".join(f"{value}" for value in more) + "]",
     ]
     if gate is not None:
         # A flat series at the limit: a bar past it is over the gate, and the eye finds that
