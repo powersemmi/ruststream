@@ -151,6 +151,16 @@
 //! registry, a key service) goes around the codec, on the async edges: the broker's delivery
 //! path on the way in, a [`PublishLayer`](crate::runtime::PublishLayer) on the way out.
 
+/// The block an encode buffer starts with, in bytes.
+///
+/// A serializer writes a document in fragments, so a buffer that starts empty is grown - and
+/// reallocated - more than once before even the smallest message is out. This is the capacity
+/// `serde_json`'s own `to_vec` reserves, and it puts a single block between a value and the wire
+/// at every size: a small document fits the first write, and a larger one grows from here exactly
+/// as a `Vec` would.
+#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+pub(crate) const ENCODE_CAPACITY: usize = 128;
+
 #[cfg(feature = "json")]
 mod json;
 
