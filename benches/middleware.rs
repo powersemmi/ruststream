@@ -103,7 +103,7 @@ fn step(message: &MemoryMessage, latch: &Latch) {
     latch.arrived();
 }
 
-#[library_benchmark(config = common::config(27))]
+#[library_benchmark(config = common::config(0, 27))]
 #[bench::first(one(1))]
 #[bench::base(one(MESSAGES))]
 #[bench::twice(one(2 * MESSAGES))]
@@ -111,7 +111,7 @@ fn service_one(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(27))]
+#[library_benchmark(config = common::config(0, 27))]
 #[bench::first(four(1))]
 #[bench::base(four(MESSAGES))]
 #[bench::twice(four(2 * MESSAGES))]
@@ -120,7 +120,7 @@ fn service_four(app: Pending) {
 }
 
 // The twin of both depths: the same delivery with no stack at all.
-#[library_benchmark(config = common::config(8))]
+#[library_benchmark(config = common::config(0, 8))]
 #[bench::first(common::feed(1, 0))]
 #[bench::base(common::feed(MESSAGES, 0))]
 #[bench::twice(common::feed(2 * MESSAGES, 0))]

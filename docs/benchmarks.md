@@ -140,7 +140,9 @@ RustStream or straight through the broker client.
 ### The code measurement
 
 `just bench` in the crate's repository produces the second table. It needs valgrind and the
-benchmark runner pinned to the version the crate depends on.
+benchmark runner pinned to the version the crate depends on. `just bench 5000` measures
+every scenario over five thousand deliveries instead of a thousand: a steadier number for a longer
+run, while the published document and the CI gate stay at the default.
 
 - **Every scenario is a pair**, and the hand-written half is what makes the number mean something.
   It reads the same queue, decodes the same bytes into the same type with the same codec, touches
