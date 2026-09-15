@@ -710,13 +710,13 @@ where
     // demand `Context: Sync` (see the signature's note).
     let delivery = ctx.delivery();
     let mut values = Vec::with_capacity(batch.len());
-    let mut accepted = Vec::with_capacity(batch.len());
-    for msg in batch {
+    // (index into `batch`, its settlement). Empty while every element decodes, and an empty
+    // `Vec` holds no buffer: a batch that decodes whole is handed on exactly as it was
+    // delivered, so the accepted deliveries cost nothing to carry.
+    let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
+    for (index, msg) in batch.iter().enumerate() {
         match Input::decode(codec, msg.payload(), msg.headers()) {
-            Ok(value) => {
-                values.push(value);
-                accepted.push(msg);
-            }
+            Ok(value) => values.push(value),
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
@@ -725,23 +725,37 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                let outcome = rejection(&err, "batch decode failed", decode, ctx);
-                settle_outcome(
-                    msg,
-                    outcome,
-                    subscription,
-                    delivery,
-                    <C as BuildBatchContext<M>>::build as fn(&M) -> C,
-                )
-                .await;
+                rejected.push((index, rejection(&err, "batch decode failed", decode, ctx)));
             }
         }
     }
     // Only batches that reach a handler count: a fully-rejected batch is short-circuited by the
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
-    if !accepted.is_empty() {
+    if !values.is_empty() {
         record_batch_size(subscription, values.len());
+    }
+    if rejected.is_empty() {
+        return (values, batch);
+    }
+    // A rejected element is settled before the handler runs, as it always was, and the accepted
+    // remainder is collected on the way past it.
+    let mut accepted = Vec::with_capacity(batch.len() - rejected.len());
+    let mut rejected = rejected.into_iter().peekable();
+    for (index, msg) in batch.into_iter().enumerate() {
+        if rejected.peek().is_some_and(|(at, _)| *at == index) {
+            let (_, outcome) = rejected.next().expect("peeked");
+            settle_outcome(
+                msg,
+                outcome,
+                subscription,
+                delivery,
+                <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+            )
+            .await;
+            continue;
+        }
+        accepted.push(msg);
     }
     (values, accepted)
 }
