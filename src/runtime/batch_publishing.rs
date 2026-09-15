@@ -188,17 +188,29 @@ where
     PP: PublishPipeline,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, D::Context, S>) {
-        let subscription = ctx.name().to_owned();
-        let (values, accepted) =
-            decode_batch::<M, D::Input, C, D::Context, S>(batch, &self.codec, self.decode, ctx)
-                .await;
+    type Scratch = Vec<<D::Input as InputKind>::Owned>;
+
+    async fn handle_batch(
+        &self,
+        batch: Vec<M>,
+        values: &mut Self::Scratch,
+        ctx: &mut Context<'_, D::Context, S>,
+    ) {
+        let subscription = ctx.subscription();
+        let accepted = decode_batch::<M, D::Input, C, D::Context, S>(
+            batch,
+            values,
+            &self.codec,
+            self.decode,
+            ctx,
+        )
+        .await;
         if accepted.is_empty() {
             return;
         }
         // The batch the broker delivered is the batch the handler answers for, whole: the size it
         // was built at is the registration's own, so there is nothing left to split here.
-        let result = match self.def.call(&values, &self.injections, ctx).await {
+        let result = match self.def.call(values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
@@ -223,7 +235,8 @@ where
             }
             Err(result) => result,
         };
-        settle_batch(accepted, result, &subscription, ctx.delivery()).await;
+        values.clear();
+        settle_batch(accepted, result, subscription, ctx.delivery()).await;
     }
 }
 

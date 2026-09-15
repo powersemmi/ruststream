@@ -477,6 +477,16 @@ impl<'a, C, S> Context<'a, C, S> {
     pub(crate) fn delivery(&self) -> &'a Delivery<C> {
         self.delivery
     }
+
+    /// The subscription's name, borrowed for the scope's lifetime rather than the context's.
+    ///
+    /// [`name`](Self::name) borrows through `&self`, so a batch path that hands `&mut self` to
+    /// the handler and still has to name the subscription afterwards had to copy the name into a
+    /// `String` once per batch. The name outlives every delivery of the subscription, so the
+    /// longer borrow is what it always was.
+    pub(crate) fn subscription(&self) -> &'a str {
+        self.name
+    }
 }
 
 /// A builder for an outcome-gated post-settle hook, returned by [`Context::after`].
