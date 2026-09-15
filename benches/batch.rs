@@ -44,7 +44,7 @@ fn step(message: &MemoryMessage, latch: &Latch) {
     latch.arrived();
 }
 
-#[library_benchmark(config = common::config(346))]
+#[library_benchmark(config = common::config(316, 30))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
@@ -52,7 +52,7 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(198))]
+#[library_benchmark(config = common::config(188, 10))]
 #[bench::first(common::feed(1, 0))]
 #[bench::base(common::feed(MESSAGES, 0))]
 #[bench::twice(common::feed(2 * MESSAGES, 0))]

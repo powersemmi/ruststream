@@ -107,30 +107,72 @@ pub struct Order {
     pub quantity: u32,
 }
 
-/// Deliveries per measured run. Large enough that the fixed cost of entering and leaving the
-/// region is lost in the per-message number, small enough that a scenario stays under a second
-/// of valgrind time.
-pub const MESSAGES: usize = 1_000;
+/// Deliveries per measured run.
+///
+/// The default is large enough that the fixed cost of entering and leaving the region is lost in
+/// the per-message number and small enough that a scenario stays under a second of valgrind time.
+/// `RUSTSTREAM_BENCH_MESSAGES` at build time overrides it (`just bench 5000`) for a
+/// steadier number at the price of a longer run; the published document is measured at the
+/// default, and the allocation limits scale with the count through [`config`].
+pub const MESSAGES: usize = messages(option_env!("RUSTSTREAM_BENCH_MESSAGES"));
+
+/// The count the limits of every scenario are stated against.
+const DEFAULT_MESSAGES: usize = 1_000;
+
+/// The configured count, or the default; a value that is not a positive number is a build error
+/// naming the variable, so a typo cannot silently measure the default.
+const fn messages(configured: Option<&str>) -> usize {
+    let Some(text) = configured else {
+        return DEFAULT_MESSAGES;
+    };
+    let bytes = text.as_bytes();
+    let mut count = 0usize;
+    let mut index = 0;
+    while index < bytes.len() {
+        let digit = bytes[index];
+        assert!(
+            digit.is_ascii_digit(),
+            "RUSTSTREAM_BENCH_MESSAGES must be a positive number of deliveries"
+        );
+        count = count * 10 + (digit - b'0') as usize;
+        index += 1;
+    }
+    assert!(
+        count > 0,
+        "RUSTSTREAM_BENCH_MESSAGES must be a positive number of deliveries"
+    );
+    count
+}
 
 /// The measurement configuration every gated scenario shares.
 ///
-/// `allocations` is the number of heap blocks the scenario allocates today. It is a hard limit:
-/// the run fails when the path allocates more than it does now, which is what turns "no
-/// allocation on the hot path" into something CI can hold the code to. The instruction limit is
-/// relative, so it needs a baseline to compare against (`--save-baseline` on `main`,
-/// `--baseline` on the pull request); without one the run only reports.
+/// The two numbers are the heap blocks the scenario allocates today, as a hard limit: the run
+/// fails when the path allocates more than it does now, which is what turns "no allocation on
+/// the hot path" into something CI can hold the code to. `steady` is what the longest run (twice
+/// the default count of deliveries) allocates per message times that count, so it scales with a
+/// configured [`MESSAGES`]; `cold` is the one-off allowance of starting the service and taking
+/// the first delivery, which no count changes. The instruction limit is relative, so it needs a
+/// baseline to compare against (`--save-baseline` on `main`, `--baseline` on the pull request);
+/// without one the run only reports.
 ///
-/// On a consume scenario the number is the cold start and nothing else. On a publish scenario it
-/// is the hand-written half's own count: the blocks the queue takes to own the message it keeps,
-/// with nothing of the framework's above them. Either way the limit is a floor the code is held
-/// to rather than a budget it may spend, so a number that goes up is a defect and a number that
-/// goes down is lowered here in the same change.
-pub fn config(allocations: u64) -> LibraryBenchmarkConfig {
+/// On a consume scenario `steady` is zero and `cold` is all there is. On a publish scenario
+/// `steady` is the hand-written half's own count: the blocks the queue takes to own the message
+/// it keeps, with nothing of the framework's above them. Either way the limit is a floor the code
+/// is held to rather than a budget it may spend, so a number that goes up is a defect and a number
+/// that goes down is lowered here in the same change.
+pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config
         .tool(callgrind().soft_limits([(EventKind::Ir, 2f64)]))
-        .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, allocations)]));
+        .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, blocks(steady, cold))]));
     config
+}
+
+/// The allocation limit for the configured count: the steady part scaled from the default count,
+/// rounded up so a count that is not a multiple of the default never trips on the rounding.
+const fn blocks(steady: u64, cold: u64) -> u64 {
+    let default = DEFAULT_MESSAGES as u64;
+    cold + (steady * MESSAGES as u64).div_ceil(default)
 }
 
 /// The same configuration without the allocation gate, for a path that is measured and reported

@@ -37,16 +37,29 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# Deliveries per measured run, the `MESSAGES` constant of the suite. Every published number is
-# per message, so the totals are divided by it.
-MESSAGES = 1000
+# Deliveries per measured run, the default of the suite's `MESSAGES` constant. Every published
+# number is per message, so the totals are divided by it. `just bench N` builds the
+# benches with another count and passes the same one here through `--messages`.
+DEFAULT_MESSAGES = 1000
+MESSAGES = DEFAULT_MESSAGES
 
-# An instruction count below this on a 1000-message run means the measurement broke, not that the
-# code got faster: the cheapest scenario here costs a thousand times more. The cold run handles
-# one delivery, so it is held to a much lower floor - but not to none, because a collapsed
-# measurement reports nearly nothing at all.
-FLOOR = 100_000
+# An instruction count below this on a default-count run means the measurement broke, not that
+# the code got faster: the cheapest scenario here costs a thousand times more. The floor scales
+# with the count. The cold run handles one delivery, so it is held to a much lower floor - but
+# not to none, because a collapsed measurement reports nearly nothing at all.
+FLOOR_PER_DEFAULT_RUN = 100_000
+FLOOR = FLOOR_PER_DEFAULT_RUN
 COLD_FLOOR = 1_000
+
+
+def configure(messages):
+    """Measure against another count of deliveries per run: the per-message division and the
+    floor a run is held to follow it."""
+    global MESSAGES, FLOOR
+    if messages <= 0:
+        sys.exit("--messages must be a positive number of deliveries")
+    MESSAGES = messages
+    FLOOR = FLOOR_PER_DEFAULT_RUN * messages // DEFAULT_MESSAGES
 
 
 class Scenario:
@@ -410,8 +423,10 @@ def crate_version():
     return match.group(1)
 
 
-def totals(found, key, count, floor=FLOOR):
+def totals(found, key, count, floor=None):
     """One benchmark's totals, checked for the two ways this measurement fails silently."""
+    if floor is None:
+        floor = FLOOR
     full = f"{key}/{count}"
     if full not in found:
         sys.exit(f"benchmark {full} is not in the run: rename it here or in benches/")
@@ -476,11 +491,29 @@ def build(found):
     return rows
 
 
+def allocation_ratio(framework, hand):
+    """The framework's allocations per message as a multiple of the hand-written half's.
+
+    `=` says both halves sit at the same count (the usual case is zero against zero), a number
+    is the multiple, and `n/a` is a scenario with no hand-written half or a hand-written half
+    that allocates nothing while the framework does, where a multiple would be infinite.
+    """
+    if hand is None:
+        return "n/a"
+    ours = framework["allocations"]
+    theirs = hand["allocations"]
+    if ours == theirs:
+        return "="
+    if theirs == 0:
+        return "n/a"
+    return f"{ours / theirs:.2f}x"
+
+
 def report(rows):
     """The same table the page publishes, for a terminal and for a CI job summary."""
     header = (
         f"{'scenario':<52}{'framework':>11}{'by hand':>10}{'overhead':>10}"
-        f"{'alloc':>8}{'cold instr':>12}{'cold alloc':>12}"
+        f"{'alloc':>8}{'by hand':>9}{'ratio':>7}{'cold instr':>12}{'cold alloc':>12}"
     )
     print(header)
     print("-" * len(header))
@@ -494,21 +527,34 @@ def report(rows):
             f"{hand['instructions'] if hand else '-':>10}"
             f"{overhead.get('instructions', '-'):>10}"
             f"{row['framework']['allocations']:>8}"
+            f"{hand['allocations'] if hand else '-':>9}"
+            f"{allocation_ratio(row['framework'], hand):>7}"
             f"{cold['instructions']:>12}"
             f"{cold['allocations']:>12}"
         )
     print()
     print(
-        "instructions and allocations per message in the steady state; cold is what starting the"
+        f"instructions and allocations per message in the steady state over {MESSAGES} "
+        "deliveries; the ratio is the framework's"
     )
-    print("service and handling the first delivery cost once")
+    print(
+        "allocations as a multiple of the hand-written half's; cold is what starting the service"
+        " and handling the first delivery cost once"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path, help="the JSON the benchmark run wrote")
     parser.add_argument("output", type=Path, help="where to write the results document")
+    parser.add_argument(
+        "--messages",
+        type=int,
+        default=DEFAULT_MESSAGES,
+        help="deliveries per measured run, the count the benches were built with",
+    )
     args = parser.parse_args()
+    configure(args.messages)
 
     version = crate_version()
     document = {

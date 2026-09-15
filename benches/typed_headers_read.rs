@@ -96,7 +96,7 @@ fn step(message: &MemoryMessage, latch: &Latch) -> Vec<u8> {
     .expect("an encodable event")
 }
 
-#[library_benchmark(config = common::config(10028))]
+#[library_benchmark(config = common::config(10_000, 28))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
@@ -104,7 +104,7 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(10008))]
+#[library_benchmark(config = common::config(10_000, 8))]
 #[bench::first(common::feed_with_headers(1, &HEADERS))]
 #[bench::base(common::feed_with_headers(MESSAGES, &HEADERS))]
 #[bench::twice(common::feed_with_headers(2 * MESSAGES, &HEADERS))]
