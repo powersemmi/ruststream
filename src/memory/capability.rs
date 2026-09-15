@@ -10,7 +10,7 @@ use std::{
     fmt,
     future::{Future, ready},
     marker::PhantomData,
-    num::NonZeroUsize,
+    num::{NonZeroU64, NonZeroUsize},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -745,6 +745,9 @@ impl<Log: LogMode> MemorySubscriber<Log> {
                     payload: entry.payload(),
                     headers: entry.headers(),
                     seq,
+                    // A replay is a fresh delivery of what the log holds, not a redelivery of
+                    // the copy a handler saw, so its count starts where a fanout's does.
+                    deliveries: NonZeroU64::MIN,
                 };
                 // The send cannot fail: this subscriber holds both ends of its own channel.
                 let _ = self.requeue.send(delivery);
