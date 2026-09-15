@@ -427,6 +427,12 @@ impl<'a, C, S> Context<'a, C, S> {
         });
     }
 
+    /// Whether this delivery registered any post-settle hook at all. The dispatch path reads it
+    /// first so a delivery that registered none never builds the drained list.
+    pub(crate) fn has_hooks(&self) -> bool {
+        !self.after.is_empty()
+    }
+
     /// Drains the registered hooks whose gate matches `outcome` (and the ungated ones), in
     /// registration order. Used by the single-message dispatch path after it settles the message.
     pub(crate) fn take_hooks_for(&mut self, outcome: HandlerResult) -> Vec<Continuation> {

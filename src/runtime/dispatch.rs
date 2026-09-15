@@ -715,10 +715,12 @@ async fn dispatch<H, M, C, St>(
     };
     // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
     // settling consumes `msg`. The drained futures own their captures. A fail-fast (no settlement)
-    // runs no hooks.
-    let continuations = settle
-        .as_ref()
-        .map_or_else(Vec::new, |s| ctx.take_hooks_for(s.outcome()));
+    // runs no hooks. Most deliveries register none, and those pay the branch alone: the list, its
+    // scan and the drop glue of both belong to the deliveries that did register one.
+    let continuations = match settle.as_ref() {
+        Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
+        _ => None,
+    };
     // The harness records what the handler saw and how it settled, BEFORE settling the message: the
     // matching decrement runs in the broker message's `Drop` (during `settle_outcome`, or at the end
     // of this function on the fail-fast path), so the record is in place by the time `drive` wakes.
@@ -752,8 +754,10 @@ async fn dispatch<H, M, C, St>(
     // Context-registered hooks run after the message is settled: at-most-once, off the delivery
     // path. They ride the same app-wide tracker as an `and_after` continuation, so one drain
     // covers both - the harness's `drain` and the shutdown's alike.
-    for fut in continuations {
-        delivery.tasks.spawn(fut);
+    if let Some(continuations) = continuations {
+        for fut in continuations {
+            delivery.tasks.spawn(fut);
+        }
     }
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
@@ -821,8 +825,11 @@ async fn run_batch<H, M, C, St>(
         .await;
     match result {
         Ok(()) => {
-            for fut in ctx.take_settle_hooks() {
-                delivery.tasks.spawn(fut);
+            // As on the single-message path: a batch that registered no hook pays the branch.
+            if ctx.has_hooks() {
+                for fut in ctx.take_settle_hooks() {
+                    delivery.tasks.spawn(fut);
+                }
             }
         }
         Err(payload) => {
