@@ -3,14 +3,17 @@
 //! task spawning.
 
 use std::fmt;
+use std::future::{Future, poll_fn};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use tokio::sync::mpsc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -258,32 +261,82 @@ where
 {
     tokio::spawn(async move {
         let mut stream = std::pin::pin!(subscriber.stream());
+        let mut cancelled = std::pin::pin!(shutdown.cancelled());
         loop {
-            tokio::select! {
-                () = shutdown.cancelled() => break,
-                next = stream.next() => match next {
-                    Some(Ok(msg)) => {
-                        dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
-                    }
-                    Some(Err(err)) => {
-                        error!(
-                            target: "ruststream::dispatch",
-                            error = %err,
-                            "subscriber stream error",
-                        );
-                    }
-                    None => {
-                        debug!(
-                            target: "ruststream::dispatch",
-                            subscriber = %name,
-                            "subscriber stream ended",
-                        );
-                        break;
-                    }
+            match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
+                Turn::Delivery(Ok(msg)) => {
+                    // Pinned rather than awaited in place: a delivery's future carries the
+                    // context, the handler's own state and the settle path, and awaiting the
+                    // call expression makes the loop build it on the stack and copy it into
+                    // its own state on every delivery.
+                    let handling = std::pin::pin!(dispatch(
+                        &*handler, msg, &name, &state, &delivery, &failure
+                    ));
+                    handling.await;
                 }
+                Turn::Delivery(Err(err)) => {
+                    error!(
+                        target: "ruststream::dispatch",
+                        error = %err,
+                        "subscriber stream error",
+                    );
+                }
+                Turn::Ended => {
+                    debug!(
+                        target: "ruststream::dispatch",
+                        subscriber = %name,
+                        "subscriber stream ended",
+                    );
+                    break;
+                }
+                Turn::Shutdown => break,
             }
         }
     })
+}
+
+/// What one turn of a dispatch loop found on its subscriber.
+enum Turn<T> {
+    /// The subscriber yielded a delivery, or an error reading one.
+    Delivery(T),
+    /// The subscriber's stream ended; the loop is done.
+    Ended,
+    /// Shutdown was signalled; the loop stops without touching the stream again.
+    Shutdown,
+}
+
+/// Waits for whichever comes first: the next item off `stream`, or `shutdown`.
+///
+/// `cancelled` is the token's own wait future, built once per subscription by the caller and
+/// pinned across the whole loop. A delivery therefore costs one read of the token's flag rather
+/// than a future created, registered with the token's waiter list and dropped again - which is
+/// what a `select!` over `cancelled()` charges on every iteration. The future is polled only
+/// where the stream has nothing ready, which is the only case that has to wait for anything.
+///
+/// # Cancel safety
+///
+/// Both halves are cancel-safe: dropping this future loses no item (a `Stream` keeps its own
+/// state across `poll_next`) and no wakeup (a registration with the token's waiter list outlives
+/// the poll). Once `cancelled` has resolved the flag stays set - a token never un-cancels - so
+/// the check at the top answers every later turn and the resolved future is never polled again.
+async fn turn<St, Wait>(
+    shutdown: &CancellationToken,
+    mut stream: Pin<&mut St>,
+    mut cancelled: Pin<&mut Wait>,
+) -> Turn<St::Item>
+where
+    St: Stream,
+    Wait: Future<Output = ()>,
+{
+    if shutdown.is_cancelled() {
+        return Turn::Shutdown;
+    }
+    poll_fn(move |cx| match stream.as_mut().poll_next(cx) {
+        Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+        Poll::Ready(None) => Poll::Ready(Turn::Ended),
+        Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+    })
+    .await
 }
 
 /// Spawns a task that drives `subscriber` through `handler` with a bounded worker pool: up to
@@ -432,48 +485,47 @@ where
         }
 
         let mut stream = std::pin::pin!(subscriber.stream());
+        let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut unkeyed_rotation = 0usize;
         loop {
-            tokio::select! {
-                () = shutdown.cancelled() => break,
-                next = stream.next() => match next {
-                    Some(Ok(msg)) => {
-                        // No key: any lane will do; rotate to spread the load.
-                        let lane = msg.partition_key().map_or_else(
-                            || {
-                                unkeyed_rotation = (unkeyed_rotation + 1) % workers.count;
-                                unkeyed_rotation
-                            },
-                            |key| lane_of(key, workers.count),
-                        );
-                        if lanes[lane].send(msg).await.is_err() {
-                            // A lane only disappears if its task panicked; stop pulling rather
-                            // than silently dropping deliveries for that key range.
-                            error!(
-                                target: "ruststream::dispatch",
-                                subscriber = %name,
-                                lane,
-                                "worker lane terminated; stopping dispatch",
-                            );
-                            break;
-                        }
-                    }
-                    Some(Err(err)) => {
+            match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
+                Turn::Delivery(Ok(msg)) => {
+                    // No key: any lane will do; rotate to spread the load.
+                    let lane = msg.partition_key().map_or_else(
+                        || {
+                            unkeyed_rotation = (unkeyed_rotation + 1) % workers.count;
+                            unkeyed_rotation
+                        },
+                        |key| lane_of(key, workers.count),
+                    );
+                    if lanes[lane].send(msg).await.is_err() {
+                        // A lane only disappears if its task panicked; stop pulling rather
+                        // than silently dropping deliveries for that key range.
                         error!(
                             target: "ruststream::dispatch",
-                            error = %err,
-                            "subscriber stream error",
-                        );
-                    }
-                    None => {
-                        debug!(
-                            target: "ruststream::dispatch",
                             subscriber = %name,
-                            "subscriber stream ended",
+                            lane,
+                            "worker lane terminated; stopping dispatch",
                         );
                         break;
                     }
                 }
+                Turn::Delivery(Err(err)) => {
+                    error!(
+                        target: "ruststream::dispatch",
+                        error = %err,
+                        "subscriber stream error",
+                    );
+                }
+                Turn::Ended => {
+                    debug!(
+                        target: "ruststream::dispatch",
+                        subscriber = %name,
+                        "subscriber stream ended",
+                    );
+                    break;
+                }
+                Turn::Shutdown => break,
             }
         }
         // Closing the channels lets each lane drain its queued delivery and exit.
@@ -663,10 +715,12 @@ async fn dispatch<H, M, C, St>(
     };
     // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
     // settling consumes `msg`. The drained futures own their captures. A fail-fast (no settlement)
-    // runs no hooks.
-    let continuations = settle
-        .as_ref()
-        .map_or_else(Vec::new, |s| ctx.take_hooks_for(s.outcome()));
+    // runs no hooks. Most deliveries register none, and those pay the branch alone: the list, its
+    // scan and the drop glue of both belong to the deliveries that did register one.
+    let continuations = match settle.as_ref() {
+        Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
+        _ => None,
+    };
     // The harness records what the handler saw and how it settled, BEFORE settling the message: the
     // matching decrement runs in the broker message's `Drop` (during `settle_outcome`, or at the end
     // of this function on the fail-fast path), so the record is in place by the time `drive` wakes.
@@ -686,7 +740,10 @@ async fn dispatch<H, M, C, St>(
     }
     drop(ctx);
     if let Some(mut s) = settle {
-        settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C).await;
+        // Named for the same reason as the delivery's own future above: the settle path is
+        // built where it is polled instead of being copied into this future's state.
+        let settling = settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C);
+        settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
@@ -697,8 +754,10 @@ async fn dispatch<H, M, C, St>(
     // Context-registered hooks run after the message is settled: at-most-once, off the delivery
     // path. They ride the same app-wide tracker as an `and_after` continuation, so one drain
     // covers both - the harness's `drain` and the shutdown's alike.
-    for fut in continuations {
-        delivery.tasks.spawn(fut);
+    if let Some(continuations) = continuations {
+        for fut in continuations {
+            delivery.tasks.spawn(fut);
+        }
     }
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
@@ -766,8 +825,11 @@ async fn run_batch<H, M, C, St>(
         .await;
     match result {
         Ok(()) => {
-            for fut in ctx.take_settle_hooks() {
-                delivery.tasks.spawn(fut);
+            // As on the single-message path: a batch that registered no hook pays the branch.
+            if ctx.has_hooks() {
+                for fut in ctx.take_settle_hooks() {
+                    delivery.tasks.spawn(fut);
+                }
             }
         }
         Err(payload) => {
