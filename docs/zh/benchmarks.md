@@ -1,18 +1,35 @@
 # 基准测试
 
 Broker 客户端和你的处理器之间隔着一层框架，每条消息都要为它花时间：订阅流、解码、分发、ack。
-本页公布这份代价。对照的是裸客户端，它在同一台机器上做同样的工作。
+本页把这份代价公布两次，用两种测量回答两个不同的问题。
 
-每个 Broker crate 自己测量自己，并公布自己的数字。本页读取这些数字，放在一起展示。
-这里不保存副本，因此某个 Broker 重新测量之后，下一次发布自己的文档时就会改变下面的表格。
+第一种是在真实 Broker 上、与裸客户端对照的吞吐量，同一台机器，同样的工作。它说明已部署的服务
+付出了多少。
+
+第二种是框架自身代码的开销：每条消息的指令数和内存分配次数，数字里不含 Broker。它说明框架变动
+之后有什么变了，而且足够精确，可以让一个把消息变贵的 pull request 通不过。
+
+每个 crate 自己测量自己，并公布自己的数字。本页读取这些数字，放在一起展示。这里不保存副本，
+因此某个 crate 重新测量之后，下一次发布自己的文档时就会改变下面的表格。
 
 ## 结果 { #results }
 
+### 与裸客户端对照 { #against-a-raw-client }
+
 数值是交替配对的中位数，括号里是观察到的波动范围。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading":"正在读取已公布的结果...","broker":"Broker","scenario":"场景","raw":"裸客户端","framework":"RustStream","overhead":"额外开销","indistinguishable":"无法区分","brokerBound":"受 Broker 限制","measured":"测量于","details":"完整结果与方法论","pending":"尚未公布结果：{brokers}。"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配"}'></div>
 
-## 这个数字是什么 { #what-the-number-is }
+### 代码的开销 { #cost-of-the-code }
+
+每条消息的指令数和内存分配次数，在进程内传输上测得。“开销”一列是框架比旁边那个手写循环多付的
+部分。
+
+<div id="benchmark-code"></div>
+
+## 这些数字是什么 { #what-the-numbers-are }
+
+### 与裸客户端的对照 { #the-comparison-against-a-raw-client }
 
 每一行都由维护该 Broker crate 的人测出，在自己的机器上，对着 localhost 上的 Broker。
 因此行与行之间不可比：一行的绝对吞吐量说明不了另一行的任何事情。可比的只有同一行里的两列，
@@ -24,6 +41,18 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 “受 Broker 限制”标记表示，裸客户端在整个运行的大部分时间里都在等套接字。框架的工作于是发生在
 原本就在等待的时间里，测出的差异趋近于零。对这类负载来说这是真实结果：饱和的消费者就是这样。
 但这样的数字是分发开销的下界，不是对它的测量，切勿读成“免费”。
+
+### 框架代码的开销 { #the-cost-of-the-code }
+
+指令数是精确的。同一个二进制程序跑两次得到同一个数字，快一倍的机器也得到同一个数字，因此这张
+表的各行之间可比，与另一台机器上测出的同一行也可比。它说明不了的是时间：同样的指令数，在缓存
+未命中处要花更多时间，表格旁边那对按时钟计时的数字正是为此而测。
+
+“开销”一列就是结果本身。框架那一行和手写那一行跑同一个场景、读同一条进程内队列、把同样的载荷
+解码成同一个类型、读一个字段、以同样的方式确认投递。两者之差就是框架，此外别无他物。
+
+内存分配按每条消息统计，投递路径上的预期值是零：消息从队列走到处理器函数体，框架一次也没有向
+分配器要过内存。发布路径还没有做到这一点，表格如实呈现。
 
 ## 方法论 { #methodology }
 
@@ -71,6 +100,26 @@ Broker 会在自己的页面上说明。
 - **环境与数字一起公布**：CPU 型号与核心数、内核、Broker 如何启动（镜像、容器、主机）、rustc
   版本、各 crate 版本、构建配置和编译标志。没有这些，一个数字既无法复现，也无法判断它是否过时。
 
+### 代码的测量 { #the-code-measurement }
+
+第二张表由 crate 仓库里的 `just bench` 生成。它需要 valgrind，以及与该 crate 所依赖版本一致的
+基准测试 runner。
+
+- **每个场景都是一对**，让数字有意义的正是手写的那一半。它读同一条队列，用同样的编解码器把同样
+  的字节解码成同一个类型，通过 `std::hint::black_box` 访问一个字段，并以同样的方式确认投递。
+  省掉解码的对照，测的是框架与空气之差。
+- **传输是进程内的。** 被测的是框架自身的代码，数字不应随套接字、服务器负载或网络而变。两半本
+  来就付同样的传输开销，在相减时会抵消。
+- **队列在测量区间打开之前就已填满。** 场景测的是稳态投递，不含连接、订阅建立，以及它们背后的
+  首批内存分配。
+- **采集只覆盖测量区间，不越界。** 准备和收尾跑在同一个进程里，走的是同一份框架代码，把它们也
+  算进去的测量，会把填满队列的开销当成清空队列的开销报出来。
+- **每个场景三个数字。** callgrind 给出的指令数是精确的，作为门禁；DHAT 给出的内存分配次数是
+  精确的，作为门禁；单独一次运行给出的时钟时间有噪声，仅供参考。
+- **门禁看变化，不看数值。** pull request 与目标分支上同一套基准测试的结果对照：受门禁的场景里
+  指令数多出两个百分点以上，就通不过；超出该场景声明的内存分配次数，同样通不过。时钟时间的差异
+  只打印出来。
+
 ## 如何公布结果 { #publishing-results }
 
 Broker crate 用 `just bench` 对着自己 compose 文件里的 Broker 运行自己的基准程序。它把结果
@@ -89,7 +138,7 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "crate": "ruststream-nats",
   "crate_version": "0.7.0",
   "core_version": "0.7.0",
@@ -114,6 +163,16 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "verdict": "indistinguishable",
       "broker_bound": true
     }
+  ],
+  "code": [
+    {
+      "name": "consume, JSON decode into a small struct",
+      "messages": 1000,
+      "framework": { "instructions": 2860.0, "allocations": 0.001 },
+      "hand_written": { "instructions": 1871.1, "allocations": 0.001 },
+      "overhead": { "instructions": 988.9, "allocations": 0.0 },
+      "gated": true
+    }
   ]
 }
 ```
@@ -121,6 +180,10 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 `schema` 是这份文档的版本。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`。`overhead_percent` 两种情况都记录，
 只在判定为 `measured` 时展示。`broker_bound` 标记那些由 Broker 而不是消费者决定节奏的运行。
+
+`code` 是第二张表，每个场景一条记录，其中每个数值都是每条消息的量。没有对照的场景不带
+`hand_written` 字段；`gated` 说明该场景出现回归时 CI 是否失败。只公布 `scenarios` 的 crate
+声明 `schema` 为 1，仍然保留自己在第一张表里的行。
 
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。

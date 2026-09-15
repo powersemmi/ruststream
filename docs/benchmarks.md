@@ -1,20 +1,38 @@
 # Benchmarks
 
 A framework between the broker client and your handler costs time on every message: the
-subscription stream, the decode, the dispatch, the ack. This page publishes that cost, measured
-against the raw client doing the same work on the same machine.
+subscription stream, the decode, the dispatch, the ack. This page publishes that cost twice, as
+two measurements that answer different questions.
 
-Each broker crate measures itself and publishes its own numbers. This page loads them and shows
-them together. Nothing is copied here, so a broker that remeasures itself changes the table below
-the next time it publishes its documentation.
+The first is throughput against the raw client, on a real broker, doing the same work on the same
+machine. It says what a deployed service pays.
+
+The second is the cost of the framework's own code: instructions and allocations per message, with
+no broker in the number. It says what changed when the framework changed, and it is precise enough
+to fail a pull request that makes a message more expensive.
+
+Each crate measures itself and publishes its own numbers. This page loads them and shows them
+together. Nothing is copied here, so a crate that remeasures itself changes the tables below the
+next time it publishes its documentation.
 
 ## Results
 
+### Against a raw client
+
 Medians over interleaved pairs, with the observed spread in parentheses.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading":"Loading published results...","broker":"Broker","scenario":"Scenario","raw":"Raw client","framework":"RustStream","overhead":"Overhead","indistinguishable":"indistinguishable","brokerBound":"broker-bound","measured":"measured","details":"Full results and methodology","pending":"No results published yet: {brokers}."}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations"}'></div>
 
-## What the number is
+### Cost of the code
+
+Instructions and allocations per message, measured on the in-process transport. `Overhead` is what
+the framework adds over the hand-written loop next to it.
+
+<div id="benchmark-code"></div>
+
+## What the numbers are
+
+### The comparison against a raw client
 
 Each row was measured by whoever maintains that broker crate, on their own machine, against a
 broker on localhost. Rows are therefore not comparable with each other: the absolute throughput of
@@ -30,6 +48,22 @@ The `broker-bound` mark means the raw client spent most of the run waiting on th
 framework does its work inside that wait, and the measured difference comes out near zero. For that
 workload it is a real result: this is what a saturated consumer looks like. But the number is a
 lower bound on the cost of dispatch, not a measurement of it, and you cannot read it as "free".
+
+### The cost of the code
+
+An instruction count is exact. Two runs of the same binary give the same number, and a machine
+twice as fast gives the same number too, so the rows of this table are comparable with each other
+and with the same row measured on another machine. What it does not tell you is time: the same
+count costs more where it misses the cache, which is what the wall-clock pair below the table is
+for.
+
+`Overhead` is the whole result. The framework row and the hand-written row run the same scenario
+over the same in-process queue, decode the same payload into the same type, read a field and settle
+the delivery the same way. The difference between them is the framework, and nothing else.
+
+Allocations are counted per message, and on the delivery path the expected figure is zero: a
+message goes from the queue to the handler body without the framework asking the allocator for
+anything. The publish path is not there yet, and the table says so.
 
 ## Methodology
 
@@ -88,6 +122,32 @@ RustStream or straight through the broker client.
   started (image, container, host), the rustc version, the crate versions, the build profile and
   the flags. Without them a number cannot be reproduced or declared out of date.
 
+### The code measurement
+
+`just bench` in the crate's repository produces the second table. It needs valgrind and the
+benchmark runner pinned to the version the crate depends on.
+
+- **Every scenario is a pair**, and the hand-written half is what makes the number mean something.
+  It reads the same queue, decodes the same bytes into the same type with the same codec, touches
+  a field through `std::hint::black_box`, and settles the delivery the same way. A twin that skips
+  the decode measures the framework against nothing.
+- **The transport is in process.** The framework's own code is the subject, so the numbers must not
+  move with a socket, a server's load or a network. Both halves pay the same transport cost anyway,
+  and it cancels in the difference.
+- **The queue is filled before the measured region opens.** What a scenario measures is
+  steady-state delivery, never the connect, the subscription open or the first allocation behind
+  them.
+- **Collection covers the measured region and nothing around it.** Setup and teardown run in the
+  same process and through the same framework code, so a measurement that counted them would report
+  the queue being filled as the cost of draining it.
+- **Three numbers per scenario.** Instructions from callgrind, which is exact and the gate;
+  allocations from DHAT, which is exact and the gate; wall time from a separate run, which is noisy
+  and informational.
+- **A gate on the change, not on the value.** A pull request is measured against the same
+  benchmarks run on the target branch: more than two percent of instructions in a gated scenario
+  fails it, and so does an allocation above what the scenario declares. A wall-clock difference
+  only prints.
+
 ## Publishing results
 
 A broker crate runs its own harness with `just bench` against the broker in its compose file. It
@@ -108,7 +168,7 @@ it. The broker sites share this site's origin, so this page reads them directly.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "crate": "ruststream-nats",
   "crate_version": "0.7.0",
   "core_version": "0.7.0",
@@ -133,6 +193,16 @@ it. The broker sites share this site's origin, so this page reads them directly.
       "verdict": "indistinguishable",
       "broker_bound": true
     }
+  ],
+  "code": [
+    {
+      "name": "consume, JSON decode into a small struct",
+      "messages": 1000,
+      "framework": { "instructions": 2860.0, "allocations": 0.001 },
+      "hand_written": { "instructions": 1871.1, "allocations": 0.001 },
+      "overhead": { "instructions": 988.9, "allocations": 0.0 },
+      "gated": true
+    }
   ]
 }
 ```
@@ -141,6 +211,11 @@ it. The broker sites share this site's origin, so this page reads them directly.
 the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`.
 `broker_bound` marks a run the broker paced rather than the consumer.
+
+`code` is the second table, one entry per scenario, and every figure in it is per message.
+`hand_written` is absent on a scenario measured without a twin, and `gated` says whether CI fails
+on a regression in it. A crate that publishes `scenarios` alone declares `schema` 1 and keeps its
+row in the first table.
 
 A document that does not load, or that declares a `schema` this page does not know, leaves its
 broker in the "no results published yet" line. A broken publish is visible instead of silently
