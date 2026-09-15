@@ -583,6 +583,9 @@ where
         // batch the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(batch_size));
         let mut tasks = JoinSet::new();
+        // One decode buffer for the whole loop: the sequential path lends the same one to every
+        // batch, so the slice a handler reads is allocated once for the subscription.
+        let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => break,
@@ -597,7 +600,13 @@ where
                             // Turbofish: the adapter handlers are generic over the batch
                             // context, so the spawn's own parameter names it.
                             run_batch::<_, _, C, _>(
-                                &*handler, batch, &name, &state, &delivery, &failure,
+                                &*handler,
+                                batch,
+                                &mut scratch,
+                                &name,
+                                &state,
+                                &delivery,
+                                &failure,
                             )
                             .await;
                         } else {
@@ -607,7 +616,7 @@ where
                             let delivery = Arc::clone(&delivery);
                             let failure = failure.clone();
                             tasks.spawn(async move {
-                                run_batch::<_, _, C, _>(
+                                run_pooled_batch::<_, _, C, _>(
                                     &*handler, batch, &name, &state, &delivery, &failure,
                                 )
                                 .await;
@@ -773,6 +782,7 @@ async fn dispatch<H, M, C, St>(
 async fn run_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,
+    scratch: &mut H::Scratch,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -816,11 +826,11 @@ async fn run_batch<H, M, C, St>(
     #[cfg(feature = "testing")]
     let result = in_harness_scope(
         harness_scope(delivery),
-        AssertUnwindSafe(handler.handle_batch(batch, &mut ctx)).catch_unwind(),
+        AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind(),
     )
     .await;
     #[cfg(not(feature = "testing"))]
-    let result = AssertUnwindSafe(handler.handle_batch(batch, &mut ctx))
+    let result = AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx))
         .catch_unwind()
         .await;
     match result {
@@ -864,6 +874,25 @@ async fn run_batch<H, M, C, St>(
     if let Some(coordinator) = &watcher {
         coordinator.consumed();
     }
+}
+
+/// [`run_batch`] with a decode buffer of its own: the pooled path runs its batches at the same
+/// time, so the loop's single buffer cannot be lent to all of them.
+async fn run_pooled_batch<H, M, C, St>(
+    handler: &H,
+    batch: Vec<M>,
+    name: &str,
+    state: &St,
+    delivery: &Delivery<C>,
+    failure: &DispatchFailure,
+) where
+    H: BatchHandler<M, C, St>,
+    M: IncomingMessage,
+    C: crate::BuildBatchContext<M> + Send + Sync + 'static,
+    St: Send + Sync,
+{
+    let mut scratch = H::Scratch::default();
+    run_batch(handler, batch, &mut scratch, name, state, delivery, failure).await;
 }
 
 /// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)

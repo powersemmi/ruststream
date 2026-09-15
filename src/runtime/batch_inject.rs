@@ -140,10 +140,18 @@ where
     DecodeCodec: Send + Sync,
     State: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<Msg>, ctx: &mut Context<'_, Def::Context, State>) {
+    type Scratch = Vec<<Def::Input as InputKind>::Owned>;
+
+    async fn handle_batch(
+        &self,
+        batch: Vec<Msg>,
+        values: &mut Self::Scratch,
+        ctx: &mut Context<'_, Def::Context, State>,
+    ) {
         let subscription = ctx.subscription();
-        let (values, accepted) = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State>(
+        let accepted = decode_batch::<Msg, Def::Input, DecodeCodec, Def::Context, State>(
             batch,
+            values,
             &self.codec,
             self.decode,
             ctx,
@@ -153,7 +161,8 @@ where
             return;
         }
         let delivery = ctx.delivery();
-        let result = self.def.call(&values, &self.injections, ctx).await;
+        let result = self.def.call(values, &self.injections, ctx).await;
+        values.clear();
         settle_batch(accepted, result, subscription, delivery).await;
     }
 }
@@ -273,7 +282,7 @@ mod tests {
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handler.handle_batch(batch, &mut ctx).await;
+        handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
         assert_eq!(*seen.lock().unwrap(), [10, 20]);
         // The uniform Ack settled both deliveries, so neither comes back.
@@ -304,7 +313,7 @@ mod tests {
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handler.handle_batch(batch, &mut ctx).await;
+        handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let mut stream = std::pin::pin!(sub.stream());
