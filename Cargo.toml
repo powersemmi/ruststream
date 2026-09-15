@@ -506,6 +506,21 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
+[[bench]]
+name = "dispatch"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "publishing"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "wall_clock"
+harness = false
+required-features = ["memory", "json", "macros"]
+
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -523,6 +538,8 @@ trybuild = "1"
 prost = "0.14"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
+gungraun = "=0.19.4"
+divan = "0.1.21"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

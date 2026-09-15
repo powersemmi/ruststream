@@ -36,6 +36,23 @@ test:
     cargo test --workspace --doc
     cargo test --workspace --doc --no-default-features
 
+# What a change costs per message: instructions and allocations through valgrind, then the
+# wall-clock pair, then the document the benchmarks page publishes.
+#
+# RUSTFLAGS is emptied on purpose. A machine-specific `-C target-cpu=native` makes the numbers
+# incomparable with anyone else's, and valgrind aborts outright on the instructions a recent CPU
+# advertises. Needs valgrind and the runner pinned to the crate:
+# cargo install --locked gungraun-runner --version =0.19.4
+#
+# Extra arguments reach the benchmark runner: `just bench --save-baseline=main` records a
+# baseline, `just bench --baseline=main` measures against it.
+bench *ARGS:
+    RUSTFLAGS="" cargo bench --bench dispatch --bench publishing \
+        --features memory,macros,json -- --output-format=json {{ ARGS }} \
+        > target/bench-summary.json
+    RUSTFLAGS="" cargo bench --bench wall_clock --features memory,macros,json
+    python3 scripts/bench_results.py target/bench-summary.json docs/benchmarks/results.json
+
 fmt:
     cargo fmt --all
 
