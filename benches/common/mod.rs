@@ -182,9 +182,12 @@ pub fn runtime() -> Runtime {
 /// Counts deliveries down and wakes the benchmark body when the last one has been handled.
 ///
 /// Handlers reach it as the application state, which is how a service shares anything with its
-/// handlers. The hand-written half calls the same methods, so both halves pay for the signal -
-/// though only the framework's call sits inside a collected frame, which is worth a handful of
-/// instructions per message in its column.
+/// handlers. The hand-written half calls the same methods, so both halves pay for the signal.
+///
+/// What a delivery pays for it is one relaxed decrement and the branch that reads it; the waiter
+/// is a single future for the whole run, woken once, when the last delivery lands. A signal that
+/// created and dropped a future per delivery would put its own machinery in the per-message
+/// number, which is the framework's number to report.
 #[derive(Clone, Debug)]
 pub struct Latch(Arc<Inner>);
 
@@ -210,8 +213,11 @@ impl Latch {
     }
 
     /// Records one handled delivery, waking the waiter on the last one.
+    ///
+    /// Relaxed: nothing is published through the counter, and the wake itself is what orders the
+    /// handler's writes against the waiter.
     pub fn arrived(&self) {
-        if self.0.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
+        if self.0.remaining.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.0.drained.notify_one();
         }
     }
@@ -222,6 +228,9 @@ impl Latch {
     }
 
     /// Resolves once every expected delivery has been handled.
+    ///
+    /// One `Notified` for the run: the counter is read before waiting and after the wake, and the
+    /// wake comes once, from the delivery that brought the count to zero.
     pub async fn drained(&self) {
         while self.0.remaining.load(Ordering::Acquire) > 0 {
             self.0.drained.notified().await;
