@@ -97,7 +97,7 @@ async fn transactional_replies_publish_atomically_then_ack() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
     // Both replies are visible after the commit, in order.
     let confirmed = pull_batch(&mut replies).await;
@@ -138,7 +138,7 @@ async fn a_batch_reply_answers_for_the_whole_delivered_batch() {
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 3, "the whole batch is delivered at once");
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -178,7 +178,7 @@ async fn handler_error_publishes_nothing_and_settles_the_batch() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
     // Nothing was published, and the whole input batch is back for redelivery.
     let mut reply_stream = std::pin::pin!(replies.stream());
@@ -251,7 +251,7 @@ async fn a_fully_undecodable_batch_never_reaches_the_handler() {
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
     assert_eq!(batch.len(), 2);
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let mut reply_stream = std::pin::pin!(replies.stream());
@@ -322,7 +322,7 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut input).await;
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
     let published = pull_batch(&mut replies).await;
     let payloads: Vec<&[u8]> = published.iter().map(IncomingMessage::payload).collect();
@@ -366,7 +366,7 @@ async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     let batch = pull_batch(&mut input).await;
 
     let (events, guard) = log_capture::start();
-    handler.handle_batch(batch, &mut ctx).await;
+    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
     drop(guard);
 
     let failure = log_capture::find(&events, "batch reply publish failed");

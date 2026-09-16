@@ -283,10 +283,20 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
 /// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
 /// The batch counterpart of [`Handler`](super::Handler) at the raw-message level.
 pub(crate) trait BatchHandler<M, C = (), S = ()>: Send + Sync {
-    /// Consumes one batch of raw deliveries, acknowledging each of them.
+    /// The buffer the decoded batch is built in.
+    ///
+    /// A dispatch loop keeps one and lends it to every batch it hands over, so the slice the
+    /// handler reads costs one allocation for the subscription rather than one per batch. It is
+    /// `()` on the form whose values borrow their deliveries, which cannot outlive the batch
+    /// they came from.
+    type Scratch: Default + Send;
+
+    /// Consumes one batch of raw deliveries, acknowledging each of them, decoding into the
+    /// buffer the caller lends. Whatever the buffer holds on entry is discarded.
     fn handle_batch(
         &self,
         batch: Vec<M>,
+        scratch: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = ()> + Send;
 }
@@ -367,16 +377,33 @@ where
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
-        let subscription = ctx.name().to_owned();
-        let (values, accepted) =
-            decode_batch::<M, Input, DecodeCodec, C, S>(batch, &self.codec, self.decode, ctx).await;
+    type Scratch = Vec<Input::Owned>;
+
+    async fn handle_batch(
+        &self,
+        batch: Vec<M>,
+        values: &mut Self::Scratch,
+        ctx: &mut Context<'_, C, S>,
+    ) {
+        let subscription = ctx.subscription();
+        let accepted = decode_batch::<M, Input, DecodeCodec, C, S>(
+            batch,
+            values,
+            &self.codec,
+            self.decode,
+            ctx,
+        )
+        .await;
         if accepted.is_empty() {
             return;
         }
         let delivery = ctx.delivery();
-        let result = self.inner.handle_slice(&values, ctx).await;
-        settle_batch(accepted, result, &subscription, delivery).await;
+        let result = self.inner.handle_slice(values, ctx).await;
+        // The buffer belongs to the caller and outlives the call, so the values are dropped
+        // here: a decoded value lives exactly as long as the batch it came from, as it did when
+        // the vector was the call's own.
+        values.clear();
+        settle_batch(accepted, result, subscription, delivery).await;
     }
 }
 
@@ -428,8 +455,13 @@ where
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
-    async fn handle_batch(&self, batch: Vec<M>, ctx: &mut Context<'_, C, S>) {
-        let subscription = ctx.name().to_owned();
+    // The constructed values borrow their deliveries' payloads (see the loop below), so a
+    // buffer that outlived the batch could not hold them: this form builds its values vector per
+    // batch, and the borrow is what forces it.
+    type Scratch = ();
+
+    async fn handle_batch(&self, batch: Vec<M>, _scratch: &mut (), ctx: &mut Context<'_, C, S>) {
+        let subscription = ctx.subscription();
         if batch.is_empty() {
             return;
         }
@@ -459,7 +491,7 @@ where
         }
         #[cfg(feature = "otel")]
         if !values.is_empty() {
-            record_batch_size(&subscription, values.len());
+            record_batch_size(subscription, values.len());
         }
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
@@ -467,7 +499,7 @@ where
             self.inner.handle_slice(&values, ctx).await
         };
         drop(values);
-        settle_split_batch(batch, rejected, result, &subscription, delivery).await;
+        settle_split_batch(batch, rejected, result, subscription, delivery).await;
     }
 }
 
@@ -682,10 +714,14 @@ fn record_batch_size(destination: &str, len: usize) {
     );
 }
 
-/// Decodes each element of one raw batch independently: failures are settled per the `decode`
-/// [`FailurePolicy`] and never reach the handler; the rest pass through, each decoded value paired
-/// with its delivery (`values[i]` decodes `accepted[i]`). A `fail_fast` decode policy tears the
-/// service down via `ctx` and drops the offending element so it is not requeued into the failure.
+/// Decodes each element of one raw batch independently into `values`, returning the deliveries
+/// behind them: failures are settled per the `decode` [`FailurePolicy`] and never reach the
+/// handler; the rest pass through, each decoded value paired with its delivery (`values[i]`
+/// decodes element `i` of the returned batch). A `fail_fast` decode policy tears the service down
+/// via `ctx` and drops the offending element so it is not requeued into the failure.
+///
+/// `values` is the caller's buffer, emptied before it is filled: a buffer that already has the
+/// room for the batch reserves nothing, which is what keeps a batch off the allocator.
 ///
 /// Takes `&mut Context` (rather than `&Context`) so the future stays `Send`: `Context` carries
 /// post-settle hooks (boxed `Send` futures that are not `Sync`), so holding a shared `&Context`
@@ -694,10 +730,11 @@ fn record_batch_size(destination: &str, len: usize) {
 #[allow(clippy::needless_pass_by_ref_mut)]
 pub(crate) async fn decode_batch<M, Input, DecodeCodec, C, S>(
     batch: Vec<M>,
+    values: &mut Vec<Input::Owned>,
     codec: &DecodeCodec,
     decode: FailurePolicy,
     ctx: &mut Context<'_, C, S>,
-) -> (Vec<Input::Owned>, Vec<M>)
+) -> Vec<M>
 where
     M: IncomingMessage,
     Input: DecodeWith<DecodeCodec>,
@@ -705,18 +742,19 @@ where
     C: BuildBatchContext<M> + Send + Sync + 'static,
     S: Send + Sync,
 {
-    let subscription = ctx.name().to_owned();
+    let subscription = ctx.subscription();
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
     // demand `Context: Sync` (see the signature's note).
     let delivery = ctx.delivery();
-    let mut values = Vec::with_capacity(batch.len());
-    let mut accepted = Vec::with_capacity(batch.len());
-    for msg in batch {
+    values.clear();
+    values.reserve(batch.len());
+    // (index into `batch`, its settlement). Empty while every element decodes, and an empty
+    // `Vec` holds no buffer: a batch that decodes whole is handed on exactly as it was
+    // delivered, so the accepted deliveries cost nothing to carry.
+    let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
+    for (index, msg) in batch.iter().enumerate() {
         match Input::decode(codec, msg.payload(), msg.headers()) {
-            Ok(value) => {
-                values.push(value);
-                accepted.push(msg);
-            }
+            Ok(value) => values.push(value),
             Err(err) => {
                 warn!(
                     target: "ruststream::dispatch",
@@ -725,25 +763,39 @@ where
                     error = %err,
                     "codec decode failed",
                 );
-                let outcome = rejection(&err, "batch decode failed", decode, ctx);
-                settle_outcome(
-                    msg,
-                    outcome,
-                    &subscription,
-                    delivery,
-                    <C as BuildBatchContext<M>>::build as fn(&M) -> C,
-                )
-                .await;
+                rejected.push((index, rejection(&err, "batch decode failed", decode, ctx)));
             }
         }
     }
     // Only batches that reach a handler count: a fully-rejected batch is short-circuited by the
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
-    if !accepted.is_empty() {
-        record_batch_size(&subscription, values.len());
+    if !values.is_empty() {
+        record_batch_size(subscription, values.len());
     }
-    (values, accepted)
+    if rejected.is_empty() {
+        return batch;
+    }
+    // A rejected element is settled before the handler runs, as it always was, and the accepted
+    // remainder is collected on the way past it.
+    let mut accepted = Vec::with_capacity(batch.len() - rejected.len());
+    let mut rejected = rejected.into_iter().peekable();
+    for (index, msg) in batch.into_iter().enumerate() {
+        if rejected.peek().is_some_and(|(at, _)| *at == index) {
+            let (_, outcome) = rejected.next().expect("peeked");
+            settle_outcome(
+                msg,
+                outcome,
+                subscription,
+                delivery,
+                <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+            )
+            .await;
+            continue;
+        }
+        accepted.push(msg);
+    }
+    accepted
 }
 
 /// The settlement of one element the handler will never see, per the subscriber's decode policy.
