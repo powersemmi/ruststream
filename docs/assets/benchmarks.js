@@ -131,11 +131,8 @@
   const columns = [
     labels.crate,
     labels.scenario,
-    labels.framework,
-    labels.byHand,
-    labels.overhead,
+    labels.instructions,
     labels.allocations,
-    labels.allocationsByHand,
     labels.cold,
   ];
   for (const column of columns) {
@@ -149,14 +146,7 @@
       row.appendChild(text("td", index === 0 ? broker.name : ""));
       row.appendChild(text("td", scenario.name));
       row.appendChild(text("td", number(scenario.framework.instructions, lang)));
-      row.appendChild(text("td", scenario.hand_written ? number(scenario.hand_written.instructions, lang) : "-"));
-      row.appendChild(
-        text("td", scenario.overhead ? "+" + number(scenario.overhead.instructions, lang) : "-"),
-      );
       row.appendChild(text("td", number(scenario.framework.allocations, lang)));
-      row.appendChild(
-        text("td", scenario.hand_written ? number(scenario.hand_written.allocations, lang) : "-"),
-      );
       // Two numbers in one cell: what starting cost in instructions, and in allocations.
       row.appendChild(
         text(

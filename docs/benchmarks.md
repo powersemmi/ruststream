@@ -21,14 +21,13 @@ next time it publishes its documentation.
 
 Medians over interleaved pairs, with the observed spread in parentheses.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "byHand": "By hand", "allocations": "Allocations, RustStream", "cold": "Cold start", "allocationsByHand": "Allocations, by hand"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "framework": "RustStream", "overhead": "Overhead", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start"}'></div>
 
 ### Cost of the code
 
 Instructions and allocations per message in the steady state, measured on the in-process
-transport. The first three number columns are instructions, the two after them are allocations,
-and each of the two is shown for both halves so the difference reads the same way: `Overhead` is
-what the framework adds over the hand-written loop next to it.
+transport. These are absolute figures for the framework's own code, not a comparison: what the
+framework costs over a broker's own client is the table above, where the client is a real one.
 
 <div id="benchmark-code"></div>
 
@@ -64,9 +63,10 @@ and with the same row measured on another machine. What it does not tell you is 
 count costs more where it misses the cache, which is what the wall-clock pair below the table is
 for.
 
-`Overhead` is the whole result. The framework row and the hand-written row run the same scenario
-over the same in-process queue, decode the same payload into the same type, read a field and settle
-the delivery the same way. The difference between them is the framework, and nothing else.
+The number is this crate's own work and nothing else: the service a user writes, over the
+in-process queue, decoding the payload into a type, reading a field and settling the delivery. No
+broker is in it, so the figure moves when the framework's code moves and at no other time, which is
+what lets two percent count as a defect rather than as noise.
 
 Every per-message figure is the steady state. Starting a service costs what it costs once - the
 connect, the subscription, the first allocations behind them - and dividing that over the messages
@@ -77,8 +77,7 @@ two runs; the cold start is measured on its own, over a single delivery.
 Allocations are counted per message, and on the delivery path the figure is zero: once the service
 is running, a message goes from the queue to the handler body without the framework asking the
 allocator for anything. On the publish path the figure is what the broker takes to own the message
-it is handed, and nothing above it: the framework's column and the hand-written one are the same
-number on every publish scenario in the table.
+it is handed, and nothing above it.
 
 ## Methodology
 
@@ -144,10 +143,11 @@ benchmark runner pinned to the version the crate depends on. `just bench 5000` m
 every scenario over five thousand deliveries instead of a thousand: a steadier number for a longer
 run, while the published document and the CI gate stay at the default.
 
-- **Every scenario is a pair**, and the hand-written half is what makes the number mean something.
-  It reads the same queue, decodes the same bytes into the same type with the same codec, touches
-  a field through `std::hint::black_box`, and settles the delivery the same way. A twin that skips
-  the decode measures the framework against nothing.
+- **Every scenario is the service a user writes**, started through the real runtime with the test
+  harness compiled out, so what is measured is the code that ships. Nothing is compared against a
+  hand-written loop here: the queue such a loop would read is this crate's own in-memory broker,
+  which makes the comparison a crate measuring itself. The comparison against a client someone
+  else wrote is the first table, and it is the broker crates that produce it.
 - **The transport is in process.** The framework's own code is the subject, so the numbers must not
   move with a socket, a server's load or a network. Both halves pay the same transport cost anyway,
   and it cancels in the difference.
@@ -228,8 +228,6 @@ it. The broker sites share this site's origin, so this page reads them directly.
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": { "instructions": 2839.8, "allocations": 0.0 },
-      "hand_written": { "instructions": 1934.4, "allocations": 0.0 },
-      "overhead": { "instructions": 905.4, "allocations": 0.0 },
       "cold": { "instructions": 19219, "allocations": 26 },
       "gated": true
     }
@@ -248,11 +246,10 @@ benchmarks were built with. A field the machine does not publish is written as `
 than guessed: memory speed comes from the DMI tables, which most systems only let root read.
 Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays readable.
 
-`code` is the second table, one entry per scenario. `framework`, `hand_written` and `overhead` are
-per message in the steady state; `cold` is the whole cost of starting the service and taking the
-first delivery, not divided by anything. `hand_written` is absent on a scenario measured without a
-twin, and `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios` alone declares `schema` 1 and keeps its
-row in the first table.
+`code` is the second table, one entry per scenario. `framework` is per message in the steady state;
+`cold` is the whole cost of starting the service and taking the first delivery, not divided by
+anything. `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios`
+alone declares `schema` 1 and keeps its row in the first table.
 
 A document that does not load, or that declares a `schema` this page does not know, leaves its
 broker in the "no results published yet" line. A broken publish is visible instead of silently

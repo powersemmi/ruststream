@@ -3,8 +3,8 @@
 
 Input is the machine-readable summary `cargo bench -- --output-format=json` writes, one JSON
 object per benchmark. Output is `docs/benchmarks/results.json` (schema 2): the `code` section,
-one entry per scenario, with instructions and allocations per message for the framework and for
-the hand-written loop it is compared against, plus what starting the service cost once.
+one entry per scenario, with instructions and allocations per message, plus what starting the
+service cost once.
 
 Every scenario is measured three times: over one delivery, over MESSAGES of them, and over twice
 MESSAGES. The slope between the last two is the steady-state cost of a message - everything that
@@ -63,7 +63,7 @@ def configure(messages):
 
 
 class Scenario:
-    """One published row: what it is called, which benchmark measured each half, and whether a
+    """One published row: what it is called, which benchmark measured it, and whether a
     regression in it fails CI.
 
     `key` is the short name a narrow report writes instead of the sentence: the chart in the
@@ -71,11 +71,10 @@ class Scenario:
     characters. The sentence stays everywhere there is room for it.
     """
 
-    def __init__(self, name, key, framework, hand, gated=True, note=None):
+    def __init__(self, name, key, framework, gated=True, note=None):
         self.name = name
         self.key = key
         self.framework = framework
-        self.hand = hand
         self.gated = gated
         self.note = note
 
@@ -85,81 +84,68 @@ class Scenario:
 COLD = "first"
 COUNTS = ("base", "twice")
 
-# The table, in reading order. Each half names a benchmark as `file/function`: one scenario per
-# benchmark file, the framework half in `service` and the hand-written one in `by_hand`, each
-# measured at both counts.
+# The table, in reading order. A scenario names its benchmark as `file/function`: one scenario
+# per benchmark file, measured at both counts.
 SCENARIOS = [
     Scenario(
         "consume, JSON decode into a small struct",
         "json",
         "consume_json/service",
-        "consume_json/by_hand",
     ),
     Scenario(
         "consume, JSON decode of a 1 KB body",
         "json-1kb",
         "consume_json_kilobyte/service",
-        "consume_json_kilobyte/by_hand",
     ),
     Scenario(
         "consume on the byte lane, no codec",
         "lane",
         "consume_lane/service",
-        "consume_lane/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of one",
         "mw1",
         "middleware/service_one",
-        "middleware/by_hand",
     ),
     Scenario(
         "consume through a middleware stack of four",
         "mw4",
         "middleware/service_four",
-        "middleware/by_hand",
     ),
     Scenario(
         "consume in batches of 64",
         "batch64",
         "batch/service",
-        "batch/by_hand",
     ),
     Scenario(
         "reply, encoded to a declared destination",
         "reply",
         "reply/service",
-        "reply/by_hand",
     ),
     Scenario(
         "publish through an Out slot with one transform",
         "out-slot",
         "out_slot/service",
-        "out_slot/by_hand",
     ),
     Scenario(
         "publish with a typed header contract",
         "hdr-write",
         "typed_headers_write/service",
-        "typed_headers_write/by_hand",
     ),
     Scenario(
         "read a typed header contract, then publish",
         "hdr-read",
         "typed_headers_read/service",
-        "typed_headers_read/by_hand",
     ),
     Scenario(
         "request and reply, one round trip",
         "req-reply",
         "request_reply/service",
-        "request_reply/by_hand",
     ),
     Scenario(
         "a delivery that asks to be redelivered, and the copy",
         "retry",
         "retry_copy/service",
-        None,
         gated=False,
         note="cold path: measured and reported, never gated",
     ),
@@ -467,80 +453,42 @@ def build(found):
     rows = []
     for scenario in SCENARIOS:
         framework, cold = half(found, scenario.framework)
-        hand, _ = half(found, scenario.hand)
         row = {
             "name": scenario.name,
             "messages": MESSAGES,
             "framework": framework,
-            "hand_written": hand,
             "cold": cold,
             "gated": scenario.gated,
         }
-        if hand:
-            row["overhead"] = {
-                "instructions": round(
-                    framework["instructions"] - hand["instructions"], 1
-                ),
-                "allocations": round(
-                    framework["allocations"] - hand["allocations"], 3
-                ),
-            }
         if scenario.note:
             row["note"] = scenario.note
         rows.append(row)
     return rows
 
 
-def allocation_ratio(framework, hand):
-    """The framework's allocations per message as a multiple of the hand-written half's.
-
-    `=` says both halves sit at the same count (the usual case is zero against zero), a number
-    is the multiple, and `n/a` is a scenario with no hand-written half or a hand-written half
-    that allocates nothing while the framework does, where a multiple would be infinite.
-    """
-    if hand is None:
-        return "n/a"
-    ours = framework["allocations"]
-    theirs = hand["allocations"]
-    if ours == theirs:
-        return "="
-    if theirs == 0:
-        return "n/a"
-    return f"{ours / theirs:.2f}x"
-
-
 def report(rows):
     """The same table the page publishes, for a terminal and for a CI job summary."""
     header = (
-        f"{'scenario':<52}{'framework':>11}{'by hand':>10}{'overhead':>10}"
-        f"{'alloc':>8}{'by hand':>9}{'ratio':>7}{'cold instr':>12}{'cold alloc':>12}"
+        f"{'scenario':<52}{'instructions':>14}{'allocations':>13}"
+        f"{'cold instr':>12}{'cold alloc':>12}"
     )
     print(header)
     print("-" * len(header))
     for row in rows:
-        hand = row["hand_written"]
-        overhead = row.get("overhead", {})
         cold = row["cold"]
         print(
             f"{row['name']:<52}"
-            f"{row['framework']['instructions']:>11}"
-            f"{hand['instructions'] if hand else '-':>10}"
-            f"{overhead.get('instructions', '-'):>10}"
-            f"{row['framework']['allocations']:>8}"
-            f"{hand['allocations'] if hand else '-':>9}"
-            f"{allocation_ratio(row['framework'], hand):>7}"
+            f"{row['framework']['instructions']:>14}"
+            f"{row['framework']['allocations']:>13}"
             f"{cold['instructions']:>12}"
             f"{cold['allocations']:>12}"
         )
     print()
     print(
         f"instructions and allocations per message in the steady state over {MESSAGES} "
-        "deliveries; the ratio is the framework's"
+        "deliveries; cold is what starting"
     )
-    print(
-        "allocations as a multiple of the hand-written half's; cold is what starting the service"
-        " and handling the first delivery cost once"
-    )
+    print("the service and handling the first delivery cost once")
 
 
 def main():

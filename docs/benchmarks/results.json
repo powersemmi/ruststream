@@ -24,241 +24,152 @@
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": {
-        "instructions": 2252.4,
-        "allocations": 0.0
-      },
-      "hand_written": {
-        "instructions": 1849.1,
+        "instructions": 2225.4,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 16041,
+        "instructions": 15945,
         "allocations": 26
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 403.3,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "consume, JSON decode of a 1 KB body",
       "messages": 1000,
       "framework": {
-        "instructions": 17654.2,
-        "allocations": 0.0
-      },
-      "hand_written": {
-        "instructions": 17250.9,
+        "instructions": 17668.1,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 31792,
+        "instructions": 31737,
         "allocations": 26
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 403.3,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "consume on the byte lane, no codec",
       "messages": 1000,
       "framework": {
-        "instructions": 1390.4,
-        "allocations": 0.0
-      },
-      "hand_written": {
-        "instructions": 981.1,
+        "instructions": 1390.5,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15145,
+        "instructions": 15150,
         "allocations": 26
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 409.3,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "consume through a middleware stack of one",
       "messages": 1000,
       "framework": {
-        "instructions": 2305.4,
-        "allocations": 0.0
-      },
-      "hand_written": {
-        "instructions": 1849.1,
+        "instructions": 2272.4,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 16108,
+        "instructions": 16016,
         "allocations": 26
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 456.3,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "consume through a middleware stack of four",
       "messages": 1000,
       "framework": {
-        "instructions": 2343.4,
-        "allocations": 0.0
-      },
-      "hand_written": {
-        "instructions": 1849.1,
+        "instructions": 2310.5,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 16146,
+        "instructions": 16054,
         "allocations": 26
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 494.3,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "consume in batches of 64",
       "messages": 1000,
       "framework": {
-        "instructions": 2044.3,
-        "allocations": 0.094
-      },
-      "hand_written": {
-        "instructions": 1920.3,
+        "instructions": 1974.7,
         "allocations": 0.094
       },
       "cold": {
-        "instructions": 17573,
+        "instructions": 17759,
         "allocations": 29
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 124.0,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "reply, encoded to a declared destination",
       "messages": 1000,
       "framework": {
-        "instructions": 3712.4,
-        "allocations": 4.0
-      },
-      "hand_written": {
-        "instructions": 3036.2,
+        "instructions": 3687.4,
         "allocations": 4.0
       },
       "cold": {
-        "instructions": 18157,
+        "instructions": 18057,
         "allocations": 31
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 676.2,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "publish through an Out slot with one transform",
       "messages": 1000,
       "framework": {
-        "instructions": 5524.4,
+        "instructions": 5529.4,
         "allocations": 10.0
       },
-      "hand_written": {
-        "instructions": 4122.2,
-        "allocations": 8.0
-      },
       "cold": {
-        "instructions": 21170,
+        "instructions": 21143,
         "allocations": 37
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 1402.2,
-        "allocations": 2.0
-      }
+      "gated": true
     },
     {
       "name": "publish with a typed header contract",
       "messages": 1000,
       "framework": {
-        "instructions": 5677.6,
-        "allocations": 10.0
-      },
-      "hand_written": {
-        "instructions": 4829.4,
+        "instructions": 5678.7,
         "allocations": 10.0
       },
       "cold": {
-        "instructions": 21075,
+        "instructions": 21041,
         "allocations": 37
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 848.2,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "read a typed header contract, then publish",
       "messages": 1000,
       "framework": {
-        "instructions": 5634.3,
-        "allocations": 4.0
-      },
-      "hand_written": {
-        "instructions": 4796.1,
+        "instructions": 5627.2,
         "allocations": 4.0
       },
       "cold": {
-        "instructions": 19858,
+        "instructions": 19766,
         "allocations": 31
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 838.2,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "request and reply, one round trip",
       "messages": 1000,
       "framework": {
-        "instructions": 11436.5,
-        "allocations": 18.0
-      },
-      "hand_written": {
-        "instructions": 10115.6,
+        "instructions": 11397.0,
         "allocations": 18.0
       },
       "cold": {
-        "instructions": 26148,
+        "instructions": 26212,
         "allocations": 44
       },
-      "gated": true,
-      "overhead": {
-        "instructions": 1320.9,
-        "allocations": 0.0
-      }
+      "gated": true
     },
     {
       "name": "a delivery that asks to be redelivered, and the copy",
       "messages": 1000,
       "framework": {
-        "instructions": 6760.3,
+        "instructions": 6746.3,
         "allocations": 1.0
       },
-      "hand_written": null,
       "cold": {
         "instructions": 22215,
         "allocations": 27

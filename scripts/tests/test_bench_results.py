@@ -1,5 +1,4 @@
-"""The results generator's knobs: the count of deliveries a run is measured over, and the
-allocation ratio the terminal report prints next to the two halves."""
+"""The results generator's knobs: the count of deliveries a run is measured over."""
 
 import sys
 import unittest
@@ -39,27 +38,6 @@ class ConfiguredCount(unittest.TestCase):
     def test_a_count_that_is_not_positive_is_refused(self):
         with self.assertRaises(SystemExit):
             bench_results.configure(0)
-
-
-class AllocationRatio(unittest.TestCase):
-    def test_equal_counts_print_as_equal(self):
-        self.assertEqual(
-            bench_results.allocation_ratio({"allocations": 0}, {"allocations": 0}), "="
-        )
-        self.assertEqual(
-            bench_results.allocation_ratio({"allocations": 5.0}, {"allocations": 5.0}), "="
-        )
-
-    def test_a_difference_prints_as_a_multiple(self):
-        self.assertEqual(
-            bench_results.allocation_ratio({"allocations": 6.0}, {"allocations": 5.0}), "1.20x"
-        )
-
-    def test_no_hand_written_half_or_a_zero_divisor_prints_not_applicable(self):
-        self.assertEqual(bench_results.allocation_ratio({"allocations": 1.0}, None), "n/a")
-        self.assertEqual(
-            bench_results.allocation_ratio({"allocations": 1.0}, {"allocations": 0}), "n/a"
-        )
 
 
 if __name__ == "__main__":
