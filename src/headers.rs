@@ -50,6 +50,19 @@ impl HeaderMap {
     /// The key is normalized to ASCII lowercase. A constant key is written
     /// `Str::from_static("content-type")`, which costs nothing; a `String` moves in without a
     /// copy; a `&str` is copied once, and a key that is not already lowercase is copied again.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{HeaderMap, Str};
+    ///
+    /// let mut headers = HeaderMap::new();
+    /// headers.insert(Str::from_static("content-type"), "application/json");
+    /// headers.insert(format!("x-tenant-{}", 7), "acme");
+    ///
+    /// assert_eq!(headers.content_type(), Some("application/json"));
+    /// assert_eq!(headers.get_str("x-tenant-7"), Some("acme"));
+    /// ```
     pub fn insert(&mut self, name: impl Into<Str>, value: impl Into<Bytes>) -> Option<Bytes> {
         let key = normalize_owned(name.into());
         self.inner.insert(key, value.into())
