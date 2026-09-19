@@ -123,6 +123,13 @@ pub use inventory;
 /// directly; a service that already does keeps its own import, which shadows this one.
 pub use bytes::BytesMut;
 
+/// The owned string of the message path: a destination name, a header key.
+///
+/// A `Bytes` that is valid UTF-8, so it reads as a `str`, clones by reference count and can be
+/// taken as a slice of a buffer the broker already holds. `Str::from_static("orders")` costs
+/// nothing at all; `String` moves in without a copy; `&str` copies once.
+pub use bytes_utils::Str;
+
 pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{

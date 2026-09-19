@@ -3,12 +3,15 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use bytes::Bytes;
+use bytes_utils::Str;
 
 /// Case-insensitive map of broker-message headers.
 ///
-/// Keys are normalized to ASCII lowercase on insertion. Values are stored as `Bytes` to support
-/// arbitrary binary metadata. Typed accessors are provided for well-known fields commonly carried
-/// by message brokers; unknown headers are read through [`HeaderMap::get`].
+/// Keys are normalized to ASCII lowercase on insertion. Both halves of an entry are shared
+/// buffers, [`Str`] and [`Bytes`], so cloning a map is a reference count per entry and a broker
+/// hands over a key its own read buffer already holds. Values are bytes to support arbitrary
+/// binary metadata. Typed accessors are provided for well-known fields commonly carried by
+/// message brokers; unknown headers are read through [`HeaderMap::get`].
 ///
 /// # Examples
 ///
@@ -24,7 +27,7 @@ use bytes::Bytes;
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeaderMap {
-    inner: HashMap<String, Bytes>,
+    inner: HashMap<Str, Bytes>,
 }
 
 impl HeaderMap {
@@ -44,8 +47,23 @@ impl HeaderMap {
 
     /// Inserts a header value, returning the previous value under that key if any.
     ///
-    /// The key is normalized to ASCII lowercase.
-    pub fn insert(&mut self, name: impl Into<String>, value: impl Into<Bytes>) -> Option<Bytes> {
+    /// The key is normalized to ASCII lowercase. A constant key is written
+    /// `Str::from_static("content-type")`, which costs nothing; a `String` moves in without a
+    /// copy; a `&str` is copied once, and a key that is not already lowercase is copied again.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{HeaderMap, Str};
+    ///
+    /// let mut headers = HeaderMap::new();
+    /// headers.insert(Str::from_static("content-type"), "application/json");
+    /// headers.insert(format!("x-tenant-{}", 7), "acme");
+    ///
+    /// assert_eq!(headers.content_type(), Some("application/json"));
+    /// assert_eq!(headers.get_str("x-tenant-7"), Some("acme"));
+    /// ```
+    pub fn insert(&mut self, name: impl Into<Str>, value: impl Into<Bytes>) -> Option<Bytes> {
         let key = normalize_owned(name.into());
         self.inner.insert(key, value.into())
     }
@@ -90,7 +108,7 @@ impl HeaderMap {
 
     /// Iterates over `(name, value)` pairs. Names are returned in their normalized lowercase form.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> {
-        self.inner.iter().map(|(k, v)| (k.as_str(), v.as_ref()))
+        self.inner.iter().map(|(k, v)| (&**k, v.as_ref()))
     }
 
     /// Returns the value of the `content-type` header decoded as UTF-8.
@@ -134,7 +152,7 @@ impl HeaderMap {
 
 impl<K, V> FromIterator<(K, V)> for HeaderMap
 where
-    K: Into<String>,
+    K: Into<Str>,
     V: Into<Bytes>,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
@@ -148,11 +166,15 @@ where
     }
 }
 
-fn normalize_owned(mut s: String) -> String {
+/// The key a shared buffer carries: kept as it arrived when it is already lowercase, which is
+/// what every framework-issued key and every wire format that lowercases its own headers hands
+/// in. A key with capitals in it is copied, since a shared buffer cannot be lowercased in place.
+fn normalize_owned(s: Str) -> Str {
     if s.bytes().any(|b| b.is_ascii_uppercase()) {
-        s.make_ascii_lowercase();
+        Str::from(s.to_ascii_lowercase())
+    } else {
+        s
     }
-    s
 }
 
 fn normalize_borrowed(s: &str) -> Cow<'_, str> {

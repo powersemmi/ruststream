@@ -420,6 +420,9 @@ allowed_external_types = [
     # The payload container and the buffer handlers write into.
     "bytes::bytes::Bytes",
     "bytes::bytes_mut::BytesMut",
+    # The owned string beside them: a header key and a message name are shared buffers, and the
+    # type is in the signature that accepts one.
+    "bytes_utils::string::Str",
     # A Subscriber is a Stream: that is the core design decision, not an accident.
     "futures_core::stream::Stream",
     # `tokio::spawn` handles surface their join failure through the app lifecycle.
@@ -463,6 +466,11 @@ otel = [
 
 [dependencies]
 bytes = "1"
+# The owned string of the message path: a `Bytes` with the UTF-8 invariant, so a name and a header
+# key clone by reference count and can be sliced out of a buffer a broker already holds.
+# 0.1.3 is the real floor: `Str::from_static`, which is how a constant key costs nothing, arrived
+# there.
+bytes-utils = "0.1.3"
 futures = "0.3"
 # 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
 # forwards the 128-bit methods, both of which arrived there.

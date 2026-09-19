@@ -53,11 +53,13 @@ pub use crate::runtime::{
 // consumer-side capabilities (`Partitioned`, `Seekable`, `Positioned`, `Seeker`) are not, since
 // a service reaches those through a broker whose prelude names the ones it implements.
 // `BytesMut` is here for one reason: a hand-written `Serialized` impl names it in the signature
-// the trait demands, and the manual path is meant to need nothing but this glob.
+// the trait demands, and the manual path is meant to need nothing but this glob. `Str` is here
+// for the same kind of reason: it is what a header key and a destination name are made of, and
+// `Str::from_static` is how a constant one is written without paying for a copy.
 pub use crate::{
     Broker, BytesMut, CallerName, FixedName, HeaderMap, IncomingMessage, MessageHeaders,
     MessageInfo, Name, NameTemplate, NoHeaders, OutSlot, OutgoingDestination, OwnedTransactions,
-    PublishPolicy, Publisher, RequestReply, TransactionalPublisher, Unnamed, WithHeaders,
+    PublishPolicy, Publisher, RequestReply, Str, TransactionalPublisher, Unnamed, WithHeaders,
 };
 // The counting macro every `workers(..)` chain writes.
 pub use crate::nonzero;

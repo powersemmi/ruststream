@@ -12,6 +12,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(any(feature = "testing", test))]
+use bytes_utils::Str;
 
 use crate::HeaderMap;
 #[cfg(any(feature = "testing", test))]
@@ -243,10 +245,13 @@ impl NameLog {
     /// The retained messages as owned values, for the harness assertions.
     #[cfg(any(feature = "testing", test))]
     pub(super) fn messages(&self, name: &str) -> Vec<RawMessage> {
+        // The name is materialized once for the whole window; every message shares it.
+        let name = Str::from(name);
         self.entries
             .iter()
             .map(|entry| {
-                RawMessage::new(name, entry.payload.clone()).with_headers((*entry.headers).clone())
+                RawMessage::new(name.clone(), entry.payload.clone())
+                    .with_headers((*entry.headers).clone())
             })
             .collect()
     }

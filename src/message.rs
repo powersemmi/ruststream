@@ -3,24 +3,40 @@
 use std::{future::Future, time::Duration};
 
 use bytes::Bytes;
+use bytes_utils::Str;
 
 use crate::{AckError, HeaderMap, SerializeHeadersError};
 
 /// An owned snapshot of a message as it travels through the framework.
 ///
-/// `RawMessage` is what the runtime hands to type-erased handlers and what test clients return
-/// from assertions. Broker-specific subscribers usually expose a richer
-/// [`IncomingMessage`] type that wraps the broker's native delivery handle.
+/// `RawMessage` is what a broker's publish log and the test harness hand back: a delivery with
+/// its settlement handle dropped, kept for assertions. Broker-specific subscribers expose a
+/// richer [`IncomingMessage`] type that wraps the broker's native delivery handle, and that is
+/// what a handler receives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawMessage {
-    name: String,
+    name: Str,
     payload: Bytes,
     headers: HeaderMap,
 }
 
 impl RawMessage {
     /// Constructs a new message for the given name and payload, with no headers.
-    pub fn new(name: impl Into<String>, payload: impl Into<Bytes>) -> Self {
+    ///
+    /// The name is a shared buffer: a broker that already holds the delivery's name as a [`Str`]
+    /// hands it over without a copy, and cloning the message copies neither name nor payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{RawMessage, Str};
+    ///
+    /// let message = RawMessage::new(Str::from_static("orders.created"), br#"{"id":7}"#.as_slice());
+    ///
+    /// assert_eq!(message.name(), "orders.created");
+    /// assert_eq!(message.clone(), message);
+    /// ```
+    pub fn new(name: impl Into<Str>, payload: impl Into<Bytes>) -> Self {
         Self {
             name: name.into(),
             payload: payload.into(),
