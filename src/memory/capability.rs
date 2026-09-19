@@ -138,7 +138,7 @@ impl Publisher for MemoryRequester {
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
-            name: msg.name().to_owned(),
+            name: Arc::from(msg.name()),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };
@@ -170,7 +170,7 @@ impl RequestReply for MemoryRequester {
         let mut headers = msg.headers().clone();
         headers.insert("reply-to", inbox.clone());
         let outbound = MemoryOutbound {
-            name: msg.name().to_owned(),
+            name: Arc::from(msg.name()),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers,
         };
@@ -391,7 +391,7 @@ impl Transaction for MemoryTransaction {
         // Buffering is local to this value and never touches the bus; a commit against a
         // shut-down bus is what reports the error.
         self.buffered.push(MemoryOutbound {
-            name: msg.name().to_owned(),
+            name: Arc::from(msg.name()),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         });

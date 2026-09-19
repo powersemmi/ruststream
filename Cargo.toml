@@ -463,6 +463,9 @@ otel = [
 
 [dependencies]
 bytes = "1"
+# The owned string of the message path: a `Bytes` with the UTF-8 invariant, so a name and a header
+# key clone by reference count and can be sliced out of a buffer a broker already holds.
+bytes-utils = "0.1"
 futures = "0.3"
 # 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
 # forwards the 128-bit methods, both of which arrived there.

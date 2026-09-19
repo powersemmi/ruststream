@@ -99,7 +99,7 @@ fn step(payload: &[u8], latch: &Latch) -> Vec<u8> {
     .expect("an encodable reply")
 }
 
-#[library_benchmark(config = common::config(40_000, 27))]
+#[library_benchmark(config = common::config(36_000, 27))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
@@ -126,7 +126,7 @@ fn service(requests: Requests) {
     drop(running);
 }
 
-#[library_benchmark(config = common::config(40_000, 9))]
+#[library_benchmark(config = common::config(36_000, 9))]
 #[bench::first(common::feed(1, 0))]
 #[bench::base(common::feed(MESSAGES, 0))]
 #[bench::twice(common::feed(2 * MESSAGES, 0))]

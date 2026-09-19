@@ -82,7 +82,7 @@ type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 /// its position in the per-name publish log.
 #[derive(Clone)]
 struct MemoryOutbound {
-    name: String,
+    name: Arc<str>,
     payload: Bytes,
     headers: HeaderMap,
 }
@@ -228,14 +228,13 @@ impl MemoryState {
     // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
     fn fanout(&self, outbound: MemoryOutbound) -> Result<(), MemoryError> {
-        // The outbound arrives by value: its name and headers move into shared allocations
-        // once, and every per-subscriber copy below is reference-count bumps.
+        // The outbound arrives by value: its headers move into a shared allocation once, its
+        // name is shared already, and every per-subscriber copy below is reference-count bumps.
         let MemoryOutbound {
             name,
             payload,
             headers,
         } = outbound;
-        let name: Arc<str> = name.into();
         let headers = Arc::new(headers);
         {
             let bus = self
@@ -255,7 +254,7 @@ impl MemoryState {
                 .as_deref_mut()
                 .map_or(0, |log| log.append(&name, &payload, &headers));
             let delivery = MemoryDelivery {
-                name: Arc::clone(&name),
+                name,
                 payload,
                 headers,
                 seq,
@@ -683,7 +682,7 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
             .fanout(MemoryOutbound {
-                name: message.name().to_owned(),
+                name: Arc::from(message.name()),
                 payload: Bytes::copy_from_slice(message.payload()),
                 headers: message.headers().clone(),
             })
@@ -967,7 +966,7 @@ impl Publisher for MemoryPublisher {
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         let outbound = MemoryOutbound {
-            name: msg.name().to_owned(),
+            name: Arc::from(msg.name()),
             payload: Bytes::copy_from_slice(msg.payload()),
             headers: msg.headers().clone(),
         };

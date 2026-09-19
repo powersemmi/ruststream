@@ -310,14 +310,14 @@ pub fn fill_with_headers(
     runtime: &Runtime,
     name: &str,
     count: usize,
-    headers: &[(&str, &str)],
+    headers: &[(&'static str, &str)],
 ) {
     let body = json_body(0);
     runtime.block_on(async move {
         for _ in 0..count {
             let mut map = HeaderMap::new();
             for (key, value) in headers {
-                map.insert(*key, (*value).to_owned());
+                map.insert(Str::from_static(key), (*value).to_owned());
             }
             publisher
                 .publish(OutgoingMessage::new(name, &body).with_headers(map), None)
@@ -565,11 +565,11 @@ pub async fn send_by_hand(
     publisher: &MemoryPublisher,
     name: &str,
     body: &[u8],
-    headers: &[(&str, &str)],
+    headers: &[(&'static str, &str)],
 ) {
     let mut map = HeaderMap::new();
     for (key, value) in headers {
-        map.insert(*key, (*value).to_owned());
+        map.insert(Str::from_static(key), (*value).to_owned());
     }
     publisher
         .publish(OutgoingMessage::new(name, body).with_headers(map), None)

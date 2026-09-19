@@ -3,6 +3,7 @@
 //! value.
 
 use bytes::Bytes;
+use bytes_utils::Str;
 use serde::ser::{
     self, Impossible, Serialize, SerializeMap, SerializeStruct, SerializeStructVariant,
 };
@@ -189,7 +190,8 @@ impl SerializeStruct for FieldSink<'_> {
         value: &T,
     ) -> Result<(), Self::Error> {
         if let Some(bytes) = value.serialize(ValueSerializer { field: key })? {
-            self.headers.insert(key, bytes);
+            // A field name is a literal in the contract's own source, so the key costs nothing.
+            self.headers.insert(Str::from_static(key), bytes);
         }
         Ok(())
     }
