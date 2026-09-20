@@ -19,13 +19,10 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Feed, Latch, MESSAGES, Order, Ready};
+use common::{Latch, MESSAGES, Order, Ready};
 use divan::Bencher;
 use divan::counter::ItemsCount;
-use futures::StreamExt;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{MemoryMessage, MemorySubscriber};
-use ruststream::{IncomingMessage, Subscriber};
 use serde::Serialize;
 
 fn main() {
@@ -69,18 +66,6 @@ fn replying() -> Ready {
     .ready()
 }
 
-fn queue() -> (Feed, MemorySubscriber) {
-    let feed = common::feed(MESSAGES, 0);
-    let subscriber = feed.subscribed();
-    (feed, subscriber)
-}
-
-fn decode_by_hand(message: &MemoryMessage) -> Order {
-    let order: Order = serde_json::from_slice(message.payload()).expect("a decodable body");
-    black_box((order.id, order.quantity));
-    order
-}
-
 #[divan::bench]
 fn consume_json(bencher: Bencher) {
     bencher
@@ -90,55 +75,9 @@ fn consume_json(bencher: Bencher) {
 }
 
 #[divan::bench]
-fn consume_json_hand(bencher: Bencher) {
-    bencher
-        .counter(ItemsCount::new(MESSAGES))
-        .with_inputs(queue)
-        .bench_local_values(|(feed, mut subscriber)| {
-            feed.runtime.block_on(async {
-                let mut stream = std::pin::pin!(subscriber.stream());
-                for _ in 0..MESSAGES {
-                    let message = stream
-                        .next()
-                        .await
-                        .expect("a delivery")
-                        .expect("a delivery");
-                    black_box(decode_by_hand(&message));
-                    message.ack().await.expect("the ack");
-                }
-            });
-        });
-}
-
-#[divan::bench]
 fn reply(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(replying)
         .bench_local_values(|ready| ready.runtime.block_on(ready.latch.drained()));
-}
-
-#[divan::bench]
-fn reply_hand(bencher: Bencher) {
-    bencher
-        .counter(ItemsCount::new(MESSAGES))
-        .with_inputs(queue)
-        .bench_local_values(|(feed, mut subscriber)| {
-            let publisher = feed.publisher();
-            feed.runtime.block_on(async {
-                let mut stream = std::pin::pin!(subscriber.stream());
-                for _ in 0..MESSAGES {
-                    let message = stream
-                        .next()
-                        .await
-                        .expect("a delivery")
-                        .expect("a delivery");
-                    let order = decode_by_hand(&message);
-                    let body = serde_json::to_vec(&Confirmation { id: order.id })
-                        .expect("an encodable reply");
-                    common::send_by_hand(&publisher, "confirmations", &body, &[]).await;
-                    message.ack().await.expect("the ack");
-                }
-            });
-        });
 }

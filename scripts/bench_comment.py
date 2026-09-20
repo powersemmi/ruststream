@@ -3,9 +3,8 @@
 
 Input is the machine-readable summary `cargo bench -- --output-format=json` writes, the same file
 `bench_results.py` reads, measured against a baseline taken on the target branch. Output is
-markdown on stdout: one row per scenario with what a message costs in the framework and in the
-hand-written loop beside it, what that cost did against the base commit, what starting the service
-cost once, and whether the run tripped a limit.
+markdown on stdout: one row per scenario with what a message costs, what that cost did against the
+base commit, what starting the service cost once, and whether the run tripped a limit.
 
 The scenarios and the arithmetic are `bench_results.py`'s, so a renamed benchmark moves in one
 place. What differs is the tolerance: this report is posted after a run that may have failed, so a
@@ -142,9 +141,7 @@ def steady(found, key):
 def limits(found, scenario):
     """The limits the scenario tripped, one phrase per metric: the run that went furthest over."""
     worst = {}
-    for key in (scenario.framework, scenario.hand):
-        if key is None:
-            continue
+    for key in (scenario.framework,):
         for count in (COLD, *COUNTS):
             for word, over, phrase in found.get(f"{key}/{count}", {}).get("exceeded", []):
                 if word not in worst or over > worst[word][0]:
@@ -193,13 +190,10 @@ def verdict(found, scenario, measured):
 def rows(found):
     for scenario in SCENARIOS:
         framework = steady(found, scenario.framework)
-        hand = steady(found, scenario.hand)
         yield [
             scenario.name,
             figure(framework, "head", "instructions"),
-            figure(hand, "head", "instructions"),
             figure(framework, "head", "allocations"),
-            figure(hand, "head", "allocations"),
             change(framework),
             cold(found, scenario),
             verdict(found, scenario, framework),
@@ -209,21 +203,19 @@ def rows(found):
 HEADER = [
     "Scenario",
     "Instructions",
-    "By hand",
     "Allocations",
-    "By hand",
     "Instruction change",
     "Cold start",
     "Gate",
 ]
 
-ALIGNMENT = ["---", "---:", "---:", "---:", "---:", "---:", "---:", "---"]
+ALIGNMENT = ["---", "---:", "---:", "---:", "---:", "---"]
 
 LEGEND = (
-    "Instructions and allocations are per message in the steady state, the framework against a "
-    "hand-written loop on the same queue. The change is the framework's instruction column "
-    "against the base commit. Cold start is the instructions and the allocations of starting the "
-    "service and taking the first delivery, counted once."
+    "Instructions and allocations are per message in the steady state, in the framework's own "
+    "code over the in-process transport. The change is the instruction column against the base "
+    "commit. Cold start is the instructions and the allocations of starting the service and "
+    "taking the first delivery, counted once."
 )
 
 

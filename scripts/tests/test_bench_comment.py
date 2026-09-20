@@ -62,16 +62,14 @@ class Table(unittest.TestCase):
         for scenario in bench_comment.SCENARIOS:
             self.assertNotEqual(row(text, scenario.name)[1], "-", scenario.name)
 
-    def test_a_scenario_reports_both_halves_and_the_cold_start(self):
-        """The pair, the per-message figures and the start-up cost the run measured."""
+    def test_a_scenario_reports_its_figures_and_the_cold_start(self):
+        """The per-message figures and the start-up cost the run measured."""
         cells = row(rendered(), "consume, JSON decode into a small struct")
         self.assertEqual(
             cells,
             [
                 "consume, JSON decode into a small struct",
                 "2378.1",
-                "1653.9",
-                "0.0",
                 "0.0",
                 "-0.50%",
                 "18891 / 26",
@@ -189,9 +187,9 @@ class Table(unittest.TestCase):
     def test_a_tripped_limit_is_reported_with_its_metric(self):
         """A failing gate names each limit once, however many of the scenario's runs tripped it."""
         cells = row(rendered(), "publish through an Out slot with one transform")
-        self.assertEqual(cells[5], "+3.00%")
+        self.assertEqual(cells[3], "+3.00%")
         self.assertEqual(
-            cells[7],
+            cells[5],
             "fail: instructions over the 2% limit; allocations 32028 over 30028",
         )
 
@@ -208,15 +206,14 @@ class Table(unittest.TestCase):
     def test_a_scenario_measured_without_a_gate_says_so(self):
         """The cold path is published and never fails the run."""
         cells = row(rendered(), "a delivery that asks to be redelivered, and the copy")
-        self.assertEqual(cells[2], "-")
-        self.assertEqual(cells[7], "not gated")
+        self.assertEqual(cells[5], "not gated")
 
     def test_a_scenario_the_run_does_not_carry_is_left_empty(self):
         """A comment is posted after a run that may have died part way through."""
         cells = row(
             rendered("bench-summary-partial.json"), "reply, encoded to a declared destination"
         )
-        self.assertEqual(cells[1:], ["-"] * 7)
+        self.assertEqual(cells[1:], ["-"] * 5)
 
     def test_without_a_baseline_the_change_column_is_empty(self):
         """A run with nothing to compare against must not read as a run that did not move."""
@@ -224,7 +221,7 @@ class Table(unittest.TestCase):
         self.assertIn("measured without a baseline", text)
         cells = row(text, "consume, JSON decode into a small struct")
         self.assertEqual(cells[1], "2378.1")
-        self.assertEqual(cells[5], "-")
+        self.assertEqual(cells[3], "-")
 
     def test_a_half_written_line_is_skipped(self):
         """A run cut off mid-line still reports everything measured before it."""

@@ -16,12 +16,9 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Feed, Latch, MESSAGES, Order, Pending};
-use futures::StreamExt;
+use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::{IncomingMessage, Subscriber};
 
 /// Bytes of JSON per delivery.
 const BODY: usize = 1024;
@@ -39,12 +36,6 @@ fn app(messages: usize) -> Pending {
     })
 }
 
-fn step(message: &MemoryMessage, latch: &Latch) {
-    let order: Order = serde_json::from_slice(message.payload()).expect("a decodable body");
-    black_box((order.id, order.quantity));
-    latch.arrived();
-}
-
 #[library_benchmark(config = common::config(0, 27))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
@@ -53,29 +44,5 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-#[library_benchmark(config = common::config(0, 8))]
-#[bench::first(common::feed(1, BODY))]
-#[bench::base(common::feed(MESSAGES, BODY))]
-#[bench::twice(common::feed(2 * MESSAGES, BODY))]
-fn by_hand(feed: Feed) {
-    let mut subscriber = feed.subscribed();
-    let latch = Latch::default();
-    latch.expect(feed.messages);
-    common::measure(|| {
-        feed.runtime.block_on(async {
-            let mut stream = std::pin::pin!(subscriber.stream());
-            for _ in 0..feed.messages {
-                let message = stream
-                    .next()
-                    .await
-                    .expect("a delivery")
-                    .expect("a delivery");
-                step(&message, &latch);
-                message.ack().await.expect("the ack");
-            }
-        });
-    });
-}
-
-library_benchmark_group!(name = consume_json_kilobyte; benchmarks = service, by_hand);
+library_benchmark_group!(name = consume_json_kilobyte; benchmarks = service);
 main!(library_benchmark_groups = consume_json_kilobyte);

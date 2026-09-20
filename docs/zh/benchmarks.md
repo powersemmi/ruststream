@@ -18,13 +18,12 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 数值是交替配对的中位数，括号里是观察到的波动范围。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "byHand": "手写", "allocations": "内存分配，RustStream", "cold": "冷启动", "allocationsByHand": "内存分配，手写"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
 ### 代码的开销 { #cost-of-the-code }
 
-稳态下每条消息的指令数和内存分配次数，在进程内传输上测得。前三列数字是指令数，后两列是内存分配
-次数，两种量都给出框架和手写两边，差值因此读法一致：“开销”一列是框架比旁边那个手写循环多付的
-部分。
+稳态下每条消息的指令数和内存分配次数，在进程内传输上测得。这是框架自身代码的绝对数值，不是
+对照：框架相对于 Broker 客户端多付出多少，看上面那张表，那里的客户端是真实的。
 
 <div id="benchmark-code"></div>
 
@@ -53,8 +52,9 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 表的各行之间可比，与另一台机器上测出的同一行也可比。它说明不了的是时间：同样的指令数，在缓存
 未命中处要花更多时间，表格旁边那对按时钟计时的数字正是为此而测。
 
-“开销”一列就是结果本身。框架那一行和手写那一行跑同一个场景、读同一条进程内队列、把同样的载荷
-解码成同一个类型、读一个字段、以同样的方式确认投递。两者之差就是框架，此外别无他物。
+这个数字就是本 crate 自身的工作，此外别无他物：用户写的服务，跑在进程内队列上，把载荷解码成
+一个类型、读一个字段、确认投递。里面没有 Broker，所以只有框架的代码变了，数字才会变 —— 这正是
+两个百分点可以算作缺陷而不是噪声的原因。
 
 每条消息的数字都是稳态。启动服务的开销只付一次：连接、建立订阅，以及它们背后的首批内存分配。
 把它摊到一次运行的消息上，等于把一次性的价钱当成每条消息的价钱公布出去。因此每个场景测两次，
@@ -62,7 +62,7 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 
 内存分配按每条消息统计，投递路径上是零：服务跑起来之后，消息从队列走到处理器函数体，框架一次
 也没有向分配器要过内存。发布路径上的数字，就是 Broker 为持有交给它的消息所要的那几次分配，此外
-再无其他：表格里每个发布场景，框架一列和手写一列都是同一个数。
+再无其他。
 
 ## 方法论 { #methodology }
 
@@ -116,11 +116,10 @@ Broker 会在自己的页面上说明。
 基准测试 runner。`just bench 5000` 让每个场景在五千次投递上测量，而不是一千次：数字更稳，
 运行更久；发布的文档和 CI 的阈值仍按默认值测量。
 
-- **每个场景都是一对**，让数字有意义的正是手写的那一半。它读同一条队列，用同样的编解码器把同样
-  的字节解码成同一个类型，通过 `std::hint::black_box` 访问一个字段，并以同样的方式确认投递。
-  省掉解码的对照，测的是框架与空气之差。
-- **传输是进程内的。** 被测的是框架自身的代码，数字不应随套接字、服务器负载或网络而变。两半本
-  来就付同样的传输开销，在相减时会抵消。
+- **每个场景都是用户写的那个服务**，由真实运行时启动，测试用的 harness 不参与编译，测的因此
+  就是发布出去的代码。这里没有手写对照：它要读的队列正是本 crate 自己的进程内 Broker，那样
+  crate 就成了自己跟自己比。与别人写的客户端相比，是第一张表的事，由 Broker crate 来做。
+- **传输是进程内的。** 被测的是框架自身的代码，数字不应随套接字、服务器负载或网络而变。
 - **队列在测量区间打开之前就已填满。** 场景测的是稳态投递，不含连接、订阅建立，以及它们背后的
   首批内存分配。
 - **采集只覆盖测量区间，不越界。** 准备和收尾跑在同一个进程里，走的是同一份框架代码，把它们也
@@ -190,8 +189,6 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": { "instructions": 2839.8, "allocations": 0.0 },
-      "hand_written": { "instructions": 1934.4, "allocations": 0.0 },
-      "overhead": { "instructions": 905.4, "allocations": 0.0 },
       "cold": { "instructions": 19219, "allocations": 26 },
       "gated": true
     }
@@ -208,10 +205,9 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 成 `unknown`，不去猜：内存速率来自 DMI 表，而多数系统只让 root 读它。除 `cpu`、`os` 和 `rustc`
 之外都是可选的，因此 schema 为 1 的文档照样可读。
 
-`code` 是第二张表，每个场景一条记录。`framework`、`hand_written` 和 `overhead` 是稳态下每条消息
-的量，`cold` 则是启动服务加第一条消息的全部开销，没有除以任何东西。没有对照的场景不带
-`hand_written` 字段；`gated` 说明该场景出现回归时 CI 是否失败。只公布 `scenarios` 的 crate
-声明 `schema` 为 1，仍然保留自己在第一张表里的行。
+`code` 是第二张表，每个场景一条记录。`framework` 是稳态下每条消息的量，`cold` 则是启动服务加
+第一条消息的全部开销，没有除以任何东西。`gated` 说明该场景出现回归时 CI 是否失败。只公布
+`scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。
 
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。

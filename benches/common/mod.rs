@@ -7,12 +7,12 @@
 //! service and queue setups, the latch a handler counts deliveries down on, and the measurement
 //! configuration.
 //!
-//! Every scenario is a pair. One half runs the real service - the app a user writes, started
-//! through [`RustStream::start`], driven by the in-process
-//! [`MemoryBroker`](ruststream::memory::MemoryBroker). The other half is a hand-written loop over
-//! the same broker queue, doing the same decode, the same `black_box` read and the same
-//! settlement, with no framework between the queue and the body. The difference between the two
-//! is what the framework costs per message.
+//! A scenario runs the real service: the app a user writes, started through
+//! [`RustStream::start`], driven by the in-process
+//! [`MemoryBroker`](ruststream::memory::MemoryBroker). What comes out is what a message costs in
+//! this crate's own code, which is what the gate holds and what the published table reports.
+//! What the framework costs over a broker's own client is measured where that client is a real
+//! one, in the broker crates.
 //!
 //! # Steady state and cold start
 //!
@@ -42,8 +42,8 @@
 //! Collection starts switched off and is switched on for [`measure`], which every body wraps its
 //! work in. The setup - which builds an app and fills a queue through the very same framework
 //! frames - is therefore not in the number, and neither is the teardown. Everything inside the
-//! region is counted, on both halves of a pair alike: the dispatcher, the codec, the in-memory
-//! transport, and tokio's share of driving them.
+//! region is counted: the dispatcher, the codec, the in-memory transport, and tokio's share of
+//! driving them.
 //!
 //! Two ways of writing this down do not work, and both fail silently.
 //!
@@ -53,8 +53,6 @@
 //! function switches counting back off one frame deeper. What comes out is the parity of the
 //! nesting rather than the framework's work - here it dropped the whole JSON decode from a
 //! scenario that had a layer in its stack and reported that as a 40 percent saving. The same
-//! pattern cannot be fair to the hand-written half either, whose decode sits in the benchmark's
-//! own frame rather than in one of ours.
 //!
 //! Toggling on the benchmark function, which is the harness default, is the second. A body that
 //! hands a closure to a generic function - `block_on` in every scenario here - makes the compiler
@@ -84,7 +82,7 @@ use std::convert::Infallible;
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, EventKind, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{MemoryBroker, MemoryPublisher, MemoryRequester, MemorySubscriber};
+use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{BrokerScope, Identity, RunningApp};
 use ruststream::{HeaderMap, OutgoingMessage, Publisher};
 use serde::Deserialize;
@@ -487,94 +485,6 @@ pub fn start_and_drain(pending: Pending) {
     );
     measure(|| runtime.block_on(latch.drained()));
     drop(running);
-}
-
-/// The hand-written side before it opens its subscription: the broker, the runtime and what the
-/// queue will hold.
-///
-/// The subscription opens inside the body, which is where the framework half starts its service,
-/// so both halves pay their cold start in the same place.
-pub struct Feed {
-    pub runtime: Runtime,
-    pub broker: MemoryBroker,
-    pub messages: usize,
-    pub size: usize,
-    pub headers: &'static [(&'static str, &'static str)],
-}
-
-/// A broker whose queue will hold `messages` bodies of `size` bytes.
-pub fn feed(messages: usize, size: usize) -> Feed {
-    Feed {
-        runtime: runtime(),
-        broker: MemoryBroker::new(),
-        messages,
-        size,
-        headers: &[],
-    }
-}
-
-/// The same with a header contract on every delivery.
-pub fn feed_with_headers(
-    messages: usize,
-    headers: &'static [(&'static str, &'static str)],
-) -> Feed {
-    Feed {
-        headers,
-        ..feed(messages, 0)
-    }
-}
-
-impl Feed {
-    /// Opens the subscription inside a measured region, the way the framework half starts its
-    /// service there, and returns it with the queue already filled.
-    pub fn subscribed(&self) -> MemorySubscriber {
-        let subscriber = measure(|| self.broker.subscribe(INPUT));
-        if self.headers.is_empty() {
-            fill(
-                &self.broker.publisher(),
-                &self.runtime,
-                INPUT,
-                self.messages,
-                self.size,
-            );
-        } else {
-            fill_with_headers(
-                &self.broker.publisher(),
-                &self.runtime,
-                INPUT,
-                self.messages,
-                self.headers,
-            );
-        }
-        subscriber
-    }
-
-    /// A requester on the same broker, for the round-trip scenario.
-    pub fn requester(&self) -> MemoryRequester {
-        self.broker.requester()
-    }
-
-    /// A publisher on the same broker, for what a hand-written loop sends on.
-    pub fn publisher(&self) -> MemoryPublisher {
-        self.broker.publisher()
-    }
-}
-
-/// Publishes `body` under `name` with `headers`, the way a handler's publish leaves the process.
-pub async fn send_by_hand(
-    publisher: &MemoryPublisher,
-    name: &str,
-    body: &[u8],
-    headers: &[(&'static str, &str)],
-) {
-    let mut map = HeaderMap::new();
-    for (key, value) in headers {
-        map.insert(Str::from_static(key), (*value).to_owned());
-    }
-    publisher
-        .publish(OutgoingMessage::new(name, body).with_headers(map), None)
-        .await
-        .expect("an in-process publish");
 }
 
 // A benchmark measures what ships. With the harness feature on, every delivery records what the
