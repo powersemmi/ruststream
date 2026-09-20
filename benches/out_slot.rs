@@ -83,7 +83,7 @@ fn app(messages: usize) -> Pending {
     })
 }
 
-#[library_benchmark(config = common::config(16_000, 28))]
+#[library_benchmark(config = common::config(12_000, 28))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

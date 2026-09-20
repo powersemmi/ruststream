@@ -136,10 +136,10 @@ impl Publisher for MemoryRequester {
         msg: OutgoingMessage<'_>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let outbound = MemoryOutbound::from(msg);
+        let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
-                .fanout(outbound)
+                .fanout(name, payload.into_bytes(), headers)
                 .map_err(|_| RequestError::ShutDown),
         )
     }
@@ -159,19 +159,18 @@ impl RequestReply for MemoryRequester {
         let inbox = format!("_inbox.{id}");
         let (tx, mut rx) = mpsc::unbounded_channel();
         self.state
-            .register(inbox.clone(), tx.clone())
+            .register(&inbox, tx.clone())
             .map_err(|_| RequestError::ShutDown)?;
 
         // The name is the caller's buffer, so it outlives the message consumed here; the inbox
         // is written into the request's own map rather than into a copy of it.
         let (subject, payload, mut headers) = msg.into_parts();
         headers.insert("reply-to", inbox.clone());
-        let outbound = MemoryOutbound {
-            name: Arc::from(subject),
-            payload: payload.into_bytes(),
-            headers,
-        };
-        if self.state.fanout(outbound).is_err() {
+        if self
+            .state
+            .fanout(subject, payload.into_bytes(), headers)
+            .is_err()
+        {
             self.state.unregister(&inbox);
             return Err(RequestError::ShutDown);
         }
@@ -302,7 +301,10 @@ impl TransactionalPublisher for MemoryPublisher {
             return ready(Err(MemoryError::NoTransaction));
         };
         for outbound in buffered {
-            if let Err(err) = self.state.fanout(outbound) {
+            if let Err(err) = self
+                .state
+                .fanout(&outbound.name, outbound.payload, outbound.headers)
+            {
                 return ready(Err(err));
             }
         }
@@ -396,7 +398,10 @@ impl Transaction for MemoryTransaction {
         // buffer is lost per the Transaction contract), so the drop warning must not fire.
         self.settled = true;
         for outbound in std::mem::take(&mut self.buffered) {
-            if let Err(err) = self.state.fanout(outbound) {
+            if let Err(err) = self
+                .state
+                .fanout(&outbound.name, outbound.payload, outbound.headers)
+            {
                 return ready(Err(err));
             }
         }
