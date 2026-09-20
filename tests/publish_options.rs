@@ -26,7 +26,7 @@ use ruststream::runtime::{
     SlotContext, for_batch,
 };
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, PairError};
+use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
 
 // --8<-- [start:broker_side]
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
@@ -78,12 +78,14 @@ impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
 }
 
 impl Publisher for PriorityPublisher {
+    // Forwarded to the bus underneath, which keeps what it is handed.
+    type Payload = Take;
     type Error = MemoryError;
     type Options = PriorityOptions;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let priority = options

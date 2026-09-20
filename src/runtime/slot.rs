@@ -38,8 +38,8 @@ use crate::runtime::router::{
 use crate::testing::coordinator::record_slot_publish;
 use crate::{
     Broker, CallerName, Connected, ConnectedBroker, FixedName, HeaderMap, NameTemplate,
-    OutgoingDestination, OutgoingMessage, OwnedTransactions, PublishPolicy, Publisher,
-    RequestReply, TransactionalPublisher,
+    OutgoingDestination, OutgoingFor, OwnedTransactions, PublishPolicy, Publisher, RequestReply,
+    TransactionalPublisher,
 };
 
 /// A slot marker: the identity of one [`Out`](super::Out) injection.
@@ -376,12 +376,13 @@ impl<P, M> SlotPublisher<P, M> {
 }
 
 impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         #[cfg(feature = "testing")]
@@ -425,12 +426,12 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
 
     async fn request(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         // A request takes no call-site options, so what it carried is the policy's defaults.
         #[cfg(feature = "testing")]
-        record_slot_publish::<P::Options>(M::NAME, &msg, None);
+        record_slot_publish::<P::Options, _>(M::NAME, &msg, None);
         self.inner.request(msg, timeout).await
     }
 }

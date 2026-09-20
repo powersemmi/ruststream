@@ -655,11 +655,12 @@ mod tests {
         /// A publisher with no broker behind it: every publish fails.
         struct Failing;
         impl crate::Publisher for Failing {
+            type Payload = crate::Lend;
             type Error = std::io::Error;
             type Options = ();
             fn publish(
                 &self,
-                _msg: crate::OutgoingMessage<'_>,
+                _msg: crate::OutgoingMessage<'_, &[u8]>,
                 _options: Option<&Self::Options>,
             ) -> impl Future<Output = Result<(), Self::Error>> {
                 ready(Err(std::io::Error::other("no broker")))

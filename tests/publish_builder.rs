@@ -7,7 +7,7 @@
     feature = "testing"
 ))]
 
-use ruststream::OutgoingMessage;
+use ruststream::OutgoingFor;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 use ruststream::testing::{TestApp, TestableBroker};
@@ -373,12 +373,13 @@ async fn a_contract_less_message_still_carries_a_header_map() {
 struct Tenanted<P>(P, HeaderMap);
 
 impl<P: Publisher> Publisher for Tenanted<P> {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.0.publish(msg, options).await
@@ -401,12 +402,13 @@ impl<P: OwnedTransactions> OwnedTransactions for Tenanted<P> {
 struct Tagged<T>(T, HeaderMap);
 
 impl<T: Transaction> Transaction for Tagged<T> {
+    type Payload = T::Payload;
     type Error = T::Error;
     type Options = T::Options;
 
     async fn publish(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.0.publish(msg, options).await

@@ -15,6 +15,7 @@ use crate::codec::Codec;
 use std::collections::HashSet;
 
 use super::*;
+use crate::{Lend, PayloadForm, Take};
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
 /// transactional publisher rigged to fail one step of the protocol, and a policy that
@@ -29,7 +30,7 @@ mod fixtures {
 
     #[cfg(feature = "memory")]
     use crate::memory::{ConnectedMemoryBroker, MemoryTransaction};
-    use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
+    use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
     #[cfg(feature = "memory")]
     use crate::{OwnedTransactions, PairError, PublishPolicy};
 
@@ -63,12 +64,13 @@ mod fixtures {
     }
 
     impl Publisher for Rigged {
+        type Payload = Lend;
         type Error = RiggedError;
         type Options = ();
 
         fn publish(
             &self,
-            _msg: OutgoingMessage<'_>,
+            _msg: OutgoingMessage<'_, &[u8]>,
             _options: Option<&Self::Options>,
         ) -> impl Future<Output = Result<(), Self::Error>> {
             self.published.fetch_add(1, Ordering::SeqCst);
@@ -167,17 +169,18 @@ fn capture_events() -> (
 async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     use std::future::{pending, ready};
 
-    use crate::{OutgoingMessage, Publisher, TransactionalPublisher};
+    use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
 
     struct PendingCommit;
 
     impl Publisher for PendingCommit {
+        type Payload = Lend;
         type Error = std::convert::Infallible;
         type Options = ();
 
         fn publish(
             &self,
-            _msg: OutgoingMessage<'_>,
+            _msg: OutgoingMessage<'_, &[u8]>,
             _options: Option<&Self::Options>,
         ) -> impl Future<Output = Result<(), Self::Error>> {
             ready(Ok(()))
@@ -350,7 +353,7 @@ fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
     // What a publish stage rebuilding a message starts from: a transform that stamps a header
     // reads the payload and never copies it, and the copy happens at the first write.
     let body = b"body".to_vec();
-    let mut out = Outgoing::rebuilding("t", OutgoingPayload::Borrowed(&body), HeaderMap::new());
+    let mut out = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
     assert!(matches!(out.payload, Payload::Lent(_)));
     assert_eq!(out.payload(), b"body");
 
@@ -364,29 +367,38 @@ fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
 }
 
 #[test]
-fn the_terminal_takes_the_payload_in_the_form_it_travelled_in() {
-    // What the broker is handed: a buffer the pipeline wrote leaves as the buffer it wrote,
-    // uncommitted to any form, and bytes the pipeline was only lent leave as a borrow.
-    let mut lent = Outgoing::rebuilding("t", OutgoingPayload::Borrowed(b"body"), HeaderMap::new());
-    assert!(matches!(lent.take_payload(), OutgoingPayload::Borrowed(_)));
-
+fn the_terminal_hands_the_message_over_in_the_publisher_s_form() {
+    // What a taking broker is handed: the buffer the pipeline wrote, as it wrote it.
     let mut produced = Outgoing::new("t", BytesMut::from(&b"body"[..]));
-    assert!(matches!(
-        produced.take_payload(),
-        OutgoingPayload::Produced(_)
-    ));
-
-    // A rebuilt message carries the buffer through untouched, so a slot's transforms do not
-    // cost the broker its hand-over.
-    let mut rebuilt = Outgoing::rebuilding(
-        "t",
-        OutgoingPayload::Produced(BytesMut::from(&b"body"[..])),
-        HeaderMap::new(),
+    let wrote_at = produced.payload().as_ptr() as usize;
+    let taken = <Take as PayloadForm>::leaving(&mut produced);
+    assert_eq!(
+        taken.payload().as_ptr() as usize,
+        wrote_at,
+        "the buffer moves into the message rather than being copied into it",
     );
-    assert!(matches!(
-        rebuilt.take_payload(),
-        OutgoingPayload::Produced(_)
-    ));
+
+    // A rebuilt message carries that buffer through untouched, so a slot's transforms do not
+    // cost the broker its hand-over.
+    let mut rebuilt =
+        <Take as PayloadForm>::rebuilt("t".into(), BytesMut::from(&b"body"[..]), HeaderMap::new());
+    let carried_at = rebuilt.payload().as_ptr() as usize;
+    assert_eq!(
+        <Take as PayloadForm>::leaving(&mut rebuilt)
+            .payload()
+            .as_ptr() as usize,
+        carried_at,
+    );
+
+    // What a reading broker is handed: the bytes where the pipeline left them, whether it was
+    // lent them or wrote them itself.
+    let body = b"body".to_vec();
+    let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
+    assert_eq!(
+        <Lend as PayloadForm>::leaving(&mut lent).payload().as_ptr() as usize,
+        body.as_ptr() as usize,
+        "bytes the pipeline was lent are lent on, with nothing copied on the way",
+    );
 }
 
 #[test]
@@ -1023,7 +1035,7 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     use std::future::ready;
     use std::sync::Mutex;
 
-    use crate::{OutgoingMessage, Publisher};
+    use crate::{Lend, OutgoingMessage, Publisher};
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
     struct Settings {
@@ -1035,12 +1047,13 @@ async fn the_options_position_starts_empty_and_reaches_the_sink() {
     struct Recording(Mutex<Vec<Option<Settings>>>);
 
     impl Publisher for Recording {
+        type Payload = Lend;
         type Error = Infallible;
         type Options = Settings;
 
         fn publish(
             &self,
-            _msg: OutgoingMessage<'_>,
+            _msg: OutgoingMessage<'_, &[u8]>,
             options: Option<&Settings>,
         ) -> impl Future<Output = Result<(), Infallible>> {
             self.0

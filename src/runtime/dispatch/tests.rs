@@ -18,8 +18,7 @@ use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::handler::HandlerResult;
 use crate::{
-    AckError, HeaderMap, IncomingMessage, OutgoingMessage, OutgoingPayload, Publisher,
-    RetryDeclaration,
+    AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, RetryDeclaration,
 };
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
@@ -97,23 +96,22 @@ impl IncomingMessage for UnsettleableMessage {
     }
 }
 
-/// A publisher that reports the form and the address the payload reached it in, for the
-/// assertion the benchmarks cannot make: the in-memory broker redelivers natively, so no measured
-/// scenario reaches the deferred copy at all.
-struct FormReportingPublisher(mpsc::UnboundedSender<(bool, usize)>);
+/// A reading publisher that reports the address the payload reached it at, for the assertion the
+/// benchmarks cannot make: the in-memory broker redelivers natively, so no measured scenario
+/// reaches the deferred copy at all.
+struct FormReportingPublisher(mpsc::UnboundedSender<usize>);
 
 impl Publisher for FormReportingPublisher {
+    type Payload = Lend;
     type Error = std::io::Error;
     type Options = ();
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let at = msg.payload().as_ptr() as usize;
-        let lent = matches!(msg.into_payload(), OutgoingPayload::Borrowed(_));
-        let _ = self.0.send((lent, at));
+        let _ = self.0.send(msg.into_payload().as_ptr() as usize);
         ready(Ok(()))
     }
 }
@@ -123,12 +121,13 @@ impl Publisher for FormReportingPublisher {
 struct RejectingPublisher;
 
 impl Publisher for RejectingPublisher {
+    type Payload = Lend;
     type Error = std::io::Error;
     type Options = ();
 
     fn publish(
         &self,
-        _msg: OutgoingMessage<'_>,
+        _msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         ready(Err(std::io::Error::other("connection closed")))
@@ -607,8 +606,8 @@ async fn a_panicking_worker_is_reported_when_joined() {
 }
 
 /// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before
-/// settling it - and they are lent on rather than handed over: a broker that keeps owned bytes
-/// copies once here, on a path that runs only after a delivery has failed, instead of the
+/// settling it - and a publisher that reads the payload is lent them: a broker that keeps owned
+/// bytes copies once here, on a path that runs only after a delivery has failed, instead of the
 /// runtime converting a buffer on every retry.
 #[tokio::test(start_paused = true)]
 async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
@@ -634,8 +633,7 @@ async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
 
     tokio::time::advance(Duration::from_secs(30)).await;
 
-    let (lent, at) = arrived.recv().await.expect("the copy is published");
-    assert!(lent, "the copy lends its bytes rather than claiming them");
+    let at = arrived.recv().await.expect("the copy is published");
     assert_ne!(
         at, delivered_at,
         "and what it lends is the dispatch's own buffer, read off the delivery before it settled",

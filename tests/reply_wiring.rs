@@ -17,7 +17,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads, for_batch};
 use ruststream::testing::TestApp;
-use ruststream::{HeaderMap, OutgoingMessage, PairError, PublishPolicy};
+use ruststream::{BytesMut, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Take};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
@@ -160,12 +160,13 @@ struct Laned {
 }
 
 impl Publisher for Laned {
+    type Payload = Take;
     type Error = MemoryError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.inner.publish(msg, options).await

@@ -18,7 +18,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, PairError, PublishPolicy};
+use ruststream::{BytesMut, OutgoingMessage, PairError, PublishPolicy, Take};
 
 /// The app-wide middleware: it stamps every publish the service makes.
 #[derive(Clone)]
@@ -149,12 +149,13 @@ struct PrefixedPublisher {
 }
 
 impl Publisher for PrefixedPublisher {
+    type Payload = Take;
     type Error = MemoryError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let name = format!("{}{}", self.prefix, msg.name());

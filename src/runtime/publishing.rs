@@ -504,7 +504,7 @@ mod tests {
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
         use crate::testkit::log_capture::{find, start};
-        use crate::{HeaderMap, OutgoingMessage, Publisher, Subscriber};
+        use crate::{HeaderMap, Lend, OutgoingMessage, Publisher, Subscriber};
 
         /// Publishes `payload` to `name` and pulls the delivery back off the bus.
         async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
@@ -526,12 +526,13 @@ mod tests {
         struct Rejecting;
 
         impl Publisher for Rejecting {
+            type Payload = Lend;
             type Error = MemoryError;
             type Options = ();
 
             fn publish(
                 &self,
-                _msg: OutgoingMessage<'_>,
+                _msg: OutgoingMessage<'_, &[u8]>,
                 _options: Option<&Self::Options>,
             ) -> impl Future<Output = Result<(), Self::Error>> {
                 ready(Err(MemoryError::ShutDown))

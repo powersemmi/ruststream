@@ -18,8 +18,8 @@ use std::pin::Pin;
 use bytes::BytesMut;
 use bytes_utils::Str;
 
+use crate::HeaderMap;
 use crate::runtime::lifecycle::BoxError;
-use crate::{HeaderMap, OutgoingPayload};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
@@ -214,29 +214,6 @@ impl Payload<'_> {
     }
 }
 
-impl<'a> From<OutgoingPayload<'a>> for Payload<'a> {
-    #[inline]
-    fn from(payload: OutgoingPayload<'a>) -> Self {
-        match payload {
-            OutgoingPayload::Borrowed(bytes) => Self::Lent(bytes),
-            OutgoingPayload::Produced(buf) => Self::Owned(buf),
-        }
-    }
-}
-
-impl<'a> From<Payload<'a>> for OutgoingPayload<'a> {
-    #[inline]
-    fn from(payload: Payload<'a>) -> Self {
-        match payload {
-            Payload::Lent(bytes) => Self::Borrowed(bytes),
-            // The pipeline is the last owner of a buffer it wrote, so the message that leaves
-            // hands it over as it stands, unconverted: which form it ends up in is the
-            // transport's choice, and a publish nobody takes from pays for none of them.
-            Payload::Owned(buf) => Self::Produced(buf),
-        }
-    }
-}
-
 impl<'a> Outgoing<'a> {
     /// Creates an outgoing message with no headers.
     ///
@@ -258,12 +235,12 @@ impl<'a> Outgoing<'a> {
     #[inline]
     pub(crate) fn rebuilding(
         name: impl Into<OutgoingName<'a>>,
-        payload: OutgoingPayload<'a>,
+        payload: Payload<'a>,
         headers: HeaderMap,
     ) -> Self {
         Self {
             name: name.into(),
-            payload: payload.into(),
+            payload,
             headers,
         }
     }
@@ -316,15 +293,19 @@ impl<'a> Outgoing<'a> {
         self.payload = Payload::Owned(payload.into());
     }
 
-    /// The payload, taken out for the message that leaves.
+    /// The payload as a buffer of its own, taken out for a message that leaves to a transport
+    /// which keeps it.
     ///
-    /// The terminal of the pipeline calls this: the broker is the last reader, so the buffer the
-    /// stages wrote moves into the outgoing message instead of being lent to it. The `Outgoing`
-    /// is dead at that point - the terminal holds the only borrow of it for the rest of the
-    /// publish - so what it is left holding is never read again.
+    /// The buffer the stages wrote moves into the outgoing message instead of being lent to it;
+    /// bytes the pipeline only carried are copied here, because the transport keeps what it is
+    /// handed. The `Outgoing` is dead at that point - the terminal holds the only borrow of it
+    /// for the rest of the publish - so what it is left holding is never read again.
     #[inline]
-    pub(crate) fn take_payload(&mut self) -> OutgoingPayload<'a> {
-        mem::replace(&mut self.payload, Payload::Lent(&[])).into()
+    pub(crate) fn take_payload(&mut self) -> BytesMut {
+        match mem::replace(&mut self.payload, Payload::Lent(&[])) {
+            Payload::Lent(bytes) => BytesMut::from(bytes),
+            Payload::Owned(buf) => buf,
+        }
     }
 
     /// The outgoing headers.
@@ -347,14 +328,6 @@ impl<'a> Outgoing<'a> {
     pub(crate) fn take_headers(&mut self) -> HeaderMap {
         mem::take(&mut self.headers)
     }
-
-    /// The name, the payload and the header map, taken apart.
-    ///
-    /// What the last stage of a publish uses to hand the message on: the map the transforms
-    /// filled travels into the broker's message rather than being cloned into it.
-    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, HeaderMap) {
-        (self.name, self.payload, self.headers)
-    }
 }
 
 mod sealed {
@@ -368,6 +341,7 @@ mod sealed {
 
 mod builder;
 mod ext;
+mod form;
 mod out;
 mod pipeline;
 mod publisher;

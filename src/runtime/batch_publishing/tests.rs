@@ -14,7 +14,9 @@ use crate::runtime::input::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
-use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource};
+use crate::{
+    BytesMut, HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take,
+};
 
 struct Confirm {
     reply_to: &'static str,
@@ -280,12 +282,14 @@ impl HalfwayPublisher {
 }
 
 impl Publisher for HalfwayPublisher {
+    // The bus underneath keeps what it is handed, and this one hands it straight on.
+    type Payload = Take;
     type Error = MemoryError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), MemoryError> {
         if self.published.fetch_add(1, Ordering::SeqCst) >= self.succeed_first {

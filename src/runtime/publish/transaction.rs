@@ -3,14 +3,15 @@
 use std::fmt;
 use std::marker::PhantomData;
 
+use bytes::BytesMut;
 use serde::Serialize;
 use thiserror::Error;
 use tracing::warn;
 
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, message_of};
-use crate::codec::{Codec, CodecError};
+use crate::codec::CodecError;
 use crate::{
-    OutgoingDestination, OutgoingMessage, OwnedTransactions, Publisher, Transaction,
+    OutgoingDestination, OutgoingMessage, OwnedTransactions, PayloadForm, Publisher, Transaction,
     TransactionalPublisher,
 };
 
@@ -135,13 +136,13 @@ where
         name: &str,
         value: &T,
     ) -> Result<(), TransactionPublishError<P::Error>> {
-        let payload = self
-            .enc
-            .codec()
-            .encode(value)
+        // The scope's own buffer for this publish: a transaction that reads the payload is lent
+        // it, one that buffers the message is handed the codec's and never touches this.
+        let mut buf = BytesMut::new();
+        let payload = <P::Payload as PayloadForm>::encoded(self.enc.codec(), value, &mut buf)
             .map_err(TransactionPublishError::Encode)?;
         self.publisher
-            .publish(OutgoingMessage::produced(name, payload), None)
+            .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }
@@ -304,13 +305,13 @@ where
     where
         T: Serialize + Sync,
     {
-        let payload = self
-            .enc
-            .codec()
-            .encode(value)
+        // As on the borrowed scope: the buffer is this publish's own, and only a transaction
+        // that lends the payload writes into it.
+        let mut buf = BytesMut::new();
+        let payload = <Txn::Payload as PayloadForm>::encoded(self.enc.codec(), value, &mut buf)
             .map_err(TransactionPublishError::Encode)?;
         self.txn
-            .publish(OutgoingMessage::produced(name, payload), None)
+            .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }

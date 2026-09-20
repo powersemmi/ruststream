@@ -33,8 +33,8 @@ use ruststream::runtime::{
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
     AckError, AddressedCopies, ConnectedBroker, HeaderMap, IncomingMessage, NamedCopies, OutSlot,
-    OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed,
-    Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
+    OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher, RedeliveryAddress,
+    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -342,12 +342,13 @@ struct Stamped<P> {
 }
 
 impl<P: Publisher> Publisher for Stamped<P> {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.inner.publish(msg, options).await
@@ -437,12 +438,13 @@ where
 }
 
 impl<P: Publisher> Publisher for PriorityPublisher<P> {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = PriorityOptions;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let priority = options

@@ -19,8 +19,8 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
 use ruststream::runtime::{PublishBuilder, PublishSink, PublishedThrough, Reads};
 use ruststream::testing::TestApp;
+use ruststream::{BytesMut, PairError, Publisher, Take};
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, OutgoingMessage};
-use ruststream::{PairError, Publisher};
 use serde::{Deserialize, Serialize};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
@@ -62,12 +62,14 @@ impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
 }
 
 impl Publisher for PriorityPublisher {
+    // Forwarded to the bus underneath, which keeps what it is handed.
+    type Payload = Take;
     type Error = MemoryError;
     type Options = PriorityOptions;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let priority = options

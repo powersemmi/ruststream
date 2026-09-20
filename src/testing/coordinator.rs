@@ -56,12 +56,13 @@ impl HarnessScope {
 /// carried, against the harness driving the current dispatch task, if any. Called by the slot
 /// publisher wrapper on every publish; outside a harness-driven handler (production, or a test
 /// without a `TestApp`) it is a no-op.
-pub(crate) fn record_slot_publish<Options>(
+pub(crate) fn record_slot_publish<Options, Payload>(
     slot: &'static str,
-    msg: &OutgoingMessage<'_>,
+    msg: &OutgoingMessage<'_, Payload>,
     options: Option<&Options>,
 ) where
     Options: Clone + Send + Sync + 'static,
+    Payload: AsRef<[u8]>,
 {
     let _ = HARNESS.try_with(|scope| {
         scope
@@ -499,10 +500,10 @@ impl Coordinator {
     }
 
     /// Records one publish made through the `Out` slot named `slot`.
-    pub(crate) fn record_slot(
+    pub(crate) fn record_slot<Payload: AsRef<[u8]>>(
         &self,
         slot: &'static str,
-        msg: &OutgoingMessage<'_>,
+        msg: &OutgoingMessage<'_, Payload>,
         options: RecordedOptions,
     ) {
         let message = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
