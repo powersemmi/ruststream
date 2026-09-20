@@ -17,7 +17,10 @@ use crate::memory::MemoryBroker;
 use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::handler::HandlerResult;
-use crate::{AckError, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RetryDeclaration};
+use crate::{
+    AckError, HeaderMap, IncomingMessage, OutgoingMessage, OutgoingPayload, Publisher,
+    RetryDeclaration,
+};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -91,6 +94,26 @@ impl IncomingMessage for UnsettleableMessage {
 
     fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         ready(Err(AckError::Unsupported))
+    }
+}
+
+/// A publisher that reports the form the payload reached it in, for the assertion the benchmarks
+/// cannot make: the in-memory broker redelivers natively, so no measured scenario reaches the
+/// deferred copy at all.
+struct FormReportingPublisher(mpsc::UnboundedSender<bool>);
+
+impl Publisher for FormReportingPublisher {
+    type Error = std::io::Error;
+    type Options = ();
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&Self::Options>,
+    ) -> impl Future<Output = Result<(), Self::Error>> {
+        let handed = matches!(msg.into_payload(), OutgoingPayload::Shared(_));
+        let _ = self.0.send(handed);
+        ready(Ok(()))
     }
 }
 
@@ -580,6 +603,38 @@ async fn a_panicking_worker_is_reported_when_joined() {
     let joined = tokio::spawn(async { panic!("worker down") }).await;
     assert!(joined.is_err());
     log_worker_exit(joined);
+}
+
+/// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before
+/// settling it - so the copy reaches the broker as a hand-over and a transport that keeps owned
+/// bytes copies nothing on top of it.
+#[tokio::test(start_paused = true)]
+async fn the_deferred_copy_hands_its_buffer_to_the_broker() {
+    let (reported, mut arrived) = mpsc::unbounded_channel();
+    let delivery = Delivery::deferring_to(
+        bare_retry_publisher(FormReportingPublisher(reported)),
+        "orders",
+        TaskTracker::new(),
+    );
+
+    let settled = Arc::new(AtomicU8::new(0));
+    settle_nack_after(
+        plain(&[], &settled),
+        "orders",
+        Duration::from_secs(30),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .unwrap();
+
+    tokio::time::advance(Duration::from_secs(30)).await;
+
+    assert_eq!(
+        arrived.recv().await,
+        Some(true),
+        "the copy carries the buffer the dispatch owns, not a borrow of it",
+    );
 }
 
 /// The deferred copy goes to the address the subscription's source reported, which is not the
