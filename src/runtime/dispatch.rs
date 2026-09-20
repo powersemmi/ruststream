@@ -448,8 +448,9 @@ where
         // A worker takes one delivery, so what carries an encode buffer from one delivery to the
         // next is the pool: a worker hands its buffer back when it is reaped, and the next one
         // takes it, so a lending reply grows a buffer once per pool slot and not once per
-        // delivery.
-        let mut spare: Vec<BytesMut> = Vec::with_capacity(workers.count);
+        // delivery. The list starts empty rather than sized: it grows once, when the first
+        // worker comes back, and a loop that never reaps pays nothing for it.
+        let mut spare: Vec<BytesMut> = Vec::new();
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -681,7 +682,7 @@ where
         // pool keeps what finished workers handed back.
         let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
-        let mut spare = Vec::with_capacity(workers.count);
+        let mut spare = Vec::new();
         loop {
             if shutdown.is_cancelled() {
                 break;
