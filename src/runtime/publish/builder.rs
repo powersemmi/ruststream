@@ -252,8 +252,8 @@ impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
 /// impl Serialized for Export {
 ///     type Error = Infallible;
 ///
-///     fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
-///         Ok(&self.0)
+///     fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+///         Ok(WireBytes::Own(&self.0))
 ///     }
 /// }
 ///
@@ -270,7 +270,7 @@ impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
 /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
 /// let export = Export(vec![7, 9]);
 /// let mut buf = BytesMut::new();
-/// assert_eq!(export.wire_bytes(&mut buf)?, &[7, 9]);
+/// assert!(matches!(export.wire_bytes(&mut buf)?, WireBytes::Own(bytes) if bytes == [7, 9]));
 /// # Ok(())
 /// # }
 /// # check().unwrap();
@@ -288,9 +288,9 @@ impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
 /// impl Serialized for Tick {
 ///     type Error = Infallible;
 ///
-///     fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
+///     fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
 ///         buf.extend_from_slice(&self.0.to_be_bytes());
-///         Ok(buf)
+///         Ok(WireBytes::InBuffer)
 ///     }
 /// }
 ///
@@ -300,7 +300,8 @@ impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
 ///
 /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut buf = BytesMut::new();
-/// assert_eq!(Tick(1).wire_bytes(&mut buf)?, &[0, 0, 0, 1]);
+/// assert!(matches!(Tick(1).wire_bytes(&mut buf)?, WireBytes::InBuffer));
+/// assert_eq!(&buf[..], &[0, 0, 0, 1]);
 /// # Ok(())
 /// # }
 /// # check().unwrap();
@@ -313,17 +314,75 @@ pub trait Serialized {
     type Error: StdError + Send + Sync + 'static;
 
     /// The bytes the value publishes, exactly as they leave on the wire: the ones it already
-    /// holds, lent as they are, or the ones it writes into `buf`.
+    /// holds, answered as [`WireBytes::Own`], or the ones it writes into `buf`, answered as
+    /// [`WireBytes::InBuffer`].
     ///
     /// One method rather than a lend-or-compute pair, so a value cannot answer the two
     /// differently, and a value that carries its bytes never touches `buf` - which is why the
-    /// publish path can hand it a buffer that has not allocated.
+    /// publish path can hand it a buffer that has not allocated. Which answer it gives is what
+    /// the path above it needs to know: a transport that keeps the payload is handed the buffer
+    /// itself where the value wrote into it, and copies only where the bytes are the value's own.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the value's own encoder rejects it. A value that already
     /// holds its bytes cannot fail, and says so with `Infallible`.
-    fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Self::Error>;
+    fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Self::Error>;
+}
+
+/// Where a [`Serialized`] value's bytes are: in the buffer it was handed, or in the value
+/// itself.
+///
+/// It is the answer [`Serialized::wire_bytes`] gives, and the publish path needs it because the
+/// two are not interchangeable underneath: a transport that keeps the payload takes the buffer
+/// where the value wrote into it, and copies where the bytes belong to the value. A pointer
+/// comparison would guess at the same fact; this states it.
+///
+/// # Examples
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use ruststream::prelude::*;
+///
+/// struct Frame(Vec<u8>);
+///
+/// impl Serialized for Frame {
+///     type Error = Infallible;
+///
+///     fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+///         Ok(WireBytes::Own(&self.0))
+///     }
+/// }
+///
+/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut buf = BytesMut::new();
+/// assert_eq!(Frame(vec![7]).wire_bytes(&mut buf)?.of(&buf), &[7]);
+/// # Ok(())
+/// # }
+/// # check().unwrap();
+/// ```
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum WireBytes<'a> {
+    /// The value wrote its bytes into the buffer it was handed.
+    InBuffer,
+    /// The bytes are the value's own, lent for the length of the publish.
+    Own(&'a [u8]),
+}
+
+impl<'a> WireBytes<'a> {
+    /// The bytes themselves, given the buffer the value was handed.
+    ///
+    /// What a caller that only reads them uses; the publish path answers the two arms
+    /// differently, because only one of them can be taken.
+    #[must_use]
+    pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {
+        match self {
+            Self::InBuffer => &buf[..],
+            Self::Own(bytes) => bytes,
+        }
+    }
 }
 
 /// The encoded wire of a typed publish: the resolved codec serializes the value.

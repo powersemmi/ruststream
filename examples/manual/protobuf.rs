@@ -37,9 +37,9 @@ struct Order {
 impl Serialized for Order {
     type Error = prost::EncodeError;
 
-    fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Self::Error> {
+    fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Self::Error> {
         prost::Message::encode(self, &mut *buf)?;
-        Ok(&buf[..])
+        Ok(WireBytes::InBuffer)
     }
 }
 

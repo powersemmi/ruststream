@@ -5,10 +5,12 @@
 //! leaves is built from. One implementation per form, chosen by the publisher's type, so no
 //! publish position ever asks which form it got.
 
+use std::mem;
+
 use bytes::BytesMut;
 use serde::Serialize;
 
-use super::{Outgoing, OutgoingName, Payload, Serialized};
+use super::{Outgoing, OutgoingName, Payload, Serialized, WireBytes};
 use crate::codec::{Codec, CodecError};
 use crate::{HeaderMap, Lend, OutgoingMessage, PayloadForm, Take};
 
@@ -36,7 +38,8 @@ impl PayloadForm for Lend {
         T: Serialized,
     {
         buf.clear();
-        value.wire_bytes(buf)
+        // Both answers are lent as they are: the transport reads them and keeps neither.
+        Ok(value.wire_bytes(buf)?.of(buf))
     }
 
     #[inline]
@@ -78,8 +81,16 @@ impl PayloadForm for Take {
         T: Serialized,
     {
         buf.clear();
-        let bytes = value.wire_bytes(buf)?;
-        Ok(BytesMut::from(bytes))
+        match value.wire_bytes(buf)? {
+            // The value wrote into this buffer and nothing else holds it, so the transport is
+            // handed it whole. A dispatch loop lending its scratch here gets an empty one back
+            // and grows a new buffer for the next message, which is what a taking transport
+            // costs.
+            WireBytes::InBuffer => Ok(mem::take(buf)),
+            // The bytes belong to the value, which outlives neither the publish nor the
+            // transport's claim on them, so this is the one copy the form asks for.
+            WireBytes::Own(bytes) => Ok(BytesMut::from(bytes)),
+        }
     }
 
     #[inline]

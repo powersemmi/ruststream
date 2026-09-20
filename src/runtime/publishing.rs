@@ -16,7 +16,7 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::codec::Codec;
-use crate::{IncomingMessage, OutgoingMessage, Publisher};
+use crate::{IncomingMessage, OutgoingMessage, PayloadForm, Publisher};
 
 use super::context::Context;
 use super::dispatch::Workers;
@@ -169,10 +169,11 @@ where
         _cx: &PublishContext<'_, DeliveryCx>,
     ) -> Result<(), Self::Error> {
         // `BytesMut::new` does not allocate, so a reply that already holds its bytes lends them
-        // and leaves this buffer untouched.
+        // and leaves this buffer untouched. Which of the two a publisher is handed follows its
+        // own declaration, as on every other publish position.
         let mut buf = BytesMut::new();
-        let payload = reply.wire_bytes(&mut buf)?;
-        self.publish(OutgoingMessage::new(name, payload), None)
+        let payload = <Bare::Payload as PayloadForm>::serialized(reply, &mut buf)?;
+        self.publish(OutgoingMessage::with_payload(name, payload), None)
             .await
             .map_err(Into::into)
     }

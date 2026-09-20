@@ -39,8 +39,8 @@ struct Export(Vec<u8>);
 impl Serialized for Export {
     type Error = Infallible;
 
-    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
-        Ok(&self.0)
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+        Ok(WireBytes::Own(&self.0))
     }
 }
 
