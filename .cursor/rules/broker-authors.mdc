@@ -245,9 +245,10 @@ impl Publisher for MyPublisher {
 }
 ```
 
-A client that takes owned bytes calls `msg.into_payload().into_bytes()` instead of copying
-`msg.payload()`: the framework hands over the buffer it produced, and that call copies only where
-the publish was lending bytes it does not own.
+Read the payload with `msg.payload()`. A client that takes owned bytes calls
+`msg.into_payload()` instead and then `into_vec()` or `into_bytes()`, whichever it speaks: the
+framework hands over the buffer it produced, those calls copy only where the publish was lending
+bytes it does not own, and only the form you ask for costs anything.
 
 ## Per-message settings on the publish builder
 

@@ -2,7 +2,7 @@
 
 use std::{future::Future, time::Duration};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
 use crate::{AckError, HeaderMap, SerializeHeadersError};
@@ -81,24 +81,27 @@ impl RawMessage {
     }
 }
 
-/// The payload of an [`OutgoingMessage`]: bytes the publish lent, or a buffer it handed over.
+/// The payload of an [`OutgoingMessage`]: bytes the publish lent, or a buffer it hands over.
 ///
 /// A publish that produced the buffer itself - the codec's output on the ordinary encode, a
-/// reply, a slot, a batched reply - hands it over as [`Shared`](Self::Shared), so a transport
-/// whose client speaks `bytes` takes it instead of copying it. A publish that rebuilt the
-/// message around bytes someone else owns lends them as [`Borrowed`](Self::Borrowed), and a
-/// transport that wants an owned buffer there copies once, as it always did.
+/// reply, a slot, a batched reply - hands it over as [`Produced`](Self::Produced), in the form it
+/// was written: a [`BytesMut`], not yet committed to anything. A buffer the runtime already holds
+/// counted arrives as [`Shared`](Self::Shared), and bytes the publish does not own as
+/// [`Borrowed`](Self::Borrowed).
 ///
-/// Reading the payload does not care which it is: [`OutgoingMessage::payload`] answers `&[u8]`
-/// either way.
+/// The form the transport wants is the transport's to choose, and choosing costs nothing:
+/// [`as_slice`](Self::as_slice) reads, [`into_vec`](Self::into_vec) takes a `Vec<u8>` and
+/// [`into_bytes`](Self::into_bytes) takes a [`Bytes`]. Each reuses the buffer it was handed
+/// wherever the form allows, and the price of the form is paid by whoever asks for it - a
+/// publish nobody takes from pays nothing at all.
 ///
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Bytes, OutgoingMessage, OutgoingPayload};
+/// use ruststream::{BytesMut, OutgoingMessage, OutgoingPayload};
 ///
-/// let handed = OutgoingMessage::shared("orders.created", Bytes::from_static(br#"{"id":7}"#));
-/// assert!(matches!(handed.into_payload(), OutgoingPayload::Shared(_)));
+/// let handed = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]));
+/// assert!(matches!(handed.into_payload(), OutgoingPayload::Produced(_)));
 ///
 /// let lent = OutgoingMessage::new("orders.created", br#"{"id":7}"#);
 /// assert!(matches!(lent.into_payload(), OutgoingPayload::Borrowed(_)));
@@ -108,7 +111,9 @@ impl RawMessage {
 pub enum OutgoingPayload<'a> {
     /// Bytes the publish lent, valid as long as the message is.
     Borrowed(&'a [u8]),
-    /// A buffer the publish produced and hands over.
+    /// The buffer the framework produced, in the form it produced it.
+    Produced(BytesMut),
+    /// A buffer the runtime already held counted, handed on as it is.
     Shared(Bytes),
 }
 
@@ -119,19 +124,26 @@ impl OutgoingPayload<'_> {
     pub fn as_slice(&self) -> &[u8] {
         match self {
             Self::Borrowed(bytes) => bytes,
+            Self::Produced(buf) => buf,
             Self::Shared(bytes) => bytes,
         }
     }
 
-    /// The payload as an owned buffer: the handed-over one moves out, a lent one is copied.
+    /// The payload as a [`Bytes`], for a client that speaks that type.
+    ///
+    /// A produced buffer is frozen here rather than in the publish path, so the shared ownership
+    /// block `Bytes` needs is allocated once, by the transport that asked for one: a buffer with
+    /// spare capacity - which a codec's growing buffer has - costs that one block, and one filled
+    /// to its capacity costs nothing. A buffer the runtime already held counted moves out. Lent
+    /// bytes are copied, because they belong to someone else.
     ///
     /// # Examples
     ///
     /// ```
     /// use ruststream::{Bytes, OutgoingPayload};
     ///
-    /// let handed = Bytes::from_static(b"{}");
-    /// assert_eq!(OutgoingPayload::Shared(handed).into_bytes(), b"{}".as_slice());
+    /// let held = Bytes::from_static(b"{}");
+    /// assert_eq!(OutgoingPayload::Shared(held).into_bytes(), b"{}".as_slice());
     /// assert_eq!(OutgoingPayload::Borrowed(b"{}").into_bytes(), b"{}".as_slice());
     /// ```
     #[inline]
@@ -139,20 +151,49 @@ impl OutgoingPayload<'_> {
     pub fn into_bytes(self) -> Bytes {
         match self {
             Self::Borrowed(bytes) => Bytes::copy_from_slice(bytes),
+            Self::Produced(buf) => buf.freeze(),
             Self::Shared(bytes) => bytes,
+        }
+    }
+
+    /// The payload as a `Vec<u8>`, for a client that takes one.
+    ///
+    /// A produced buffer becomes the vector it was written into, with no allocation: it is
+    /// vector-backed and starts at offset zero, which is what a codec's output is and what any
+    /// buffer nothing has split is. A buffer the runtime held counted does the same where this
+    /// is the only handle on it and it is vector-backed, and is copied otherwise. Lent bytes are
+    /// copied, because they belong to someone else.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{BytesMut, OutgoingPayload};
+    ///
+    /// let produced = BytesMut::from(&b"{}"[..]);
+    /// assert_eq!(OutgoingPayload::Produced(produced).into_vec(), b"{}".to_vec());
+    /// assert_eq!(OutgoingPayload::Borrowed(b"{}").into_vec(), b"{}".to_vec());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            Self::Borrowed(bytes) => bytes.to_vec(),
+            Self::Produced(buf) => Vec::from(buf),
+            Self::Shared(bytes) => Vec::from(bytes),
         }
     }
 }
 
 /// A message ready to be published, holding a borrowed name and a payload the publish either
-/// lent or handed over.
+/// lent or hands over.
 ///
 /// A borrowed name and a lent payload let a publisher send without an allocation when the caller
-/// already owns the buffers. Where the framework produced the payload itself it hands the buffer
-/// over instead ([`OutgoingPayload::Shared`]), so a transport that wants owned bytes takes it
-/// rather than copying it: [`payload_bytes`](Self::payload_bytes) clones the handle and
-/// [`into_payload`](Self::into_payload) moves it out. Use [`OutgoingMessage::new`],
-/// [`OutgoingMessage::shared`] and the builder-style setters to construct.
+/// already owns the buffers. Where the framework produced the payload itself it hands that buffer
+/// over ([`OutgoingPayload`]), so a transport that wants owned bytes takes it rather than copying
+/// it: [`payload`](Self::payload) reads it, and [`into_payload`](Self::into_payload) takes it,
+/// since publishing owns the message. Use [`OutgoingMessage::new`],
+/// [`OutgoingMessage::produced`], [`OutgoingMessage::shared`] and the builder-style setters to
+/// construct.
 ///
 /// # Examples
 ///
@@ -182,9 +223,27 @@ impl<'a> OutgoingMessage<'a> {
         Self::with_payload(name, OutgoingPayload::Borrowed(payload))
     }
 
-    /// Constructs a new outgoing message handing the given buffer over, with no headers.
+    /// Constructs a new outgoing message handing over a buffer just written, with no headers.
     ///
-    /// What a publish that produced the buffer uses, so the transport underneath can keep it.
+    /// What a publish that produced the payload uses: the buffer travels as it was written, and
+    /// whoever takes it decides what to make of it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{BytesMut, OutgoingMessage};
+    ///
+    /// let msg = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]));
+    /// assert_eq!(msg.payload(), b"{}");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn produced(name: &'a str, payload: BytesMut) -> Self {
+        Self::with_payload(name, OutgoingPayload::Produced(payload))
+    }
+
+    /// Constructs a new outgoing message handing over a buffer already held counted, with no
+    /// headers.
     ///
     /// # Examples
     ///
@@ -294,41 +353,20 @@ impl<'a> OutgoingMessage<'a> {
         self.payload.as_slice()
     }
 
-    /// Returns the payload as owned bytes: a handed-over buffer is shared, a lent one is copied.
+    /// Returns the payload in the form the publish hands it over in.
     ///
-    /// The outgoing counterpart of [`RawMessage::payload_bytes`]. Cloning a handed-over
-    /// buffer is a reference count, not a copy; a transport that consumes the message takes
-    /// [`into_payload`](Self::into_payload) instead and pays nothing at all.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::{Bytes, OutgoingMessage};
-    ///
-    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
-    /// assert_eq!(msg.payload_bytes(), b"{}".as_slice());
-    /// ```
-    #[must_use]
-    pub fn payload_bytes(&self) -> Bytes {
-        match &self.payload {
-            OutgoingPayload::Borrowed(bytes) => Bytes::copy_from_slice(bytes),
-            OutgoingPayload::Shared(bytes) => bytes.clone(),
-        }
-    }
-
-    /// Returns the payload in the form the publish handed it over in.
-    ///
-    /// What a transport that writes the message and keeps its buffer calls: publishing takes the
-    /// message by value, so a handed-over buffer moves into the transport with no copy and no
-    /// reference count.
+    /// What a transport that keeps the payload calls: publishing takes the message by value, so
+    /// the buffer moves into the transport, and [`OutgoingPayload::into_vec`] or
+    /// [`OutgoingPayload::into_bytes`] then settles what it becomes. There is no by-reference
+    /// counterpart: a borrow cannot hand a buffer over, so it would have to copy.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Bytes, OutgoingMessage, OutgoingPayload};
+    /// use ruststream::{BytesMut, OutgoingMessage, OutgoingPayload};
     ///
-    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
-    /// assert!(matches!(msg.into_payload(), OutgoingPayload::Shared(_)));
+    /// let msg = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]));
+    /// assert!(matches!(msg.into_payload(), OutgoingPayload::Produced(_)));
     /// ```
     #[inline]
     #[must_use]

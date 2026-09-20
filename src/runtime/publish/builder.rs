@@ -410,10 +410,9 @@ impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
         _buf: &'v mut BytesMut,
     ) -> Result<OutgoingPayload<'v>, PayloadError> {
         // Nothing reads the codec's output after this publish, so it travels as the buffer it
-        // is: a transport that keeps owned bytes takes it instead of copying it.
-        Ok(OutgoingPayload::Shared(
-            codec.codec().encode(value)?.freeze(),
-        ))
+        // is: a transport that keeps owned bytes takes it instead of copying it, in whichever
+        // form its client speaks.
+        Ok(OutgoingPayload::Produced(codec.codec().encode(value)?))
     }
 }
 

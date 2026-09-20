@@ -365,7 +365,7 @@ fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
 
 #[test]
 fn a_handed_over_payload_is_copied_where_something_writes_and_nowhere_else() {
-    // What a slot's transform sees once the publish handed its buffer over: reading it costs
+    // What a slot's transform sees on a payload the runtime holds counted: reading it costs
     // nothing, and the copy happens at the first write, leaving the handed-over buffer alone.
     let body = Bytes::from_static(b"body");
     let mut out =
@@ -385,8 +385,8 @@ fn a_handed_over_payload_is_copied_where_something_writes_and_nowhere_else() {
 
 #[test]
 fn the_terminal_takes_the_payload_in_the_form_it_travelled_in() {
-    // What the broker is handed: a buffer the pipeline owns leaves as a buffer it can keep, and
-    // bytes the pipeline was only lent leave as a borrow.
+    // What the broker is handed: a buffer the pipeline wrote leaves as the buffer it wrote,
+    // uncommitted to any form, and bytes the pipeline was only lent leave as a borrow.
     let mut lent = Outgoing::rebuilding("t", OutgoingPayload::Borrowed(b"body"), HeaderMap::new());
     assert!(matches!(lent.take_payload(), OutgoingPayload::Borrowed(_)));
 
@@ -394,8 +394,11 @@ fn the_terminal_takes_the_payload_in_the_form_it_travelled_in() {
     let mut shared = Outgoing::rebuilding("t", OutgoingPayload::Shared(handed), HeaderMap::new());
     assert!(matches!(shared.take_payload(), OutgoingPayload::Shared(_)));
 
-    let mut owned = Outgoing::new("t", BytesMut::from(&b"body"[..]));
-    assert!(matches!(owned.take_payload(), OutgoingPayload::Shared(_)));
+    let mut produced = Outgoing::new("t", BytesMut::from(&b"body"[..]));
+    assert!(matches!(
+        produced.take_payload(),
+        OutgoingPayload::Produced(_)
+    ));
 }
 
 #[test]

@@ -225,6 +225,7 @@ impl<'a> From<OutgoingPayload<'a>> for Payload<'a> {
     fn from(payload: OutgoingPayload<'a>) -> Self {
         match payload {
             OutgoingPayload::Borrowed(bytes) => Self::Lent(bytes),
+            OutgoingPayload::Produced(buf) => Self::Owned(buf),
             OutgoingPayload::Shared(bytes) => Self::Shared(bytes),
         }
     }
@@ -237,8 +238,9 @@ impl<'a> From<Payload<'a>> for OutgoingPayload<'a> {
             Payload::Lent(bytes) => Self::Borrowed(bytes),
             Payload::Shared(bytes) => Self::Shared(bytes),
             // The pipeline is the last owner of a buffer it wrote, so the message that leaves
-            // hands it to the broker rather than lending a borrow of something about to drop.
-            Payload::Owned(buf) => Self::Shared(buf.freeze()),
+            // hands it over as it stands, unconverted: which form it ends up in is the
+            // transport's choice, and a publish nobody takes from pays for none of them.
+            Payload::Owned(buf) => Self::Produced(buf),
         }
     }
 }
