@@ -8,7 +8,8 @@ alwaysApply: false
   broker-specific config and defaults out of core; if a field has no sane default, do not implement
   `Default`. Core is fully generic (no object-safety); erasure lives in `runtime`.
 - Default visibility `pub(crate)`; make `pub` only what `lib.rs` re-exports. The crate root denies
-  `missing_docs`: every `pub` item gets a summary plus a compiling `# Examples` doctest using `?`.
+  `missing_docs`: every `pub` item gets a summary plus a compiling `# Examples` doctest; a
+  fallible call in it is written with `?`, never unwrapped.
 - Library code uses `thiserror` (`anyhow` is bins/examples only); public error enums are
   `#[non_exhaustive]`. Never panic on user/network input - return `Result`.
 - Native `async fn in trait`; `+ Send` at the call site, not the trait. Destructors never panic or
@@ -92,7 +93,8 @@ pub trait Publisher: Send + Sync {
 
 ## Public item with a doctest
 
-Every `pub` item carries a compiling example using `?`, not `unwrap()`.
+Every `pub` item carries a compiling example. A fallible call in it is written with `?`, never
+`unwrap()`; an example with nothing fallible in it, like the one below, has nothing to propagate.
 
 ```rust
 /// Creates a name source bound to `name`.
