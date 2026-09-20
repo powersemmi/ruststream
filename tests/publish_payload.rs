@@ -542,3 +542,120 @@ async fn a_header_costs_the_in_memory_broker_only_what_writing_it_costs() {
          reference block per entry",
     );
 }
+
+/// A pooled subscription keeps the encode buffers its workers use: a worker hands its buffer
+/// back when it finishes, the next one takes it, and a reply through a reading transport costs
+/// the pool nothing per delivery once its buffers exist. The measurement is a difference of
+/// differences: what a pool adds over the sequential loop for replies may not exceed what it
+/// adds for acknowledgements, so the harness's own bookkeeping of a reply and the pool's own
+/// task per delivery both cancel out.
+#[cfg(all(feature = "memory", feature = "testing"))]
+mod pool {
+    use super::*;
+    use ruststream::memory::ConnectedMemoryBroker;
+    use ruststream::prelude::*;
+    use ruststream::testing::TestApp;
+    use ruststream::{PairError, PublishPolicy};
+    use serde::Deserialize;
+
+    #[derive(Debug, Serialize, Deserialize, Outgoing)]
+    struct Order {
+        id: u64,
+    }
+
+    #[derive(Debug, Serialize, Outgoing)]
+    #[outgoing(name = "confirmations")]
+    struct Confirmation {
+        id: u64,
+    }
+
+    #[subscriber("orders.pooled", workers(2), publish)]
+    async fn confirm_pooled(order: &Order) -> Confirmation {
+        Confirmation { id: order.id }
+    }
+
+    #[subscriber("orders.sequential", publish)]
+    async fn confirm_sequential(order: &Order) -> Confirmation {
+        Confirmation { id: order.id }
+    }
+
+    #[subscriber("plain.pooled", workers(2))]
+    async fn acknowledge_pooled(order: &Order) -> HandlerOutcome {
+        let _ = order.id;
+        HandlerOutcome::ack()
+    }
+
+    #[subscriber("plain.sequential")]
+    async fn acknowledge_sequential(order: &Order) -> HandlerOutcome {
+        let _ = order.id;
+        HandlerOutcome::ack()
+    }
+
+    /// The reading transport as a policy, so the reply position can be wired to it.
+    #[derive(Debug, Clone, Copy)]
+    struct SinkPublish;
+
+    impl PublishPolicy<ConnectedMemoryBroker> for SinkPublish {
+        type Live = Reading;
+
+        fn pair(
+            self,
+            _connected: &ConnectedMemoryBroker,
+        ) -> impl Future<Output = Result<Reading, PairError>> {
+            ready(Ok(Reading::default()))
+        }
+    }
+
+    /// Publishes `count` orders to `name`, each settled before the next, and answers what this
+    /// thread allocated while they were handled.
+    async fn cost_of(tb: &TestApp<()>, name: &str, count: u64) -> usize {
+        let before = allocations();
+        for id in 0..count {
+            tb.message(&Order { id })
+                .to(name)
+                .publish()
+                .await
+                .expect("publish");
+        }
+        allocations() - before
+    }
+
+    /// The four paths compared, in the order the costs are read.
+    const NAMES: [&str; 4] = [
+        "orders.pooled",
+        "orders.sequential",
+        "plain.pooled",
+        "plain.sequential",
+    ];
+
+    #[tokio::test]
+    async fn a_pool_reuses_its_encode_buffers_across_deliveries() {
+        let app =
+            RustStream::new(AppInfo::new("pool", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(confirm_pooled).out_reply(SinkPublish);
+                b.include(confirm_sequential).out_reply(SinkPublish);
+                b.include(acknowledge_pooled);
+                b.include(acknowledge_sequential);
+            });
+        let tb = TestApp::start(app).await.expect("startup failed");
+
+        // Warm every path: the first deliveries grow the buffers a loop keeps, and a run's
+        // one-time costs are none of the comparison's business.
+        for name in NAMES {
+            cost_of(&tb, name, 4).await;
+        }
+        let mut cost = [0; 4];
+        for (slot, name) in cost.iter_mut().zip(NAMES) {
+            *slot = cost_of(&tb, name, 8).await;
+        }
+        let [reply_pooled, reply_sequential, ack_pooled, ack_sequential] = cost;
+        let pool_over_replies = reply_pooled.saturating_sub(reply_sequential);
+        let pool_over_acks = ack_pooled.saturating_sub(ack_sequential);
+        assert!(
+            pool_over_replies <= pool_over_acks,
+            "over eight deliveries the pool adds {pool_over_replies} allocations to replies \
+             and {pool_over_acks} to acknowledgements: a worker's buffer is not coming back \
+             to the pool ({cost:?})",
+        );
+    }
+}
