@@ -364,12 +364,13 @@ where
 ///
 /// Cancel-safe, like [`turn`]: a `JoinSet` keeps its finished workers across polls, and the
 /// registration a parked poll made with the waiter list outlives that poll.
-async fn reap<Wait>(
-    tasks: &mut JoinSet<()>,
+async fn reap<Wait, Done>(
+    tasks: &mut JoinSet<Done>,
     mut cancelled: Pin<&mut Wait>,
-) -> Turn<Result<(), JoinError>>
+) -> Turn<Result<Done, JoinError>>
 where
     Wait: Future<Output = ()>,
+    Done: 'static,
 {
     poll_fn(|cx| match tasks.poll_join_next(cx) {
         Poll::Ready(Some(joined)) => Poll::Ready(Turn::Delivery(joined)),
@@ -444,6 +445,11 @@ where
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut tasks = JoinSet::new();
+        // A worker takes one delivery, so what carries an encode buffer from one delivery to the
+        // next is the pool: a worker hands its buffer back when it is reaped, and the next one
+        // takes it, so a lending reply grows a buffer once per pool slot and not once per
+        // delivery.
+        let mut spare: Vec<BytesMut> = Vec::with_capacity(workers.count);
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -451,7 +457,7 @@ where
             if tasks.len() >= workers.count {
                 // The pool is full: reap a finished worker before polling for more.
                 match reap(&mut tasks, cancelled.as_mut()).await {
-                    Turn::Delivery(joined) => log_worker_exit(joined),
+                    Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
                     // A full pool holds a worker, so `Ended` is shutdown's twin here: either
                     // way the drain below joins whatever is still running.
                     Turn::Ended | Turn::Shutdown => break,
@@ -473,10 +479,8 @@ where
                     let state = Arc::clone(&state);
                     let delivery = Arc::clone(&delivery);
                     let failure = failure.clone();
+                    let mut encode = spare.pop().unwrap_or_default();
                     tasks.spawn(async move {
-                        // A worker task takes one delivery, so its buffer is its own and lives
-                        // as long as the delivery does.
-                        let mut encode = BytesMut::new();
                         dispatch(
                             &*handler,
                             msg,
@@ -487,6 +491,7 @@ where
                             &failure,
                         )
                         .await;
+                        encode
                     });
                 }
                 Turn::Delivery(Err(err)) => {
@@ -626,9 +631,14 @@ fn lane_of(key: &[u8], lanes: usize) -> usize {
     }
 }
 
-fn log_worker_exit(joined: Result<(), JoinError>) {
-    if let Err(err) = joined {
-        error!(target: "ruststream::dispatch", error = %err, "worker task failed");
+/// What a finished worker handed back, or nothing and a log line where it failed.
+fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
+    match joined {
+        Ok(done) => Some(done),
+        Err(err) => {
+            error!(target: "ruststream::dispatch", error = %err, "worker task failed");
+            None
+        }
     }
 }
 
@@ -666,9 +676,12 @@ where
         let mut tasks = JoinSet::new();
         // One decode buffer for the whole loop: the sequential path lends the same one to every
         // batch, so the slice a handler reads is allocated once for the subscription. The encode
-        // buffer beside it is the same bargain on the way out.
+        // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
+        // others and cannot share these, so it takes a pair of its own from `spare`, where the
+        // pool keeps what finished workers handed back.
         let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
+        let mut spare = Vec::with_capacity(workers.count);
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -676,7 +689,7 @@ where
             if tasks.len() >= workers.count {
                 // The pool is full: reap a finished worker before polling for more.
                 match reap(&mut tasks, cancelled.as_mut()).await {
-                    Turn::Delivery(joined) => log_worker_exit(joined),
+                    Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
                     // A full pool holds a worker, so `Ended` is shutdown's twin here: either
                     // way the drain below joins whatever is still running.
                     Turn::Ended | Turn::Shutdown => break,
@@ -714,11 +727,20 @@ where
                         let state = Arc::clone(&state);
                         let delivery = Arc::clone(&delivery);
                         let failure = failure.clone();
+                        let (mut scratch, mut encode) = spare.pop().unwrap_or_default();
                         tasks.spawn(async move {
-                            run_pooled_batch::<_, _, C, _>(
-                                &*handler, batch, &name, &state, &delivery, &failure,
+                            run_batch::<_, _, C, _>(
+                                &*handler,
+                                batch,
+                                &mut scratch,
+                                &mut encode,
+                                &name,
+                                &state,
+                                &delivery,
+                                &failure,
                             )
                             .await;
+                            (scratch, encode)
                         });
                     }
                 }
@@ -980,36 +1002,6 @@ async fn run_batch<H, M, C, St>(
     if let Some(coordinator) = &watcher {
         coordinator.consumed();
     }
-}
-
-/// [`run_batch`] with buffers of its own: the pooled path runs its batches at the same time, so
-/// the loop's single decode and encode buffers cannot be lent to all of them.
-async fn run_pooled_batch<H, M, C, St>(
-    handler: &H,
-    batch: Vec<M>,
-    name: &str,
-    state: &St,
-    delivery: &Delivery<C>,
-    failure: &DispatchFailure,
-) where
-    H: BatchHandler<M, C, St>,
-    M: IncomingMessage,
-    C: crate::BuildBatchContext<M> + Send + Sync + 'static,
-    St: Send + Sync,
-{
-    let mut scratch = H::Scratch::default();
-    let mut encode = BytesMut::new();
-    run_batch(
-        handler,
-        batch,
-        &mut scratch,
-        &mut encode,
-        name,
-        state,
-        delivery,
-        failure,
-    )
-    .await;
 }
 
 /// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)
