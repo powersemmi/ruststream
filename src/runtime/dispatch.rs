@@ -1313,8 +1313,9 @@ where
 
     // Settling consumes the message, so capture everything the copy needs first: its bytes, the
     // headers the handler saw, and the broker's own per-delivery context, which is what a
-    // transform on this position reads. The bytes are the runtime's own from here on, so the
-    // copy hands them to the broker rather than lending them back.
+    // transform on this position reads. The bytes are lent on from here rather than handed over:
+    // this path runs only after a delivery has failed, so a broker that keeps owned bytes copies
+    // once there, where handing them over would cost the runtime a conversion on every retry.
     let payload = Bytes::copy_from_slice(msg.payload());
     let delivered = msg.headers().clone();
     let mut headers = delivered.clone();
@@ -1334,7 +1335,7 @@ where
 
     let republish = async move {
         let cx = PublishContext::new(&subscription, &delivered, &context);
-        let copy = OutgoingMessage::shared(target.as_ref(), payload).with_headers(headers);
+        let copy = OutgoingMessage::new(target.as_ref(), payload.as_ref()).with_headers(headers);
         if let Err(err) = publisher.publish_copy(copy, &cx).await {
             warn!(
                 target: "ruststream::dispatch",

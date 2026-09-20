@@ -97,10 +97,10 @@ impl IncomingMessage for UnsettleableMessage {
     }
 }
 
-/// A publisher that reports the form the payload reached it in, for the assertion the benchmarks
-/// cannot make: the in-memory broker redelivers natively, so no measured scenario reaches the
-/// deferred copy at all.
-struct FormReportingPublisher(mpsc::UnboundedSender<bool>);
+/// A publisher that reports the form and the address the payload reached it in, for the
+/// assertion the benchmarks cannot make: the in-memory broker redelivers natively, so no measured
+/// scenario reaches the deferred copy at all.
+struct FormReportingPublisher(mpsc::UnboundedSender<(bool, usize)>);
 
 impl Publisher for FormReportingPublisher {
     type Error = std::io::Error;
@@ -111,8 +111,9 @@ impl Publisher for FormReportingPublisher {
         msg: OutgoingMessage<'_>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let handed = matches!(msg.into_payload(), OutgoingPayload::Shared(_));
-        let _ = self.0.send(handed);
+        let at = msg.payload().as_ptr() as usize;
+        let lent = matches!(msg.into_payload(), OutgoingPayload::Borrowed(_));
+        let _ = self.0.send((lent, at));
         ready(Ok(()))
     }
 }
@@ -606,10 +607,11 @@ async fn a_panicking_worker_is_reported_when_joined() {
 }
 
 /// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before
-/// settling it - so the copy reaches the broker as a hand-over and a transport that keeps owned
-/// bytes copies nothing on top of it.
+/// settling it - and they are lent on rather than handed over: a broker that keeps owned bytes
+/// copies once here, on a path that runs only after a delivery has failed, instead of the
+/// runtime converting a buffer on every retry.
 #[tokio::test(start_paused = true)]
-async fn the_deferred_copy_hands_its_buffer_to_the_broker() {
+async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
     let (reported, mut arrived) = mpsc::unbounded_channel();
     let delivery = Delivery::deferring_to(
         bare_retry_publisher(FormReportingPublisher(reported)),
@@ -618,8 +620,10 @@ async fn the_deferred_copy_hands_its_buffer_to_the_broker() {
     );
 
     let settled = Arc::new(AtomicU8::new(0));
+    let delivered = plain(&[], &settled);
+    let delivered_at = delivered.payload().as_ptr() as usize;
     settle_nack_after(
-        plain(&[], &settled),
+        delivered,
         "orders",
         Duration::from_secs(30),
         &delivery,
@@ -630,10 +634,11 @@ async fn the_deferred_copy_hands_its_buffer_to_the_broker() {
 
     tokio::time::advance(Duration::from_secs(30)).await;
 
-    assert_eq!(
-        arrived.recv().await,
-        Some(true),
-        "the copy carries the buffer the dispatch owns, not a borrow of it",
+    let (lent, at) = arrived.recv().await.expect("the copy is published");
+    assert!(lent, "the copy lends its bytes rather than claiming them");
+    assert_ne!(
+        at, delivered_at,
+        "and what it lends is the dispatch's own buffer, read off the delivery before it settled",
     );
 }
 

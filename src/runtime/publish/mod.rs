@@ -15,7 +15,7 @@ use std::mem;
 use std::ops::Deref;
 use std::pin::Pin;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use bytes_utils::Str;
 
 use crate::runtime::lifecycle::BoxError;
@@ -186,8 +186,6 @@ impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
 pub(crate) enum Payload<'a> {
     /// The caller's bytes, valid as long as the message is.
     Lent(&'a [u8]),
-    /// A buffer an earlier stage already handed over, travelling on untouched.
-    Shared(Bytes),
     /// A buffer of this message's own: codec output, or the copy a write asked for.
     Owned(BytesMut),
 }
@@ -198,24 +196,20 @@ impl Payload<'_> {
     pub(crate) fn as_slice(&self) -> &[u8] {
         match self {
             Self::Lent(bytes) => bytes,
-            Self::Shared(bytes) => bytes,
             Self::Owned(buf) => buf,
         }
     }
 
     /// The buffer, making it this message's own on the first call.
     fn to_mut(&mut self) -> &mut BytesMut {
-        match self {
-            Self::Lent(bytes) => *self = Self::Owned(BytesMut::from(*bytes)),
-            Self::Shared(bytes) => *self = Self::Owned(BytesMut::from(&bytes[..])),
-            Self::Owned(_) => {}
+        if let Self::Lent(bytes) = *self {
+            *self = Self::Owned(BytesMut::from(bytes));
         }
         match self {
             Self::Owned(buf) => buf,
-            // The branches above leave nothing but an owned buffer, which the borrow checker
-            // cannot carry across this match; `Cow::to_mut` in the standard library is written
-            // the same way.
-            Self::Lent(_) | Self::Shared(_) => unreachable!(),
+            // The branch above leaves nothing lent, which the borrow checker cannot carry across
+            // this match; `Cow::to_mut` in the standard library is written the same way.
+            Self::Lent(_) => unreachable!(),
         }
     }
 }
@@ -226,7 +220,6 @@ impl<'a> From<OutgoingPayload<'a>> for Payload<'a> {
         match payload {
             OutgoingPayload::Borrowed(bytes) => Self::Lent(bytes),
             OutgoingPayload::Produced(buf) => Self::Owned(buf),
-            OutgoingPayload::Shared(bytes) => Self::Shared(bytes),
         }
     }
 }
@@ -236,7 +229,6 @@ impl<'a> From<Payload<'a>> for OutgoingPayload<'a> {
     fn from(payload: Payload<'a>) -> Self {
         match payload {
             Payload::Lent(bytes) => Self::Borrowed(bytes),
-            Payload::Shared(bytes) => Self::Shared(bytes),
             // The pipeline is the last owner of a buffer it wrote, so the message that leaves
             // hands it over as it stands, unconverted: which form it ends up in is the
             // transport's choice, and a publish nobody takes from pays for none of them.
