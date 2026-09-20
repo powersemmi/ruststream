@@ -80,7 +80,7 @@ class Table(unittest.TestCase):
     def test_the_summary_totals_the_gated_scenarios_and_carries_the_verdict(self):
         """What a reader gets without opening anything: the move, and whether it failed."""
         self.assertIn(
-            "Instructions across the gated scenarios: +0.24% against the base. "
+            "Instructions across the gated scenarios: +0.22% against the base. "
             "Allocations: +3.12%. Gate: fail on publish through an Out slot with one transform.",
             rendered(),
         )
@@ -108,6 +108,7 @@ class Table(unittest.TestCase):
                 "mw1",
                 "hdr-read",
                 "batch64",
+                "reply-lent",
             ],
         )
 
