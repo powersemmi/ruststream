@@ -466,7 +466,7 @@ jobs:
       # One benchmark file per scenario; the wall-clock one runs on its own below. Keep the list
       # in step with the `cost_benches` variable in the justfile.
       COST_BENCHES: >-
-        --bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy
+        --bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy
     steps:
       - uses: actions/checkout@v7
         with:

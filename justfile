@@ -11,7 +11,7 @@ bench_features := "memory,macros,json"
 # The scenarios that count instructions and allocations, one benchmark file each. The wall-clock
 # one is not in the list: it runs under a different harness, which takes none of the arguments
 # below.
-cost_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy"
+cost_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy"
 
 default: check
 
