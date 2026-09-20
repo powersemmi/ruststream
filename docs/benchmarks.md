@@ -134,7 +134,7 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
 - **The message count makes a run last at least five seconds**, so startup transients and timer
   resolution stay inside the noise.
 - **The loops are interleaved, not blocked.** Raw, crate, framework, raw, crate, framework and so
-  on, for at least five rounds, discarding the first. Running one loop to the end and then the
+  on, for at least three rounds, discarding the first. Running one loop to the end and then the
   next attributes every drift of the machine (thermal, background load, page cache) to whichever
   ran last.
 
