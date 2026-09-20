@@ -24,11 +24,11 @@
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": {
-        "instructions": 1963.6,
+        "instructions": 1799.2,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15609,
+        "instructions": 15460,
         "allocations": 26
       },
       "gated": true
@@ -37,11 +37,11 @@
       "name": "consume, JSON decode of a 1 KB body",
       "messages": 1000,
       "framework": {
-        "instructions": 17406.6,
+        "instructions": 17242.4,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 31404,
+        "instructions": 31252,
         "allocations": 26
       },
       "gated": true
@@ -50,11 +50,11 @@
       "name": "consume on the byte lane, no codec",
       "messages": 1000,
       "framework": {
-        "instructions": 1124.6,
+        "instructions": 964.2,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 14772,
+        "instructions": 14664,
         "allocations": 26
       },
       "gated": true
@@ -63,11 +63,11 @@
       "name": "consume through a middleware stack of one",
       "messages": 1000,
       "framework": {
-        "instructions": 2015.6,
+        "instructions": 1855.2,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15682,
+        "instructions": 15599,
         "allocations": 26
       },
       "gated": true
@@ -76,11 +76,11 @@
       "name": "consume through a middleware stack of four",
       "messages": 1000,
       "framework": {
-        "instructions": 2053.6,
+        "instructions": 1893.2,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15720,
+        "instructions": 15637,
         "allocations": 26
       },
       "gated": true
@@ -89,11 +89,11 @@
       "name": "consume in batches of 64",
       "messages": 1000,
       "framework": {
-        "instructions": 1708.6,
+        "instructions": 1547.5,
         "allocations": 0.094
       },
       "cold": {
-        "instructions": 16716,
+        "instructions": 16585,
         "allocations": 29
       },
       "gated": true
@@ -102,12 +102,12 @@
       "name": "reply, encoded to a declared destination",
       "messages": 1000,
       "framework": {
-        "instructions": 3356.6,
-        "allocations": 4.0
+        "instructions": 2953.1,
+        "allocations": 2.0
       },
       "cold": {
-        "instructions": 17617,
-        "allocations": 31
+        "instructions": 17239,
+        "allocations": 29
       },
       "gated": true
     },
@@ -115,12 +115,12 @@
       "name": "publish through an Out slot with one transform",
       "messages": 1000,
       "framework": {
-        "instructions": 4609.6,
-        "allocations": 8.0
+        "instructions": 4202.1,
+        "allocations": 6.0
       },
       "cold": {
-        "instructions": 19890,
-        "allocations": 35
+        "instructions": 19103,
+        "allocations": 33
       },
       "gated": true
     },
@@ -128,12 +128,12 @@
       "name": "publish with a typed header contract",
       "messages": 1000,
       "framework": {
-        "instructions": 4796.9,
-        "allocations": 7.0
+        "instructions": 4389.4,
+        "allocations": 5.0
       },
       "cold": {
-        "instructions": 19556,
-        "allocations": 34
+        "instructions": 18927,
+        "allocations": 32
       },
       "gated": true
     },
@@ -141,12 +141,12 @@
       "name": "read a typed header contract, then publish",
       "messages": 1000,
       "framework": {
-        "instructions": 4981.2,
-        "allocations": 4.0
+        "instructions": 4574.3,
+        "allocations": 2.0
       },
       "cold": {
-        "instructions": 19095,
-        "allocations": 31
+        "instructions": 18593,
+        "allocations": 29
       },
       "gated": true
     },
@@ -154,12 +154,12 @@
       "name": "request and reply, one round trip",
       "messages": 1000,
       "framework": {
-        "instructions": 10575.9,
-        "allocations": 16.0
+        "instructions": 10384.0,
+        "allocations": 14.0
       },
       "cold": {
-        "instructions": 25291,
-        "allocations": 42
+        "instructions": 24515,
+        "allocations": 40
       },
       "gated": true
     },
@@ -167,11 +167,11 @@
       "name": "a delivery that asks to be redelivered, and the copy",
       "messages": 1000,
       "framework": {
-        "instructions": 6411.7,
+        "instructions": 6242.1,
         "allocations": 1.0
       },
       "cold": {
-        "instructions": 21748,
+        "instructions": 21644,
         "allocations": 27
       },
       "gated": false,

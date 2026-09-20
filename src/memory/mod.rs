@@ -75,14 +75,16 @@ use tokio::time::sleep;
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
-/// A message before it reaches the bus: what publishers construct and transactions buffer.
+/// A message a transaction holds until it settles.
 ///
 /// Distinct from [`MemoryDelivery`] so an unstamped message cannot be enqueued to a
-/// subscriber: only [`MemoryState::fanout`] turns an outbound into a delivery, by assigning
-/// its position in the per-name publish log.
+/// subscriber: only [`MemoryState::fanout`] turns a message into a delivery, by assigning
+/// its position in the per-name publish log. The name is owned because a buffered publish
+/// outlives the call that wrote it; a publish that goes straight to the bus lends its name
+/// instead.
 #[derive(Clone)]
 struct MemoryOutbound {
-    name: Arc<str>,
+    name: String,
     payload: Bytes,
     headers: HeaderMap,
 }
@@ -93,7 +95,7 @@ impl From<OutgoingMessage<'_>> for MemoryOutbound {
         // keeps them as they stand; only a message lending someone else's bytes is copied here.
         let (name, payload, headers) = msg.into_parts();
         Self {
-            name: Arc::from(name),
+            name: name.to_owned(),
             payload: payload.into_bytes(),
             headers,
         }
@@ -147,8 +149,12 @@ impl MemoryDelivery {
 /// One value instead of a map beside a flag, so the lifecycle state and the registrations
 /// cannot disagree: every bus operation matches on the variant and reports
 /// [`MemoryError::ShutDown`] against a dead bus instead of silently succeeding.
+///
+/// The key is shared because it is the name every delivery to that subscription carries: the
+/// fanout finds it in the lookup it has to do anyway and stamps the delivery with it, so a
+/// publish to a name someone reads allocates nothing for the name.
 enum Bus {
-    Live(HashMap<String, Vec<Sender>>),
+    Live(HashMap<Arc<str>, Vec<Sender>>),
     ShutDown,
 }
 
@@ -199,19 +205,22 @@ impl MemoryState {
 
     /// Registers a subscriber sender on the live bus.
     ///
+    /// The name is shared from here on, and a second subscription to the same name joins the
+    /// first one's key rather than bringing a copy of the bytes.
+    ///
     /// # Errors
     ///
     /// Returns [`MemoryError::ShutDown`] against a shut-down bus; the caller decides whether
     /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
     /// inherent constructor).
-    fn register(&self, name: String, tx: Sender) -> Result<(), MemoryError> {
+    fn register(&self, name: &str, tx: Sender) -> Result<(), MemoryError> {
         match &mut *self
             .subscribers
             .lock()
             .expect("memory broker mutex poisoned")
         {
             Bus::Live(subscribers) => {
-                subscribers.entry(name).or_default().push(tx);
+                subscribers.entry(Arc::from(name)).or_default().push(tx);
                 Ok(())
             }
             Bus::ShutDown => Err(MemoryError::ShutDown),
@@ -239,7 +248,14 @@ impl MemoryState {
         }
     }
 
-    /// Stamps `outbound` with its log position and fans it out to the live bus.
+    /// Stamps a message published to `name` with its log position and fans it out to the live
+    /// bus.
+    ///
+    /// The name arrives as a borrow and is resolved by the lookup the fanout has to do anyway:
+    /// the registration under it owns a shared name, and that is the one the delivery carries,
+    /// so a publish to a name someone reads allocates nothing for it. A name no subscription
+    /// holds is allocated only where the log will keep it, and on a broker that keeps nothing
+    /// there is no delivery to build at all.
     ///
     /// Both locks are held across the log append and the sends (subscribers first, then the
     /// log, the order `apply_pending_seek` uses too): a concurrent seek must never observe a
@@ -253,19 +269,7 @@ impl MemoryState {
     // significant_drop_tightening misfires here: both guards drop at the end of the minimal
     // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
-    fn fanout(&self, outbound: MemoryOutbound) -> Result<(), MemoryError> {
-        // The outbound arrives by value: it moves into the shared block once, and every
-        // per-subscriber copy below is one reference count on that block.
-        let MemoryOutbound {
-            name,
-            payload,
-            headers,
-        } = outbound;
-        let shared = Arc::new(DeliveryInner {
-            name,
-            payload,
-            headers,
-        });
+    fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
         {
             let bus = self
                 .subscribers
@@ -280,36 +284,53 @@ impl MemoryState {
                 .recording
                 .load(Ordering::Acquire)
                 .then(|| self.log.lock().expect("memory broker mutex poisoned"));
-            let seq = log.as_deref_mut().map_or(0, |log| log.append(&shared));
-            let delivery = MemoryDelivery {
-                shared,
-                seq,
-                deliveries: NonZeroU64::MIN,
+            let registered = subscribers.get_key_value(name);
+            let shared = match registered {
+                Some((registered, _)) => Some(Arc::clone(registered)),
+                // Nobody reads this name. The log still has to name what it keeps, so a
+                // recording broker pays for the name there; a broker that keeps nothing has
+                // nothing to build a delivery for.
+                None => log.is_some().then(|| Arc::from(name)),
             };
-            self.send_to(subscribers, &delivery);
+            if let Some(name) = shared {
+                // The payload and the headers move into the shared block once, and every
+                // per-subscriber copy below is one reference count on that block.
+                let shared = Arc::new(DeliveryInner {
+                    name,
+                    payload,
+                    headers,
+                });
+                let seq = log.as_deref_mut().map_or(0, |log| log.append(&shared));
+                let delivery = MemoryDelivery {
+                    shared,
+                    seq,
+                    deliveries: NonZeroU64::MIN,
+                };
+                if let Some((_, senders)) = registered {
+                    self.send_to(senders, &delivery);
+                }
+            }
         }
         self.notify.notify_waiters();
         Ok(())
     }
 
-    /// Enqueues `delivery` to every subscriber registered under its name.
-    fn send_to(&self, subscribers: &HashMap<String, Vec<Sender>>, delivery: &MemoryDelivery) {
-        if let Some(senders) = subscribers.get(&*delivery.shared.name) {
-            for tx in senders {
-                let sent = tx.send(delivery.clone());
-                // Count every live enqueue so the harness can drive to quiescence. Request inboxes
-                // (`_inbox.`) are excluded: their reply is consumed by the requester, not a dispatch
-                // loop, so it carries no coordinator and is never decremented.
-                #[cfg(feature = "testing")]
-                if sent.is_ok()
-                    && !delivery.shared.name.starts_with("_inbox.")
-                    && let Some(coordinator) = self.coordinator.get()
-                {
-                    coordinator.enqueued();
-                }
-                #[cfg(not(feature = "testing"))]
-                let _ = sent;
+    /// Enqueues `delivery` to the senders registered under its name.
+    fn send_to(&self, senders: &[Sender], delivery: &MemoryDelivery) {
+        for tx in senders {
+            let sent = tx.send(delivery.clone());
+            // Count every live enqueue so the harness can drive to quiescence. Request inboxes
+            // (`_inbox.`) are excluded: their reply is consumed by the requester, not a dispatch
+            // loop, so it carries no coordinator and is never decremented.
+            #[cfg(feature = "testing")]
+            if sent.is_ok()
+                && !delivery.shared.name.starts_with("_inbox.")
+                && let Some(coordinator) = self.coordinator.get()
+            {
+                coordinator.enqueued();
             }
+            #[cfg(not(feature = "testing"))]
+            let _ = sent;
         }
     }
 
@@ -453,7 +474,7 @@ impl<Log: LogMode> MemoryBroker<Log> {
     pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber<Log> {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.into();
-        let _ = self.state.register(name.clone(), tx.clone());
+        let _ = self.state.register(&name, tx.clone());
         MemorySubscriber {
             name,
             rx,
@@ -704,10 +725,11 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
     }
 
     fn inject(&self, message: OutgoingMessage<'_>) {
+        let (name, payload, headers) = message.into_parts();
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(message.into())
+            .fanout(name, payload.into_bytes(), headers)
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
@@ -743,7 +765,7 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.to_owned();
-        if let Err(err) = self.state.register(name.clone(), tx.clone()) {
+        if let Err(err) = self.state.register(&name, tx.clone()) {
             return ready(Err(err));
         }
         ready(Ok(MemorySubscriber {
@@ -987,17 +1009,18 @@ impl Publisher for MemoryPublisher {
         msg: OutgoingMessage<'_>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let outbound = MemoryOutbound::from(msg);
         {
             let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
             if let Some(buffered) = txn.as_mut() {
                 // Buffering is local to this handle and never touches the bus; a commit against
-                // a shut-down bus is what reports the error.
-                buffered.push(outbound);
+                // a shut-down bus is what reports the error. The name is copied here because the
+                // buffer outlives this call.
+                buffered.push(MemoryOutbound::from(msg));
                 return ready(Ok(()));
             }
         }
-        ready(self.state.fanout(outbound))
+        let (name, payload, headers) = msg.into_parts();
+        ready(self.state.fanout(name, payload.into_bytes(), headers))
     }
 }
 

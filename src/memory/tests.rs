@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 
 use super::*;
 
@@ -205,4 +205,55 @@ async fn stream_can_be_reentered() {
     let msg = stream.next().await.unwrap().unwrap();
     assert_eq!(msg.payload(), b"two");
     msg.ack().await.unwrap();
+}
+
+/// One name per subscription rather than one per delivery: the fanout stamps the delivery with
+/// the very handle the registration holds, which is what keeps the name off the allocator.
+#[tokio::test]
+async fn a_delivery_carries_the_name_the_registry_holds() {
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("orders");
+    broker
+        .publisher()
+        .publish(OutgoingMessage::new("orders", b"body"), None)
+        .await
+        .unwrap();
+
+    let mut stream = std::pin::pin!(subscriber.stream());
+    let delivered = stream.next().await.unwrap().unwrap();
+    let stamped = &delivered
+        .delivery
+        .as_ref()
+        .expect("the delivery is still held")
+        .shared
+        .name;
+
+    let bus = broker.state.subscribers.lock().unwrap();
+    let Bus::Live(subscribers) = &*bus else {
+        panic!("the bus is live");
+    };
+    let (registered, _) = subscribers
+        .get_key_value("orders")
+        .expect("the subscription is registered");
+    let registered = Arc::clone(registered);
+    drop(bus);
+
+    assert!(Arc::ptr_eq(&registered, stamped));
+}
+
+/// A publish to a name nothing reads is accepted and left nowhere: a broker that keeps no log
+/// has no subscription to hand the message to, and a subscription opened afterwards starts at
+/// the tip.
+#[tokio::test]
+async fn a_publish_nothing_reads_is_accepted_and_kept_nowhere() {
+    let broker = MemoryBroker::new();
+    broker
+        .publisher()
+        .publish(OutgoingMessage::new("unread", b"body"), None)
+        .await
+        .unwrap();
+
+    let mut subscriber = broker.subscribe("unread");
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(stream.next().now_or_never().is_none());
 }
