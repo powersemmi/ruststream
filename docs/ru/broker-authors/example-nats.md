@@ -498,6 +498,10 @@ pub struct NatsPublisher {
 }
 
 impl Publisher for NatsPublisher {
+    // The client owns the payload until it has written it, so the publish hands the buffer over
+    // and freezes it instead of copying the bytes.
+    type Payload = Take;
+
     type Error = NatsError;
 
     // Core NATS lets a message differ from the next in nothing the client exposes per publish, so
@@ -510,13 +514,14 @@ impl Publisher for NatsPublisher {
     /// without waiting for the server. Dropping the future may leave it either sent or unsent.
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let client = self.connection.live_client(msg.name())?.clone();
-        let subject = msg.name().to_owned();
-        let payload = Bytes::copy_from_slice(msg.payload());
-        match headers_to_nats(msg.headers()) {
+        let (subject, payload, headers) = msg.into_parts();
+        let subject = subject.to_owned();
+        let payload = payload.freeze();
+        match headers_to_nats(&headers) {
             Some(headers) => client.publish_with_headers(subject, headers, payload).await,
             None => client.publish(subject, payload).await,
         }
@@ -542,12 +547,12 @@ impl RequestReply for NatsPublisher {
 
     async fn request(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         let client = self.connection.live_client(msg.name())?.clone();
         let subject = msg.name().to_owned();
-        let request = async_nats::Request::new().payload(Bytes::copy_from_slice(msg.payload()));
+        let request = async_nats::Request::new().payload(msg.into_payload().freeze());
         let send = async {
             client
                 .send_request(subject, request)

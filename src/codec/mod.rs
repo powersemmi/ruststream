@@ -122,11 +122,14 @@
 //!     const CONTENT_TYPE: &'static str = C::CONTENT_TYPE;
 //!
 //!     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-//!         let payload = self.0.encode(value)?;
-//!         let mut framed = BytesMut::with_capacity(1 + payload.len());
-//!         framed.extend_from_slice(&[VERSION]);
-//!         framed.extend_from_slice(&payload);
+//!         let mut framed = BytesMut::new();
+//!         self.encode_into(value, &mut framed)?;
 //!         Ok(framed)
+//!     }
+//!
+//!     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
+//!         buf.extend_from_slice(&[VERSION]);
+//!         self.0.encode_into(value, buf)
 //!     }
 //!
 //!     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
@@ -145,6 +148,13 @@
 //! assert_eq!(back, 7);
 //! # }
 //! ```
+//!
+//! [`Codec::encode_into`] is the buffer-taking sibling of `encode`, and the one the publish path
+//! calls for a broker that only reads the payload: inside a dispatch loop that buffer is the
+//! loop's own, so a codec that writes into it leaves the publish nothing to allocate. It is
+//! defaulted (encode into a buffer of its own, then copy), so a codec compiles without it and is
+//! faster with it. The wrapper above writes its version byte into the caller's buffer and hands
+//! the rest to the inner codec, which is why its `encode` is the one line that calls it.
 //!
 //! `encode` and `decode` are synchronous, and that is the boundary of what fits: only what a
 //! constant and the bytes at hand decide. An integration that needs I/O to serialize (a schema

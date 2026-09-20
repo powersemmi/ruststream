@@ -213,16 +213,17 @@ failure lands on, so that policy is accepted on this lane.
 A generated message (Protobuf, Cap'n Proto, FlatBuffers) rides the same lanes with the format's own
 functions in the impls, which is all `#[wire(prost)]` and `#[wire(encode = .., decode = ..)]` fill
 in. The outgoing half is three impls: `Serialized::wire_bytes` takes the publish path's own
-`BytesMut` and lends back what it wrote, so the message is encoded once and nothing intermediate is
-allocated, and the two wire spellings say where the value may be used.
+`BytesMut` and answers `WireBytes::InBuffer` where it wrote into it, or `WireBytes::Own(..)` where
+the bytes are the value's already, so the message is encoded once and nothing intermediate is
+allocated; the two wire spellings say where the value may be used.
 
 ```rust
 impl Serialized for Order {
     type Error = prost::EncodeError;
 
-    fn wire_bytes<'a>(&'a self, buf: &'a mut BytesMut) -> Result<&'a [u8], Self::Error> {
+    fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, Self::Error> {
         prost::Message::encode(self, &mut *buf)?;
-        Ok(&buf[..])
+        Ok(WireBytes::InBuffer)
     }
 }
 

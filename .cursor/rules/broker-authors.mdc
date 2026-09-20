@@ -225,13 +225,16 @@ impl DefaultPublish for ConnectedMyBroker {
 }
 
 impl Publisher for MyPublisher {
+    /// The client writes the bytes into a frame of its own and keeps nothing, so this publisher
+    /// is lent them; a client that keeps the payload declares `Take` and is handed a `BytesMut`.
+    type Payload = Lend;
     type Error = MyError;
     type Options = MyOptions;
 
     /// Resolving the call's fields over the policy's is the first thing publish does.
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         options: Option<&MyOptions>,
     ) -> Result<(), MyError> {
         let priority = options
@@ -245,12 +248,15 @@ impl Publisher for MyPublisher {
 }
 ```
 
-Read the payload with `msg.payload()` and the headers with `msg.headers()`. A transport that
-consumes the message takes its parts with `msg.into_parts()` - the destination, the payload and
-the header map in one move, nothing copied - and then calls `into_vec()` or `into_bytes()` on the
-payload, whichever its client speaks: the framework hands over the buffer it produced, those
-calls copy only where the publish was lending bytes it does not own, and only the form you ask
-for costs anything.
+`Publisher::Payload` is the declaration everything else follows. Declare `Take` when your client
+keeps the payload past the call and you are handed the `BytesMut` the framework wrote
+(`Vec::from` is free, `freeze()` costs one block); declare `Lend` when your transport only reads
+the bytes, and inside a dispatch loop the framework lends you one buffer per loop, so a reply
+through your broker allocates nothing per delivery.
+
+Read the payload with `msg.payload()` and the headers with `msg.headers()` whichever form you
+declared. A transport that consumes the message takes its parts with `msg.into_parts()` - the
+destination, the payload and the header map in one move, nothing copied.
 
 ## Per-message settings on the publish builder
 

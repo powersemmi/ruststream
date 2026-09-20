@@ -320,6 +320,11 @@ default codec. `.out_reply(policy)` names the policy, and the steps after it fil
 `.transform(..)` for a publish transform, `.transactional()` for one broker transaction per
 batch of replies.
 
+What the encoded reply costs is the broker's own declaration ([`Publisher::Payload`](crate::Publisher::Payload)): a
+broker that reads the payload is lent the dispatch loop's own buffer, so replying allocates
+nothing per delivery, and one whose client keeps the payload is handed the buffer the codec
+wrote.
+
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 # mod demo {

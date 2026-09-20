@@ -69,6 +69,9 @@ pub trait Publisher: Send + Sync {
     /// The broker's per-message settings; every field optional.
     type Options: Clone + Send + Sync + 'static;
 
+    /// How this transport consumes the payload: `Lend` reads it, `Take` keeps it.
+    type Payload: PayloadForm;
+
     /// Publishes `msg` with the settings the call site adjusted.
     ///
     /// # Errors
@@ -76,7 +79,7 @@ pub trait Publisher: Send + Sync {
     /// Returns [`Self::Error`] when the broker rejects the message.
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
