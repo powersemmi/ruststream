@@ -19,7 +19,7 @@ next time it publishes its documentation.
 
 ### Against a raw client
 
-Medians over interleaved rounds, with the observed spread in parentheses. `Broker crate` is the
+The best of three interleaved rounds, with the slowest round in parentheses. `Broker crate` is the
 crate's own consumer and publisher driven without the runtime, so the two differences read apart:
 what the crate costs over the client it wraps, and what the runtime costs on top of that.
 
@@ -128,20 +128,20 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
   published. In most brokers those are two different paths.
 - **Every run gets its own names.** A fresh subject, queue, stream or consumer group per run, so
   run N never sees what run N-1 left behind.
-- **The window starts at the first message received and ends at the ack of the last one.** A warm-up
-  run precedes the measured ones and its result is discarded. Connection setup, consumer
-  registration and the first allocations are startup cost, not per-message cost.
+- **The window starts at the first message received and ends at the ack of the last one.** A
+  calibration run precedes the measured ones and its result is discarded. Connection setup,
+  consumer registration and the first allocations are startup cost, not per-message cost.
 - **The message count makes a run last at least five seconds**, so startup transients and timer
   resolution stay inside the noise.
 - **The loops are interleaved, not blocked.** Raw, crate, framework, raw, crate, framework and so
-  on, for at least three rounds, discarding the first. Running one loop to the end and then the
-  next attributes every drift of the machine (thermal, background load, page cache) to whichever
-  ran last.
+  on, for three rounds. Running one loop to the end and then the next attributes every drift of
+  the machine (thermal, background load, page cache) to whichever ran last.
 
 ### The report
 
-- **Every loop reports a median and a spread**, over the rounds that were kept. A single number from
-  a single run is not a result.
+- **Every loop reports its best round and its worst.** Noise on the machine only ever slows a run
+  down, so the fastest round is the closest to the undisturbed cost, and the slowest says how far
+  from quiet the machine was. A single number from a single run is not a result.
 - **A difference smaller than the spread is published as `indistinguishable`,** never as a
   percentage: a figure below the run-to-run noise reads as precision that was never measured.
 - **A saturated consumer is flagged.** When the raw side spends the run waiting on the broker, the
@@ -204,7 +204,7 @@ it. The broker sites share this site's origin, so this page reads them directly.
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "crate": "ruststream-nats",
   "crate_version": "0.7.0",
   "core_version": "0.7.0",
@@ -229,10 +229,10 @@ it. The broker sites share this site's origin, so this page reads them directly.
       "name": "core NATS, 512 B JSON, ack each",
       "unit": "msg/s",
       "messages": 200000,
-      "pairs": 11,
-      "raw": { "median": 128412, "min": 126980, "max": 129604 },
-      "adapter": { "median": 128090, "min": 126700, "max": 129310 },
-      "framework": { "median": 127905, "min": 126100, "max": 129020 },
+      "pairs": 3,
+      "raw": { "best": 129604, "worst": 126980 },
+      "adapter": { "best": 129310, "worst": 126700 },
+      "framework": { "best": 129020, "worst": 126100 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
       "adapter_verdict": "indistinguishable",
@@ -252,8 +252,9 @@ it. The broker sites share this site's origin, so this page reads them directly.
 }
 ```
 
-`schema` is the version of this document. `unit` is a short label rendered next to every value in
-the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
+`schema` is the version of this document: 3 reports each loop as its best and worst round, 2 added
+the `code` section, and a schema 1 document carried a median with its extremes. `unit` is a short
+label rendered next to every value in the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`. It is
 the framework against the raw client, end to end. `adapter` and `adapter_overhead_percent` are the
 crate's own consumer and publisher against the same client, measured without the runtime, and

@@ -42,8 +42,9 @@
   // part of the stable path rather than an implementation detail of the deploy.
   const RESULTS = "/latest/benchmarks/results.json";
   const PAGE = "/latest/benchmarks/";
-  // Schema 2 added the `code` section; a schema 1 document still renders in the first table.
-  const SCHEMAS = [1, 2];
+  // Schema 2 added the `code` section and schema 3 reports each loop as its best and worst round;
+  // a schema 1 document still renders in the first table.
+  const SCHEMAS = [1, 2, 3];
   const TIMEOUT_MS = 8000;
   // What a cell shows when the document does not carry that measurement at all.
   const EMPTY = "-";
@@ -86,6 +87,13 @@
     if (!measurement) {
       return "-";
     }
+    if (typeof measurement.best === "number") {
+      const best = number(measurement.best, lang) + " " + unit;
+      if (typeof measurement.worst !== "number") {
+        return best;
+      }
+      return best + " (" + number(measurement.worst, lang) + ")";
+    }
     const median = number(measurement.median, lang) + " " + unit;
     if (typeof measurement.min !== "number" || typeof measurement.max !== "number") {
       return median;
@@ -106,7 +114,14 @@
     return value;
   }
 
+  // A schema 3 loop is its best and worst round; a schema 1 loop was a median with its extremes.
+  const figure = (measurement) =>
+    typeof measurement?.best === "number" ? measurement.best : measurement?.median;
+
   function spread(measurement) {
+    if (typeof measurement?.best === "number" && typeof measurement?.worst === "number") {
+      return measurement.best - measurement.worst;
+    }
     if (!measurement || typeof measurement.min !== "number" || typeof measurement.max !== "number") {
       return null;
     }
@@ -124,7 +139,7 @@
     if (ours === null || theirs === null) {
       return false;
     }
-    return Math.abs(scenario.raw.median - scenario.adapter.median) < Math.max(ours, theirs);
+    return Math.abs(figure(scenario.raw) - figure(scenario.adapter)) < Math.max(ours, theirs);
   }
 
   function adapter(scenario, lang, labels) {
