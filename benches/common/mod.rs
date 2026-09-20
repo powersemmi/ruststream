@@ -75,6 +75,8 @@
 #![allow(dead_code)]
 
 use std::fmt::Write;
+use std::future::{Future, ready};
+use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -82,9 +84,9 @@ use std::convert::Infallible;
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, EventKind, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{MemoryBroker, MemoryPublisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{BrokerScope, Identity, RunningApp};
-use ruststream::{HeaderMap, OutgoingMessage, Publisher};
+use ruststream::{HeaderMap, Lend, OutgoingMessage, PairError, PublishPolicy, Publisher};
 use serde::Deserialize;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::Notify;
@@ -92,6 +94,48 @@ use tokio::sync::Notify;
 /// The name every scenario delivers on. A handler names it in its own `#[subscriber(..)]`
 /// attribute, which takes a literal.
 pub const INPUT: &str = "orders";
+
+/// The publish policy of a transport that only reads the payload: what every broker crate that
+/// packs the body into a frame of its own declares.
+///
+/// It is here rather than in a scenario file because it is the counterpart of the in-memory
+/// broker for the publish side: the bus keeps what it is handed and pays for a buffer per
+/// message, while this one reads and keeps nothing, which is what the framework's own path costs
+/// with nothing of a transport in it.
+#[derive(Debug, Clone, Copy)]
+pub struct SinkPublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for SinkPublish {
+    type Live = Sink;
+
+    fn pair(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Sink, PairError>> {
+        ready(Ok(Sink))
+    }
+}
+
+/// The live half of [`SinkPublish`]: it reads the message and answers `Ok`, so the number is the
+/// framework's path to a transport rather than any transport's own work.
+#[derive(Debug, Clone, Copy)]
+pub struct Sink;
+
+impl Publisher for Sink {
+    type Payload = Lend;
+    type Error = Infallible;
+    type Options = ();
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_, &[u8]>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), Infallible>> {
+        let (name, payload, headers) = msg.into_parts();
+        black_box((name.len(), payload, headers.len()));
+        ready(Ok(()))
+    }
+}
 
 /// The values every body carries. Fixed, so that every delivery of a run costs the same.
 const ID: u64 = 1_000_000;
