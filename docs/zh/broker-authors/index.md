@@ -121,6 +121,12 @@ pub trait Subscriber: Send {
 一条投递过来的消息交出自己的载荷和消息头，并由 ack 确认或由 nack 退回。ack 消费 `self`，因此两次 ack
 是编译错误。
 
+这里的每个访问方法交出的都是借用，因此一条投递只需要一个引用计数，而不是每个字段各有一个。Broker 的
+投递包住客户端自己的消息，而它的名字、载荷和消息头通常是三个各自计数的值；把它们放进一个 `Arc`
+后面的块里，把每份副本各不相同的东西留在块外，例如日志位置和投递次数。这样一次交接（发给每个订阅者
+的副本、重新入队、重放）就是一次原子自增而不是三次。客户端线程和分发任务位于不同核心的服务，每条
+消息都在付这笔钱。`MemoryBroker` 就是这样写的。
+
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait IncomingMessage: Send + Sync {

@@ -132,6 +132,14 @@ which keeps it cancel-safe.
 A delivered message exposes its payload and its headers, and is acknowledged with `ack` or rejected
 with `nack`. `ack` consumes `self`, so a double ack is a compile error.
 
+Every accessor here hands back a borrow, so one delivery needs one reference count and not one per
+field. A broker's delivery wraps the client's own message, whose name, payload and headers are
+usually three counted things; put them in one block behind one `Arc` and keep outside it what
+differs per copy, such as a log position or an attempt count. A hand-over - the copy per
+subscriber, a requeue, a replay - is then one atomic increment rather than three, which a service
+whose client thread and dispatch task sit on different cores pays for on every message.
+`MemoryBroker` is written that way.
+
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait IncomingMessage: Send + Sync {
