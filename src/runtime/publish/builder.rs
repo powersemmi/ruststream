@@ -376,6 +376,17 @@ impl<'a> WireBytes<'a> {
     ///
     /// What a caller that only reads them uses; the publish path answers the two arms
     /// differently, because only one of them can be taken.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::BytesMut;
+    /// use ruststream::runtime::WireBytes;
+    ///
+    /// let buf = BytesMut::from(&b"{}"[..]);
+    /// assert_eq!(WireBytes::InBuffer.of(&buf), b"{}");
+    /// assert_eq!(WireBytes::Own(b"[]").of(&buf), b"[]");
+    /// ```
     #[must_use]
     pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {
         match self {
