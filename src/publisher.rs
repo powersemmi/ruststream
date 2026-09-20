@@ -66,12 +66,13 @@ pub trait Publisher: Send + Sync {
     /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
     /// redelivery - and the policy's own settings apply.
     ///
-    /// The message arrives by value, and so does its payload. Read it with
-    /// [`OutgoingMessage::payload`], as before. A transport whose client takes owned bytes calls
-    /// [`OutgoingMessage::into_payload`] instead, then
+    /// The message arrives by value, and so do its payload and its header map. Read them with
+    /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`], as before. A transport that
+    /// consumes the message takes its parts with [`OutgoingMessage::into_parts`] - the
+    /// destination, the payload and the map in one move, nothing copied - and then calls
     /// [`into_vec`](crate::OutgoingPayload::into_vec) or
-    /// [`into_bytes`](crate::OutgoingPayload::into_bytes), whichever its client speaks: wherever
-    /// the framework
+    /// [`into_bytes`](crate::OutgoingPayload::into_bytes) on the payload, whichever its client
+    /// speaks: wherever the framework
     /// produced the buffer - the codec's output on an ordinary publish, a reply, a slot - that
     /// buffer is what you get, and only a publish lending bytes it does not own copies here.
     /// Which form it becomes is your choice and your cost alone: a publish this broker only

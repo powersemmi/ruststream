@@ -338,6 +338,16 @@ impl<'a> Outgoing<'a> {
         &mut self.headers
     }
 
+    /// The headers, taken out for the message that leaves.
+    ///
+    /// The terminal calls this beside [`take_payload`](Self::take_payload) and for the same
+    /// reason: the map the transforms filled moves into the outgoing message instead of being
+    /// cloned into it, and what the dead `Outgoing` is left holding is never read again.
+    #[inline]
+    pub(crate) fn take_headers(&mut self) -> HeaderMap {
+        mem::take(&mut self.headers)
+    }
+
     /// The name, the payload and the header map, taken apart.
     ///
     /// What the last stage of a publish uses to hand the message on: the map the transforms

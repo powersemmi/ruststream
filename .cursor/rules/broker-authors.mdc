@@ -245,10 +245,12 @@ impl Publisher for MyPublisher {
 }
 ```
 
-Read the payload with `msg.payload()`. A client that takes owned bytes calls
-`msg.into_payload()` instead and then `into_vec()` or `into_bytes()`, whichever it speaks: the
-framework hands over the buffer it produced, those calls copy only where the publish was lending
-bytes it does not own, and only the form you ask for costs anything.
+Read the payload with `msg.payload()` and the headers with `msg.headers()`. A transport that
+consumes the message takes its parts with `msg.into_parts()` - the destination, the payload and
+the header map in one move, nothing copied - and then calls `into_vec()` or `into_bytes()` on the
+payload, whichever its client speaks: the framework hands over the buffer it produced, those
+calls copy only where the publish was lending bytes it does not own, and only the form you ask
+for costs anything.
 
 ## Per-message settings on the publish builder
 
