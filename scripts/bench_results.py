@@ -123,6 +123,11 @@ SCENARIOS = [
         "reply/service",
     ),
     Scenario(
+        "reply to a transport that reads the payload",
+        "reply-lent",
+        "reply/service_lending",
+    ),
+    Scenario(
         "publish through an Out slot with one transform",
         "out-slot",
         "out_slot/service",

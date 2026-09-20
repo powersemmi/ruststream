@@ -9,13 +9,18 @@
     clippy::needless_pass_by_value
 )]
 //! Replying: the handler returns a value, the runtime encodes it with the default codec and
-//! publishes it where the reply type says. The twin encodes and publishes the same bytes itself.
+//! publishes it where the reply type says.
+//!
+//! Twice over, once per payload form. The in-memory broker keeps what it is handed, so its reply
+//! costs the buffer the codec wrote; the lending sink beside it reads the payload and keeps
+//! nothing, which is the form every transport that packs the body into a frame of its own
+//! declares, and there the dispatch loop's own buffer carries every reply of the run.
 
 mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Pending};
+use common::{Latch, MESSAGES, Order, Pending, SinkPublish};
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::prelude::*;
 use serde::Serialize;
@@ -41,6 +46,12 @@ fn app(messages: usize) -> Pending {
     })
 }
 
+fn lending(messages: usize) -> Pending {
+    common::pending(messages, 0, |b| {
+        b.include(confirm).out_reply(SinkPublish);
+    })
+}
+
 #[library_benchmark(config = common::config(2, 28))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
@@ -49,5 +60,15 @@ fn service(app: Pending) {
     common::start_and_drain(app);
 }
 
-library_benchmark_group!(name = reply; benchmarks = service);
+// The same reply to a transport that reads the payload: the framework allocates nothing per
+// message, so what is left in the steady state is the delivery the bus made.
+#[library_benchmark(config = common::config(0, 30))]
+#[bench::first(lending(1))]
+#[bench::base(lending(MESSAGES))]
+#[bench::twice(lending(2 * MESSAGES))]
+fn service_lending(app: Pending) {
+    common::start_and_drain(app);
+}
+
+library_benchmark_group!(name = reply; benchmarks = service, service_lending);
 main!(library_benchmark_groups = reply);
