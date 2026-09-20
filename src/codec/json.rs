@@ -16,7 +16,11 @@ impl Codec for JsonCodec {
         // One buffer, sized once, and no Vec-to-Bytes hop: what a transport that keeps the
         // payload is handed.
         let mut buf = BytesMut::with_capacity(ENCODE_CAPACITY);
-        self.encode_into(value, &mut buf)?;
+        // Written here rather than through `encode_into`: the hop through the trait method costs
+        // a taking publish about thirty instructions per message once the two have separate
+        // callers, and this is the path every such publish takes.
+        serde_json::to_writer((&mut buf).writer(), value)
+            .map_err(|err| CodecError::Encode(Box::new(err)))?;
         Ok(buf)
     }
 
