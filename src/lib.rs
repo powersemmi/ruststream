@@ -123,6 +123,13 @@ pub use inventory;
 /// directly; a service that already does keeps its own import, which shadows this one.
 pub use bytes::BytesMut;
 
+/// The shared byte buffer the message path hands around: a payload, a header value taken with
+/// [`HeaderMap::get_shared`].
+///
+/// Re-exported for the same reason as [`BytesMut`]: reading a value out of a header map, or
+/// handing one to a publisher, should not also mean depending on `bytes` directly.
+pub use bytes::Bytes;
+
 /// The owned string of the message path: a destination name, a header key.
 ///
 /// A `Bytes` that is valid UTF-8, so it reads as a `str`, clones by reference count and can be

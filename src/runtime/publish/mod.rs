@@ -57,18 +57,22 @@ pub struct Outgoing<'a> {
 /// # Examples
 ///
 /// ```
-/// use ruststream::Str;
+/// use ruststream::{HeaderMap, Str};
 /// use ruststream::runtime::{Outgoing, OutgoingName};
 ///
-/// let mut out = Outgoing::new("answers", b"{}".as_slice());
-/// assert_eq!(out.name(), "answers");
+/// // What a transform sees: the request named the queue it wants its answer in.
+/// let mut headers = HeaderMap::new();
+/// headers.insert(Str::from_static("reply-to"), "replies.inbox");
 ///
-/// // A name the delivery already holds: the buffer is shared, not copied.
-/// out.set_name(Str::from_static("replies.inbox"));
+/// let address = headers.get_shared("reply-to").ok_or("the request named no inbox")?;
+/// let mut out = Outgoing::new("answers", b"{}".as_slice());
+/// out.set_name(Str::try_from(address)?);
 /// assert_eq!(out.name(), "replies.inbox");
 ///
+/// // The other two forms, for a name nobody sent us: a literal, and one built per delivery.
 /// let computed = OutgoingName::from(format!("replies.{}", 7));
 /// assert_eq!(&*computed, "replies.7");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub enum OutgoingName<'a> {
@@ -87,9 +91,15 @@ impl OutgoingName<'_> {
     /// # Examples
     ///
     /// ```
+    /// use ruststream::{Bytes, Str};
     /// use ruststream::runtime::OutgoingName;
     ///
     /// assert_eq!(OutgoingName::from("orders").as_str(), "orders");
+    ///
+    /// // The form a transform builds reads the same: the bytes are checked once, not copied.
+    /// let shared = OutgoingName::from(Str::try_from(Bytes::from_static(b"orders"))?);
+    /// assert_eq!(shared.as_str(), "orders");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -239,11 +249,17 @@ impl<'a> Outgoing<'a> {
     /// # Examples
     ///
     /// ```
+    /// use ruststream::{Bytes, Str};
     /// use ruststream::runtime::Outgoing;
     ///
     /// let mut out = Outgoing::new("answers", b"{}".as_slice());
     /// out.set_name("replies.inbox");
     /// assert_eq!(out.name(), "replies.inbox");
+    ///
+    /// // The same setter takes the buffer a delivery arrived in, with no copy between them.
+    /// out.set_name(Str::try_from(Bytes::from_static(b"replies.7"))?);
+    /// assert_eq!(out.name(), "replies.7");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn set_name(&mut self, name: impl Into<OutgoingName<'a>>) {
         self.name = name.into();
