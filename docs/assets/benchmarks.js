@@ -45,6 +45,8 @@
   // Schema 2 added the `code` section; a schema 1 document still renders in the first table.
   const SCHEMAS = [1, 2];
   const TIMEOUT_MS = 8000;
+  // What a cell shows when the document does not carry that measurement at all.
+  const EMPTY = "-";
 
   const text = (tag, value) => {
     const node = document.createElement(tag);
@@ -104,10 +106,58 @@
     return value;
   }
 
+  function spread(measurement) {
+    if (!measurement || typeof measurement.min !== "number" || typeof measurement.max !== "number") {
+      return null;
+    }
+    return measurement.max - measurement.min;
+  }
+
+  function indistinguishable(scenario) {
+    // Only for a document that left `adapter_verdict` out: the difference against the widest
+    // spread of the two loops it is drawn from.
+    if (scenario.adapter_verdict) {
+      return false;
+    }
+    const ours = spread(scenario.adapter);
+    const theirs = spread(scenario.raw);
+    if (ours === null || theirs === null) {
+      return false;
+    }
+    return Math.abs(scenario.raw.median - scenario.adapter.median) < Math.max(ours, theirs);
+  }
+
+  function adapter(scenario, lang, labels) {
+    // A crate that measured only the two ends leaves the middle column empty rather than
+    // borrowing a number from either side.
+    if (!scenario.adapter) {
+      return EMPTY;
+    }
+    let value = side(scenario.adapter, scenario.unit, lang);
+    // The same honesty rule as the overhead column: a difference smaller than the spread is a
+    // verdict rather than a percentage. A crate that decided it where the samples are says so in
+    // `adapter_verdict`; for one that did not, the rule is applied here to the spreads it
+    // published, so the two columns of a row never disagree about what is visible.
+    if (scenario.adapter_verdict === "indistinguishable" || indistinguishable(scenario)) {
+      value += " " + labels.against.replace("{percent}", labels.indistinguishable);
+    } else if (typeof scenario.adapter_overhead_percent === "number") {
+      const percent = scenario.adapter_overhead_percent;
+      value += " " + labels.against.replace("{percent}", (percent >= 0 ? "+" : "") + percent + "%");
+    }
+    return value;
+  }
+
   function table(published, labels, lang) {
     const element = document.createElement("table");
     const head = element.createTHead().insertRow();
-    for (const column of [labels.broker, labels.scenario, labels.raw, labels.framework, labels.overhead]) {
+    for (const column of [
+      labels.broker,
+      labels.scenario,
+      labels.raw,
+      labels.adapter,
+      labels.framework,
+      labels.overhead,
+    ]) {
       head.appendChild(text("th", column));
     }
     const body = element.createTBody();
@@ -118,6 +168,7 @@
         row.appendChild(text("td", index === 0 ? broker.name : ""));
         row.appendChild(text("td", scenario.name));
         row.appendChild(text("td", side(scenario.raw, scenario.unit, lang)));
+        row.appendChild(text("td", adapter(scenario, lang, labels)));
         row.appendChild(text("td", side(scenario.framework, scenario.unit, lang)));
         row.appendChild(text("td", overhead(scenario, labels)));
       }

@@ -16,9 +16,11 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 ### 与裸客户端对照 { #against-a-raw-client }
 
-数值是交替配对的中位数，括号里是观察到的波动范围。
+数值是交替轮次的中位数，括号里是观察到的波动范围。“Broker crate”一列是该 crate 自己的消费者
+和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上多付
+多少。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "framework": "RustStream", "overhead": "额外开销", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
 ### 代码的开销 { #cost-of-the-code }
 
@@ -69,21 +71,29 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 每个 Broker crate 都遵循下面的流程。这样一来，不同 Broker 公布的数字含义相同。偏离流程的
 Broker 会在自己的页面上说明。
 
-### 配对 { #the-pair }
+### 三个循环 { #the-three-loops }
 
-一次运行是一对二进制程序，两者只有一个区别：消息经由 RustStream 到达，还是直接经由 Broker
-客户端到达。
+一次运行把同一个场景测三遍，三者只有一个区别：消息由什么承载。
+
+- **裸客户端。** Broker 自己的客户端，直接驱动。
+- **Broker crate。** 该 crate 自己的消费者和发布者 —— 它的订阅描述符、它产出的订阅者流、它的
+  确认、它的发布者 —— 由基准测试里的一个循环驱动，上面没有运行时。
+- **RustStream。** 用户写的那整个服务：处理器、应用、分发。
+
+第一项差值是这个 Broker crate 比它所包装的客户端多付出多少，这由 crate 自己负责。第二项是
+运行时在其上多付出多少，而且是在这个 Broker 上；它按 Broker 分别公布，因为各个 crate 与运行时
+相接的方式不同：流如何产出、投递是否成批到达、背压如何传到消费者。
 
 - **同一个客户端，同一套客户端配置。** 预取、ack 模式、consumer group、持久化、连接数和
-  Broker 特有的调优，两边完全一致。框架一侧通过 RustStream 配置 Broker，最终生成的客户端设置
+  Broker 特有的调优，三个循环完全一致。框架一侧通过 RustStream 配置 Broker，最终生成的客户端设置
   仍然必须相同。
-- **ack 的位置相同。** RustStream 在处理器返回之后 ack，因此裸循环也在同一位置 ack。在裸运行
+- **ack 的位置相同。** RustStream 在处理器返回之后 ack，因此另外两个循环也在同一位置 ack。在裸运行
   的末尾批量 ack，测的是另一种协议，而不是另一个框架。
-- **解码成同一个类型。** 裸的一侧用同样的编解码器把载荷反序列化成同一个结构体，并通过
+- **解码成同一个类型。** 没有处理器的那两个循环用同样的编解码器把载荷反序列化成同一个结构体，并通过
   `std::hint::black_box` 访问其中一个字段。省掉这一步，最容易得出错误的数字：解码结果没有人
   用，优化器就会把解码删掉，裸的一侧于是悄悄不再解码。
-- **载荷逐字节相同。** 两边消费的消息体来自同一个生成器。
-- **运行时相同。** tokio 的 flavor、工作线程数和同时在处理的消息条数，两边一致。
+- **载荷逐字节相同。** 每个循环消费的消息体都来自同一个生成器。
+- **运行时相同。** tokio 的 flavor、工作线程数和同时在处理的消息条数，三者一致。
 - **构建相同。** 构建配置、`RUSTFLAGS` 和分配器一致，可观测性 feature（`logging`、`metrics`、
   `otel`）要么两边都关，要么两边都开。环境里带着 `-C target-cpu=native` 的机器，产出的数字
   别的机器复现不了，因此这些标志与结果一起公布。
@@ -178,8 +188,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "messages": 200000,
       "pairs": 11,
       "raw": { "median": 128412, "min": 126980, "max": 129604 },
+      "adapter": { "median": 128090, "min": 126700, "max": 129310 },
       "framework": { "median": 127905, "min": 126100, "max": 129020 },
       "overhead_percent": 0.4,
+      "adapter_overhead_percent": 0.3,
+      "adapter_verdict": "indistinguishable",
       "verdict": "indistinguishable",
       "broker_bound": true
     }
@@ -197,7 +210,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 ```
 
 `schema` 是这份文档的版本。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
-`verdict` 按上面的规则取 `measured` 或 `indistinguishable`。`overhead_percent` 两种情况都记录，
+`verdict` 按上面的规则取 `measured` 或 `indistinguishable`；`adapter_verdict` 把同一条波动规则
+用在 crate 与裸客户端的那项差值上；crate 没有给出它时，页面就按已公布的波动范围自己套同一条
+规则，使同一行的两列不会对“什么是可见的”给出相反的说法。`environment` 里还可以带 `round_trip`，即 `broker_bound`
+算式所依据的探测值，读者可以自己重算。`overhead_percent` 是框架相对裸客户端的端到端开销，
+两种情况都记录，
 只在判定为 `measured` 时展示。`broker_bound` 标记那些由 Broker 而不是消费者决定节奏的运行。
 
 `environment` 描述机器和构建。`cpu`、`architecture`、`cpu_frequency`、`cores`、`memory` 和
