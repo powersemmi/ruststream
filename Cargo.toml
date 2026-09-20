@@ -421,8 +421,11 @@ allowed_external_types = [
     "bytes::bytes::Bytes",
     "bytes::bytes_mut::BytesMut",
     # The owned string beside them: a header key and a message name are shared buffers, and the
-    # type is in the signature that accepts one.
+    # type is in the signature that accepts one. `Str` is an alias, and the tool names the alias
+    # where a signature spells it and the underlying type where an impl does, so both paths are
+    # the same entry twice.
     "bytes_utils::string::Str",
+    "bytes_utils::string::StrInner",
     # A Subscriber is a Stream: that is the core design decision, not an accident.
     "futures_core::stream::Stream",
     # `tokio::spawn` handles surface their join failure through the app lifecycle.
