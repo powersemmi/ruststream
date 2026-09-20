@@ -17,7 +17,9 @@ use ruststream::codec::{Codec, JsonCodec};
 #[cfg(feature = "memory")]
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{Outgoing as OutgoingView, PublishExt, PublishIdentity, PublishPipeline};
-use ruststream::{HeaderMap, Outgoing, OutgoingMessage, OutgoingPayload, Publisher, Serialized};
+use ruststream::{
+    BytesMut, HeaderMap, Lend, Outgoing, OutgoingMessage, Publisher, Serialized, Take,
+};
 use serde::Serialize;
 
 /// Counts this thread's allocations, so the cost of one publish can be read off directly. A
@@ -62,9 +64,9 @@ struct OrderCreated {
 #[outgoing(name = "orders.audit")]
 struct Audit(Vec<u8>);
 
-/// What a transport does with the payload it is handed.
+/// What a transport that declared [`Take`] does with the buffer it is handed.
 #[derive(Clone, Copy)]
-enum Take {
+enum Claim {
     /// Reads it and forgets it, as a transport that writes into a buffer of its own does.
     Read,
     /// Takes it as the vector its client wants.
@@ -76,8 +78,6 @@ enum Take {
 /// What the broker saw. It holds no owned buffer on purpose: the probe must not allocate, or the
 /// counts below would measure the test rather than the publish.
 struct Seen {
-    /// Which arm the payload arrived in.
-    arm: &'static str,
     /// Where the bytes `payload()` answered live.
     read_at: usize,
     /// Where the bytes the transport took ended up, or the read address where it took none.
@@ -86,17 +86,17 @@ struct Seen {
     len: usize,
 }
 
-/// A publisher that does with the payload what one of the broker crates would, and reports what
-/// it saw without allocating anything of its own.
+/// A publisher whose client keeps the payload, and reports what it saw without allocating
+/// anything of its own.
 struct Probe {
-    take: Take,
+    claim: Claim,
     seen: Mutex<Option<Seen>>,
 }
 
 impl Probe {
-    fn taking(take: Take) -> Self {
+    fn taking(claim: Claim) -> Self {
         Self {
-            take,
+            claim,
             seen: Mutex::new(None),
         }
     }
@@ -112,43 +112,79 @@ impl Probe {
 }
 
 impl Publisher for Probe {
+    // The client keeps the bytes, so the publish hands the buffer over.
+    type Payload = Take;
     type Error = Infallible;
     type Options = ();
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Infallible>> {
         let read_at = msg.payload().as_ptr() as usize;
         let len = msg.payload().len();
         let payload = msg.into_payload();
-        let arm = match payload {
-            OutgoingPayload::Borrowed(_) => "borrowed",
-            OutgoingPayload::Produced(_) => "produced",
-            _ => "a form this test does not know",
-        };
         // The taken buffer is released here rather than kept: the address is the whole of what
         // the assertions read, and holding it would outlive the count.
-        let taken_at = match self.take {
-            Take::Read => read_at,
-            Take::Vec => {
-                let taken = payload.into_vec();
+        let taken_at = match self.claim {
+            Claim::Read => read_at,
+            Claim::Vec => {
+                let taken = Vec::from(payload);
                 let at = taken.as_ptr() as usize;
                 drop(taken);
                 at
             }
-            Take::Bytes => {
-                let taken = payload.into_bytes();
+            Claim::Bytes => {
+                let taken = payload.freeze();
                 let at = taken.as_ptr() as usize;
                 drop(taken);
                 at
             }
         };
         *self.seen.lock().expect("probe mutex poisoned") = Some(Seen {
-            arm,
             read_at,
             taken_at,
+            len,
+        });
+        ready(Ok(()))
+    }
+}
+
+/// A publisher that only reads the payload, as every transport that packs it into a frame of its
+/// own does: it declares [`Lend`] and is handed the bytes where they already are.
+#[derive(Default)]
+struct Reading(Mutex<Option<Seen>>);
+
+impl Reading {
+    /// What the last publish handed it.
+    fn seen(&self) -> Seen {
+        self.0
+            .lock()
+            .expect("reading probe mutex poisoned")
+            .take()
+            .expect("nothing was published")
+    }
+}
+
+impl Publisher for Reading {
+    type Payload = Lend;
+    type Error = Infallible;
+    type Options = ();
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_, &[u8]>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), Infallible>> {
+        let read_at = msg.payload().as_ptr() as usize;
+        let len = msg.payload().len();
+        // The form itself, with no arm to match on: a lending publisher is handed a slice and
+        // there is nothing else it could be handed.
+        let lent: &[u8] = msg.into_payload();
+        *self.0.lock().expect("reading probe mutex poisoned") = Some(Seen {
+            read_at,
+            taken_at: lent.as_ptr() as usize,
             len,
         });
         ready(Ok(()))
@@ -175,18 +211,19 @@ impl Keeper {
 }
 
 impl Publisher for Keeper {
+    type Payload = Take;
     type Error = Infallible;
     type Options = ();
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Infallible>> {
         // What a transport whose client takes owned parts does: one move for all three.
         let (name, payload, headers) = msg.into_parts();
         *self.0.lock().expect("keeper mutex poisoned") =
-            Some((name.to_owned(), payload.into_vec(), headers));
+            Some((name.to_owned(), Vec::from(payload), headers));
         ready(Ok(()))
     }
 }
@@ -216,12 +253,14 @@ impl Taker {
 }
 
 impl Publisher for Taker {
+    // The map is what this one is about, so the payload travels the free way.
+    type Payload = Lend;
     type Error = Infallible;
     type Options = ();
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Infallible>> {
         let (_, _, headers) = msg.into_parts();
@@ -240,8 +279,8 @@ impl Publisher for Taker {
 }
 
 #[tokio::test]
-async fn an_encoded_publish_hands_the_codec_buffer_to_the_broker() {
-    let publisher = Probe::taking(Take::Vec);
+async fn an_encoded_publish_hands_the_codec_buffer_to_a_taking_broker() {
+    let publisher = Probe::taking(Claim::Vec);
     publisher
         .message(&OrderCreated { id: 7 })
         .publish()
@@ -250,19 +289,16 @@ async fn an_encoded_publish_hands_the_codec_buffer_to_the_broker() {
 
     let seen = publisher.seen();
     assert_eq!(
-        seen.arm, "produced",
-        "the codec's buffer travels as it was written",
-    );
-    assert_eq!(
         seen.taken_at, seen.read_at,
-        "taking it as a vector reuses that buffer rather than copying out of it",
+        "the codec's buffer travels as it was written, and taking it as a vector reuses it \
+         rather than copying out of it",
     );
 }
 
 #[tokio::test]
-async fn a_value_that_carries_its_own_bytes_is_lent_to_the_broker() {
+async fn a_value_that_carries_its_own_bytes_is_lent_to_a_reading_broker() {
     let audit = Audit(br#"{"seen":true}"#.to_vec());
-    let publisher = Probe::taking(Take::Vec);
+    let publisher = Reading::default();
     publisher
         .message(&audit)
         .publish()
@@ -271,18 +307,30 @@ async fn a_value_that_carries_its_own_bytes_is_lent_to_the_broker() {
 
     let seen = publisher.seen();
     assert_eq!(
-        seen.arm, "borrowed",
-        "bytes the value owns are lent, never claimed",
-    );
-    assert_eq!(
         seen.read_at,
         audit.0.as_ptr() as usize,
-        "the broker reads the value's own buffer",
+        "a transport that reads the payload is handed the value's own buffer, uncopied",
     );
+}
+
+#[tokio::test]
+async fn a_value_that_carries_its_own_bytes_is_copied_for_a_taking_broker() {
+    let audit = Audit(br#"{"seen":true}"#.to_vec());
+    let publisher = Probe::taking(Claim::Read);
+    publisher
+        .message(&audit)
+        .publish()
+        .await
+        .expect("the probe never refuses");
+
+    let seen = publisher.seen();
     assert_ne!(
-        seen.taken_at, seen.read_at,
-        "and a transport that wants a buffer of its own gets a copy",
+        seen.read_at,
+        audit.0.as_ptr() as usize,
+        "a transport that keeps the payload cannot keep bytes the value owns, so it is handed \
+         a buffer of its own",
     );
+    assert_eq!(seen.len, audit.0.len(), "holding the same bytes");
 }
 
 #[tokio::test]
@@ -349,14 +397,14 @@ async fn handing_the_header_map_to_the_broker_allocates_nothing() {
 }
 
 /// What the broker crates need before they adapt: a form costs what it costs, and only the
-/// transport that asks for one pays. A publish nobody takes from is the floor, and it is the
-/// floor a lent payload already had; a vector costs nothing over it, because the buffer the codec
-/// wrote is the vector; a `Bytes` costs the one block that makes ownership shareable.
+/// transport that asks for one pays. A publish that hands the buffer over is the floor; a vector
+/// costs nothing over it, because the buffer the codec wrote is the vector; a `Bytes` costs the
+/// one block that makes ownership shareable.
 #[tokio::test]
 async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
     // One publish before the count: a run's first encode grows buffers that later ones do not.
-    let counted = async |take| {
-        let publisher = Probe::taking(take);
+    let counted = async |claim| {
+        let publisher = Probe::taking(claim);
         let value = OrderCreated { id: 7 };
         publisher
             .message(&value)
@@ -375,20 +423,40 @@ async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
         (spent, publisher.seen())
     };
 
-    let (reading, read) = counted(Take::Read).await;
-    let (as_vec, took_vec) = counted(Take::Vec).await;
-    let (as_bytes, took_bytes) = counted(Take::Bytes).await;
+    let (handed_over, read) = counted(Claim::Read).await;
+    let (as_vec, took_vec) = counted(Claim::Vec).await;
+    let (as_bytes, took_bytes) = counted(Claim::Bytes).await;
 
     assert_eq!(
-        as_vec, reading,
+        as_vec, handed_over,
         "the codec's buffer is already the vector, so taking it as one allocates nothing",
     );
     assert_eq!(
         as_bytes,
-        reading + 1,
+        handed_over + 1,
         "a `Bytes` needs the shared ownership block, and that block is all it costs",
     );
     assert_eq!((read.len, took_vec.len, took_bytes.len), (8, 8, 8));
+}
+
+/// The declaration is what the payload's form follows, and a transport that only reads it is
+/// handed the buffer the encode wrote rather than a buffer of its own.
+#[tokio::test]
+async fn a_reading_transport_is_lent_the_buffer_the_encode_wrote() {
+    let publisher = Reading::default();
+    let value = OrderCreated { id: 7 };
+    publisher
+        .message(&value)
+        .publish()
+        .await
+        .expect("the probe never refuses");
+
+    let seen = publisher.seen();
+    assert_eq!(
+        seen.taken_at, seen.read_at,
+        "what the publish lends and what it reads are the same bytes",
+    );
+    assert_eq!(seen.len, 8, "the encoded body");
 }
 
 /// What a broker does with the map, measured on the one broker this crate ships. A header costs

@@ -117,8 +117,8 @@ mod typed_headers;
 pub use inventory;
 
 /// The buffer the crate's byte-producing surfaces speak: what a [`Codec`](codec::Codec) returns,
-/// what a [`Serialized`](runtime::Serialized) value writes into, and the form a publish hands its
-/// payload to the broker in ([`OutgoingPayload::Produced`]).
+/// what a [`Serialized`](runtime::Serialized) value writes into, and the payload a publisher
+/// that declared [`Take`] is handed.
 ///
 /// Re-exported so that implementing either trait, or taking a published payload, does not also
 /// mean depending on `bytes` directly; a service that already does keeps its own import, which
@@ -150,8 +150,10 @@ pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use error::{AckError, DeclareRetryError};
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
-pub use message::{IncomingMessage, OutgoingMessage, OutgoingPayload, RawMessage};
-pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
+pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
+pub use publisher::{
+    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
+};
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,

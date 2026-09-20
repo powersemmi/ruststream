@@ -15,7 +15,6 @@ use tokio_util::task::TaskTracker;
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
 use crate::OutgoingDestination;
-use crate::OutgoingMessage;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
@@ -23,6 +22,7 @@ use crate::runtime::{
     PublishSink, RegisteredBroker, RustStream, RustStreamError, Starter, TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
+use crate::{Lend, OutgoingMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
 use super::broker::{TestableBroker, TestableRegistration};
@@ -741,13 +741,16 @@ impl fmt::Debug for InjectSink<'_> {
 }
 
 impl PublishSink for InjectSink<'_> {
+    // An injection is handed to the in-process transport by reference, which stores what it
+    // keeps: see `TestableBroker::inject`.
+    type Payload = Lend;
     type Error = TestError;
     // An injection stands in for an external producer, which reaches no broker's options type.
     type Options = ();
 
     async fn send(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         let Target::Broker {
@@ -861,10 +864,8 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        // The harness hands the buffer over exactly as a real publish does, so an in-process
-        // transport sees the same payload form here as it does in production.
         self.sink()
-            .send(OutgoingMessage::produced(name, bytes), None)
+            .send(OutgoingMessage::new(name, &bytes), None)
             .await
     }
 
@@ -894,7 +895,7 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        let msg = OutgoingMessage::produced(name, bytes)
+        let msg = OutgoingMessage::new(name, &bytes)
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
         self.sink().send(msg, None).await

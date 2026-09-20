@@ -67,6 +67,10 @@ pub trait TestableBroker: Send + Sync {
 
     /// Injects a message onto the bus as an external producer would, synchronously (no awaiting).
     /// Routes through the broker's normal fanout, so it is recorded and counted like any publish.
+    ///
+    /// The payload is lent whichever form the transport's own [`Publisher`](crate::Publisher)
+    /// declared: an injection is a test writing bytes it holds, so the transport copies them as
+    /// it stores them rather than the test building a buffer for it.
     fn inject(&self, message: OutgoingMessage<'_>);
 
     /// Returns every message published to `name` on this broker, in publish order. Backs the

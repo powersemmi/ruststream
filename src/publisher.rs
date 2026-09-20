@@ -2,11 +2,177 @@
 
 use std::{error::Error as StdError, future::Future};
 
+use bytes::BytesMut;
+use serde::Serialize;
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
+use crate::codec::{Codec, CodecError};
+use crate::runtime::{Outgoing, OutgoingName, Serialized};
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
+
+/// How a transport consumes the payload of a publish: [`Lend`] where it reads the bytes,
+/// [`Take`] where its client keeps them.
+///
+/// Every [`Publisher`] names one as [`Publisher::Payload`], and the message its `publish`
+/// receives follows the declaration: a lending publisher is handed `&[u8]`, a taking one a
+/// [`BytesMut`] it owns. There is no third form and no arm that never arrives, so a transport
+/// matches on nothing and the runtime branches on nothing: it produces the payload the way the
+/// type said before the first message was ever published.
+///
+/// The declaration is what the framework's own buffers follow. A lending publisher inside a
+/// dispatch loop is lent one encode buffer the loop reuses, so a reply through it allocates
+/// nothing per message; a taking one is handed a fresh buffer per publish, which it keeps.
+///
+/// Sealed: the two forms are the whole set.
+///
+/// # Examples
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use ruststream::{Lend, OutgoingMessage, Publisher};
+///
+/// // A transport that packs the payload into a frame of its own reads it and keeps nothing.
+/// struct Framed;
+///
+/// impl Publisher for Framed {
+///     type Payload = Lend;
+///     type Error = Infallible;
+///     type Options = ();
+///
+///     async fn publish(
+///         &self,
+///         msg: OutgoingMessage<'_, &[u8]>,
+///         _options: Option<&()>,
+///     ) -> Result<(), Infallible> {
+///         let (name, payload, _headers) = msg.into_parts();
+///         let _frame = (name.len(), payload.len());
+///         Ok(())
+///     }
+/// }
+/// ```
+pub trait PayloadForm: sealed::Sealed {
+    /// The payload as this form carries it: `&'a [u8]` for [`Lend`], [`BytesMut`] for [`Take`].
+    ///
+    /// The bounds are what every publish position needs of it: the bytes are readable, the
+    /// message crosses a task boundary, and bytes the caller holds can be handed over in this
+    /// form (free where the transport lends, one copy where it keeps them).
+    type Form<'a>: AsRef<[u8]> + Send + From<&'a [u8]>;
+
+    /// The codec's output in this form: written into `buf` and lent, or a buffer of its own.
+    ///
+    /// `buf` is the publish path's scratch - inside a dispatch loop, the one buffer that loop
+    /// reuses - and is emptied here, so what it held for the previous message never leaves with
+    /// this one.
+    ///
+    /// The framework's own side of the declaration, and the reason it is on this trait: a form
+    /// is one decision with two ends, what the transport is handed and what the runtime writes
+    /// into, and splitting them would let the two drift. Sealed, so nothing outside implements
+    /// it; you never call it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when the codec rejects the value.
+    #[doc(hidden)]
+    fn encoded<'b, C, T>(
+        codec: &C,
+        value: &T,
+        buf: &'b mut BytesMut,
+    ) -> Result<Self::Form<'b>, CodecError>
+    where
+        C: Codec,
+        T: Serialize;
+
+    /// The bytes a [`Serialized`] value publishes, in this form: the ones it holds, or the ones
+    /// it writes into `buf`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the value's own error when its encoder rejects it.
+    #[doc(hidden)]
+    fn serialized<'v, T>(value: &'v T, buf: &'v mut BytesMut) -> Result<Self::Form<'v>, T::Error>
+    where
+        T: Serialized;
+
+    /// A message in this form, put back on the publish pipeline for the stages above the leaf.
+    #[doc(hidden)]
+    fn rebuilt<'a>(
+        name: OutgoingName<'a>,
+        payload: Self::Form<'a>,
+        headers: HeaderMap,
+    ) -> Outgoing<'a>;
+
+    /// The message that leaves the pipeline, in this form.
+    ///
+    /// The broker is the last reader, so a taking transport is handed the buffer the stages
+    /// wrote and a lending one the bytes where they are; either way the map the transforms
+    /// filled moves into the message rather than being cloned into it.
+    #[doc(hidden)]
+    fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, Self::Form<'a>>;
+}
+
+/// The declaration of a transport that reads the payload and keeps nothing: it is handed
+/// `&[u8]`.
+///
+/// What every transport that writes the payload into a frame of its own declares. See
+/// [`PayloadForm`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Lend;
+
+/// The declaration of a transport whose client keeps the payload: it is handed a [`BytesMut`]
+/// of its own.
+///
+/// The buffer arrives as it was written, so `Vec::from` and [`BytesMut::freeze`] turn it into
+/// what the client speaks without copying it. See [`PayloadForm`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Take;
+
+/// The message a publisher of form `Form` is handed: [`OutgoingMessage`] over that form's
+/// payload.
+///
+/// A broker names the form itself (`OutgoingMessage<'_, &[u8]>`, `OutgoingMessage<'_, BytesMut>`)
+/// and never needs this alias; a wrapper generic over the publisher underneath it does, because
+/// the form is not known there.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{HeaderMap, OutgoingFor, Publisher};
+///
+/// // A handle that forwards every publish to the publisher it wraps, whichever form that one
+/// // declared.
+/// struct Tagged<P>(P, HeaderMap);
+///
+/// impl<P: Publisher> Publisher for Tagged<P> {
+///     type Payload = P::Payload;
+///     type Error = P::Error;
+///     type Options = P::Options;
+///
+///     async fn publish(
+///         &self,
+///         msg: OutgoingFor<'_, Self::Payload>,
+///         options: Option<&Self::Options>,
+///     ) -> Result<(), Self::Error> {
+///         self.0.publish(msg, options).await
+///     }
+///
+///     fn base_headers(&self) -> Option<&HeaderMap> {
+///         Some(&self.1)
+///     }
+/// }
+/// ```
+pub type OutgoingFor<'a, Form> = OutgoingMessage<'a, <Form as PayloadForm>::Form<'a>>;
+
+mod sealed {
+    /// Seals [`PayloadForm`](super::PayloadForm): a transport reads the payload or keeps it,
+    /// and a third answer would be one the runtime has no buffer strategy for.
+    pub trait Sealed {}
+
+    impl Sealed for super::Lend {}
+    impl Sealed for super::Take {}
+}
 
 /// A producer that sends messages into the broker.
 ///
@@ -20,6 +186,7 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// use ruststream::{OutgoingMessage, Publisher};
 ///
 /// async fn emit<P: Publisher>(publisher: &P) -> Result<(), P::Error> {
+///     // Bytes the caller holds, in whichever form this publisher declared.
 ///     let msg = OutgoingMessage::new("orders.created", b"{}".as_slice());
 ///     publisher.publish(msg, None).await
 /// }
@@ -32,6 +199,19 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
             the include site: attach one whose live form publishes"
 )]
 pub trait Publisher: Send + Sync {
+    /// How this transport consumes the payload: [`Lend`] where it reads the bytes and keeps
+    /// nothing, [`Take`] where its client keeps them.
+    ///
+    /// The declaration decides what [`publish`] receives - `&[u8]` under `Lend`, a
+    /// [`BytesMut`] of its own under `Take` - and what the framework does with its own buffers
+    /// above it: a lending publisher inside a dispatch loop is lent the one encode buffer that
+    /// loop reuses, so a reply through it allocates nothing per message, while a taking one is
+    /// handed a fresh buffer it may keep. Declare `Lend` unless the client keeps the bytes past
+    /// the call.
+    ///
+    /// [`publish`]: Self::publish
+    type Payload: PayloadForm;
+
     /// The error type returned by [`publish`].
     ///
     /// [`publish`]: Self::publish
@@ -67,16 +247,16 @@ pub trait Publisher: Send + Sync {
     /// redelivery - and the policy's own settings apply.
     ///
     /// The message arrives by value, and so do its payload and its header map. Read them with
-    /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`], as before. A transport that
-    /// consumes the message takes its parts with [`OutgoingMessage::into_parts`] - the
-    /// destination, the payload and the map in one move, nothing copied - and then calls
-    /// [`into_vec`](crate::OutgoingPayload::into_vec) or
-    /// [`into_bytes`](crate::OutgoingPayload::into_bytes) on the payload, whichever its client
-    /// speaks: wherever the framework
-    /// produced the buffer - the codec's output on an ordinary publish, a reply, a slot - that
-    /// buffer is what you get, and only a publish lending bytes it does not own copies here.
-    /// Which form it becomes is your choice and your cost alone: a publish this broker only
-    /// reads from converts nothing.
+    /// [`OutgoingMessage::payload`] and [`OutgoingMessage::headers`]; a transport that consumes
+    /// the message takes its parts with [`OutgoingMessage::into_parts`] - the destination, the
+    /// payload and the map in one move, nothing copied.
+    ///
+    /// What the payload is follows [`Payload`](Self::Payload). A [`Lend`] publisher is handed
+    /// `&[u8]` valid for the length of the call: read it, write it into your frame, and hold
+    /// nothing afterwards. A [`Take`] publisher is handed the [`BytesMut`] the framework wrote,
+    /// as it was written, so `Vec::from(payload)` and [`BytesMut::freeze`] turn it into what the
+    /// client speaks with no copy of the body; only a publish lending bytes the framework does
+    /// not own is copied into that buffer.
     ///
     /// # Cancel safety
     ///
@@ -90,7 +270,7 @@ pub trait Publisher: Send + Sync {
     /// the operation times out.
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -122,18 +302,19 @@ pub trait Publisher: Send + Sync {
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;
-    /// use ruststream::{HeaderMap, Outgoing, OutgoingMessage, Publisher, Serialized};
+    /// use ruststream::{HeaderMap, Outgoing, OutgoingFor, Publisher, Serialized};
     ///
     /// // A handle that tags every message it sends, without touching the message itself.
     /// struct Tenanted<P>(P, HeaderMap);
     ///
     /// impl<P: Publisher> Publisher for Tenanted<P> {
+    ///     type Payload = P::Payload;
     ///     type Error = P::Error;
     ///     type Options = P::Options;
     ///
     ///     async fn publish(
     ///         &self,
-    ///         msg: OutgoingMessage<'_>,
+    ///         msg: OutgoingFor<'_, Self::Payload>,
     ///         options: Option<&Self::Options>,
     ///     ) -> Result<(), Self::Error> {
     ///         self.0.publish(msg, options).await

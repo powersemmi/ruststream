@@ -4,7 +4,7 @@ use std::{fmt, future::Future, sync::Arc};
 
 use super::{Outgoing, PublishFut};
 use crate::runtime::lifecycle::BoxError;
-use crate::{OutgoingMessage, Publisher};
+use crate::{PayloadForm, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
 /// the broker send.
@@ -40,12 +40,9 @@ impl PublishPipeline for PublishIdentity {
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
-        // The broker is the last reader of this message, so the buffer the stages produced and
-        // the map they filled both move into it rather than being lent and copied: a transport
-        // that keeps either one takes it as it stands.
-        let payload = out.take_payload();
-        let headers = out.take_headers();
-        let msg = OutgoingMessage::assembled(out.name(), payload, headers);
+        // The broker is the last reader of this message, so what the stages produced travels
+        // into it in the form the publisher declared, and the map they filled moves with it.
+        let msg = <P::Payload as PayloadForm>::leaving(out);
         send.publish(msg, options)
             .await
             .map_err(|e| Box::new(e) as BoxError)

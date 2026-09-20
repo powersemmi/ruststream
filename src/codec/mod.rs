@@ -267,12 +267,30 @@ pub trait Codec: Send + Sync {
     ///
     /// Returning [`BytesMut`] lets the encoded buffer move into the publish pipeline (an
     /// [`Outgoing`](crate::runtime::Outgoing) payload) without a copy, while still allowing
-    /// publish middleware to mutate it in place.
+    /// publish middleware to mutate it in place. It is what a publish to a transport that keeps
+    /// the payload ([`Take`](crate::Take)) calls, once per message.
     ///
     /// # Errors
     ///
     /// Returns [`CodecError::Encode`] when the underlying serializer fails.
     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError>;
+
+    /// Encodes `value` into the end of a buffer the caller owns.
+    ///
+    /// What a publish to a transport that only reads the payload ([`Lend`](crate::Lend)) calls:
+    /// inside a dispatch loop that buffer is the loop's own, reused for every message, so a
+    /// codec that writes into it leaves the publish path with nothing to allocate. Implement it
+    /// wherever the serializer can write into a sink; the default encodes into a buffer of its
+    /// own and copies, which is correct but pays the allocation this exists to avoid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError::Encode`] when the underlying serializer fails. The buffer's
+    /// contents are then unspecified: the publish path discards what a failed encode wrote.
+    fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
+        buf.extend_from_slice(&self.encode(value)?);
+        Ok(())
+    }
 
     /// Decodes `bytes` into a Rust value of type `T`.
     ///

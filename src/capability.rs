@@ -14,8 +14,8 @@ use crate::asyncapi::Bindings;
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{
-    Broker, ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage,
-    OutgoingMessage, Publisher, RetryDeclaration, Subscriber,
+    Broker, ConnectedBroker, CopyPath, DeclareRetryError, HeaderMap, IncomingMessage, OutgoingFor,
+    PayloadForm, Publisher, RetryDeclaration, Subscriber,
 };
 
 /// A subscriber that delivers messages in batches.
@@ -246,6 +246,17 @@ pub trait TransactionalPublisher: Publisher {
 /// [`abort`]: Self::abort
 #[must_use = "a transaction does nothing until settled with commit() or abort()"]
 pub trait Transaction: Send {
+    /// How this transaction consumes the payload: [`Lend`] where it reads the bytes into a frame
+    /// of its own, [`Take`] where the buffer it holds until the commit keeps them.
+    ///
+    /// A type of its own, for the reason [`Options`](Self::Options) is one: a transaction is a
+    /// publish surface of its own, and a client buffer keeps what the direct publish may only
+    /// read. See [`Publisher::Payload`](crate::Publisher::Payload).
+    ///
+    /// [`Lend`]: crate::Lend
+    /// [`Take`]: crate::Take
+    type Payload: PayloadForm;
+
     /// The error type returned by transaction operations.
     type Error: StdError + Send + Sync + 'static;
 
@@ -272,7 +283,7 @@ pub trait Transaction: Send {
     /// here.
     fn publish(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -304,17 +315,18 @@ pub trait Transaction: Send {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HeaderMap, OutgoingMessage, Transaction};
+    /// use ruststream::{HeaderMap, OutgoingFor, Transaction};
     ///
     /// struct Tagged<T>(T, HeaderMap);
     ///
     /// impl<T: Transaction> Transaction for Tagged<T> {
+    ///     type Payload = T::Payload;
     ///     type Error = T::Error;
     ///     type Options = T::Options;
     ///
     ///     async fn publish(
     ///         &mut self,
-    ///         msg: OutgoingMessage<'_>,
+    ///         msg: OutgoingFor<'_, Self::Payload>,
     ///         options: Option<&Self::Options>,
     ///     ) -> Result<(), Self::Error> {
     ///         self.0.publish(msg, options).await
@@ -423,7 +435,7 @@ pub trait RequestReply: Publisher {
     /// the underlying transport fails before a reply arrives.
     fn request(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         timeout: Duration,
     ) -> impl Future<Output = Result<Self::Reply, Self::Error>> + Send;
 }

@@ -101,7 +101,7 @@ use crate::runtime::slot::{
     BindSlots, ContainsMessage, HasSlots, OutSlot, PublishedThrough, SlotPublisher,
 };
 use crate::{
-    Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingMessage,
+    Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingFor,
     OwnedTransactions, PairError, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
     Unnamed,
 };
@@ -407,6 +407,9 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
 impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publisher
     for Slot<M, W, E, Pipe, Body>
 {
+    // The slot is attribution, not policy: the payload travels in the wired publisher's own
+    // form, so what a transform above it sees is what the broker will be handed.
+    type Payload = W::Payload;
     type Error = Pipe::Error<W::Error>;
     // The slot is attribution, not policy: the broker's per-message settings are the wired
     // publisher's, which is what puts that broker's builder steps on this entry's `message(..)`.
@@ -414,7 +417,7 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publi
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.pipeline.send(&self.wired, msg, options).await
@@ -464,7 +467,7 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
 
     async fn request(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         self.wired

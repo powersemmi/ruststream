@@ -21,7 +21,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::RustStreamError;
 use ruststream::testing::{Outcome, TestApp};
-use ruststream::{OutgoingMessage, PairError};
+use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
 use serde::Serialize;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber as TracingSubscriber};
@@ -97,12 +97,13 @@ struct FailsOnce {
 }
 
 impl Publisher for FailsOnce {
+    type Payload = Take;
     type Error = Rejected;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         if self.armed.swap(false, Ordering::SeqCst) {

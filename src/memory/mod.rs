@@ -63,9 +63,10 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    AckError, AddressedCopies, Broker, ConnectedBroker, DefaultPublish, DescribeServer, FromName,
-    HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher, RawMessage,
-    RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
+    FromName, HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    RawMessage, RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe, Subscriber,
+    SubscriptionSource, Take,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -89,14 +90,14 @@ struct MemoryOutbound {
     headers: HeaderMap,
 }
 
-impl From<OutgoingMessage<'_>> for MemoryOutbound {
-    fn from(msg: OutgoingMessage<'_>) -> Self {
+impl From<OutgoingMessage<'_, BytesMut>> for MemoryOutbound {
+    fn from(msg: OutgoingMessage<'_, BytesMut>) -> Self {
         // The publish hands over both the buffer it produced and the map it filled, so the bus
-        // keeps them as they stand; only a message lending someone else's bytes is copied here.
+        // keeps them as they stand; the freeze is the one block shared ownership costs.
         let (name, payload, headers) = msg.into_parts();
         Self {
             name: name.to_owned(),
-            payload: payload.into_bytes(),
+            payload: payload.freeze(),
             headers,
         }
     }
@@ -729,7 +730,7 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(name, payload.into_bytes(), headers)
+            .fanout(name, Bytes::copy_from_slice(payload), headers)
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 
@@ -999,6 +1000,10 @@ pub enum MemoryError {
 }
 
 impl Publisher for MemoryPublisher {
+    // The bus keeps every message it is handed until the last subscriber has read it, so the
+    // publish hands the buffer over rather than lending it.
+    type Payload = Take;
+
     type Error = MemoryError;
     // The in-memory bus has no protocol field a message can differ in, so there is nothing to
     // settle per message.
@@ -1006,7 +1011,7 @@ impl Publisher for MemoryPublisher {
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         {
@@ -1020,7 +1025,7 @@ impl Publisher for MemoryPublisher {
             }
         }
         let (name, payload, headers) = msg.into_parts();
-        ready(self.state.fanout(name, payload.into_bytes(), headers))
+        ready(self.state.fanout(name, payload.freeze(), headers))
     }
 }
 

@@ -23,11 +23,11 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
 use crate::runtime::publish::{
-    ForReply, OutPipeline, Outgoing, PublishContext, PublishTransform, PublishTransformIdentity,
+    ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
 use crate::{
     AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
-    DefaultPublish, NamedCopies, OutgoingMessage, PairError, PublishPolicy, Publisher,
+    DefaultPublish, NamedCopies, OutgoingMessage, PairError, PayloadForm, PublishPolicy, Publisher,
     RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, SubscriptionSource,
 };
 
@@ -101,13 +101,18 @@ where
                 // With nothing to sit over, the delivery's map is the outgoing one.
                 delivered
             };
-            let mut out = Outgoing::rebuilding(name, payload, headers);
+            // The copy carries the delivery's own bytes: a transport that reads them is lent
+            // them, and only one that keeps them is handed a buffer of its own.
+            let mut out = <Live::Payload as PayloadForm>::rebuilt(
+                name.into(),
+                <Live::Payload as PayloadForm>::Form::from(payload),
+                headers,
+            );
             let mut options: Option<Live::Options> = None;
             self.stack.apply(&mut out, &mut options, cx);
             // The copy is dead once the leaf has it, so what the transforms wrote moves on rather
             // than being copied on.
-            let (name, payload, headers) = out.into_parts();
-            let sent = OutgoingMessage::assembled(&name, payload.into(), headers);
+            let sent = <Live::Payload as PayloadForm>::leaving(&mut out);
             self.pipeline
                 .send(&self.live, sent, options.as_ref())
                 .await

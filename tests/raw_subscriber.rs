@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher};
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, ContextField, OutgoingMessage, PairError};
+use ruststream::{BuildContext, BytesMut, ContextField, OutgoingMessage, PairError, Take};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";
@@ -224,12 +224,13 @@ struct FlakyPublisher {
 }
 
 impl Publisher for FlakyPublisher {
+    type Payload = Take;
     type Error = MemoryError;
     type Options = ();
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         options: Option<&Self::Options>,
     ) -> Result<(), MemoryError> {
         if self.fail_next.swap(false, Ordering::SeqCst) {

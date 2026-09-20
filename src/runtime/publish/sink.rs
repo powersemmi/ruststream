@@ -5,11 +5,11 @@ use std::error::Error as StdError;
 use std::future::Future;
 
 use crate::codec::Codec;
-use crate::{HeaderMap, OutgoingMessage, Publisher, Transaction};
+use crate::{HeaderMap, OutgoingFor, PayloadForm, Publisher, Transaction};
 
 /// The byte sink a publish builder resolves down to.
 ///
-/// Every publish surface ends in one call carrying an [`OutgoingMessage`]: a live
+/// Every publish surface ends in one call carrying an [`OutgoingMessage`](crate::OutgoingMessage): a live
 /// [`Publisher`] for the ordinary path, a [`Transaction`] for a buffered one. The builder is
 /// generic over this trait so both paths share one set of positions instead of growing a
 /// parallel method each.
@@ -36,6 +36,11 @@ use crate::{HeaderMap, OutgoingMessage, Publisher, Transaction};
 /// # }
 /// ```
 pub trait PublishSink: Send {
+    /// How the publisher or transaction underneath consumes the payload, forwarded so the
+    /// builder encodes into the form it declared. See
+    /// [`Publisher::Payload`](crate::Publisher::Payload).
+    type Payload: PayloadForm;
+
     /// The error the sink reports when the message cannot be sent.
     type Error: StdError + Send + Sync + 'static;
 
@@ -59,7 +64,7 @@ pub trait PublishSink: Send {
     /// may leave the message in an indeterminate state.
     fn send(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -79,12 +84,13 @@ pub trait PublishSink: Send {
 // A shared publisher reference is the ordinary sink: publishing takes `&self`, so the builder
 // only ever borrows it.
 impl<P: Publisher + ?Sized> PublishSink for &P {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
 
     fn send(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         (**self).publish(msg, options)
@@ -98,12 +104,13 @@ impl<P: Publisher + ?Sized> PublishSink for &P {
 // A transaction buffers into itself, so its sink is the unique borrow the builder holds for the
 // duration of one publish.
 impl<T: Transaction> PublishSink for &mut T {
+    type Payload = T::Payload;
     type Error = T::Error;
     type Options = T::Options;
 
     fn send(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         (**self).publish(msg, options)

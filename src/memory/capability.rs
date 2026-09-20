@@ -31,8 +31,9 @@ use super::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
-    BatchSubscriber, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned, Positioned,
-    Publisher, RequestReply, Seekable, Seeker, Subscriber, Transaction, TransactionalPublisher,
+    BatchSubscriber, BytesMut, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned,
+    Positioned, Publisher, RequestReply, Seekable, Seeker, Subscriber, Take, Transaction,
+    TransactionalPublisher,
 };
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
@@ -128,18 +129,20 @@ impl fmt::Debug for MemoryRequester {
 }
 
 impl Publisher for MemoryRequester {
+    // The same bus, kept the same way: see `MemoryPublisher`.
+    type Payload = Take;
     type Error = RequestError;
     type Options = ();
 
     fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         let (name, payload, headers) = msg.into_parts();
         ready(
             self.state
-                .fanout(name, payload.into_bytes(), headers)
+                .fanout(name, payload.freeze(), headers)
                 .map_err(|_| RequestError::ShutDown),
         )
     }
@@ -152,7 +155,7 @@ impl RequestReply for MemoryRequester {
 
     async fn request(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         wait: Duration,
     ) -> Result<Self::Reply, Self::Error> {
         let id = self.state.inbox_seq.fetch_add(1, Ordering::Relaxed);
@@ -168,7 +171,7 @@ impl RequestReply for MemoryRequester {
         headers.insert("reply-to", inbox.clone());
         if self
             .state
-            .fanout(subject, payload.into_bytes(), headers)
+            .fanout(subject, payload.freeze(), headers)
             .is_err()
         {
             self.state.unregister(&inbox);
@@ -379,12 +382,15 @@ impl Drop for MemoryTransaction {
 }
 
 impl Transaction for MemoryTransaction {
+    // The buffer holds the messages until the commit fans them out, so it keeps what it is
+    // handed.
+    type Payload = Take;
     type Error = MemoryError;
     type Options = ();
 
     fn publish(
         &mut self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingMessage<'_, BytesMut>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), MemoryError>> {
         // Buffering is local to this value and never touches the bus; a commit against a

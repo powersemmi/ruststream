@@ -23,14 +23,15 @@ use std::future::Future;
 use thiserror::Error;
 
 use super::{
-    DestinationUse, ForSlot, Names, Outgoing, PublishIdentity, PublishLayer, PublishPipeline,
-    PublishStack, PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads,
-    SlotContext,
+    DestinationUse, ForSlot, Names, PublishIdentity, PublishLayer, PublishPipeline, PublishStack,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, SlotContext,
 };
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
 use crate::runtime::lifecycle::BoxError;
-use crate::{ConnectedBroker, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Publisher};
+use crate::{
+    ConnectedBroker, HeaderMap, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher,
+};
 
 /// One slot's [`PublishTransform`] stack, paired with the slot it was named on (so the transforms
 /// have their [`SlotContext`] to read) and with the publish path underneath it. Machinery; a
@@ -187,12 +188,13 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
 pub struct NamedDestinationSend<P>(P);
 
 impl<P: Publisher> Publisher for NamedDestinationSend<P> {
+    type Payload = P::Payload;
     type Error = P::Error;
     type Options = P::Options;
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         self.0.publish(msg, options).await
@@ -241,12 +243,12 @@ pub trait OutPipeline<W>: Send + Sync {
     fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> impl Future<Output = Result<(), Self::Error<P::Error>>> + Send
     where
         W: Publisher,
-        P: Publisher<Options = W::Options>;
+        P: Publisher<Options = W::Options, Payload = W::Payload>;
 }
 
 impl<W> OutPipeline<W> for PublishIdentity {
@@ -261,12 +263,12 @@ impl<W> OutPipeline<W> for PublishIdentity {
     async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> Result<(), P::Error>
     where
         W: Publisher,
-        P: Publisher<Options = W::Options>,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         leaf.publish(msg, options).await
     }
@@ -282,17 +284,17 @@ impl<W, Head: PublishLayer, Tail: PublishPipeline> OutPipeline<W> for PublishSta
     async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> Result<(), PipelinePublishError>
     where
         W: Publisher,
-        P: Publisher<Options = W::Options>,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         // The pipeline mutates the message, so the borrowed publish takes ownership of its parts
         // here; only a slot that actually has middleware pays for that.
         let (name, payload, headers) = msg.into_parts();
-        let mut out = Outgoing::rebuilding(name, payload, headers);
+        let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         self.run(&mut out, leaf, options)
             .await
             .map_err(PipelinePublishError)
@@ -317,24 +319,23 @@ where
     async fn send<P>(
         &self,
         leaf: &P,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, W::Payload>,
         options: Option<&P::Options>,
     ) -> Result<(), Self::Error<P::Error>>
     where
         W: Publisher,
-        P: Publisher<Options = W::Options>,
+        P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         // The transforms mutate the message and the call's settings, so both are taken by value
         // here; only a slot that actually mounts one pays for that.
         let (name, payload, headers) = msg.into_parts();
-        let mut out = Outgoing::rebuilding(name, payload, headers);
+        let mut out = <W::Payload as PayloadForm>::rebuilt(name.into(), payload, headers);
         let mut resolved = options.cloned();
         self.stack
             .apply(&mut out, &mut resolved, &SlotContext::new(self.slot));
         // The rebuilt message is dead once the leaf has it, so what the transforms wrote moves on
         // rather than being copied on.
-        let (name, payload, headers) = out.into_parts();
-        let sent = OutgoingMessage::assembled(&name, payload.into(), headers);
+        let sent = <W::Payload as PayloadForm>::leaving(&mut out);
         self.pipeline.send(leaf, sent, resolved.as_ref()).await
     }
 }
