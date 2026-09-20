@@ -51,10 +51,10 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
         _options: &mut Option<Options>,
         cx: &PublishContext<'_, C>,
     ) {
-        if let Some(to) = cx.headers().get("reply-to")
-            && let Ok(to) = std::str::from_utf8(to)
+        if let Some(to) = cx.headers().get_shared("reply-to")
+            && let Ok(to) = Str::try_from(to)
         {
-            out.set_name(to.to_owned());
+            out.set_name(to);
         }
     }
 }
@@ -88,7 +88,7 @@ fn app(messages: usize) -> Requests {
     }
 }
 
-#[library_benchmark(config = common::config(36_000, 27))]
+#[library_benchmark(config = common::config(32_000, 27))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]

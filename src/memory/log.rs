@@ -11,11 +11,10 @@ use std::{
     sync::Arc,
 };
 
-use bytes::Bytes;
 #[cfg(any(feature = "testing", test))]
 use bytes_utils::Str;
 
-use crate::HeaderMap;
+use super::DeliveryInner;
 #[cfg(any(feature = "testing", test))]
 use crate::RawMessage;
 
@@ -160,24 +159,19 @@ impl LogState {
         true
     }
 
-    /// Records `payload` under `name` and returns its absolute sequence number there.
+    /// Records the delivery `shared` stands for and returns its absolute sequence number under
+    /// its name.
     ///
     /// The key is cloned only for a name recorded for the first time; every later append reuses
     /// the `Arc<str>` the fanout already holds.
-    pub(super) fn append(
-        &mut self,
-        name: &Arc<str>,
-        payload: &Bytes,
-        headers: &Arc<HeaderMap>,
-    ) -> usize {
+    pub(super) fn append(&mut self, shared: &Arc<DeliveryInner>) -> usize {
         let Self::Recording { budget, names } = self else {
             return 0;
         };
-        let log = names.entry(Arc::clone(name)).or_default();
+        let log = names.entry(Arc::clone(&shared.name)).or_default();
         log.push(
             LogEntry {
-                payload: payload.clone(),
-                headers: Arc::clone(headers),
+                shared: Arc::clone(shared),
             },
             budget,
         )
@@ -250,8 +244,8 @@ impl NameLog {
         self.entries
             .iter()
             .map(|entry| {
-                RawMessage::new(name.clone(), entry.payload.clone())
-                    .with_headers((*entry.headers).clone())
+                RawMessage::new(name.clone(), entry.shared.payload.clone())
+                    .with_headers(entry.shared.headers.clone())
             })
             .collect()
     }
@@ -260,7 +254,7 @@ impl NameLog {
     /// message's absolute position.
     fn push(&mut self, entry: LogEntry, budget: &Budget) -> usize {
         let seq = self.next_seq();
-        self.bytes += entry.payload.len();
+        self.bytes += entry.shared.payload.len();
         self.entries.push_back(entry);
         // `Budget` has one variant without the harness feature, which makes the match
         // irrefutable there; the shape stays as it is because the other variant exists with it.
@@ -270,7 +264,7 @@ impl NameLog {
             // alone, rather than evicted by the same publish that produced it.
             while self.entries.len() > 1 && !retention.admits(self.entries.len(), self.bytes) {
                 if let Some(evicted) = self.entries.pop_front() {
-                    self.bytes -= evicted.payload.len();
+                    self.bytes -= evicted.shared.payload.len();
                     self.first_seq += 1;
                 }
             }
@@ -279,20 +273,15 @@ impl NameLog {
     }
 }
 
-/// One retained message. The name is the map key, so an entry does not repeat it, and both
-/// fields are the shared form the fanout already built: recording a publish is reference-count
-/// bumps, not allocations.
+/// One retained message: the very block the fanout handed to the subscribers, so recording a
+/// publish is one reference count and replaying it is one more.
 pub(super) struct LogEntry {
-    payload: Bytes,
-    headers: Arc<HeaderMap>,
+    shared: Arc<DeliveryInner>,
 }
 
 impl LogEntry {
-    pub(super) fn payload(&self) -> Bytes {
-        self.payload.clone()
-    }
-
-    pub(super) fn headers(&self) -> Arc<HeaderMap> {
-        Arc::clone(&self.headers)
+    /// The shared block, for the replay that turns this entry back into a delivery.
+    pub(super) fn shared(&self) -> Arc<DeliveryInner> {
+        Arc::clone(&self.shared)
     }
 }

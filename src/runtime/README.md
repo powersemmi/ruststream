@@ -451,7 +451,11 @@ after the `.out(..)` that named it. An impl declares three things: what it reads
 [`ForSlot`] sees the slot's name through [`SlotContext`]), which settings it writes (the
 `Options` parameter, `()` or the broker's type), and `type Destination`: [`Reads`] leaves the
 destination alone, [`Names`] sets it. A position offers `Names` only where nothing declared
-the destination, and once; elsewhere the `.transform(..)` call does not compile. A
+the destination, and once; elsewhere the `.transform(..)` call does not compile. A name a
+transform reads off the delivery - the queue a request asked to be answered on - reaches
+[`Outgoing::set_name`] as the delivery's own buffer, through
+[`HeaderMap::get_shared`](crate::HeaderMap::get_shared) and [`Str`](crate::Str), so naming a
+destination per message allocates nothing. A
 [`PublishLayer`] is app-wide, added with [`publish_layer`](RustStream::publish_layer), and
 wraps every publish a handler makes around the send. The order is a position's transforms as
 written, then the app-wide layers, then the send. Batch replies take `.batch_transform(..)`,

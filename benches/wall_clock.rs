@@ -19,7 +19,7 @@ mod common;
 
 use std::hint::black_box;
 
-use common::{Latch, MESSAGES, Order, Ready};
+use common::{Latch, MESSAGES, Order, Ready, Started};
 use divan::Bencher;
 use divan::counter::ItemsCount;
 use ruststream::memory::prelude::*;
@@ -66,6 +66,17 @@ fn replying() -> Ready {
     .ready()
 }
 
+// The same consume on a runtime with worker threads, publishing inside the timing: what a
+// delivery costs when the thread that produced it and the thread that handles it are different
+// ones. The instruction counts cannot see this - an atomic read-modify-write is one instruction
+// to callgrind whether the cache line is its own core's or another's.
+fn consuming_across_threads() -> Started {
+    common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
+        b.include(consume);
+    })
+    .started()
+}
+
 #[divan::bench]
 fn consume_json(bencher: Bencher) {
     bencher
@@ -80,4 +91,12 @@ fn reply(bencher: Bencher) {
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(replying)
         .bench_local_values(|ready| ready.runtime.block_on(ready.latch.drained()));
+}
+
+#[divan::bench]
+fn consume_json_across_threads(bencher: Bencher) {
+    bencher
+        .counter(ItemsCount::new(MESSAGES))
+        .with_inputs(consuming_across_threads)
+        .bench_local_values(|started| started.publish_and_drain());
 }

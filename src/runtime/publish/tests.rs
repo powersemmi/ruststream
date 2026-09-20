@@ -12,6 +12,8 @@ use crate::Publisher;
 #[cfg(all(feature = "memory", feature = "json"))]
 use crate::codec::Codec;
 
+use std::collections::HashSet;
+
 use super::*;
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
@@ -277,9 +279,9 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
 #[test]
 fn borrowed_name_is_not_owned() {
     // The macro-reply hot path passes a string literal: it must stay borrowed (no alloc),
-    // which is the whole point of the Cow.
+    // which is the whole point of the three forms.
     let out = Outgoing::new("orders.created", b"payload".as_slice());
-    assert!(matches!(out.name, Cow::Borrowed(_)));
+    assert!(matches!(out.name, OutgoingName::Borrowed(_)));
     assert_eq!(out.name(), "orders.created");
     assert_eq!(out.payload(), b"payload");
 }
@@ -288,8 +290,49 @@ fn borrowed_name_is_not_owned() {
 fn owned_name_moves_in() {
     let computed = format!("orders.{}", 42);
     let out = Outgoing::new(computed, BytesMut::from(&b"x"[..]));
-    assert!(matches!(out.name, Cow::Owned(_)));
+    assert!(matches!(out.name, OutgoingName::Owned(_)));
     assert_eq!(out.name(), "orders.42");
+}
+
+#[test]
+fn a_shared_name_keeps_the_buffer_it_was_read_from() {
+    // What a transform naming a destination off the delivery hands over: the header's own
+    // buffer, so the name costs a reference count and no copy.
+    let mut headers = HeaderMap::new();
+    headers.insert("reply-to", "replies.inbox");
+    let shared = Str::try_from(headers.get_shared("reply-to").expect("the header is there"))
+        .expect("the address is UTF-8");
+
+    let mut out = Outgoing::new("answers", b"{}".as_slice());
+    out.set_name(shared);
+    assert!(matches!(out.name, OutgoingName::Shared(_)));
+    assert_eq!(out.name(), "replies.inbox");
+}
+
+#[test]
+fn the_three_name_forms_read_as_one_name() {
+    let borrowed = OutgoingName::from("replies.inbox");
+    let owned = OutgoingName::from("replies.inbox".to_owned());
+    let shared = OutgoingName::from(Str::from_static("replies.inbox"));
+
+    assert_eq!(borrowed, owned);
+    assert_eq!(owned, shared);
+    assert_eq!(shared.as_str(), "replies.inbox");
+    assert_eq!(borrowed.to_string(), "replies.inbox");
+    assert_eq!(AsRef::<str>::as_ref(&owned), "replies.inbox");
+
+    let mut names = HashSet::new();
+    names.insert(borrowed);
+    names.insert(owned);
+    names.insert(shared);
+    assert_eq!(names.len(), 1, "the form a name came in is not part of it");
+
+    let from_cow = OutgoingName::from(Cow::Owned("orders.42".to_owned()));
+    assert!(matches!(from_cow, OutgoingName::Owned(_)));
+    assert!(matches!(
+        OutgoingName::from(Cow::Borrowed("orders")),
+        OutgoingName::Borrowed(_)
+    ));
 }
 
 #[test]

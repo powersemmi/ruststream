@@ -11,7 +11,8 @@ use bytes_utils::Str;
 /// buffers, [`Str`] and [`Bytes`], so cloning a map is a reference count per entry and a broker
 /// hands over a key its own read buffer already holds. Values are bytes to support arbitrary
 /// binary metadata. Typed accessors are provided for well-known fields commonly carried by
-/// message brokers; unknown headers are read through [`HeaderMap::get`].
+/// message brokers; unknown headers are read through [`HeaderMap::get`], or through
+/// [`HeaderMap::get_shared`] where the value is to outlive the borrow.
 ///
 /// # Examples
 ///
@@ -73,6 +74,34 @@ impl HeaderMap {
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         let key = normalize_borrowed(name);
         self.inner.get(key.as_ref()).map(Bytes::as_ref)
+    }
+
+    /// Returns a header value as the shared buffer the map stores, or `None` if the header is
+    /// absent.
+    ///
+    /// [`get`](Self::get) borrows the bytes for as long as the map lives; this hands over a
+    /// counted handle on them instead, which outlives the borrow and costs a reference count
+    /// rather than a copy. It is how a value becomes something that travels: a reply address read
+    /// off a delivery becomes an outgoing destination through `Str::try_from`, a UTF-8 check over
+    /// the same bytes that yields a [`Str`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{HeaderMap, Str};
+    ///
+    /// let mut headers = HeaderMap::new();
+    /// headers.insert("Reply-To", "replies.inbox");
+    ///
+    /// let shared = headers.get_shared("reply-to").ok_or("no reply address")?;
+    /// let destination = Str::try_from(shared)?;
+    /// assert_eq!(&*destination, "replies.inbox");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn get_shared(&self, name: &str) -> Option<Bytes> {
+        let key = normalize_borrowed(name);
+        self.inner.get(key.as_ref()).cloned()
     }
 
     /// Returns the value of a header decoded as UTF-8, or `None` if absent or not valid UTF-8.

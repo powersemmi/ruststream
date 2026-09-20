@@ -377,6 +377,37 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// open. Where it is not on offer, mounting a naming transform is a compile error at the mount
 /// site, which is what keeps a declaration and the wire in step. [`Outgoing::set_name`] stays a
 /// plain method; what is checked is the declaration, not the call.
+///
+/// A destination the delivery already carries travels as the delivery's own buffer:
+/// [`HeaderMap::get_shared`](crate::HeaderMap::get_shared) hands the header value over as a
+/// counted handle, <code>[Str](crate::Str)::try_from</code> checks it is UTF-8, and `set_name`
+/// takes the result. Answering where the request asked therefore costs a reference count, not a copy of the
+/// address.
+///
+/// ```
+/// use ruststream::Str;
+/// use ruststream::runtime::{ForReply, Names, Outgoing, PublishContext, PublishTransform};
+///
+/// /// Answers where the request asked to be answered.
+/// struct ReplyTo;
+///
+/// impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
+///     type Destination = Names;
+///
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         cx: &PublishContext<'_, C>,
+///     ) {
+///         if let Some(to) = cx.headers().get_shared("reply-to")
+///             && let Ok(to) = Str::try_from(to)
+///         {
+///             out.set_name(to);
+///         }
+///     }
+/// }
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a publish transform for `{K}` writing `{Options}`",
     note = "a transform states its position by the kind it implements: `PublishTransform<K>` for \

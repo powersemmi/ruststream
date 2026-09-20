@@ -87,14 +87,27 @@ struct MemoryOutbound {
     headers: HeaderMap,
 }
 
-/// A stamped message on its way to subscribers. The name and headers are shared, not owned:
-/// fanout clones one delivery per subscriber, so per-subscriber cost is reference-count bumps
-/// (plus the [`Bytes`] payload's own cheap clone), not string and map allocations.
-#[derive(Clone)]
-struct MemoryDelivery {
+/// What every copy of one published message shares: the name it was published to, its payload
+/// and its headers.
+///
+/// One block behind one reference count, rather than a counted field each. Every accessor the
+/// consumer contract asks for hands back a borrow ([`IncomingMessage::payload`],
+/// [`IncomingMessage::headers`], [`MemoryMessage::name`]), so nothing needs the fields to be
+/// counted apart, and a hand-over - the fanout copy per subscriber, a requeue, a replay off the
+/// publish log - is one atomic increment instead of three.
+struct DeliveryInner {
     name: Arc<str>,
     payload: Bytes,
-    headers: Arc<HeaderMap>,
+    headers: HeaderMap,
+}
+
+/// A stamped message on its way to subscribers.
+///
+/// Cloning one is a reference count on the shared block; what sits beside it is per copy rather
+/// than per message, which is what a requeue and a replay change.
+#[derive(Clone)]
+struct MemoryDelivery {
+    shared: Arc<DeliveryInner>,
     /// Zero-based index of this message in its name's publish log. Stable across requeues, so
     /// a redelivered message reports the same [`MemoryPosition`].
     seq: usize,
@@ -228,14 +241,18 @@ impl MemoryState {
     // block right after their last use.
     #[allow(clippy::significant_drop_tightening)]
     fn fanout(&self, outbound: MemoryOutbound) -> Result<(), MemoryError> {
-        // The outbound arrives by value: its headers move into a shared allocation once, its
-        // name is shared already, and every per-subscriber copy below is reference-count bumps.
+        // The outbound arrives by value: it moves into the shared block once, and every
+        // per-subscriber copy below is one reference count on that block.
         let MemoryOutbound {
             name,
             payload,
             headers,
         } = outbound;
-        let headers = Arc::new(headers);
+        let shared = Arc::new(DeliveryInner {
+            name,
+            payload,
+            headers,
+        });
         {
             let bus = self
                 .subscribers
@@ -250,13 +267,9 @@ impl MemoryState {
                 .recording
                 .load(Ordering::Acquire)
                 .then(|| self.log.lock().expect("memory broker mutex poisoned"));
-            let seq = log
-                .as_deref_mut()
-                .map_or(0, |log| log.append(&name, &payload, &headers));
+            let seq = log.as_deref_mut().map_or(0, |log| log.append(&shared));
             let delivery = MemoryDelivery {
-                name,
-                payload,
-                headers,
+                shared,
                 seq,
                 deliveries: NonZeroU64::MIN,
             };
@@ -268,7 +281,7 @@ impl MemoryState {
 
     /// Enqueues `delivery` to every subscriber registered under its name.
     fn send_to(&self, subscribers: &HashMap<String, Vec<Sender>>, delivery: &MemoryDelivery) {
-        if let Some(senders) = subscribers.get(&*delivery.name) {
+        if let Some(senders) = subscribers.get(&*delivery.shared.name) {
             for tx in senders {
                 let sent = tx.send(delivery.clone());
                 // Count every live enqueue so the harness can drive to quiescence. Request inboxes
@@ -276,7 +289,7 @@ impl MemoryState {
                 // loop, so it carries no coordinator and is never decremented.
                 #[cfg(feature = "testing")]
                 if sent.is_ok()
-                    && !delivery.name.starts_with("_inbox.")
+                    && !delivery.shared.name.starts_with("_inbox.")
                     && let Some(coordinator) = self.coordinator.get()
                 {
                     coordinator.enqueued();
@@ -1018,7 +1031,7 @@ impl<Log> Drop for MemoryMessage<Log> {
 impl<Log> fmt::Debug for MemoryMessage<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemoryMessage")
-            .field("name", &self.delivery.as_ref().map(|d| &*d.name))
+            .field("name", &self.delivery.as_ref().map(|d| &*d.shared.name))
             .finish_non_exhaustive()
     }
 }
@@ -1027,7 +1040,10 @@ impl<Log> MemoryMessage<Log> {
     /// Returns the name the message was published to.
     #[must_use]
     pub fn name(&self) -> &str {
-        self.delivery.as_ref().map(|d| &*d.name).unwrap_or_default()
+        self.delivery
+            .as_ref()
+            .map(|d| &*d.shared.name)
+            .unwrap_or_default()
     }
 
     /// Converts the delivery into a broker-agnostic [`RawMessage`]. Consumes the handle without
@@ -1040,9 +1056,10 @@ impl<Log> MemoryMessage<Log> {
     #[must_use]
     pub fn into_raw(mut self) -> RawMessage {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        // Cold path (test assertions): the shared name and headers are materialized here, not
-        // on the fanout.
-        RawMessage::new(&*delivery.name, delivery.payload).with_headers((*delivery.headers).clone())
+        // Cold path (test assertions): the name, the payload and the headers are copied out of
+        // the shared block here, not on the fanout.
+        RawMessage::new(&*delivery.shared.name, delivery.shared.payload.clone())
+            .with_headers(delivery.shared.headers.clone())
     }
 }
 
@@ -1050,7 +1067,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     fn payload(&self) -> &[u8] {
         self.delivery
             .as_ref()
-            .map(|d| d.payload.as_ref())
+            .map(|d| d.shared.payload.as_ref())
             .unwrap_or_default()
     }
 
@@ -1062,7 +1079,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
         static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
         self.delivery
             .as_ref()
-            .map_or_else(|| EMPTY.get_or_init(HeaderMap::new), |d| &d.headers)
+            .map_or_else(|| EMPTY.get_or_init(HeaderMap::new), |d| &d.shared.headers)
     }
 
     /// This broker counts what it delivers, so a registration's `max_attempts(..)` is spent on
