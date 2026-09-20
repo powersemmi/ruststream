@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::codec::{Codec, CodecError};
 use crate::{
     CallerName, FixedName, HeaderMap, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
-    OutgoingDestination, OutgoingMessage, SerializeHeadersError, WithHeaders,
+    OutgoingDestination, OutgoingMessage, OutgoingPayload, SerializeHeadersError, WithHeaders,
 };
 
 use super::sink::{CallCodec, PublishCodec, PublishSink};
@@ -389,7 +389,8 @@ pub enum PayloadError {
 #[doc(hidden)]
 pub trait WirePayload<T, Enc> {
     /// Produces the bytes that leave, into or beside `buf`: the encoded wire runs the resolved
-    /// codec, the serialized wire asks the value and never touches the codec.
+    /// codec and hands its buffer over, the serialized wire asks the value, never touches the
+    /// codec and lends what the value holds.
     ///
     /// # Errors
     ///
@@ -399,19 +400,20 @@ pub trait WirePayload<T, Enc> {
         value: &'v T,
         codec: &Enc,
         buf: &'v mut BytesMut,
-    ) -> Result<&'v [u8], PayloadError>;
+    ) -> Result<OutgoingPayload<'v>, PayloadError>;
 }
 
 impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
     fn payload<'v>(
         value: &'v T,
         codec: &Enc,
-        buf: &'v mut BytesMut,
-    ) -> Result<&'v [u8], PayloadError> {
-        // The codec's buffer moves into the slot the serialized wire writes into, so both lanes
-        // hand the sink one borrow and neither copies.
-        *buf = codec.codec().encode(value)?;
-        Ok(&buf[..])
+        _buf: &'v mut BytesMut,
+    ) -> Result<OutgoingPayload<'v>, PayloadError> {
+        // Nothing reads the codec's output after this publish, so it travels as the buffer it
+        // is: a transport that keeps owned bytes takes it instead of copying it.
+        Ok(OutgoingPayload::Shared(
+            codec.codec().encode(value)?.freeze(),
+        ))
     }
 }
 
@@ -420,9 +422,12 @@ impl<T: Serialized, Enc> WirePayload<T, Enc> for SerializedWire {
         value: &'v T,
         _codec: &Enc,
         buf: &'v mut BytesMut,
-    ) -> Result<&'v [u8], PayloadError> {
+    ) -> Result<OutgoingPayload<'v>, PayloadError> {
+        // The lane hands back a borrow of whatever the value holds, which may be the value's own
+        // bytes rather than `buf`, so this side of the publish lends and never claims ownership.
         value
             .wire_bytes(buf)
+            .map(OutgoingPayload::Borrowed)
             .map_err(|err| PayloadError::Serialize(Box::new(err)))
     }
 }
@@ -763,7 +768,7 @@ pub trait PublishAt {
 async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     mut sink: Sink,
     name: &str,
-    payload: &[u8],
+    payload: OutgoingPayload<'_>,
     headers: Hdrs,
     options: Option<&Sink::Options>,
 ) -> Result<(), PublishError<Sink::Error>> {
@@ -772,7 +777,7 @@ async fn deliver<Sink: PublishSink, Hdrs: PublishHeaders>(
     // cloned and nothing is allocated on the path every publisher takes today.
     let mut map = sink.base_headers().cloned().unwrap_or_default();
     headers.write(&mut map).map_err(PublishError::Headers)?;
-    let msg = OutgoingMessage::new(name, payload).with_headers(map);
+    let msg = OutgoingMessage::assembled(name, payload, map);
     sink.send(msg, options).await.map_err(PublishError::Publish)
 }
 
@@ -793,9 +798,9 @@ where
     T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders,
 {
-    // The buffer the serialized wire writes into and the encoded wire's codec output moves into.
-    // `BytesMut::new` does not allocate, so a value that lends bytes it already holds pays
-    // nothing for it.
+    // The buffer the serialized wire writes into; the encoded wire hands its codec's own buffer
+    // over and never touches this one. `BytesMut::new` does not allocate, so a value that lends
+    // bytes it already holds pays nothing for it.
     let mut buf = BytesMut::new();
     let payload = <T::Wire as WirePayload<T, Enc>>::payload(value, &codec, &mut buf)?;
     deliver(sink, name, payload, headers, options).await
@@ -905,6 +910,9 @@ where
         } = self;
         // Bytes declare no name of their own, so the destination is always the supplied one.
         let name = dest.resolve("");
-        deliver(sink, name, body.0, headers, options.as_ref()).await
+        // The caller owns these bytes and keeps them for the length of the call, so the publish
+        // lends them on rather than claiming a buffer it never produced.
+        let payload = OutgoingPayload::Borrowed(body.0);
+        deliver(sink, name, payload, headers, options.as_ref()).await
     }
 }

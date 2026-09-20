@@ -91,25 +91,23 @@ where
             // The publisher's own constants sit under the delivery's headers, as they do under
             // any publish through it; the transforms then see the message as it will be sent.
             let (name, payload, delivered) = msg.into_parts();
-            let mut out = Outgoing::lending(name, payload);
-            if let Some(base) = self.live.base_headers() {
-                let headers = out.headers_mut();
-                for (key, value) in base.iter() {
-                    headers.insert(key.to_owned(), value.to_owned());
-                }
+            let headers = if let Some(base) = self.live.base_headers() {
+                let mut headers = base.clone();
                 for (key, value) in delivered.iter() {
                     headers.insert(key.to_owned(), value.to_owned());
                 }
+                headers
             } else {
                 // With nothing to sit over, the delivery's map is the outgoing one.
-                *out.headers_mut() = delivered;
-            }
+                delivered
+            };
+            let mut out = Outgoing::rebuilding(name, payload, headers);
             let mut options: Option<Live::Options> = None;
             self.stack.apply(&mut out, &mut options, cx);
             // The copy is dead once the leaf has it, so what the transforms wrote moves on rather
             // than being copied on.
             let (name, payload, headers) = out.into_parts();
-            let sent = OutgoingMessage::new(&name, payload.as_slice()).with_headers(headers);
+            let sent = OutgoingMessage::assembled(&name, payload.into(), headers);
             self.pipeline
                 .send(&self.live, sent, options.as_ref())
                 .await

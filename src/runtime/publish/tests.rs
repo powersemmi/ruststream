@@ -350,7 +350,7 @@ fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
     // What a publish stage rebuilding a message starts from: a transform that stamps a header
     // reads the payload and never copies it, and the copy happens at the first write.
     let body = b"body".to_vec();
-    let mut out = Outgoing::lending("t", &body);
+    let mut out = Outgoing::rebuilding("t", OutgoingPayload::Borrowed(&body), HeaderMap::new());
     assert!(matches!(out.payload, Payload::Lent(_)));
     assert_eq!(out.payload(), b"body");
 
@@ -361,6 +361,41 @@ fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
 
     out.set_payload(b"fresh".as_slice());
     assert_eq!(out.payload(), b"fresh");
+}
+
+#[test]
+fn a_handed_over_payload_is_copied_where_something_writes_and_nowhere_else() {
+    // What a slot's transform sees once the publish handed its buffer over: reading it costs
+    // nothing, and the copy happens at the first write, leaving the handed-over buffer alone.
+    let body = Bytes::from_static(b"body");
+    let mut out =
+        Outgoing::rebuilding("t", OutgoingPayload::Shared(body.clone()), HeaderMap::new());
+    assert!(matches!(out.payload, Payload::Shared(_)));
+    assert_eq!(out.payload(), b"body");
+
+    out.payload_mut().extend_from_slice(b"!");
+    assert!(matches!(out.payload, Payload::Owned(_)));
+    assert_eq!(out.payload(), b"body!");
+    assert_eq!(
+        body,
+        b"body".as_slice(),
+        "the buffer it was handed is left as it was"
+    );
+}
+
+#[test]
+fn the_terminal_takes_the_payload_in_the_form_it_travelled_in() {
+    // What the broker is handed: a buffer the pipeline owns leaves as a buffer it can keep, and
+    // bytes the pipeline was only lent leave as a borrow.
+    let mut lent = Outgoing::rebuilding("t", OutgoingPayload::Borrowed(b"body"), HeaderMap::new());
+    assert!(matches!(lent.take_payload(), OutgoingPayload::Borrowed(_)));
+
+    let handed = Bytes::from_static(b"body");
+    let mut shared = Outgoing::rebuilding("t", OutgoingPayload::Shared(handed), HeaderMap::new());
+    assert!(matches!(shared.take_payload(), OutgoingPayload::Shared(_)));
+
+    let mut owned = Outgoing::new("t", BytesMut::from(&b"body"[..]));
+    assert!(matches!(owned.take_payload(), OutgoingPayload::Shared(_)));
 }
 
 #[test]

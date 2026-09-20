@@ -87,6 +87,20 @@ struct MemoryOutbound {
     headers: HeaderMap,
 }
 
+impl From<OutgoingMessage<'_>> for MemoryOutbound {
+    fn from(msg: OutgoingMessage<'_>) -> Self {
+        let name = Arc::from(msg.name());
+        let headers = msg.headers().clone();
+        Self {
+            name,
+            // The publish hands the buffer it produced over, so the bus keeps that buffer; only
+            // a message lending someone else's bytes is copied here.
+            payload: msg.into_payload().into_bytes(),
+            headers,
+        }
+    }
+}
+
 /// What every copy of one published message shares: the name it was published to, its payload
 /// and its headers.
 ///
@@ -978,11 +992,7 @@ impl Publisher for MemoryPublisher {
         msg: OutgoingMessage<'_>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let outbound = MemoryOutbound {
-            name: Arc::from(msg.name()),
-            payload: Bytes::copy_from_slice(msg.payload()),
-            headers: msg.headers().clone(),
-        };
+        let outbound = MemoryOutbound::from(msg);
         {
             let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
             if let Some(buffered) = txn.as_mut() {

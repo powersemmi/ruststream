@@ -19,7 +19,6 @@ use std::{
     time::Duration,
 };
 
-use bytes::Bytes;
 use futures::{Stream, task::AtomicWaker};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
@@ -137,11 +136,7 @@ impl Publisher for MemoryRequester {
         msg: OutgoingMessage<'_>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        let outbound = MemoryOutbound {
-            name: Arc::from(msg.name()),
-            payload: Bytes::copy_from_slice(msg.payload()),
-            headers: msg.headers().clone(),
-        };
+        let outbound = MemoryOutbound::from(msg);
         ready(
             self.state
                 .fanout(outbound)
@@ -167,11 +162,14 @@ impl RequestReply for MemoryRequester {
             .register(inbox.clone(), tx.clone())
             .map_err(|_| RequestError::ShutDown)?;
 
+        // The name is the caller's buffer, so reading it here leaves the message free to be
+        // consumed for its payload below.
+        let subject = msg.name();
         let mut headers = msg.headers().clone();
         headers.insert("reply-to", inbox.clone());
         let outbound = MemoryOutbound {
-            name: Arc::from(msg.name()),
-            payload: Bytes::copy_from_slice(msg.payload()),
+            name: Arc::from(subject),
+            payload: msg.into_payload().into_bytes(),
             headers,
         };
         if self.state.fanout(outbound).is_err() {
@@ -195,7 +193,7 @@ impl RequestReply for MemoryRequester {
             // `tx` is held on this stack frame, so the channel cannot report closed.
             Ok(None) => unreachable!("request inbox closed while its sender is held"),
             Err(_) => Err(RequestError::Timeout {
-                subject: msg.name().to_owned(),
+                subject: subject.to_owned(),
                 timeout: wait,
             }),
         }
@@ -390,11 +388,7 @@ impl Transaction for MemoryTransaction {
     ) -> impl Future<Output = Result<(), MemoryError>> {
         // Buffering is local to this value and never touches the bus; a commit against a
         // shut-down bus is what reports the error.
-        self.buffered.push(MemoryOutbound {
-            name: Arc::from(msg.name()),
-            payload: Bytes::copy_from_slice(msg.payload()),
-            headers: msg.headers().clone(),
-        });
+        self.buffered.push(MemoryOutbound::from(msg));
         ready(Ok(()))
     }
 

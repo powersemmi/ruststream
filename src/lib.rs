@@ -148,7 +148,7 @@ pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use error::{AckError, DeclareRetryError};
 pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 pub use headers::HeaderMap;
-pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
+pub use message::{IncomingMessage, OutgoingMessage, OutgoingPayload, RawMessage};
 pub use publisher::{DefaultPublish, PairError, PublishPolicy, Publisher};
 pub use schema::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
