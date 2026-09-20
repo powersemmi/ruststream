@@ -130,6 +130,15 @@ const _: () = assert!(
 
 impl OutgoingPayload<'_> {
     /// The bytes, wherever they live.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::OutgoingMessage;
+    ///
+    /// let payload = OutgoingMessage::new("orders.created", b"{}").into_payload();
+    /// assert_eq!(payload.as_slice(), b"{}");
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
