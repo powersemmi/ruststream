@@ -73,7 +73,7 @@ pub trait PayloadForm: sealed::Sealed {
     /// The publish path's scratch, as this form takes it: inside a dispatch loop, the one buffer
     /// that loop reuses.
     #[doc(hidden)]
-    fn encode_slot<'a>(buf: &'a mut BytesMut) -> Self::Encode<'a>;
+    fn encode_slot(buf: &mut BytesMut) -> Self::Encode<'_>;
 
     /// The same scratch again, for the next message of a batch: what a form that carries a
     /// buffer lends on, and nothing for one that carries none.

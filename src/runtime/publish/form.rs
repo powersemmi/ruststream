@@ -39,10 +39,13 @@ impl PayloadForm for Lend {
     type Spent = (Option<OutgoingName<'static>>, Option<BytesMut>);
 
     #[inline]
-    fn encode_slot<'a>(buf: &'a mut BytesMut) -> &'a mut BytesMut {
+    fn encode_slot(buf: &mut BytesMut) -> &mut BytesMut {
         buf
     }
 
+    // The slot is itself the borrow of the loop's buffer, so lending it again is a borrow of a
+    // borrow; there is no shape of this that is not `&mut &mut`.
+    #[allow(clippy::mut_mut)]
     #[inline]
     fn encode_again<'s, 'a: 's>(slot: &'s mut &'a mut BytesMut) -> &'s mut BytesMut {
         slot
@@ -117,7 +120,7 @@ impl PayloadForm for Take {
     type Spent = Option<OutgoingName<'static>>;
 
     #[inline]
-    fn encode_slot<'a>(_buf: &'a mut BytesMut) -> PhantomData<&'a mut BytesMut> {
+    fn encode_slot(_buf: &mut BytesMut) -> PhantomData<&mut BytesMut> {
         PhantomData
     }
 
@@ -162,7 +165,7 @@ impl PayloadForm for Take {
     }
 
     #[inline]
-    fn rebuilt<'a>(name: OutgoingName<'a>, payload: BytesMut, headers: HeaderMap) -> Outgoing<'a> {
+    fn rebuilt(name: OutgoingName<'_>, payload: BytesMut, headers: HeaderMap) -> Outgoing<'_> {
         Outgoing::rebuilding(name, Payload::Owned(payload), headers)
     }
 
