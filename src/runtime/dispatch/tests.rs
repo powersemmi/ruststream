@@ -1,11 +1,10 @@
 use std::future::ready;
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicU8, Ordering},
 };
 
 use futures::{StreamExt, poll, stream};
-use tokio::sync::Notify;
 use tokio::time::timeout;
 
 use super::*;
@@ -134,6 +133,42 @@ impl Subscriber for ScriptedSubscriber {
 /// subscription rather than stopped on the shutdown signal.
 const BACKLOG: usize = 10_000;
 
+/// One delivery of the backlog, carrying its own position: what a handler reports, so a test can
+/// tell a delivery the loop lost from one it handled twice.
+fn numbered(position: usize) -> PlainMessage {
+    PlainMessage {
+        payload: Bytes::copy_from_slice(&position.to_le_bytes()),
+        headers: HeaderMap::new(),
+        settled: Arc::new(AtomicU8::new(0)),
+        settlement: Settlement::Accepted,
+    }
+}
+
+/// The position [`numbered`] wrote into a delivery.
+fn position_of(payload: &Bytes) -> usize {
+    usize::from_le_bytes(
+        payload
+            .as_ref()
+            .try_into()
+            .expect("a delivery of the numbered backlog"),
+    )
+}
+
+/// The batch form of a subscriber's own stream. A batch closes as soon as it is full, so the
+/// size stays at one: a subscription that goes quiet hands over the delivery it has rather than
+/// waiting for the rest of the batch.
+fn batched<S>(
+    stream: S,
+    size: NonZeroUsize,
+) -> impl Stream<Item = Result<Vec<PlainMessage>, StreamFault>> + Send
+where
+    S: Stream<Item = Result<PlainMessage, StreamFault>> + Send,
+{
+    stream
+        .chunks(size.get())
+        .map(|chunk| chunk.into_iter().collect())
+}
+
 /// A subscriber with a long backlog, every delivery ready on the first poll: the loop never
 /// waits on it, so the shutdown signal is the only thing that can stop it early.
 struct SaturatedSubscriber;
@@ -143,15 +178,18 @@ impl Subscriber for SaturatedSubscriber {
     type Error = StreamFault;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        stream::repeat_with(|| {
-            Ok(PlainMessage {
-                payload: Bytes::from_static(b"body"),
-                headers: HeaderMap::new(),
-                settled: Arc::new(AtomicU8::new(0)),
-                settlement: Settlement::Accepted,
-            })
-        })
-        .take(BACKLOG)
+        stream::iter((0..BACKLOG).map(|position| Ok(numbered(position))))
+    }
+}
+
+impl BatchSubscriber for SaturatedSubscriber {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+        batched(self.stream(), size)
     }
 }
 
@@ -164,13 +202,18 @@ impl Subscriber for QuietSubscriber {
     type Error = StreamFault;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        stream::once(ready(Ok(PlainMessage {
-            payload: Bytes::from_static(b"body"),
-            headers: HeaderMap::new(),
-            settled: Arc::new(AtomicU8::new(0)),
-            settlement: Settlement::Accepted,
-        })))
-        .chain(stream::pending())
+        stream::once(ready(Ok(numbered(0)))).chain(stream::pending())
+    }
+}
+
+impl BatchSubscriber for QuietSubscriber {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+        batched(self.stream(), size)
     }
 }
 
@@ -293,62 +336,133 @@ async fn a_stream_error_does_not_stop_the_keyed_lanes() {
     );
 }
 
-/// Counts deliveries and wakes the test on the first one. Unlike `ReportingHandler` it keeps
-/// nothing per delivery, so a loop that missed the shutdown signal works through the backlog and
-/// fails the count rather than filling memory.
-struct CountingHandler {
-    handled: Arc<AtomicUsize>,
-    first: Arc<Notify>,
+/// Reports every delivery of a batch and settles it, the way the batch adapters do: a batch
+/// handler owns the deliveries it was handed.
+struct ReportingBatchHandler {
+    seen: mpsc::UnboundedSender<Bytes>,
 }
 
-impl Handler<PlainMessage, (), ()> for CountingHandler {
-    fn handle(
+impl BatchHandler<PlainMessage, (), ()> for ReportingBatchHandler {
+    type Scratch = ();
+
+    fn handle_batch(
         &self,
-        _msg: &PlainMessage,
+        batch: Vec<PlainMessage>,
+        _scratch: &mut Self::Scratch,
         _ctx: &mut Context<'_, (), ()>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
-        let handled = Arc::clone(&self.handled);
-        let first = Arc::clone(&self.first);
+    ) -> impl Future<Output = ()> + Send {
+        let seen = self.seen.clone();
         async move {
-            if handled.fetch_add(1, Ordering::Relaxed) == 0 {
-                first.notify_one();
+            for msg in batch {
+                seen.send(msg.payload.clone())
+                    .expect("the test holds the receiver");
+                msg.ack().await.expect("the test delivery settles");
             }
-            HandlerOutcome::ack()
         }
     }
 }
 
-/// Drives `subscriber`, signals shutdown once the first delivery has been handled, and reports
-/// how many deliveries the loop handled before it stopped - or `None` where it never stopped.
-async fn handled_before_shutdown<S>(subscriber: S) -> Option<usize>
+/// The worker policies a subscription runs under, each with a dispatch loop of its own:
+/// sequential, a pool, and keyed lanes.
+const WORKER_FORMS: [Workers; 3] = [
+    Workers::sequential(),
+    Workers::pool(crate::nonzero!(2usize)),
+    Workers::keyed(crate::nonzero!(2usize)),
+];
+
+/// The batch loop drives both of its own forms from one place, so both are worth the same
+/// shutdown check; keyed lanes do not apply at batch granularity.
+const BATCH_FORMS: [Workers; 2] = [
+    Workers::sequential(),
+    Workers::pool(crate::nonzero!(2usize)),
+];
+
+/// Starts the loop `workers` names over `subscriber`, reporting each delivery it handled.
+fn reporting_workers<S>(
+    subscriber: S,
+    workers: Workers,
+) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
 where
     S: Subscriber<Message = PlainMessage> + Send + 'static,
 {
+    move |shutdown, seen| {
+        spawn_dispatch_workers(
+            subscriber,
+            Arc::new(ReportingHandler { seen }),
+            shutdown,
+            Arc::from("orders"),
+            Arc::new(()),
+            Arc::new(Delivery::empty()),
+            dispatch_failure(),
+            workers,
+        )
+    }
+}
+
+/// Starts the batch loop over `subscriber` under `workers`, reporting each delivery it handled.
+fn reporting_batches<S>(
+    subscriber: S,
+    workers: Workers,
+) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
+where
+    S: BatchSubscriber<Message = PlainMessage, Batch = Vec<PlainMessage>> + Send + 'static,
+{
+    move |shutdown, seen| {
+        spawn_batch_dispatch::<_, _, (), _>(
+            subscriber,
+            Arc::new(ReportingBatchHandler { seen }),
+            shutdown,
+            Arc::from("orders"),
+            Arc::new(()),
+            Arc::new(Delivery::empty()),
+            dispatch_failure(),
+            workers,
+            crate::nonzero!(1usize),
+        )
+    }
+}
+
+/// Runs one dispatch loop, signals shutdown once the first delivery has been handled, and
+/// reports the backlog positions the loop handled before it stopped - or `None` where it never
+/// stopped. `spawn` starts the loop under test on the token and the channel its handler reports
+/// through.
+async fn handled_before_shutdown<Spawn>(spawn: Spawn) -> Option<Vec<usize>>
+where
+    Spawn: FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
+{
     let shutdown = CancellationToken::new();
-    let first = Arc::new(Notify::new());
-    let handled = Arc::new(AtomicUsize::new(0));
-    let joined = spawn_dispatch(
-        subscriber,
-        Arc::new(CountingHandler {
-            handled: Arc::clone(&handled),
-            first: Arc::clone(&first),
-        }),
-        shutdown.clone(),
-        Arc::from("orders"),
-        Arc::new(()),
-        Arc::new(Delivery::empty()),
-        dispatch_failure(),
-    );
+    let (seen, mut arrived) = mpsc::unbounded_channel();
+    let joined = spawn(shutdown.clone(), seen);
     // One delivery in, so the loop is running rather than about to start.
-    first.notified().await;
+    let first = arrived.recv().await.expect("a first delivery");
     shutdown.cancel();
     timeout(Duration::from_secs(5), joined)
         .await
-        .ok()
-        .map(|joined| {
-            joined.expect("dispatch task should not panic");
-            handled.load(Ordering::Acquire)
-        })
+        .ok()?
+        .expect("dispatch task should not panic");
+    // The loop and its handler are gone with the task, so the channel ends where the loop did.
+    let mut handled = vec![position_of(&first)];
+    while let Some(payload) = arrived.recv().await {
+        handled.push(position_of(&payload));
+    }
+    Some(handled)
+}
+
+/// The loop stopped on the signal rather than on the end of the backlog, and took every delivery
+/// it handled off the subscription exactly once.
+fn assert_stopped_early(handled: &[usize], form: Workers) {
+    assert!(
+        handled.len() < BACKLOG,
+        "{form:?} drained the subscription instead of stopping: {} deliveries",
+        handled.len(),
+    );
+    let mut ordered = handled.to_vec();
+    ordered.sort_unstable();
+    assert_eq!(
+        ordered,
+        (0..handled.len()).collect::<Vec<_>>(),
+        "{form:?} lost a delivery or handled one twice",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -356,23 +470,40 @@ async fn shutdown_stops_a_loop_whose_subscription_never_runs_dry() {
     // A saturated subscription: every poll has a delivery ready, so the loop never waits for
     // anything. A loop that consulted the token only where the stream had nothing ready would
     // work through the whole backlog before it noticed.
-    let handled = handled_before_shutdown(SaturatedSubscriber)
-        .await
-        .expect("the loop kept consuming after the shutdown signal");
-    assert!(
-        handled < BACKLOG,
-        "the loop drained the subscription instead of stopping: {handled} deliveries",
-    );
+    for form in WORKER_FORMS {
+        let handled = handled_before_shutdown(reporting_workers(SaturatedSubscriber, form))
+            .await
+            .unwrap_or_else(|| panic!("{form:?} kept consuming after the shutdown signal"));
+        assert_stopped_early(&handled, form);
+    }
+    for form in BATCH_FORMS {
+        let handled = handled_before_shutdown(reporting_batches(SaturatedSubscriber, form))
+            .await
+            .unwrap_or_else(|| panic!("batches under {form:?} kept consuming after the signal"));
+        assert_stopped_early(&handled, form);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
     // The other edge: nothing more is delivered, so the loop is parked when the signal arrives
     // and the token's own wait future is what has to wake it.
-    assert!(
-        handled_before_shutdown(QuietSubscriber).await.is_some(),
-        "the parked loop never woke on the shutdown signal",
-    );
+    for form in WORKER_FORMS {
+        let handled = handled_before_shutdown(reporting_workers(QuietSubscriber, form))
+            .await
+            .unwrap_or_else(|| panic!("{form:?} never woke on the shutdown signal"));
+        assert_eq!(handled, [0], "{form:?} lost or repeated the one delivery");
+    }
+    for form in BATCH_FORMS {
+        let handled = handled_before_shutdown(reporting_batches(QuietSubscriber, form))
+            .await
+            .unwrap_or_else(|| panic!("batches under {form:?} never woke on the signal"));
+        assert_eq!(
+            handled,
+            [0],
+            "batches under {form:?} lost or repeated the one delivery",
+        );
+    }
 }
 
 #[tokio::test]

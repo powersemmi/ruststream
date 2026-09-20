@@ -13,9 +13,9 @@ use std::task::Poll;
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{FutureExt, Stream};
 use tokio::sync::mpsc;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
@@ -307,11 +307,12 @@ enum Turn<T> {
 
 /// Waits for whichever comes first: the next item off `stream`, or `shutdown`.
 ///
-/// `cancelled` is the token's own wait future, built once per subscription by the caller and
-/// pinned across the whole loop. A delivery therefore costs one read of the token's flag rather
-/// than a future created, registered with the token's waiter list and dropped again - which is
-/// what a `select!` over `cancelled()` charges on every iteration. The future is polled only
-/// where the stream has nothing ready, which is the only case that has to wait for anything.
+/// The stream is polled first and `cancelled` only where it answers `Pending`, so a turn that
+/// finds a delivery ready never touches the token's waiter list: what shutdown costs a busy
+/// subscription is the one flag read above. `cancelled` is the token's own wait future, built
+/// once per subscription by the caller and pinned across the whole loop, so the turn that does
+/// park registers with the waiter list once rather than on every iteration, which is what a
+/// `select!` over `cancelled()` charges.
 ///
 /// # Cancel safety
 ///
@@ -319,6 +320,10 @@ enum Turn<T> {
 /// state across `poll_next`) and no wakeup (a registration with the token's waiter list outlives
 /// the poll). Once `cancelled` has resolved the flag stays set - a token never un-cancels - so
 /// the check at the top answers every later turn and the resolved future is never polled again.
+///
+/// The pooled loops write the same wait out rather than calling this: measured on `consume_json`,
+/// one instantiation shared with them is enough for the compiler to stop inlining it here, and
+/// the call frame it leaves costs the sequential path five instructions a delivery.
 async fn turn<St, Wait>(
     shutdown: &CancellationToken,
     mut stream: Pin<&mut St>,
@@ -333,6 +338,31 @@ where
     }
     poll_fn(move |cx| match stream.as_mut().poll_next(cx) {
         Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+        Poll::Ready(None) => Poll::Ready(Turn::Ended),
+        Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+    })
+    .await
+}
+
+/// Waits for whichever comes first: a finished worker off `tasks`, or `shutdown`.
+///
+/// [`turn`]'s counterpart for a full pool, in the same order and over the same pinned token
+/// future: a worker that has already finished is reaped without the token's waiter list being
+/// touched. `Ended` answers an empty set, which a full pool cannot be.
+///
+/// # Cancel safety
+///
+/// Cancel-safe, like [`turn`]: a `JoinSet` keeps its finished workers across polls, and the
+/// registration a parked poll made with the waiter list outlives that poll.
+async fn reap<Wait>(
+    tasks: &mut JoinSet<()>,
+    mut cancelled: Pin<&mut Wait>,
+) -> Turn<Result<(), JoinError>>
+where
+    Wait: Future<Output = ()>,
+{
+    poll_fn(|cx| match tasks.poll_join_next(cx) {
+        Poll::Ready(Some(joined)) => Poll::Ready(Turn::Delivery(joined)),
         Poll::Ready(None) => Poll::Ready(Turn::Ended),
         Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
     })
@@ -402,41 +432,57 @@ where
 {
     tokio::spawn(async move {
         let mut stream = std::pin::pin!(subscriber.stream());
+        let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut tasks = JoinSet::new();
         loop {
-            tokio::select! {
-                () = shutdown.cancelled() => break,
+            if shutdown.is_cancelled() {
+                break;
+            }
+            if tasks.len() >= workers.count {
                 // The pool is full: reap a finished worker before polling for more.
-                Some(joined) = tasks.join_next(), if tasks.len() >= workers.count => {
-                    log_worker_exit(joined);
+                match reap(&mut tasks, cancelled.as_mut()).await {
+                    Turn::Delivery(joined) => log_worker_exit(joined),
+                    // A full pool holds a worker, so `Ended` is shutdown's twin here: either
+                    // way the drain below joins whatever is still running.
+                    Turn::Ended | Turn::Shutdown => break,
                 }
-                next = stream.next(), if tasks.len() < workers.count => match next {
-                    Some(Ok(msg)) => {
-                        let handler = Arc::clone(&handler);
-                        let name = Arc::clone(&name);
-                        let state = Arc::clone(&state);
-                        let delivery = Arc::clone(&delivery);
-                        let failure = failure.clone();
-                        tasks.spawn(async move {
-                            dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
-                        });
-                    }
-                    Some(Err(err)) => {
-                        error!(
-                            target: "ruststream::dispatch",
-                            error = %err,
-                            "subscriber stream error",
-                        );
-                    }
-                    None => {
-                        debug!(
-                            target: "ruststream::dispatch",
-                            subscriber = %name,
-                            "subscriber stream ended",
-                        );
-                        break;
-                    }
+                continue;
+            }
+            // The stream first, the token only where the stream has nothing: see `turn`, whose
+            // wait this is.
+            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+                Poll::Ready(None) => Poll::Ready(Turn::Ended),
+                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+            })
+            .await;
+            match pulled {
+                Turn::Delivery(Ok(msg)) => {
+                    let handler = Arc::clone(&handler);
+                    let name = Arc::clone(&name);
+                    let state = Arc::clone(&state);
+                    let delivery = Arc::clone(&delivery);
+                    let failure = failure.clone();
+                    tasks.spawn(async move {
+                        dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
+                    });
                 }
+                Turn::Delivery(Err(err)) => {
+                    error!(
+                        target: "ruststream::dispatch",
+                        error = %err,
+                        "subscriber stream error",
+                    );
+                }
+                Turn::Ended => {
+                    debug!(
+                        target: "ruststream::dispatch",
+                        subscriber = %name,
+                        "subscriber stream ended",
+                    );
+                    break;
+                }
+                Turn::Shutdown => break,
             }
         }
         while let Some(joined) = tasks.join_next().await {
@@ -546,7 +592,7 @@ fn lane_of(key: &[u8], lanes: usize) -> usize {
     }
 }
 
-fn log_worker_exit(joined: Result<(), tokio::task::JoinError>) {
+fn log_worker_exit(joined: Result<(), JoinError>) {
     if let Err(err) = joined {
         error!(target: "ruststream::dispatch", error = %err, "worker task failed");
     }
@@ -582,63 +628,79 @@ where
         // The registration's own batch size, straight to the broker: whatever comes back is the
         // batch the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(batch_size));
+        let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut tasks = JoinSet::new();
         // One decode buffer for the whole loop: the sequential path lends the same one to every
         // batch, so the slice a handler reads is allocated once for the subscription.
         let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
         loop {
-            tokio::select! {
-                () = shutdown.cancelled() => break,
+            if shutdown.is_cancelled() {
+                break;
+            }
+            if tasks.len() >= workers.count {
                 // The pool is full: reap a finished worker before polling for more.
-                Some(joined) = tasks.join_next(), if tasks.len() >= workers.count => {
-                    log_worker_exit(joined);
+                match reap(&mut tasks, cancelled.as_mut()).await {
+                    Turn::Delivery(joined) => log_worker_exit(joined),
+                    // A full pool holds a worker, so `Ended` is shutdown's twin here: either
+                    // way the drain below joins whatever is still running.
+                    Turn::Ended | Turn::Shutdown => break,
                 }
-                next = stream.next(), if tasks.len() < workers.count => match next {
-                    Some(Ok(batch)) => {
-                        let batch: Vec<S::Message> = batch.into_iter().collect();
-                        if workers.is_sequential() {
-                            // Turbofish: the adapter handlers are generic over the batch
-                            // context, so the spawn's own parameter names it.
-                            run_batch::<_, _, C, _>(
-                                &*handler,
-                                batch,
-                                &mut scratch,
-                                &name,
-                                &state,
-                                &delivery,
-                                &failure,
+                continue;
+            }
+            // The stream first, the token only where the stream has nothing: see `turn`, whose
+            // wait this is.
+            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+                Poll::Ready(None) => Poll::Ready(Turn::Ended),
+                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+            })
+            .await;
+            match pulled {
+                Turn::Delivery(Ok(batch)) => {
+                    let batch: Vec<S::Message> = batch.into_iter().collect();
+                    if workers.is_sequential() {
+                        // Turbofish: the adapter handlers are generic over the batch context,
+                        // so the spawn's own parameter names it.
+                        run_batch::<_, _, C, _>(
+                            &*handler,
+                            batch,
+                            &mut scratch,
+                            &name,
+                            &state,
+                            &delivery,
+                            &failure,
+                        )
+                        .await;
+                    } else {
+                        let handler = Arc::clone(&handler);
+                        let name = Arc::clone(&name);
+                        let state = Arc::clone(&state);
+                        let delivery = Arc::clone(&delivery);
+                        let failure = failure.clone();
+                        tasks.spawn(async move {
+                            run_pooled_batch::<_, _, C, _>(
+                                &*handler, batch, &name, &state, &delivery, &failure,
                             )
                             .await;
-                        } else {
-                            let handler = Arc::clone(&handler);
-                            let name = Arc::clone(&name);
-                            let state = Arc::clone(&state);
-                            let delivery = Arc::clone(&delivery);
-                            let failure = failure.clone();
-                            tasks.spawn(async move {
-                                run_pooled_batch::<_, _, C, _>(
-                                    &*handler, batch, &name, &state, &delivery, &failure,
-                                )
-                                .await;
-                            });
-                        }
-                    }
-                    Some(Err(err)) => {
-                        error!(
-                            target: "ruststream::dispatch",
-                            error = %err,
-                            "subscriber stream error",
-                        );
-                    }
-                    None => {
-                        debug!(
-                            target: "ruststream::dispatch",
-                            subscriber = %name,
-                            "subscriber stream ended",
-                        );
-                        break;
+                        });
                     }
                 }
+                Turn::Delivery(Err(err)) => {
+                    error!(
+                        target: "ruststream::dispatch",
+                        error = %err,
+                        "subscriber stream error",
+                    );
+                }
+                Turn::Ended => {
+                    debug!(
+                        target: "ruststream::dispatch",
+                        subscriber = %name,
+                        "subscriber stream ended",
+                    );
+                    break;
+                }
+                Turn::Shutdown => break,
             }
         }
         while let Some(joined) = tasks.join_next().await {
