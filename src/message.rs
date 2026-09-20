@@ -85,9 +85,8 @@ impl RawMessage {
 ///
 /// A publish that produced the buffer itself - the codec's output on the ordinary encode, a
 /// reply, a slot, a batched reply - hands it over as [`Produced`](Self::Produced), in the form it
-/// was written: a [`BytesMut`], not yet committed to anything. A buffer the runtime already holds
-/// counted arrives as [`Shared`](Self::Shared), and bytes the publish does not own as
-/// [`Borrowed`](Self::Borrowed).
+/// was written: a [`BytesMut`], not yet committed to anything. Bytes the publish does not own
+/// travel as [`Borrowed`](Self::Borrowed).
 ///
 /// The form the transport wants is the transport's to choose, and choosing costs nothing:
 /// [`as_slice`](Self::as_slice) reads, [`into_vec`](Self::into_vec) takes a `Vec<u8>` and
@@ -109,13 +108,25 @@ impl RawMessage {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum OutgoingPayload<'a> {
-    /// Bytes the publish lent, valid as long as the message is.
+    /// Bytes the publish lent, valid as long as the message is: what a value carrying its own
+    /// bytes publishes, and what the deferred retry copy carries - that path runs only after a
+    /// delivery has failed, so it lends the buffer it read rather than making the runtime
+    /// convert one per retry.
     Borrowed(&'a [u8]),
     /// The buffer the framework produced, in the form it produced it.
     Produced(BytesMut),
-    /// A buffer the runtime already held counted, handed on as it is.
-    Shared(Bytes),
 }
+
+// Two arms, one of them a buffer with a non-null pointer: the tag rides that niche, so the
+// payload position is 32 bytes - a `BytesMut` and nothing on top - and the message is its three
+// fields with no padding, 96. A second owned arm would take the niche away and widen every
+// publish by a word, which is the reason the retry copy lends instead of carrying a `Bytes`. The
+// promise is checked here rather than left to be measured later.
+const _: () = assert!(size_of::<OutgoingPayload<'static>>() == size_of::<BytesMut>());
+const _: () = assert!(
+    size_of::<OutgoingMessage<'static>>()
+        == size_of::<&str>() + size_of::<BytesMut>() + size_of::<HeaderMap>()
+);
 
 impl OutgoingPayload<'_> {
     /// The bytes, wherever they live.
@@ -125,7 +136,6 @@ impl OutgoingPayload<'_> {
         match self {
             Self::Borrowed(bytes) => bytes,
             Self::Produced(buf) => buf,
-            Self::Shared(bytes) => bytes,
         }
     }
 
@@ -134,16 +144,15 @@ impl OutgoingPayload<'_> {
     /// A produced buffer is frozen here rather than in the publish path, so the shared ownership
     /// block `Bytes` needs is allocated once, by the transport that asked for one: a buffer with
     /// spare capacity - which a codec's growing buffer has - costs that one block, and one filled
-    /// to its capacity costs nothing. A buffer the runtime already held counted moves out. Lent
-    /// bytes are copied, because they belong to someone else.
+    /// to its capacity costs nothing. Lent bytes are copied, because they belong to someone else.
     ///
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Bytes, OutgoingPayload};
+    /// use ruststream::{BytesMut, OutgoingPayload};
     ///
-    /// let held = Bytes::from_static(b"{}");
-    /// assert_eq!(OutgoingPayload::Shared(held).into_bytes(), b"{}".as_slice());
+    /// let produced = BytesMut::from(&b"{}"[..]);
+    /// assert_eq!(OutgoingPayload::Produced(produced).into_bytes(), b"{}".as_slice());
     /// assert_eq!(OutgoingPayload::Borrowed(b"{}").into_bytes(), b"{}".as_slice());
     /// ```
     #[inline]
@@ -152,7 +161,6 @@ impl OutgoingPayload<'_> {
         match self {
             Self::Borrowed(bytes) => Bytes::copy_from_slice(bytes),
             Self::Produced(buf) => buf.freeze(),
-            Self::Shared(bytes) => bytes,
         }
     }
 
@@ -160,9 +168,7 @@ impl OutgoingPayload<'_> {
     ///
     /// A produced buffer becomes the vector it was written into, with no allocation: it is
     /// vector-backed and starts at offset zero, which is what a codec's output is and what any
-    /// buffer nothing has split is. A buffer the runtime held counted does the same where this
-    /// is the only handle on it and it is vector-backed, and is copied otherwise. Lent bytes are
-    /// copied, because they belong to someone else.
+    /// buffer nothing has split is. Lent bytes are copied, because they belong to someone else.
     ///
     /// # Examples
     ///
@@ -179,7 +185,6 @@ impl OutgoingPayload<'_> {
         match self {
             Self::Borrowed(bytes) => bytes.to_vec(),
             Self::Produced(buf) => Vec::from(buf),
-            Self::Shared(bytes) => Vec::from(bytes),
         }
     }
 }
@@ -192,8 +197,7 @@ impl OutgoingPayload<'_> {
 /// over ([`OutgoingPayload`]), so a transport that wants owned bytes takes it rather than copying
 /// it: [`payload`](Self::payload) reads it, and [`into_payload`](Self::into_payload) takes it,
 /// since publishing owns the message. Use [`OutgoingMessage::new`],
-/// [`OutgoingMessage::produced`], [`OutgoingMessage::shared`] and the builder-style setters to
-/// construct.
+/// [`OutgoingMessage::produced`] and the builder-style setters to construct.
 ///
 /// # Examples
 ///
@@ -240,23 +244,6 @@ impl<'a> OutgoingMessage<'a> {
     #[must_use]
     pub fn produced(name: &'a str, payload: BytesMut) -> Self {
         Self::with_payload(name, OutgoingPayload::Produced(payload))
-    }
-
-    /// Constructs a new outgoing message handing over a buffer already held counted, with no
-    /// headers.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::{Bytes, OutgoingMessage};
-    ///
-    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
-    /// assert_eq!(msg.payload(), b"{}");
-    /// ```
-    #[inline]
-    #[must_use]
-    pub fn shared(name: &'a str, payload: Bytes) -> Self {
-        Self::with_payload(name, OutgoingPayload::Shared(payload))
     }
 
     /// Constructs a new outgoing message over a payload in whichever form it arrived, with no

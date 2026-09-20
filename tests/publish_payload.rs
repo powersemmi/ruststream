@@ -124,7 +124,6 @@ impl Publisher for Probe {
         let arm = match payload {
             OutgoingPayload::Borrowed(_) => "borrowed",
             OutgoingPayload::Produced(_) => "produced",
-            OutgoingPayload::Shared(_) => "shared",
             _ => "a form this test does not know",
         };
         // The taken buffer is released here rather than kept: the address is the whole of what

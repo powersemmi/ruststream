@@ -191,7 +191,9 @@ to the subscription after the delay and drops the original, with the framework's
 [`RETRY_COUNT_HEADER`] incremented; that copy is at most once over the delay window. The
 publisher it leaves through is on every registration already, from the broker's default
 policy. `.out_retry(policy)` replaces it, and the steps after it are the slot steps,
-`.codec(..)` and `.transform(..)`. The copy goes where the subscription says it is reached
+`.codec(..)` and `.transform(..)`. The copy lends its bytes rather than handing them over, so
+a broker that keeps owned bytes copies once here: this path runs only after a delivery has
+failed, and lending costs the runtime nothing on the path that has not. The copy goes where the subscription says it is reached
 again ([`RedeliveryAddressed`](crate::RedeliveryAddressed)). A subscription reading many
 destinations ([`NamedCopies`](crate::NamedCopies)) makes the mount site name one with
 `.to(name)`, or a transform names it per delivery. A name given with `.to(name)` is a channel
