@@ -225,6 +225,21 @@ pub fn runtime() -> Runtime {
         .expect("current-thread runtime")
 }
 
+/// A runtime with worker threads, which is what a service runs on.
+///
+/// The instruction counts keep the current-thread runtime above, and price one class of work at
+/// a fraction of what it is: a counter shared between a publishing thread and a dispatching one
+/// is the same single instruction to callgrind that an uncontended counter in L1 is. What the
+/// hand-over between two cores actually costs is visible by wall clock and nowhere else, so the
+/// scenario that measures it runs here.
+pub fn worker_runtime() -> Runtime {
+    Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("multi-thread runtime")
+}
+
 /// Counts deliveries down and wakes the benchmark body when the last one has been handled.
 ///
 /// Handlers reach it as the application state, which is how a service shares anything with its
@@ -366,7 +381,16 @@ pub type Mount<'a> = &'a mut BrokerScope<MemoryBroker, Identity, (), Latch>;
 
 /// Builds a one-handler service on a fresh in-memory broker, ready to be started by the body.
 pub fn pending(messages: usize, size: usize, mount: impl FnOnce(Mount<'_>)) -> Pending {
-    let runtime = runtime();
+    pending_on(runtime(), messages, size, mount)
+}
+
+/// The same on a runtime the scenario chose, for the one that needs worker threads.
+pub fn pending_on(
+    runtime: Runtime,
+    messages: usize,
+    size: usize,
+    mount: impl FnOnce(Mount<'_>),
+) -> Pending {
     let latch = Latch::default();
     let broker = MemoryBroker::new();
     let state = latch.clone();
@@ -445,6 +469,54 @@ impl Pending {
             latch: self.latch,
             _app: running,
         }
+    }
+
+    /// Starts the service and hands the body what it needs to fill the queue itself.
+    ///
+    /// The scenarios above fill before the timing, because production is not what they measure.
+    /// This one cannot: on a runtime with worker threads the handlers drain the queue while it is
+    /// being filled, so a pre-filled queue would leave the timing covering whatever was left.
+    #[must_use]
+    pub fn started(self) -> Started {
+        let running = (self.start)(&self.runtime);
+        self.latch.expect(self.expected);
+        Started {
+            publisher: self.broker.publisher(),
+            body: json_body(self.size),
+            messages: self.messages,
+            runtime: self.runtime,
+            latch: self.latch,
+            _app: running,
+        }
+    }
+}
+
+/// A started service whose queue the measured body fills itself.
+pub struct Started {
+    pub runtime: Runtime,
+    latch: Latch,
+    publisher: MemoryPublisher,
+    body: Vec<u8>,
+    messages: usize,
+    // Held so the service outlives the run.
+    _app: RunningApp,
+}
+
+impl Started {
+    /// Publishes the run's messages and waits for the last one to be handled.
+    ///
+    /// The publish runs on the thread that calls this and the handler on a worker thread, so what
+    /// the timing covers is a delivery travelling from one core to another.
+    pub fn publish_and_drain(&self) {
+        self.runtime.block_on(async {
+            for _ in 0..self.messages {
+                self.publisher
+                    .publish(OutgoingMessage::new(INPUT, &self.body), None)
+                    .await
+                    .expect("in-process publish");
+            }
+            self.latch.drained().await;
+        });
     }
 }
 

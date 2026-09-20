@@ -737,13 +737,11 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         }
 
         if let Some(retained) = retained {
-            // One shared name for the whole replay, not one allocation per redelivered message.
-            let subject: Arc<str> = Arc::from(self.name.as_str());
             for (seq, entry) in retained.replay_from(target) {
                 let delivery = MemoryDelivery {
-                    name: Arc::clone(&subject),
-                    payload: entry.payload(),
-                    headers: entry.headers(),
+                    // The block the fanout built, name and payload and headers together: a
+                    // replayed delivery is one reference count, not a rebuilt message.
+                    shared: entry.shared(),
                     seq,
                     // A replay is a fresh delivery of what the log holds, not a redelivery of
                     // the copy a handler saw, so its count starts where a fanout's does.
