@@ -116,11 +116,13 @@ mod typed_headers;
 #[doc(hidden)]
 pub use inventory;
 
-/// The buffer the crate's byte-producing surfaces speak: what a [`Codec`](codec::Codec) returns
-/// and what a [`Serialized`](runtime::Serialized) value writes into.
+/// The buffer the crate's byte-producing surfaces speak: what a [`Codec`](codec::Codec) returns,
+/// what a [`Serialized`](runtime::Serialized) value writes into, and the form a publish hands its
+/// payload to the broker in ([`OutgoingPayload::Produced`]).
 ///
-/// Re-exported so that implementing either trait does not also mean depending on `bytes`
-/// directly; a service that already does keeps its own import, which shadows this one.
+/// Re-exported so that implementing either trait, or taking a published payload, does not also
+/// mean depending on `bytes` directly; a service that already does keeps its own import, which
+/// shadows this one.
 pub use bytes::BytesMut;
 
 /// The shared byte buffer the message path hands around: a payload, a header value taken with

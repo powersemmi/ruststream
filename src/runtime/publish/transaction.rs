@@ -141,7 +141,7 @@ where
             .encode(value)
             .map_err(TransactionPublishError::Encode)?;
         self.publisher
-            .publish(OutgoingMessage::shared(name, payload.freeze()), None)
+            .publish(OutgoingMessage::produced(name, payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }
@@ -310,7 +310,7 @@ where
             .encode(value)
             .map_err(TransactionPublishError::Encode)?;
         self.txn
-            .publish(OutgoingMessage::shared(name, payload.freeze()), None)
+            .publish(OutgoingMessage::produced(name, payload), None)
             .await
             .map_err(TransactionPublishError::Publish)
     }

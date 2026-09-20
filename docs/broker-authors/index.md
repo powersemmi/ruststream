@@ -225,11 +225,13 @@ pub trait Publisher: Send + Sync {
 ```
 
 `OutgoingMessage` borrows its name, and carries a payload your transport may take rather than
-copy. `msg.payload()` answers `&[u8]` as it always did. Where your client wants owned bytes,
-`msg.into_payload().into_bytes()` hands you the buffer the framework produced - the codec's own
-output on an ordinary publish, a reply, a slot - and copies only where the publish was lending
-bytes it does not own. A client that clones the buffer it was given pays a reference count and no
-allocation.
+copy. Read it with `msg.payload()`, which answers `&[u8]` as it always did. Take it with
+`msg.into_payload()`, then `into_vec()` or `into_bytes()`, whichever your client wants: what you
+get is the buffer the framework produced - the codec's own output on an ordinary publish, a
+reply, a slot - and it is copied only where the publish was lending bytes it does not own. A
+vector costs nothing, because that buffer is the vector; a `Bytes` costs the one block that makes
+its ownership shareable. Only a transport that takes the payload pays anything at all, and only
+for the form it asked for.
 
 A service writes the builder, not this method: `publisher.message(&value).publish()` picks the
 destination, the codec and the headers, and makes exactly one call to `publish`. Implement
