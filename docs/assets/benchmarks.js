@@ -106,6 +106,27 @@
     return value;
   }
 
+  function spread(measurement) {
+    if (!measurement || typeof measurement.min !== "number" || typeof measurement.max !== "number") {
+      return null;
+    }
+    return measurement.max - measurement.min;
+  }
+
+  function indistinguishable(scenario) {
+    // Only for a document that left `adapter_verdict` out: the difference against the widest
+    // spread of the two loops it is drawn from.
+    if (scenario.adapter_verdict) {
+      return false;
+    }
+    const ours = spread(scenario.adapter);
+    const theirs = spread(scenario.raw);
+    if (ours === null || theirs === null) {
+      return false;
+    }
+    return Math.abs(scenario.raw.median - scenario.adapter.median) < Math.max(ours, theirs);
+  }
+
   function adapter(scenario, lang, labels) {
     // A crate that measured only the two ends leaves the middle column empty rather than
     // borrowing a number from either side.
@@ -114,8 +135,10 @@
     }
     let value = side(scenario.adapter, scenario.unit, lang);
     // The same honesty rule as the overhead column: a difference smaller than the spread is a
-    // verdict rather than a percentage, and the crate decides it where it has the samples.
-    if (scenario.adapter_verdict === "indistinguishable") {
+    // verdict rather than a percentage. A crate that decided it where the samples are says so in
+    // `adapter_verdict`; for one that did not, the rule is applied here to the spreads it
+    // published, so the two columns of a row never disagree about what is visible.
+    if (scenario.adapter_verdict === "indistinguishable" || indistinguishable(scenario)) {
       value += " " + labels.against.replace("{percent}", labels.indistinguishable);
     } else if (typeof scenario.adapter_overhead_percent === "number") {
       const percent = scenario.adapter_overhead_percent;

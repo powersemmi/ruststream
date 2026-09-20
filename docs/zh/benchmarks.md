@@ -211,7 +211,8 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 
 `schema` 是这份文档的版本。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`；`adapter_verdict` 把同一条波动规则
-用在 crate 与裸客户端的那项差值上。`environment` 里还可以带 `round_trip`，即 `broker_bound`
+用在 crate 与裸客户端的那项差值上；crate 没有给出它时，页面就按已公布的波动范围自己套同一条
+规则，使同一行的两列不会对“什么是可见的”给出相反的说法。`environment` 里还可以带 `round_trip`，即 `broker_bound`
 算式所依据的探测值，读者可以自己重算。`overhead_percent` 是框架相对裸客户端的端到端开销，
 两种情况都记录，
 只在判定为 `measured` 时展示。`broker_bound` 标记那些由 Broker 而不是消费者决定节奏的运行。

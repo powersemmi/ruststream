@@ -258,7 +258,9 @@ the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided
 the framework against the raw client, end to end. `adapter` and `adapter_overhead_percent` are the
 crate's own consumer and publisher against the same client, measured without the runtime, and
 `adapter_verdict` applies the spread rule to that difference the way `verdict` applies it to the
-other; a crate that publishes none of them leaves the middle column empty. `environment` may carry
+other - and where a crate leaves it out, the page applies the same rule to the spreads it did
+publish, so the two columns of a row never disagree about what is visible. A crate that publishes
+none of them leaves the middle column empty. `environment` may carry
 `round_trip`, the probe the `broker_bound` arithmetic rests on, so a reader can redo the sum.
 `broker_bound` marks a run the broker paced rather than the consumer.
 
