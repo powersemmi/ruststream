@@ -113,7 +113,11 @@
       return EMPTY;
     }
     let value = side(scenario.adapter, scenario.unit, lang);
-    if (typeof scenario.adapter_overhead_percent === "number") {
+    // The same honesty rule as the overhead column: a difference smaller than the spread is a
+    // verdict rather than a percentage, and the crate decides it where it has the samples.
+    if (scenario.adapter_verdict === "indistinguishable") {
+      value += " " + labels.against.replace("{percent}", labels.indistinguishable);
+    } else if (typeof scenario.adapter_overhead_percent === "number") {
       const percent = scenario.adapter_overhead_percent;
       value += " " + labels.against.replace("{percent}", (percent >= 0 ? "+" : "") + percent + "%");
     }

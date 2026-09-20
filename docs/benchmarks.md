@@ -235,6 +235,7 @@ it. The broker sites share this site's origin, so this page reads them directly.
       "framework": { "median": 127905, "min": 126100, "max": 129020 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
+      "adapter_verdict": "indistinguishable",
       "verdict": "indistinguishable",
       "broker_bound": true
     }
@@ -255,8 +256,10 @@ it. The broker sites share this site's origin, so this page reads them directly.
 the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`. It is
 the framework against the raw client, end to end. `adapter` and `adapter_overhead_percent` are the
-crate's own consumer and publisher against the same client, measured without the runtime; a crate
-that publishes neither leaves the middle column empty.
+crate's own consumer and publisher against the same client, measured without the runtime, and
+`adapter_verdict` applies the spread rule to that difference the way `verdict` applies it to the
+other; a crate that publishes none of them leaves the middle column empty. `environment` may carry
+`round_trip`, the probe the `broker_bound` arithmetic rests on, so a reader can redo the sum.
 `broker_bound` marks a run the broker paced rather than the consumer.
 
 `environment` describes the machine and the build. `cpu`, `architecture`, `cpu_frequency`,

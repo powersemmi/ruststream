@@ -233,6 +233,7 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "framework": { "median": 127905, "min": 126100, "max": 129020 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
+      "adapter_verdict": "indistinguishable",
       "verdict": "indistinguishable",
       "broker_bound": true
     }
@@ -253,8 +254,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 предложение. `verdict` принимает значение `measured` или `indistinguishable` по правилу выше;
 `overhead_percent` записывается в обоих случаях, а показывается только при вердикте `measured`; это
 фреймворк против сырого клиента, от края до края. Поля `adapter` и `adapter_overhead_percent` -
-собственные консьюмер и паблишер крейта против того же клиента, измеренные без рантайма; крейт, не
-опубликовавший их, оставляет среднюю колонку пустой.
+собственные консьюмер и паблишер крейта против того же клиента, измеренные без рантайма, а
+`adapter_verdict` применяет к этой разности то же правило разброса, что `verdict` к другой; крейт,
+не опубликовавший ничего из этого, оставляет среднюю колонку пустой. В `environment` может лежать
+`round_trip` - та самая проба, на которой стоит арифметика `broker_bound`, чтобы читатель мог
+пересчитать сам.
 `broker_bound` помечает прогон, темп которого задавал брокер, а не консьюмер.
 
 `environment` описывает машину и сборку. Поля `cpu`, `architecture`, `cpu_frequency`, `cores`,
