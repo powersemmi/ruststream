@@ -89,13 +89,12 @@ struct MemoryOutbound {
 
 impl From<OutgoingMessage<'_>> for MemoryOutbound {
     fn from(msg: OutgoingMessage<'_>) -> Self {
-        let name = Arc::from(msg.name());
-        let headers = msg.headers().clone();
+        // The publish hands over both the buffer it produced and the map it filled, so the bus
+        // keeps them as they stand; only a message lending someone else's bytes is copied here.
+        let (name, payload, headers) = msg.into_parts();
         Self {
-            name,
-            // The publish hands the buffer it produced over, so the bus keeps that buffer; only
-            // a message lending someone else's bytes is copied here.
-            payload: msg.into_payload().into_bytes(),
+            name: Arc::from(name),
+            payload: payload.into_bytes(),
             headers,
         }
     }
@@ -708,11 +707,7 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
         // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
         // the bus strictly before shutdown), so fail loudly instead of losing the message.
         self.state
-            .fanout(MemoryOutbound {
-                name: Arc::from(message.name()),
-                payload: Bytes::copy_from_slice(message.payload()),
-                headers: message.headers().clone(),
-            })
+            .fanout(message.into())
             .expect("inject on a shut-down broker: drive the harness before shutdown");
     }
 

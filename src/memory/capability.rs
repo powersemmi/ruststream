@@ -162,14 +162,13 @@ impl RequestReply for MemoryRequester {
             .register(inbox.clone(), tx.clone())
             .map_err(|_| RequestError::ShutDown)?;
 
-        // The name is the caller's buffer, so reading it here leaves the message free to be
-        // consumed for its payload below.
-        let subject = msg.name();
-        let mut headers = msg.headers().clone();
+        // The name is the caller's buffer, so it outlives the message consumed here; the inbox
+        // is written into the request's own map rather than into a copy of it.
+        let (subject, payload, mut headers) = msg.into_parts();
         headers.insert("reply-to", inbox.clone());
         let outbound = MemoryOutbound {
             name: Arc::from(subject),
-            payload: msg.into_payload().into_bytes(),
+            payload: payload.into_bytes(),
             headers,
         };
         if self.state.fanout(outbound).is_err() {

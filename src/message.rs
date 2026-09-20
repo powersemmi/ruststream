@@ -205,8 +205,12 @@ impl OutgoingPayload<'_> {
 /// already owns the buffers. Where the framework produced the payload itself it hands that buffer
 /// over ([`OutgoingPayload`]), so a transport that wants owned bytes takes it rather than copying
 /// it: [`payload`](Self::payload) reads it, and [`into_payload`](Self::into_payload) takes it,
-/// since publishing owns the message. Use [`OutgoingMessage::new`],
-/// [`OutgoingMessage::produced`] and the builder-style setters to construct.
+/// since publishing owns the message. The header map is the message's own and goes the same way,
+/// so a transport that consumes the message takes all three parts at once with
+/// [`into_parts`](Self::into_parts) - the destination, the payload and the map in one move,
+/// nothing copied - and [`into_payload`](Self::into_payload) is left to the transport that wants
+/// the bytes alone. Use [`OutgoingMessage::new`], [`OutgoingMessage::produced`] and the
+/// builder-style setters to construct.
 ///
 /// # Examples
 ///
@@ -220,6 +224,16 @@ impl OutgoingPayload<'_> {
 /// let msg = OutgoingMessage::new("orders.created", payload).with_headers(headers);
 /// assert_eq!(msg.name(), "orders.created");
 /// assert_eq!(msg.payload(), payload);
+///
+/// // What a transport that keeps the message takes, in the one call that ends it.
+/// let (name, body, headers) = msg.into_parts();
+/// assert_eq!(name, "orders.created");
+/// assert_eq!(body.as_slice(), payload);
+/// assert_eq!(
+///     headers.content_type().ok_or("the publish named no content type")?,
+///     "application/json",
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutgoingMessage<'a> {
@@ -371,17 +385,44 @@ impl<'a> OutgoingMessage<'a> {
     }
 
     /// Returns a shared reference to the headers.
+    ///
+    /// What a transport that only walks the map reads. One that hands the map on to its client
+    /// takes it with [`into_parts`](Self::into_parts) rather than cloning it.
     #[must_use]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
-    /// The borrowed name, the payload as it arrived, and the header map this message owns.
+    /// The destination, the payload and the header map, taken in one move.
     ///
-    /// A publish stage that has to rebuild the message takes the map here instead of cloning
-    /// what the caller is about to drop.
+    /// What a transport that consumes the message calls: publishing owns the message, so the
+    /// name it was addressed to, the buffer the publish produced and the map the transforms
+    /// filled all arrive at once, with nothing copied. The name is the caller's, so it outlives
+    /// the message it came out of. There is no second consuming accessor to pair this with:
+    /// [`into_payload`](Self::into_payload) already ends the message, so a transport that wants
+    /// the map as well asks for everything here.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{HeaderMap, OutgoingMessage};
+    ///
+    /// let mut headers = HeaderMap::new();
+    /// headers.insert("Content-Type", "application/json");
+    /// let msg = OutgoingMessage::new("orders.created", b"{}").with_headers(headers);
+    ///
+    /// let (name, payload, headers) = msg.into_parts();
+    /// assert_eq!(name, "orders.created");
+    /// assert_eq!(payload.into_vec(), b"{}".to_vec());
+    /// assert_eq!(
+    ///     headers.content_type().ok_or("the publish named no content type")?,
+    ///     "application/json",
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[inline]
-    pub(crate) fn into_parts(self) -> (&'a str, OutgoingPayload<'a>, HeaderMap) {
+    #[must_use]
+    pub fn into_parts(self) -> (&'a str, OutgoingPayload<'a>, HeaderMap) {
         (self.name, self.payload, self.headers)
     }
 }

@@ -224,10 +224,12 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
-`OutgoingMessage` borrows its name, and carries a payload your transport may take rather than
-copy. Read it with `msg.payload()`, which answers `&[u8]` as it always did. Take it with
-`msg.into_payload()`, then `into_vec()` or `into_bytes()`, whichever your client wants: what you
-get is the buffer the framework produced - the codec's own output on an ordinary publish, a
+`OutgoingMessage` borrows its name, and carries a payload and a header map your transport may
+take rather than copy. Read them with `msg.payload()` and `msg.headers()`, which answer `&[u8]`
+and `&HeaderMap` as they always did. A transport that consumes the message takes its parts with
+`msg.into_parts()` - the destination, the payload and the map in one move, nothing copied - and
+then calls `into_vec()` or `into_bytes()` on the payload, whichever its client wants: what it
+gets is the buffer the framework produced - the codec's own output on an ordinary publish, a
 reply, a slot - and it is copied only where the publish was lending bytes it does not own. A
 vector costs nothing, because that buffer is the vector; a `Bytes` costs the one block that makes
 its ownership shareable. Only a transport that takes the payload pays anything at all, and only

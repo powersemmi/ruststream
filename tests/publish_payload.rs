@@ -1,10 +1,10 @@
-//! What a broker is handed on the publish path: the buffer the framework produced, or a borrow
-//! of bytes it does not own.
+//! What a broker is handed on the publish path: the destination, the buffer the framework
+//! produced (or a borrow of bytes it does not own), and the header map the publish filled.
 //!
-//! A transport whose client wants owned bytes should take that buffer rather than copy it, and
-//! should pay only for the form it asks for. The tests below read the form through the public
-//! accessors, compare buffer addresses - content equality cannot tell a hand-over from a copy -
-//! and count this thread's allocations around a publish.
+//! A transport whose client wants owned bytes or an owned map should take them rather than copy
+//! them, and should pay only for the form it asks for. The tests below read the forms through the
+//! public accessors, compare buffer addresses - content equality cannot tell a hand-over from a
+//! copy - and count this thread's allocations around a publish.
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -14,8 +14,10 @@ use std::future::{Future, ready};
 use std::sync::Mutex;
 
 use ruststream::codec::{Codec, JsonCodec};
-use ruststream::runtime::PublishExt;
-use ruststream::{Outgoing, OutgoingMessage, OutgoingPayload, Publisher, Serialized};
+#[cfg(feature = "memory")]
+use ruststream::memory::MemoryBroker;
+use ruststream::runtime::{Outgoing as OutgoingView, PublishExt, PublishIdentity, PublishPipeline};
+use ruststream::{HeaderMap, Outgoing, OutgoingMessage, OutgoingPayload, Publisher, Serialized};
 use serde::Serialize;
 
 /// Counts this thread's allocations, so the cost of one publish can be read off directly. A
@@ -153,9 +155,24 @@ impl Publisher for Probe {
     }
 }
 
-/// A publisher that keeps the payload, for the one assertion about its contents.
+/// The one header a publish carries below: what a transform on a publish position stamps, and
+/// what every broker crate used to clone the whole map for.
+const STAMP: &str = "x-stamp";
+
+/// A publisher that keeps everything it was handed, for the assertions about contents.
 #[derive(Default)]
-struct Keeper(Mutex<Option<Vec<u8>>>);
+struct Keeper(Mutex<Option<(String, Vec<u8>, HeaderMap)>>);
+
+impl Keeper {
+    /// The destination, the payload and the headers of the last publish.
+    fn kept(&self) -> (String, Vec<u8>, HeaderMap) {
+        self.0
+            .lock()
+            .expect("keeper mutex poisoned")
+            .take()
+            .expect("nothing was published")
+    }
+}
 
 impl Publisher for Keeper {
     type Error = Infallible;
@@ -166,7 +183,58 @@ impl Publisher for Keeper {
         msg: OutgoingMessage<'_>,
         _options: Option<&()>,
     ) -> impl Future<Output = Result<(), Infallible>> {
-        *self.0.lock().expect("keeper mutex poisoned") = Some(msg.into_payload().into_vec());
+        // What a transport whose client takes owned parts does: one move for all three.
+        let (name, payload, headers) = msg.into_parts();
+        *self.0.lock().expect("keeper mutex poisoned") =
+            Some((name.to_owned(), payload.into_vec(), headers));
+        ready(Ok(()))
+    }
+}
+
+/// What the broker saw of the headers. It keeps no copy of the map on purpose: the probe must
+/// not allocate, or the counts below would measure the test rather than the publish.
+struct SeenHeaders {
+    /// How many entries arrived.
+    len: usize,
+    /// Where the bytes of the stamped value live.
+    value_at: usize,
+}
+
+/// A publisher that takes the map and reports what it is, without allocating anything of its own.
+#[derive(Default)]
+struct Taker(Mutex<Option<SeenHeaders>>);
+
+impl Taker {
+    /// What the last publish handed it.
+    fn seen(&self) -> SeenHeaders {
+        self.0
+            .lock()
+            .expect("taker mutex poisoned")
+            .take()
+            .expect("nothing was published")
+    }
+}
+
+impl Publisher for Taker {
+    type Error = Infallible;
+    type Options = ();
+
+    fn publish(
+        &self,
+        msg: OutgoingMessage<'_>,
+        _options: Option<&()>,
+    ) -> impl Future<Output = Result<(), Infallible>> {
+        let (_, _, headers) = msg.into_parts();
+        let seen = SeenHeaders {
+            len: headers.len(),
+            // Read, not taken: `get_shared` hands back a counted handle, and claiming one out of
+            // a map nothing has cloned promotes the value - an allocation of this probe's own,
+            // inside the region the test counts.
+            value_at: headers
+                .get(STAMP)
+                .map_or(0, |value| value.as_ptr() as usize),
+        };
+        *self.0.lock().expect("taker mutex poisoned") = Some(seen);
         ready(Ok(()))
     }
 }
@@ -218,20 +286,65 @@ async fn a_value_that_carries_its_own_bytes_is_lent_to_the_broker() {
 }
 
 #[tokio::test]
-async fn the_payload_reaches_the_broker_byte_for_byte() {
+async fn a_transport_takes_the_destination_the_payload_and_the_headers_in_one_move() {
+    let mut headers = HeaderMap::new();
+    headers.insert(STAMP, b"1".to_vec());
+
     let publisher = Keeper::default();
     publisher
         .message(&OrderCreated { id: 7 })
+        .with_headers(headers)
         .publish()
         .await
         .expect("the keeper never refuses");
 
-    let kept = publisher.0.lock().expect("poisoned").take().expect("sent");
+    let (name, payload, headers) = publisher.kept();
     assert_eq!(
-        kept,
+        name, "orders.created",
+        "the destination the message declared"
+    );
+    assert_eq!(
+        payload,
         JsonCodec
             .encode(&OrderCreated { id: 7 })
             .expect("encodable"),
+        "the payload reaches the broker byte for byte",
+    );
+    assert_eq!(
+        headers.get(STAMP),
+        Some(b"1".as_slice()),
+        "and the map arrives whole, without the transport reading it out entry by entry",
+    );
+}
+
+/// The framework makes no copy of the map on its way out: the terminal of the publish pipeline
+/// moves what the transforms filled into the message that leaves, and the transport takes it from
+/// there.
+#[tokio::test]
+async fn handing_the_header_map_to_the_broker_allocates_nothing() {
+    let pipeline = PublishIdentity;
+    let taker = Taker::default();
+    let mut out = OutgoingView::new("events", b"{}".as_slice());
+    out.headers_mut().insert(STAMP, b"1".to_vec());
+    let stamped_at = out.headers().get(STAMP).expect("just stamped").as_ptr() as usize;
+
+    let before = allocations();
+    pipeline
+        .run(&mut out, &taker, None)
+        .await
+        .expect("the taker never refuses");
+    let spent = allocations() - before;
+
+    let seen = taker.seen();
+    assert_eq!(
+        spent, 0,
+        "the map travels into the broker's message; a copy of it would cost the table and a \
+         reference block per entry",
+    );
+    assert_eq!(
+        (seen.len, seen.value_at),
+        (1, stamped_at),
+        "and it arrives whole, over the buffer the stamp wrote",
     );
 }
 
@@ -276,4 +389,48 @@ async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
         "a `Bytes` needs the shared ownership block, and that block is all it costs",
     );
     assert_eq!((read.len, took_vec.len, took_bytes.len), (8, 8, 8));
+}
+
+/// What a broker does with the map, measured on the one broker this crate ships. A header costs
+/// the publish what writing that header costs, and nothing on top: the map reaches the bus as
+/// the publish filled it.
+#[cfg(feature = "memory")]
+#[tokio::test]
+async fn a_header_costs_the_in_memory_broker_only_what_writing_it_costs() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+
+    let counted = async move |carried: usize| {
+        let before = allocations();
+        let mut headers = HeaderMap::new();
+        for _ in 0..carried {
+            headers.insert(STAMP, b"1".to_vec());
+        }
+        let msg = OutgoingMessage::new("orders.created", b"{}").with_headers(headers);
+        publisher
+            .publish(msg, None)
+            .await
+            .expect("the bus is up for the length of this test");
+        allocations() - before
+    };
+
+    // One publish before the counts: the bus grows its own tables on the first message.
+    counted(0).await;
+    let bare = counted(0).await;
+    let stamped = counted(1).await;
+
+    // What the entry costs on its own, so the assertion names no magic number.
+    let writing = {
+        let before = allocations();
+        let mut headers = HeaderMap::new();
+        headers.insert(STAMP, b"1".to_vec());
+        allocations() - before
+    };
+
+    assert_eq!(
+        stamped - bare,
+        writing,
+        "the map travels into the bus; a copy of it on the way would add the table and a \
+         reference block per entry",
+    );
 }
