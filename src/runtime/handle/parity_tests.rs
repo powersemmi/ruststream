@@ -21,7 +21,7 @@ use crate::runtime::{
     Context, ContextKind, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire,
     OutEntry, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router, RouterDef,
     Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
-    Verdict, for_batch, subscriber,
+    Verdict, WireBytes, for_batch, subscriber,
 };
 use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
@@ -65,8 +65,8 @@ struct Export(Vec<u8>);
 impl Serialized for Export {
     type Error = Infallible;
 
-    fn wire_bytes<'a>(&'a self, _buf: &'a mut BytesMut) -> Result<&'a [u8], Infallible> {
-        Ok(&self.0)
+    fn wire_bytes(&self, _buf: &mut BytesMut) -> Result<WireBytes<'_>, Infallible> {
+        Ok(WireBytes::Own(&self.0))
     }
 }
 

@@ -12,6 +12,7 @@ use std::cell::Cell;
 use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ruststream::codec::{Codec, JsonCodec};
 #[cfg(feature = "memory")]
@@ -63,6 +64,22 @@ struct OrderCreated {
 #[derive(Outgoing, Serialized)]
 #[outgoing(name = "orders.audit")]
 struct Audit(Vec<u8>);
+
+/// A value that computes its bytes into the buffer the publish path hands it, recording where
+/// it wrote them so a test can tell a hand-over from a copy.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "ticks")]
+#[wire(encode = write_tick)]
+struct Tick {
+    at: AtomicUsize,
+}
+
+/// The value's own encoder, in the shape `#[wire(encode = ..)]` takes.
+fn write_tick(tick: &Tick, buf: &mut BytesMut) -> Result<(), Infallible> {
+    buf.extend_from_slice(&[1, 2, 3, 4]);
+    tick.at.store(buf.as_ptr() as usize, Ordering::Relaxed);
+    Ok(())
+}
 
 /// What a transport that declared [`Take`] does with the buffer it is handed.
 #[derive(Clone, Copy)]
@@ -437,6 +454,29 @@ async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
         "a `Bytes` needs the shared ownership block, and that block is all it costs",
     );
     assert_eq!((read.len, took_vec.len, took_bytes.len), (8, 8, 8));
+}
+
+/// A value that computes its bytes writes them once, into the buffer the publish path handed
+/// it, and a transport that keeps the payload is handed that buffer rather than a copy of it.
+#[tokio::test]
+async fn a_computed_value_hands_over_the_buffer_it_wrote() {
+    let tick = Tick {
+        at: AtomicUsize::new(0),
+    };
+    let publisher = Probe::taking(Claim::Read);
+    publisher
+        .message(&tick)
+        .publish()
+        .await
+        .expect("the probe never refuses");
+
+    let seen = publisher.seen();
+    assert_eq!(
+        seen.read_at,
+        tick.at.load(Ordering::Relaxed),
+        "the value wrote into the publish path's buffer, and that buffer is what leaves",
+    );
+    assert_eq!(seen.len, 4, "holding what the value wrote");
 }
 
 /// The declaration is what the payload's form follows, and a transport that only reads it is

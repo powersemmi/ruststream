@@ -303,11 +303,16 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
             impl ::ruststream::runtime::Serialized for #name {
                 type Error = ::core::convert::Infallible;
 
-                fn wire_bytes<'__rs_wire>(
-                    &'__rs_wire self,
-                    _buf: &'__rs_wire mut ::ruststream::BytesMut,
-                ) -> ::core::result::Result<&'__rs_wire [u8], Self::Error> {
-                    ::core::result::Result::Ok(&self.#accessor)
+                fn wire_bytes(
+                    &self,
+                    _buf: &mut ::ruststream::BytesMut,
+                ) -> ::core::result::Result<
+                    ::ruststream::runtime::WireBytes<'_>,
+                    Self::Error,
+                > {
+                    ::core::result::Result::Ok(
+                        ::ruststream::runtime::WireBytes::Own(&self.#accessor),
+                    )
                 }
             }
 
@@ -326,14 +331,15 @@ pub(crate) fn derive_serialized(input: &DeriveInput) -> syn::Result<TokenStream2
         impl ::ruststream::runtime::Serialized for #name {
             type Error = ::ruststream::runtime::SerializePayloadError;
 
-            fn wire_bytes<'__rs_wire>(
-                &'__rs_wire self,
-                buf: &'__rs_wire mut ::ruststream::BytesMut,
-            ) -> ::core::result::Result<&'__rs_wire [u8], Self::Error> {
-                // Straight into the publish path's buffer: the value is encoded once, and
-                // nothing intermediate is allocated.
+            fn wire_bytes(
+                &self,
+                buf: &mut ::ruststream::BytesMut,
+            ) -> ::core::result::Result<::ruststream::runtime::WireBytes<'_>, Self::Error> {
+                // Straight into the publish path's buffer: the value is encoded once, nothing
+                // intermediate is allocated, and a transport that keeps the payload is handed
+                // that buffer rather than a copy of it.
                 ::ruststream::runtime::EncodeOutcome::finish(#encode(self, &mut *buf))?;
-                ::core::result::Result::Ok(&buf[..])
+                ::core::result::Result::Ok(::ruststream::runtime::WireBytes::InBuffer)
             }
         }
 

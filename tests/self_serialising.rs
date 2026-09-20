@@ -99,14 +99,15 @@ async fn count(tick: &Tick) -> HandlerOutcome {
 fn a_value_that_holds_its_bytes_lends_them() {
     let export = Export(vec![1, 2, 3]);
     let mut buf = BytesMut::new();
-    // The address alone, so the borrow of `buf` ends with the statement and the buffer can be
-    // read back below.
-    let lent = export.wire_bytes(&mut buf).expect("held bytes cannot fail");
-    let lent = lent.as_ptr();
+    let answer = export.wire_bytes(&mut buf).expect("held bytes cannot fail");
 
     // The property the lane exists for: what leaves is the value's own allocation rather than a
-    // copy of it, and the publish path's buffer is never written.
-    assert!(std::ptr::eq(lent, export.0.as_ptr()));
+    // copy of it, and the publish path's buffer is never written. The answer says so itself, so
+    // the path above it takes the buffer only where the value wrote into it.
+    let WireBytes::Own(lent) = answer else {
+        panic!("a value that holds its bytes lends them");
+    };
+    assert!(std::ptr::eq(lent.as_ptr(), export.0.as_ptr()));
     assert!(buf.is_empty());
 }
 
@@ -115,7 +116,9 @@ fn a_value_that_holds_fields_writes_them_into_the_buffer() {
     let tick = Tick { seq: 9 };
     let mut buf = BytesMut::new();
 
-    assert_eq!(tick.wire_bytes(&mut buf).expect("in range"), &[0, 0, 0, 9]);
+    let answer = tick.wire_bytes(&mut buf).expect("in range");
+    assert!(matches!(answer, WireBytes::InBuffer));
+    assert_eq!(&buf[..], &[0, 0, 0, 9]);
 }
 
 #[test]
@@ -123,7 +126,11 @@ fn an_infallible_writer_needs_no_result() {
     let beat = Beat { at: 4 };
     let mut buf = BytesMut::new();
 
-    assert_eq!(beat.wire_bytes(&mut buf).expect("cannot fail"), &[4]);
+    assert!(matches!(
+        beat.wire_bytes(&mut buf).expect("cannot fail"),
+        WireBytes::InBuffer
+    ));
+    assert_eq!(&buf[..], &[4]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

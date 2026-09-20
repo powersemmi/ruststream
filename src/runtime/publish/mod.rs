@@ -358,7 +358,7 @@ pub use builder::{
     BoundSegment, EncodeOutcome, EncodedWire, HeaderSource, HeadersUnset, MapHeaders, MessageBody,
     MessageWire, MissingSegment, PayloadError, PublishAt, PublishBuilder, PublishError,
     PublishHeaders, ResolvedName, SatisfiesContract, SerializePayloadError, Serialized,
-    SerializedWire, SuppliedName, TemplateAddress, TypedHeaders, WirePayload,
+    SerializedWire, SuppliedName, TemplateAddress, TypedHeaders, WireBytes, WirePayload,
 };
 pub use ext::PublishExt;
 pub use out::{
