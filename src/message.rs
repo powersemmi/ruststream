@@ -205,8 +205,12 @@ impl OutgoingPayload<'_> {
 /// already owns the buffers. Where the framework produced the payload itself it hands that buffer
 /// over ([`OutgoingPayload`]), so a transport that wants owned bytes takes it rather than copying
 /// it: [`payload`](Self::payload) reads it, and [`into_payload`](Self::into_payload) takes it,
-/// since publishing owns the message. Use [`OutgoingMessage::new`],
-/// [`OutgoingMessage::produced`] and the builder-style setters to construct.
+/// since publishing owns the message. The header map is the message's own and goes the same way,
+/// so a transport that consumes the message takes all three parts at once with
+/// [`into_parts`](Self::into_parts) - the destination, the payload and the map in one move,
+/// nothing copied - and [`into_payload`](Self::into_payload) is left to the transport that wants
+/// the bytes alone. Use [`OutgoingMessage::new`], [`OutgoingMessage::produced`] and the
+/// builder-style setters to construct.
 ///
 /// # Examples
 ///
@@ -220,6 +224,16 @@ impl OutgoingPayload<'_> {
 /// let msg = OutgoingMessage::new("orders.created", payload).with_headers(headers);
 /// assert_eq!(msg.name(), "orders.created");
 /// assert_eq!(msg.payload(), payload);
+///
+/// // What a transport that keeps the message takes, in the one call that ends it.
+/// let (name, body, headers) = msg.into_parts();
+/// assert_eq!(name, "orders.created");
+/// assert_eq!(body.as_slice(), payload);
+/// assert_eq!(
+///     headers.content_type().ok_or("the publish named no content type")?,
+///     "application/json",
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutgoingMessage<'a> {
