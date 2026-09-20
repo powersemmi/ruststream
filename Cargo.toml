@@ -551,6 +551,11 @@ harness = false
 required-features = ["memory", "json", "macros"]
 
 [[bench]]
+name = "reply_lending"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
 name = "out_slot"
 harness = false
 required-features = ["memory", "json", "macros"]
