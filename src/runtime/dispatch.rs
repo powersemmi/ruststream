@@ -880,6 +880,9 @@ async fn dispatch<H, M, C, St>(
 /// the service down (`fail_fast`) or be logged and skipped. Per-element settlement is out of scope
 /// (see the batch decode path for per-element decode handling). Ungated `after_settle` hooks run
 /// once the batch has settled (per-element outcomes make a gated hook ill-defined on a batch).
+// The loop hands this everything one batch needs, the buffers it lends included: see
+// spawn_dispatch_workers.
+#[allow(clippy::too_many_arguments)]
 async fn run_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,

@@ -74,11 +74,11 @@ struct Tick {
     at: AtomicUsize,
 }
 
-/// The value's own encoder, in the shape `#[wire(encode = ..)]` takes.
-fn write_tick(tick: &Tick, buf: &mut BytesMut) -> Result<(), Infallible> {
+/// The value's own encoder, in the shape `#[wire(encode = ..)]` takes. It cannot fail, so it
+/// answers nothing.
+fn write_tick(tick: &Tick, buf: &mut BytesMut) {
     buf.extend_from_slice(&[1, 2, 3, 4]);
     tick.at.store(buf.as_ptr() as usize, Ordering::Relaxed);
-    Ok(())
 }
 
 /// What a transport that declared [`Take`] does with the buffer it is handed.
