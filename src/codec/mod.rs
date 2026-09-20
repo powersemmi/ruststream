@@ -297,6 +297,23 @@ pub trait Codec: Send + Sync {
     ///
     /// Returns [`CodecError::Encode`] when the underlying serializer fails. The buffer's
     /// contents are then unspecified: the publish path discards what a failed encode wrote.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # fn main() -> Result<(), ruststream::codec::CodecError> {
+    /// use ruststream::BytesMut;
+    /// use ruststream::codec::{Codec, JsonCodec};
+    ///
+    /// let mut buf = BytesMut::new();
+    /// JsonCodec.encode_into(&7u8, &mut buf)?;
+    /// assert_eq!(&buf[..], b"7");
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "json"))]
+    /// # fn main() {}
+    /// ```
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
         buf.extend_from_slice(&self.encode(value)?);
         Ok(())
