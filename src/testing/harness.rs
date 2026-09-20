@@ -861,8 +861,10 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
+        // The harness hands the buffer over exactly as a real publish does, so an in-process
+        // transport sees the same payload form here as it does in production.
         self.sink()
-            .send(OutgoingMessage::new(name, &bytes), None)
+            .send(OutgoingMessage::shared(name, bytes.freeze()), None)
             .await
     }
 
@@ -892,7 +894,7 @@ impl BrokerHandle<'_> {
         let bytes = DefaultCodec::default()
             .encode(value)
             .map_err(|err| TestError::Encode(err.to_string()))?;
-        let msg = OutgoingMessage::new(name, &bytes)
+        let msg = OutgoingMessage::shared(name, bytes.freeze())
             .with_typed_headers(headers)
             .map_err(|err| TestError::Encode(err.to_string()))?;
         self.sink().send(msg, None).await

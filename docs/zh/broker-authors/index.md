@@ -205,7 +205,10 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
-`OutgoingMessage` 借用自己的名字和载荷，因此发布不强制分配内存。
+`OutgoingMessage` 借用自己的名字，载荷则是你的传输层可以接管而不必复制的东西。`msg.payload()` 照旧
+给出 `&[u8]`。如果你的客户端要的是自己拥有的字节，`msg.into_payload().into_bytes()` 把框架造出来的
+缓冲区交给你 - 普通发布、回复、通过槽位发送时编解码器的输出 - 只有在发布只是借来别人的字节时才复制一
+次。克隆拿到的缓冲区的客户端付出的是一次引用计数，而不是一次内存分配。
 
 服务写的不是这个方法，而是构建器：`publisher.message(&value).publish()` 选定目的地、编解码器和消息
 头，然后恰好调用一次 `publish`。实现 `publish`，整个构建器就在它之上工作起来。

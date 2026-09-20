@@ -81,10 +81,78 @@ impl RawMessage {
     }
 }
 
-/// A message ready to be published, holding borrowed payload and name.
+/// The payload of an [`OutgoingMessage`]: bytes the publish lent, or a buffer it handed over.
 ///
-/// Borrowed fields let publishers send messages without an allocation when the caller already
-/// owns the buffers. Use [`OutgoingMessage::new`] and the builder-style setters to construct.
+/// A publish that produced the buffer itself - the codec's output on the ordinary encode, a
+/// reply, a slot, a batched reply - hands it over as [`Shared`](Self::Shared), so a transport
+/// whose client speaks `bytes` takes it instead of copying it. A publish that rebuilt the
+/// message around bytes someone else owns lends them as [`Borrowed`](Self::Borrowed), and a
+/// transport that wants an owned buffer there copies once, as it always did.
+///
+/// Reading the payload does not care which it is: [`OutgoingMessage::payload`] answers `&[u8]`
+/// either way.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Bytes, OutgoingMessage, OutgoingPayload};
+///
+/// let handed = OutgoingMessage::shared("orders.created", Bytes::from_static(br#"{"id":7}"#));
+/// assert!(matches!(handed.into_payload(), OutgoingPayload::Shared(_)));
+///
+/// let lent = OutgoingMessage::new("orders.created", br#"{"id":7}"#);
+/// assert!(matches!(lent.into_payload(), OutgoingPayload::Borrowed(_)));
+/// ```
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum OutgoingPayload<'a> {
+    /// Bytes the publish lent, valid as long as the message is.
+    Borrowed(&'a [u8]),
+    /// A buffer the publish produced and hands over.
+    Shared(Bytes),
+}
+
+impl OutgoingPayload<'_> {
+    /// The bytes, wherever they live.
+    #[inline]
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
+
+    /// The payload as an owned buffer: the handed-over one moves out, a lent one is copied.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Bytes, OutgoingPayload};
+    ///
+    /// let handed = Bytes::from_static(b"{}");
+    /// assert_eq!(OutgoingPayload::Shared(handed).into_bytes(), b"{}".as_slice());
+    /// assert_eq!(OutgoingPayload::Borrowed(b"{}").into_bytes(), b"{}".as_slice());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            Self::Borrowed(bytes) => Bytes::copy_from_slice(bytes),
+            Self::Shared(bytes) => bytes,
+        }
+    }
+}
+
+/// A message ready to be published, holding a borrowed name and a payload the publish either
+/// lent or handed over.
+///
+/// A borrowed name and a lent payload let a publisher send without an allocation when the caller
+/// already owns the buffers. Where the framework produced the payload itself it hands the buffer
+/// over instead ([`OutgoingPayload::Shared`]), so a transport that wants owned bytes takes it
+/// rather than copying it: [`payload_bytes`](Self::payload_bytes) clones the handle and
+/// [`into_payload`](Self::into_payload) moves it out. Use [`OutgoingMessage::new`],
+/// [`OutgoingMessage::shared`] and the builder-style setters to construct.
 ///
 /// # Examples
 ///
@@ -102,18 +170,72 @@ impl RawMessage {
 #[derive(Debug, Clone)]
 pub struct OutgoingMessage<'a> {
     name: &'a str,
-    payload: &'a [u8],
+    payload: OutgoingPayload<'a>,
     headers: HeaderMap,
 }
 
 impl<'a> OutgoingMessage<'a> {
-    /// Constructs a new outgoing message for the given name and payload, with no headers.
+    /// Constructs a new outgoing message lending the given payload, with no headers.
+    #[inline]
     #[must_use]
     pub fn new(name: &'a str, payload: &'a [u8]) -> Self {
+        Self::with_payload(name, OutgoingPayload::Borrowed(payload))
+    }
+
+    /// Constructs a new outgoing message handing the given buffer over, with no headers.
+    ///
+    /// What a publish that produced the buffer uses, so the transport underneath can keep it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Bytes, OutgoingMessage};
+    ///
+    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
+    /// assert_eq!(msg.payload(), b"{}");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn shared(name: &'a str, payload: Bytes) -> Self {
+        Self::with_payload(name, OutgoingPayload::Shared(payload))
+    }
+
+    /// Constructs a new outgoing message over a payload in whichever form it arrived, with no
+    /// headers.
+    ///
+    /// What a stage that rebuilds a message uses, so a buffer already handed over is not
+    /// downgraded to a borrow on the way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{OutgoingMessage, OutgoingPayload};
+    ///
+    /// let carried = OutgoingMessage::new("orders.created", b"{}").into_payload();
+    /// let msg = OutgoingMessage::with_payload("orders.rebuilt", carried);
+    /// assert_eq!(msg.payload(), b"{}");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_payload(name: &'a str, payload: OutgoingPayload<'a>) -> Self {
+        Self::assembled(name, payload, HeaderMap::new())
+    }
+
+    /// The whole message at once, for a stage that already holds all three parts.
+    ///
+    /// The builder pair (`with_payload` then `with_headers`) writes the header field twice and
+    /// drops the empty map it started from; the publish path assembles enough messages per
+    /// delivery for that to be worth avoiding.
+    #[inline]
+    pub(crate) fn assembled(
+        name: &'a str,
+        payload: OutgoingPayload<'a>,
+        headers: HeaderMap,
+    ) -> Self {
         Self {
             name,
             payload,
-            headers: HeaderMap::new(),
+            headers,
         }
     }
 
@@ -156,14 +278,61 @@ impl<'a> OutgoingMessage<'a> {
     }
 
     /// Returns the name / subject this message will be published to.
+    ///
+    /// The name is the caller's, not the message's, so it outlives the message: a transport
+    /// reads the destination here and then consumes the message for its payload.
+    #[inline]
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'a str {
         self.name
     }
 
     /// Returns the payload to be published.
+    #[inline]
     #[must_use]
     pub fn payload(&self) -> &[u8] {
+        self.payload.as_slice()
+    }
+
+    /// Returns the payload as owned bytes: a handed-over buffer is shared, a lent one is copied.
+    ///
+    /// The outgoing counterpart of [`RawMessage::payload_bytes`]. Cloning a handed-over
+    /// buffer is a reference count, not a copy; a transport that consumes the message takes
+    /// [`into_payload`](Self::into_payload) instead and pays nothing at all.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Bytes, OutgoingMessage};
+    ///
+    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
+    /// assert_eq!(msg.payload_bytes(), b"{}".as_slice());
+    /// ```
+    #[must_use]
+    pub fn payload_bytes(&self) -> Bytes {
+        match &self.payload {
+            OutgoingPayload::Borrowed(bytes) => Bytes::copy_from_slice(bytes),
+            OutgoingPayload::Shared(bytes) => bytes.clone(),
+        }
+    }
+
+    /// Returns the payload in the form the publish handed it over in.
+    ///
+    /// What a transport that writes the message and keeps its buffer calls: publishing takes the
+    /// message by value, so a handed-over buffer moves into the transport with no copy and no
+    /// reference count.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Bytes, OutgoingMessage, OutgoingPayload};
+    ///
+    /// let msg = OutgoingMessage::shared("orders.created", Bytes::from_static(b"{}"));
+    /// assert!(matches!(msg.into_payload(), OutgoingPayload::Shared(_)));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn into_payload(self) -> OutgoingPayload<'a> {
         self.payload
     }
 
@@ -173,11 +342,12 @@ impl<'a> OutgoingMessage<'a> {
         &self.headers
     }
 
-    /// The borrowed name and payload, and the header map this message owns.
+    /// The borrowed name, the payload as it arrived, and the header map this message owns.
     ///
     /// A publish stage that has to rebuild the message takes the map here instead of cloning
     /// what the caller is about to drop.
-    pub(crate) fn into_parts(self) -> (&'a str, &'a [u8], HeaderMap) {
+    #[inline]
+    pub(crate) fn into_parts(self) -> (&'a str, OutgoingPayload<'a>, HeaderMap) {
         (self.name, self.payload, self.headers)
     }
 }

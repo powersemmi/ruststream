@@ -245,6 +245,10 @@ impl Publisher for MyPublisher {
 }
 ```
 
+A client that takes owned bytes calls `msg.into_payload().into_bytes()` instead of copying
+`msg.payload()`: the framework hands over the buffer it produced, and that call copies only where
+the publish was lending bytes it does not own.
+
 ## Per-message settings on the publish builder
 
 A call site adjusts one field through a step you add to the publish builder. Nothing wraps the

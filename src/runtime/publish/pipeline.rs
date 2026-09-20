@@ -40,8 +40,10 @@ impl PublishPipeline for PublishIdentity {
         send: &'a P,
         options: Option<&'a P::Options>,
     ) -> Result<(), BoxError> {
-        let msg =
-            OutgoingMessage::new(out.name(), out.payload()).with_headers(out.headers().clone());
+        // The broker is the last reader of this message, so the buffer the stages produced moves
+        // into it rather than being lent: a transport that keeps owned bytes takes it as it is.
+        let payload = out.take_payload();
+        let msg = OutgoingMessage::assembled(out.name(), payload, out.headers().clone());
         send.publish(msg, options)
             .await
             .map_err(|e| Box::new(e) as BoxError)

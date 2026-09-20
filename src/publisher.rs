@@ -66,6 +66,12 @@ pub trait Publisher: Send + Sync {
     /// `options` is `None` on every path with no call site to adjust them - a reply, a deferred
     /// redelivery - and the policy's own settings apply.
     ///
+    /// The message arrives by value, and so does its payload. Reading it with
+    /// [`OutgoingMessage::payload`] is unchanged. A transport whose client takes owned bytes
+    /// calls [`OutgoingMessage::into_payload`] instead: wherever the framework produced the
+    /// buffer - the codec's output on an ordinary publish, a reply, a slot - the buffer itself is
+    /// handed over, and only a publish lending bytes it does not own copies there.
+    ///
     /// # Cancel safety
     ///
     /// Cancel safety is implementation-defined: most brokers will leave a message in an

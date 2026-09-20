@@ -11,14 +11,15 @@ use std::borrow::Cow;
 use std::fmt::{self, Display, Formatter};
 use std::future::Future;
 use std::hash::{Hash, Hasher};
+use std::mem;
 use std::ops::Deref;
 use std::pin::Pin;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
-use crate::HeaderMap;
 use crate::runtime::lifecycle::BoxError;
+use crate::{HeaderMap, OutgoingPayload};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
 // The static pipeline returns unboxed RPITIT futures; only the opt-in runtime-composed list
@@ -31,10 +32,11 @@ pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError
 /// three places one comes from without copying it: the macro reply path borrows a string literal
 /// (`reply_name(&self) -> &str`), a computed name moves in owned, and a name read off the
 /// delivery being answered arrives as the delivery's own buffer. The payload behaves the same
-/// way: codec output moves in whole, a rebuilt message lends the bytes it was given, and the
-/// first [`payload_mut`](Self::payload_mut) or [`set_payload`](Self::set_payload) is what makes
-/// the buffer this message's own. Middleware may change the name, transform the payload, and
-/// enrich the [`headers`](Self::headers_mut) before the message is sent.
+/// way: codec output moves in whole, a rebuilt message carries the buffer it was handed or lends
+/// the bytes it was lent, and the first [`payload_mut`](Self::payload_mut) or
+/// [`set_payload`](Self::set_payload) is what makes the buffer this message's own. Middleware may
+/// change the name, transform the payload, and enrich the [`headers`](Self::headers_mut) before
+/// the message is sent.
 #[derive(Debug, Clone)]
 pub struct Outgoing<'a> {
     name: OutgoingName<'a>,
@@ -176,36 +178,67 @@ impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
 
 /// An [`Outgoing`] payload: the bytes as they arrived, until something writes to them.
 ///
-/// The [`Cow`] of the payload position. A publish whose stages only read it - which every
-/// transform that stamps a header or a setting does - travels on the buffer that is already
-/// there, and the copy happens where a stage actually asks to write.
+/// The [`Cow`] of the payload position, over the three places the bytes can be. A publish whose
+/// stages only read it - which every transform that stamps a header or a setting does - travels
+/// on the buffer that is already there, and the copy happens where a stage actually asks to
+/// write.
 #[derive(Debug, Clone)]
 pub(crate) enum Payload<'a> {
     /// The caller's bytes, valid as long as the message is.
     Lent(&'a [u8]),
+    /// A buffer an earlier stage already handed over, travelling on untouched.
+    Shared(Bytes),
     /// A buffer of this message's own: codec output, or the copy a write asked for.
     Owned(BytesMut),
 }
 
 impl Payload<'_> {
     /// The bytes, wherever they live.
+    #[inline]
     pub(crate) fn as_slice(&self) -> &[u8] {
         match self {
             Self::Lent(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
             Self::Owned(buf) => buf,
         }
     }
 
     /// The buffer, making it this message's own on the first call.
     fn to_mut(&mut self) -> &mut BytesMut {
-        if let Self::Lent(bytes) = *self {
-            *self = Self::Owned(BytesMut::from(bytes));
+        match self {
+            Self::Lent(bytes) => *self = Self::Owned(BytesMut::from(*bytes)),
+            Self::Shared(bytes) => *self = Self::Owned(BytesMut::from(&bytes[..])),
+            Self::Owned(_) => {}
         }
         match self {
             Self::Owned(buf) => buf,
-            // The branch above leaves nothing lent, which the borrow checker cannot carry across
-            // this match; `Cow::to_mut` in the standard library is written the same way.
-            Self::Lent(_) => unreachable!(),
+            // The branches above leave nothing but an owned buffer, which the borrow checker
+            // cannot carry across this match; `Cow::to_mut` in the standard library is written
+            // the same way.
+            Self::Lent(_) | Self::Shared(_) => unreachable!(),
+        }
+    }
+}
+
+impl<'a> From<OutgoingPayload<'a>> for Payload<'a> {
+    #[inline]
+    fn from(payload: OutgoingPayload<'a>) -> Self {
+        match payload {
+            OutgoingPayload::Borrowed(bytes) => Self::Lent(bytes),
+            OutgoingPayload::Shared(bytes) => Self::Shared(bytes),
+        }
+    }
+}
+
+impl<'a> From<Payload<'a>> for OutgoingPayload<'a> {
+    #[inline]
+    fn from(payload: Payload<'a>) -> Self {
+        match payload {
+            Payload::Lent(bytes) => Self::Borrowed(bytes),
+            Payload::Shared(bytes) => Self::Shared(bytes),
+            // The pipeline is the last owner of a buffer it wrote, so the message that leaves
+            // hands it to the broker rather than lending a borrow of something about to drop.
+            Payload::Owned(buf) => Self::Shared(buf.freeze()),
         }
     }
 }
@@ -225,13 +258,19 @@ impl<'a> Outgoing<'a> {
         }
     }
 
-    /// The same over bytes the caller keeps alive: what a publish stage rebuilding a message
-    /// starts from, so a message nothing writes to is never copied.
-    pub(crate) fn lending(name: impl Into<OutgoingName<'a>>, payload: &'a [u8]) -> Self {
+    /// The same over a payload in the form it arrived in: what a publish stage rebuilding a
+    /// message starts from, so a message nothing writes to is never copied and a buffer an
+    /// earlier stage handed over is not downgraded to a borrow here.
+    #[inline]
+    pub(crate) fn rebuilding(
+        name: impl Into<OutgoingName<'a>>,
+        payload: OutgoingPayload<'a>,
+        headers: HeaderMap,
+    ) -> Self {
         Self {
             name: name.into(),
-            payload: Payload::Lent(payload),
-            headers: HeaderMap::new(),
+            payload: payload.into(),
+            headers,
         }
     }
 
@@ -281,6 +320,17 @@ impl<'a> Outgoing<'a> {
     /// Replaces the payload.
     pub fn set_payload(&mut self, payload: impl Into<BytesMut>) {
         self.payload = Payload::Owned(payload.into());
+    }
+
+    /// The payload, taken out for the message that leaves.
+    ///
+    /// The terminal of the pipeline calls this: the broker is the last reader, so the buffer the
+    /// stages wrote moves into the outgoing message instead of being lent to it. The `Outgoing`
+    /// is dead at that point - the terminal holds the only borrow of it for the rest of the
+    /// publish - so what it is left holding is never read again.
+    #[inline]
+    pub(crate) fn take_payload(&mut self) -> OutgoingPayload<'a> {
+        mem::replace(&mut self.payload, Payload::Lent(&[])).into()
     }
 
     /// The outgoing headers.
