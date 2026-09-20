@@ -469,7 +469,7 @@ impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
         codec: &Enc,
         buf: &'v mut BytesMut,
     ) -> Result<Form::Form<'v>, PayloadError> {
-        Ok(Form::encoded(codec.codec(), value, buf)?)
+        Ok(Form::encoded(codec.codec(), value, Form::encode_slot(buf))?)
     }
 }
 
@@ -479,7 +479,8 @@ impl<T: Serialized, Enc> WirePayload<T, Enc> for SerializedWire {
         _codec: &Enc,
         buf: &'v mut BytesMut,
     ) -> Result<Form::Form<'v>, PayloadError> {
-        Form::serialized(value, buf).map_err(|err| PayloadError::Serialize(Box::new(err)))
+        Form::serialized(value, Form::encode_slot(buf))
+            .map_err(|err| PayloadError::Serialize(Box::new(err)))
     }
 }
 

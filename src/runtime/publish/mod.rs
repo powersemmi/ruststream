@@ -319,6 +319,15 @@ impl<'a> Outgoing<'a> {
         &mut self.headers
     }
 
+    /// The name, the payload and the header map, taken apart.
+    ///
+    /// What a stage that owns its message calls on the way out: whatever the transforms wrote
+    /// moves on rather than being copied on, and the spent value is not held across the send.
+    #[inline]
+    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, HeaderMap) {
+        (self.name, self.payload, self.headers)
+    }
+
     /// The headers, taken out for the message that leaves.
     ///
     /// The terminal calls this beside [`take_payload`](Self::take_payload) and for the same

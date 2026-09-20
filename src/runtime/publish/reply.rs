@@ -11,7 +11,7 @@ use super::{
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::publish::sealed::Sealed;
-use crate::{Publisher, TransactionalPublisher};
+use crate::{PayloadForm, Publisher, TransactionalPublisher};
 
 /// The live reply sink a batch's replies travel through.
 ///
@@ -20,6 +20,10 @@ use crate::{Publisher, TransactionalPublisher};
 /// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
 /// static [`PublishTransform`](crate::runtime::PublishTransform) reads the delivery while publishing each reply.
 pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
+    /// The payload form of the publisher underneath, so a batch's replies encode into what that
+    /// form carries. See [`Publisher::Payload`].
+    type Payload: PayloadForm;
+
     /// The codec replies are encoded with (also reused as the decode codec when a batch
     /// publishing handler is mounted without an explicit one).
     type Codec: Codec;
@@ -37,6 +41,7 @@ pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'a>,
     ) -> impl Future<Output = Result<(), BoxError>> + Send
     where
         T: Serialize + Sync,
@@ -51,6 +56,7 @@ where
     BL: BatchPublishTransform<Cx, P::Options>,
     Cx: Sync,
 {
+    type Payload = P::Payload;
     type Codec = C;
 
     fn reply_codec(&self) -> &C {
@@ -65,13 +71,16 @@ where
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
+        mut encode: <P::Payload as PayloadForm>::Encode<'a>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
         PP: PublishPipeline,
     {
         for reply in replies {
-            self.publish_batched(name, reply, pipeline, cx).await?;
+            let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
+            self.publish_batched(name, reply, pipeline, cx, slot)
+                .await?;
         }
         Ok(())
     }
@@ -85,6 +94,7 @@ where
     BL: BatchPublishTransform<Cx, P::Options>,
     Cx: Sync,
 {
+    type Payload = P::Payload;
     type Codec = C;
 
     fn reply_codec(&self) -> &C {
@@ -99,6 +109,7 @@ where
         replies: &'a [T],
         pipeline: &'a PP,
         cx: &'a PublishContext<'a, Cx>,
+        mut encode: <P::Payload as PayloadForm>::Encode<'a>,
     ) -> Result<(), BoxError>
     where
         T: Serialize + Sync,
@@ -110,7 +121,12 @@ where
             .await
             .map_err(|e| Box::new(e) as BoxError)?;
         for reply in replies {
-            if let Err(err) = self.inner.publish_batched(name, reply, pipeline, cx).await {
+            let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
+            if let Err(err) = self
+                .inner
+                .publish_batched(name, reply, pipeline, cx, slot)
+                .await
+            {
                 abort_quietly(publisher).await;
                 return Err(err);
             }

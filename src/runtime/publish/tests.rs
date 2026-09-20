@@ -264,7 +264,13 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     let headers = HeaderMap::new();
     let cx = PublishContext::new("dyn", &headers, &());
     publisher
-        .publish("dyn", &5_u32, &pipeline, &cx)
+        .publish(
+            "dyn",
+            &5_u32,
+            &pipeline,
+            &cx,
+            <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect("publish through the dynamic stack failed");
 
@@ -460,7 +466,13 @@ async fn the_pipeline_cursors_render_their_position() {
     let headers = HeaderMap::new();
     let cx = PublishContext::new("cursors", &headers, &());
     publisher
-        .publish("cursors", &1_u32, &pipeline, &cx)
+        .publish(
+            "cursors",
+            &1_u32,
+            &pipeline,
+            &cx,
+            <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect("publish through the recorded pipeline failed");
 
@@ -520,7 +532,13 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
     let cx = PublishContext::new("in", &headers, &());
 
     let single = publisher
-        .publish("out", &unencodable(), &PublishIdentity, &cx)
+        .publish(
+            "out",
+            &unencodable(),
+            &PublishIdentity,
+            &cx,
+            <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect_err("the codec cannot encode this reply");
     assert!(
@@ -534,6 +552,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
             &[unencodable(), unencodable()],
             &PublishIdentity,
             &cx,
+            <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
         )
         .await
         .expect_err("the batch path encodes per reply");
@@ -567,7 +586,13 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
     let cx = PublishContext::new("in", &headers, &());
 
     publisher
-        .publish_batch("out", &[1_u32, 2, 3], &PublishIdentity, &cx)
+        .publish_batch(
+            "out",
+            &[1_u32, 2, 3],
+            &PublishIdentity,
+            &cx,
+            <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect("publishing a batch of replies failed");
 
@@ -650,9 +675,15 @@ async fn a_reply_wiring_pairs_into_its_live_sink() {
 
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
-    live.publish("paired", &9_u32, &PublishIdentity, &cx)
-        .await
-        .expect("the paired stack must publish");
+    live.publish(
+        "paired",
+        &9_u32,
+        &PublishIdentity,
+        &cx,
+        <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+    )
+    .await
+    .expect("the paired stack must publish");
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = stream
@@ -688,9 +719,15 @@ async fn a_transactional_wiring_pairs_into_the_transactional_sink() {
 
     let headers = HeaderMap::new();
     let cx = PublishContext::new("in", &headers, &());
-    live.publish_batch("scoped", &[4_u32, 5], &PublishIdentity, &cx)
-        .await
-        .expect("the batch's replies must publish and commit");
+    live.publish_batch(
+        "scoped",
+        &[4_u32, 5],
+        &PublishIdentity,
+        &cx,
+        <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
+    )
+    .await
+    .expect("the batch's replies must publish and commit");
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let mut sent = Vec::new();
@@ -766,7 +803,13 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
-        .publish_batch("out", &[1_u32, 2], &PublishIdentity, &cx)
+        .publish_batch(
+            "out",
+            &[1_u32, 2],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect_err("a refused begin fails the batch");
     assert!(err.to_string().contains("rigged"), "reported: {err}");
@@ -798,6 +841,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
             &[unencodable(), unencodable()],
             &PublishIdentity,
             &cx,
+            <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
         )
         .await
         .expect_err("a reply that cannot be encoded fails the batch");
@@ -837,7 +881,13 @@ async fn a_failed_abort_is_logged_rather_than_propagated() {
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
-        .publish_batch("out", &[unencodable()], &PublishIdentity, &cx)
+        .publish_batch(
+            "out",
+            &[unencodable()],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect_err("a reply that cannot be encoded fails the batch");
     drop(guard);
@@ -882,7 +932,13 @@ async fn a_refused_commit_fails_the_batch() {
     let cx = PublishContext::new("in", &headers, &());
 
     let err = wiring
-        .publish_batch("out", &[1_u32, 2], &PublishIdentity, &cx)
+        .publish_batch(
+            "out",
+            &[1_u32, 2],
+            &PublishIdentity,
+            &cx,
+            <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
+        )
         .await
         .expect_err("a refused commit fails the batch");
     assert!(err.to_string().contains("rigged"), "reported: {err}");

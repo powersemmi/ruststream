@@ -139,7 +139,8 @@ where
         // The scope's own buffer for this publish: a transaction that reads the payload is lent
         // it, one that buffers the message is handed the codec's and never touches this.
         let mut buf = BytesMut::new();
-        let payload = <P::Payload as PayloadForm>::encoded(self.enc.codec(), value, &mut buf)
+        let slot = <P::Payload as PayloadForm>::encode_slot(&mut buf);
+        let payload = <P::Payload as PayloadForm>::encoded(self.enc.codec(), value, slot)
             .map_err(TransactionPublishError::Encode)?;
         self.publisher
             .publish(OutgoingMessage::with_payload(name, payload), None)
@@ -308,7 +309,8 @@ where
         // As on the borrowed scope: the buffer is this publish's own, and only a transaction
         // that lends the payload writes into it.
         let mut buf = BytesMut::new();
-        let payload = <Txn::Payload as PayloadForm>::encoded(self.enc.codec(), value, &mut buf)
+        let slot = <Txn::Payload as PayloadForm>::encode_slot(&mut buf);
+        let payload = <Txn::Payload as PayloadForm>::encoded(self.enc.codec(), value, slot)
             .map_err(TransactionPublishError::Encode)?;
         self.txn
             .publish(OutgoingMessage::with_payload(name, payload), None)

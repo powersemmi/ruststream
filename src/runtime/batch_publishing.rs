@@ -11,10 +11,11 @@
 
 use std::future::Future;
 
+use bytes::BytesMut;
 use serde::Serialize;
 use tracing::warn;
 
-use crate::{BuildBatchContext, IncomingMessage};
+use crate::{BuildBatchContext, IncomingMessage, PayloadForm};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
 use super::context::Context;
@@ -213,10 +214,15 @@ where
         let result = match self.def.call(values, &self.injections, ctx).await {
             Ok(replies) => {
                 let name = self.def.reply_name();
+                // As on the single-message path: the loop's buffer where the dispatch lent one,
+                // and one of this batch's own where it did not.
+                let mut own = BytesMut::new();
+                let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
+                let slot = <R::Payload as PayloadForm>::encode_slot(encode);
                 let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
                 match self
                     .publisher
-                    .publish_batch(name, &replies, &self.pipeline, &pubcx)
+                    .publish_batch(name, &replies, &self.pipeline, &pubcx, slot)
                     .await
                 {
                     Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
