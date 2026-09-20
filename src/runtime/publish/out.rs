@@ -333,9 +333,10 @@ where
         let mut resolved = options.cloned();
         self.stack
             .apply(&mut out, &mut resolved, &SlotContext::new(self.slot));
-        // The rebuilt message is dead once the leaf has it, so what the transforms wrote moves on
-        // rather than being copied on.
-        let sent = <W::Payload as PayloadForm>::leaving(&mut out);
+        // The rebuilt message is spent here, so what the transforms wrote moves on rather than
+        // being copied on, and only what the transport needs alive travels with the send.
+        let mut spent = <W::Payload as PayloadForm>::Spent::default();
+        let sent = <W::Payload as PayloadForm>::handed_on(out, &mut spent);
         self.pipeline.send(leaf, sent, resolved.as_ref()).await
     }
 }

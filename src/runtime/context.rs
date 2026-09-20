@@ -12,6 +12,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use bytes::BytesMut;
+
 use crate::{Field, FieldMut, HeaderMap};
 
 use super::dispatch::Delivery;
@@ -73,6 +75,9 @@ pub struct Context<'a, C = (), S = ()> {
     delivery: &'a Delivery<C>,
     after: Vec<AfterHook>,
     failfast: Option<&'a ErrorShutdown>,
+    /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
+    /// context was built without one, and then the reply encodes into a buffer of its own.
+    encode: Option<&'a mut BytesMut>,
     /// The subscriber's materialization policy, set by the dispatcher from the definition's
     /// failure policies. It reaches the handler body because a `Headers` contract is parsed
     /// there rather than in the decode adapter.
@@ -114,6 +119,7 @@ impl<'a, C, S> Context<'a, C, S> {
             delivery,
             after: Vec::new(),
             failfast: None,
+            encode: None,
             decode: FailurePolicy::Drop,
             #[cfg(any(feature = "testing", feature = "otel"))]
             decode_failed: false,
@@ -148,6 +154,27 @@ impl<'a, C, S> Context<'a, C, S> {
     pub(crate) fn with_failfast(mut self, failfast: &'a ErrorShutdown) -> Self {
         self.failfast = Some(failfast);
         self
+    }
+
+    /// Lends this delivery the dispatch loop's encode buffer.
+    ///
+    /// One buffer per sequential loop, per keyed lane and per pooled worker task, so a reply
+    /// encoded into it allocates only while it is growing - which it stops doing after the
+    /// subscription's first message. What the buffer is worth to the publish depends on the
+    /// broker: a publisher that reads the payload is lent it, and one that keeps the payload is
+    /// handed a buffer of its own regardless.
+    pub(crate) fn with_encode_buffer(mut self, buf: &'a mut BytesMut) -> Self {
+        self.encode = Some(buf);
+        self
+    }
+
+    /// Takes the loop's encode buffer out for this delivery's reply.
+    ///
+    /// Taken rather than borrowed, so the rest of the context stays readable while the reply is
+    /// being built: what the publish needs of the context (the subscription's name, the
+    /// delivery's headers) is read next to the buffer, not through it.
+    pub(crate) fn take_encode_buffer(&mut self) -> Option<&'a mut BytesMut> {
+        self.encode.take()
     }
 
     /// Attaches the subscriber's effective materialization policy, so a handler-side contract

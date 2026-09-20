@@ -61,10 +61,29 @@ pub trait PayloadForm: sealed::Sealed {
     /// form (free where the transport lends, one copy where it keeps them).
     type Form<'a>: AsRef<[u8]> + Send + From<&'a [u8]>;
 
-    /// The codec's output in this form: written into `buf` and lent, or a buffer of its own.
+    /// What a publish in this form carries to its encode: the scratch buffer where the form
+    /// writes into one, and nothing at all where it does not.
     ///
-    /// `buf` is the publish path's scratch - inside a dispatch loop, the one buffer that loop
-    /// reuses - and is emptied here, so what it held for the previous message never leaves with
+    /// A publish to a transport that keeps the payload is handed the codec's own buffer, so
+    /// there is nothing for it to write into and the publish path carries no buffer - which a
+    /// dispatch's futures would otherwise hold for the length of every delivery.
+    #[doc(hidden)]
+    type Encode<'a>: Send;
+
+    /// The publish path's scratch, as this form takes it: inside a dispatch loop, the one buffer
+    /// that loop reuses.
+    #[doc(hidden)]
+    fn encode_slot<'a>(buf: &'a mut BytesMut) -> Self::Encode<'a>;
+
+    /// The same scratch again, for the next message of a batch: what a form that carries a
+    /// buffer lends on, and nothing for one that carries none.
+    #[doc(hidden)]
+    fn encode_again<'s, 'a: 's>(slot: &'s mut Self::Encode<'a>) -> Self::Encode<'s>;
+
+    /// The codec's output in this form: written into the scratch and lent, or a buffer of its
+    /// own.
+    ///
+    /// The scratch is emptied here, so what it held for the previous message never leaves with
     /// this one.
     ///
     /// The framework's own side of the declaration, and the reason it is on this trait: a form
@@ -79,20 +98,20 @@ pub trait PayloadForm: sealed::Sealed {
     fn encoded<'b, C, T>(
         codec: &C,
         value: &T,
-        buf: &'b mut BytesMut,
+        buf: Self::Encode<'b>,
     ) -> Result<Self::Form<'b>, CodecError>
     where
         C: Codec,
         T: Serialize;
 
     /// The bytes a [`Serialized`] value publishes, in this form: the ones it holds, or the ones
-    /// it writes into `buf`.
+    /// it writes into the scratch.
     ///
     /// # Errors
     ///
     /// Returns the value's own error when its encoder rejects it.
     #[doc(hidden)]
-    fn serialized<'v, T>(value: &'v T, buf: &'v mut BytesMut) -> Result<Self::Form<'v>, T::Error>
+    fn serialized<'v, T>(value: &'v T, buf: Self::Encode<'v>) -> Result<Self::Form<'v>, T::Error>
     where
         T: Serialized;
 
@@ -111,6 +130,26 @@ pub trait PayloadForm: sealed::Sealed {
     /// filled moves into the message rather than being cloned into it.
     #[doc(hidden)]
     fn leaving<'a>(out: &'a mut Outgoing<'a>) -> OutgoingMessage<'a, Self::Form<'a>>;
+
+    /// What a stage that owns its [`Outgoing`] has to keep alive for the length of the publish
+    /// it hands on: a destination it owns, and - only where the transport reads the payload -
+    /// the buffer a stage above wrote.
+    ///
+    /// The stage holds one of these instead of the message it spent, so a publish to a taking
+    /// transport carries no buffer across its send, and a message addressed to a literal
+    /// carries nothing at all.
+    #[doc(hidden)]
+    type Spent: Default + Send;
+
+    /// The message a stage that owns its [`Outgoing`] hands on, spending it into `spent`.
+    ///
+    /// [`leaving`](Self::leaving) is the same step for a stage that only borrows the message
+    /// from the pipeline and therefore cannot spend it.
+    #[doc(hidden)]
+    fn handed_on<'a>(
+        out: Outgoing<'a>,
+        spent: &'a mut Self::Spent,
+    ) -> OutgoingMessage<'a, Self::Form<'a>>;
 }
 
 /// The declaration of a transport that reads the payload and keeps nothing: it is handed

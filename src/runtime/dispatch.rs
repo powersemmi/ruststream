@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
@@ -262,6 +262,10 @@ where
     tokio::spawn(async move {
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut cancelled = std::pin::pin!(shutdown.cancelled());
+        // One encode buffer for the whole loop: a reply that leaves through a publisher which
+        // reads the payload is written into this one every time, so the subscription allocates
+        // it once and never again.
+        let mut encode = BytesMut::new();
         loop {
             match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
                 Turn::Delivery(Ok(msg)) => {
@@ -270,7 +274,13 @@ where
                     // call expression makes the loop build it on the stack and copy it into
                     // its own state on every delivery.
                     let handling = std::pin::pin!(dispatch(
-                        &*handler, msg, &name, &state, &delivery, &failure
+                        &*handler,
+                        msg,
+                        &mut encode,
+                        &name,
+                        &state,
+                        &delivery,
+                        &failure
                     ));
                     handling.await;
                 }
@@ -464,7 +474,19 @@ where
                     let delivery = Arc::clone(&delivery);
                     let failure = failure.clone();
                     tasks.spawn(async move {
-                        dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
+                        // A worker task takes one delivery, so its buffer is its own and lives
+                        // as long as the delivery does.
+                        let mut encode = BytesMut::new();
+                        dispatch(
+                            &*handler,
+                            msg,
+                            &mut encode,
+                            &name,
+                            &state,
+                            &delivery,
+                            &failure,
+                        )
+                        .await;
                     });
                 }
                 Turn::Delivery(Err(err)) => {
@@ -523,8 +545,20 @@ where
             let delivery = Arc::clone(&delivery);
             let failure = failure.clone();
             tasks.spawn(async move {
+                // One buffer per lane, for the same reason the sequential loop has one: a lane
+                // is a sequential loop over the keys that hash to it.
+                let mut encode = BytesMut::new();
                 while let Some(msg) = rx.recv().await {
-                    dispatch(&*handler, msg, &name, &state, &delivery, &failure).await;
+                    dispatch(
+                        &*handler,
+                        msg,
+                        &mut encode,
+                        &name,
+                        &state,
+                        &delivery,
+                        &failure,
+                    )
+                    .await;
                 }
             });
             lanes.push(tx);
@@ -631,8 +665,10 @@ where
         let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut tasks = JoinSet::new();
         // One decode buffer for the whole loop: the sequential path lends the same one to every
-        // batch, so the slice a handler reads is allocated once for the subscription.
+        // batch, so the slice a handler reads is allocated once for the subscription. The encode
+        // buffer beside it is the same bargain on the way out.
         let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
+        let mut encode = BytesMut::new();
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -665,6 +701,7 @@ where
                             &*handler,
                             batch,
                             &mut scratch,
+                            &mut encode,
                             &name,
                             &state,
                             &delivery,
@@ -712,6 +749,7 @@ where
 async fn dispatch<H, M, C, St>(
     handler: &H,
     msg: M,
+    encode: &mut BytesMut,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -738,6 +776,7 @@ async fn dispatch<H, M, C, St>(
     let cx = C::build(&msg);
     let mut ctx = Context::new(name, msg.headers(), state, cx, delivery)
         .with_failfast(&failure.shutdown)
+        .with_encode_buffer(encode)
         .with_decode_policy(failure.policies.decode);
     // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
     // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
@@ -845,6 +884,7 @@ async fn run_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,
     scratch: &mut H::Scratch,
+    encode: &mut BytesMut,
     name: &str,
     state: &St,
     delivery: &Delivery<C>,
@@ -865,6 +905,7 @@ async fn run_batch<H, M, C, St>(
     let cx = C::build(first);
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
+        .with_encode_buffer(encode)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
     // batch settle path record the batch it applied.
@@ -938,8 +979,8 @@ async fn run_batch<H, M, C, St>(
     }
 }
 
-/// [`run_batch`] with a decode buffer of its own: the pooled path runs its batches at the same
-/// time, so the loop's single buffer cannot be lent to all of them.
+/// [`run_batch`] with buffers of its own: the pooled path runs its batches at the same time, so
+/// the loop's single decode and encode buffers cannot be lent to all of them.
 async fn run_pooled_batch<H, M, C, St>(
     handler: &H,
     batch: Vec<M>,
@@ -954,7 +995,18 @@ async fn run_pooled_batch<H, M, C, St>(
     St: Send + Sync,
 {
     let mut scratch = H::Scratch::default();
-    run_batch(handler, batch, &mut scratch, name, state, delivery, failure).await;
+    let mut encode = BytesMut::new();
+    run_batch(
+        handler,
+        batch,
+        &mut scratch,
+        &mut encode,
+        name,
+        state,
+        delivery,
+        failure,
+    )
+    .await;
 }
 
 /// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)

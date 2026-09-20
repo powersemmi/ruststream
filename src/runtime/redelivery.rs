@@ -110,9 +110,10 @@ where
             );
             let mut options: Option<Live::Options> = None;
             self.stack.apply(&mut out, &mut options, cx);
-            // The copy is dead once the leaf has it, so what the transforms wrote moves on rather
-            // than being copied on.
-            let sent = <Live::Payload as PayloadForm>::leaving(&mut out);
+            // The copy is spent once the leaf has it, so what the transforms wrote moves on
+            // rather than being copied on.
+            let mut spent = <Live::Payload as PayloadForm>::Spent::default();
+            let sent = <Live::Payload as PayloadForm>::handed_on(out, &mut spent);
             self.pipeline
                 .send(&self.live, sent, options.as_ref())
                 .await

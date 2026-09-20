@@ -677,7 +677,15 @@ mod tests {
         let publisher = TypedPublisher::with_codec(Failing, JsonCodec);
         let headers = HeaderMap::new();
         let cx = PublishContext::new("orders", &headers, &());
-        let result = publisher.publish("orders", &7_u32, &pipeline, &cx).await;
+        let result = publisher
+            .publish(
+                "orders",
+                &7_u32,
+                &pipeline,
+                &cx,
+                <crate::Lend as crate::PayloadForm>::encode_slot(&mut crate::BytesMut::new()),
+            )
+            .await;
         assert!(
             result.is_err(),
             "the failing publisher must surface its error"

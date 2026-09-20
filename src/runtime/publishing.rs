@@ -36,16 +36,21 @@ use super::publish::{
 /// [`PublishingHandler`] serves both, so the encoded and the byte reply forms differ only in
 /// what pairs at the include site.
 pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
+    /// The payload form of the publisher this wiring ends in, so the reply encodes into what
+    /// that form carries. See [`Publisher::Payload`].
+    type Payload: PayloadForm;
+
     /// The error surfaced when the reply cannot be published.
     type Error: std::fmt::Display;
 
     /// Publishes `reply` to `name`.
-    fn deliver(
+    fn deliver<'e>(
         &self,
-        name: &str,
-        reply: &Reply,
+        name: &'e str,
+        reply: &'e Reply,
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
@@ -63,12 +68,13 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
 pub(crate) trait EncodeReply: Send + Sync {
     /// Delivers `self` through the typed reply stack.
     #[doc(hidden)]
-    fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
-        name: &str,
+        name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
@@ -79,13 +85,16 @@ pub(crate) trait EncodeReply: Send + Sync {
 }
 
 impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
-    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+    // The inner future is returned rather than awaited: this is a spelling of the reply's shape,
+    // and a state machine of its own here would sit in every dispatch's future for nothing.
+    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
-        name: &str,
+        name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -93,7 +102,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        stack.publish(name, self, pipeline, cx).await
+        stack.publish(name, self, pipeline, cx, encode)
     }
 }
 
@@ -102,13 +111,14 @@ where
     Hd: Serialize + Send + Sync,
     Pd: Serialize + Send + Sync,
 {
-    async fn deliver_typed<Leaf, ReplyCodec, Transforms, Cx, PP>(
+    fn deliver_typed<'e, Leaf, ReplyCodec, Transforms, Cx, PP>(
         &self,
         stack: &TypedPublisher<Leaf, ReplyCodec, Transforms>,
-        name: &str,
+        name: &'e str,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+        encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -116,9 +126,7 @@ where
         Cx: Sync,
         PP: PublishPipeline,
     {
-        stack
-            .publish_pair(name, &self.headers, &self.body, pipeline, cx)
-            .await
+        stack.publish_pair(name, &self.headers, &self.body, pipeline, cx, encode)
     }
 }
 
@@ -135,16 +143,20 @@ where
     ReplyCodec: Codec,
     Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
+    type Payload = Leaf::Payload;
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
-    async fn deliver(
+    // As in `EncodeReply`: the wiring's own step is the choice of lane, and the future it
+    // hands back is the publish itself.
+    fn deliver<'e>(
         &self,
-        name: &str,
-        reply: &Reply,
+        name: &'e str,
+        reply: &'e Reply,
         pipeline: &Pipeline,
         cx: &PublishContext<'_, DeliveryCx>,
-    ) -> Result<(), Self::Error> {
-        reply.deliver_typed(self, name, pipeline, cx).await
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        reply.deliver_typed(self, name, pipeline, cx, encode)
     }
 }
 
@@ -157,22 +169,23 @@ where
     Pipeline: Send + Sync,
     Bare: Publisher,
 {
+    type Payload = Bare::Payload;
     // Erased, because two unrelated failures reach this point: the reply's own encoder and the
     // publisher. The axis only ever reports its error, so nothing downstream matches on it.
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
-    async fn deliver(
+    async fn deliver<'e>(
         &self,
-        name: &str,
-        reply: &Reply,
+        name: &'e str,
+        reply: &'e Reply,
         _pipeline: &Pipeline,
         _cx: &PublishContext<'_, DeliveryCx>,
+        encode: <Self::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), Self::Error> {
-        // `BytesMut::new` does not allocate, so a reply that already holds its bytes lends them
-        // and leaves this buffer untouched. Which of the two a publisher is handed follows its
-        // own declaration, as on every other publish position.
-        let mut buf = BytesMut::new();
-        let payload = <Bare::Payload as PayloadForm>::serialized(reply, &mut buf)?;
+        // The dispatch loop's buffer, for a reply that writes its bytes rather than holding
+        // them; a reply that already holds them leaves it untouched. Which of the two a
+        // publisher is handed follows its own declaration, as on every other publish position.
+        let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
         self.publish(OutgoingMessage::with_payload(name, payload), None)
             .await
             .map_err(Into::into)
@@ -398,8 +411,17 @@ where
             Err(outcome) => return outcome,
         };
         let name = self.def.reply_name();
+        // The loop's buffer where the dispatch lent one, and one of this publish's own where it
+        // did not; `BytesMut::new` allocates nothing, so the second costs the first nothing.
+        let mut own = BytesMut::new();
+        let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
+        let slot = <<Wiring as ReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
+            encode,
+        );
         let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
-        let publish = self.publisher.deliver(name, &reply, &self.pipeline, &pubcx);
+        let publish = self
+            .publisher
+            .deliver(name, &reply, &self.pipeline, &pubcx, slot);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",

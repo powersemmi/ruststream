@@ -2,18 +2,17 @@
 
 use std::fmt;
 
-use bytes::BytesMut;
 use serde::Serialize;
 
 use super::{
     BatchPublishTransform, BatchTransformIdentity, ForReply, Outgoing, PublishContext,
     PublishPipeline, PublishTransform, PublishTransformIdentity,
 };
-use crate::Publisher;
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::record_reply_publish;
+use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
 /// reply wiring becomes once the broker connects.
@@ -64,29 +63,35 @@ impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity
 }
 
 impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
-    /// The message a reply starts from: `name` and `payload` over the publisher's own base
-    /// ([`Publisher::base_headers`]).
+    /// The message a reply starts from: `name` and the encoded `payload` over the publisher's
+    /// own base ([`Publisher::base_headers`]).
     ///
     /// A reply never passes the publish builder, so this is where the base reaches it, in the same
     /// order the builder uses: the handle's headers first, whatever the reply itself names written
     /// over them. A publisher with no base yields the empty map a reply always started from, so
     /// nothing is cloned on the path every broker publisher takes today.
-    fn outgoing<'n>(&self, name: &'n str, payload: BytesMut) -> Outgoing<'n> {
-        let mut out = Outgoing::new(name, payload);
-        if let Some(base) = self.publisher.base_headers() {
-            *out.headers_mut() = base.clone();
-        }
-        out
+    fn outgoing<'n>(
+        &self,
+        name: &'n str,
+        payload: <P::Payload as PayloadForm>::Form<'n>,
+    ) -> Outgoing<'n> {
+        let headers = self
+            .publisher
+            .base_headers()
+            .cloned()
+            .unwrap_or_else(HeaderMap::new);
+        <P::Payload as PayloadForm>::rebuilt(name.into(), payload, headers)
     }
 
     /// Encodes `value`, applies the static transforms (reading the originating delivery through
     /// `cx`), then publishes to `name` through `pipeline`.
-    pub(crate) async fn publish<T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish<'e, T: Serialize + Sync, Cx, PP>(
         &self,
-        name: &str,
+        name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
+        encode: <P::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), BoxError>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
@@ -94,9 +99,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = self
-            .codec
-            .encode(value)
+        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
         // A reply has no call site to adjust the broker's per-message settings, so the position
@@ -113,13 +116,14 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// Like [`publish`](Self::publish), but the reply is a typed-headers pair: the contract
     /// serializes into the outgoing headers before the transforms run, and the body encodes
     /// through the reply codec.
-    pub(crate) async fn publish_pair<Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_pair<'e, Hd: Serialize + Sync, T: Serialize + Sync, Cx, PP>(
         &self,
-        name: &str,
+        name: &'e str,
         headers: &Hd,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
+        encode: <P::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), BoxError>
     where
         PL: PublishTransform<ForReply<Cx>, P::Options>,
@@ -127,9 +131,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = self
-            .codec
-            .encode(value)
+        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
         out.headers_mut()
@@ -148,12 +150,13 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
     /// instead of the per-message [`PublishTransform`] one. Used per reply on the batch path: the
     /// per-message transforms do not run for batched replies (a transform wanted on both paths is
     /// added to each, reusing it on the batch side with [`for_batch`]).
-    pub(crate) async fn publish_batched<T: Serialize + Sync, Cx, PP>(
+    pub(crate) async fn publish_batched<'e, T: Serialize + Sync, Cx, PP>(
         &self,
-        name: &str,
+        name: &'e str,
         value: &T,
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
+        encode: <P::Payload as PayloadForm>::Encode<'e>,
     ) -> Result<(), BoxError>
     where
         PL: Sync,
@@ -161,9 +164,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = self
-            .codec
-            .encode(value)
+        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut out = self.outgoing(name, payload);
         let mut options = None;
