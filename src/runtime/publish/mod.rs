@@ -7,9 +7,15 @@
 //! (content-type, schema id), or observe it (publish metrics). The chain is symmetric to the
 //! consume-side static [`Stack`](super::Stack).
 
-use std::{borrow::Cow, future::Future, pin::Pin};
+use std::borrow::Cow;
+use std::fmt::{self, Display, Formatter};
+use std::future::Future;
+use std::hash::{Hash, Hasher};
+use std::ops::Deref;
+use std::pin::Pin;
 
 use bytes::BytesMut;
+use bytes_utils::Str;
 
 use crate::HeaderMap;
 use crate::runtime::lifecycle::BoxError;
@@ -21,18 +27,141 @@ pub(super) type PublishFut<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError
 
 /// A mutable outgoing message flowing through the publish pipeline.
 ///
-/// The [`name`](Self::name) is a [`Cow`]: the macro reply path borrows a string literal
-/// (`reply_name(&self) -> &str`), so the common case carries the destination without an
-/// allocation; a computed name moves in owned. The payload behaves the same way: codec output
-/// moves in whole, a rebuilt message lends the bytes it was given, and the first
-/// [`payload_mut`](Self::payload_mut) or [`set_payload`](Self::set_payload) is what makes the
-/// buffer this message's own. Middleware may change the name, transform the payload, and enrich
-/// the [`headers`](Self::headers_mut) before the message is sent.
+/// The [`name`](Self::name) is an [`OutgoingName`], which carries a destination from any of the
+/// three places one comes from without copying it: the macro reply path borrows a string literal
+/// (`reply_name(&self) -> &str`), a computed name moves in owned, and a name read off the
+/// delivery being answered arrives as the delivery's own buffer. The payload behaves the same
+/// way: codec output moves in whole, a rebuilt message lends the bytes it was given, and the
+/// first [`payload_mut`](Self::payload_mut) or [`set_payload`](Self::set_payload) is what makes
+/// the buffer this message's own. Middleware may change the name, transform the payload, and
+/// enrich the [`headers`](Self::headers_mut) before the message is sent.
 #[derive(Debug, Clone)]
 pub struct Outgoing<'a> {
-    name: Cow<'a, str>,
+    name: OutgoingName<'a>,
     payload: Payload<'a>,
     headers: HeaderMap,
+}
+
+/// The destination of an [`Outgoing`]: a borrow, an owned string, or a shared buffer.
+///
+/// Each form is a place a name comes from, and none of them copies it. A literal at a mount site
+/// borrows for the length of the publish call. A name built per delivery moves in owned. A name
+/// the delivery already carries - the queue an AMQP request named in its `reply-to` header, a
+/// `ROUTER` peer identity - arrives as the buffer it was read from, through
+/// [`HeaderMap::get_shared`] and [`Str`], so a transform that answers where the request asked
+/// allocates nothing.
+///
+/// Every one of those forms converts, so [`Outgoing::set_name`] takes the name as the call site
+/// has it.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::Str;
+/// use ruststream::runtime::{Outgoing, OutgoingName};
+///
+/// let mut out = Outgoing::new("answers", b"{}".as_slice());
+/// assert_eq!(out.name(), "answers");
+///
+/// // A name the delivery already holds: the buffer is shared, not copied.
+/// out.set_name(Str::from_static("replies.inbox"));
+/// assert_eq!(out.name(), "replies.inbox");
+///
+/// let computed = OutgoingName::from(format!("replies.{}", 7));
+/// assert_eq!(&*computed, "replies.7");
+/// ```
+#[derive(Debug, Clone)]
+pub enum OutgoingName<'a> {
+    /// A name valid as long as the publish call is: a literal, or a slice of something the caller
+    /// keeps alive.
+    Borrowed(&'a str),
+    /// A name built for this message.
+    Owned(String),
+    /// A name sharing a buffer with whatever produced it, counted by reference.
+    Shared(Str),
+}
+
+impl OutgoingName<'_> {
+    /// The name as a string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::OutgoingName;
+    ///
+    /// assert_eq!(OutgoingName::from("orders").as_str(), "orders");
+    /// ```
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(name) => name,
+            Self::Owned(name) => name,
+            Self::Shared(name) => name,
+        }
+    }
+}
+
+impl Deref for OutgoingName<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for OutgoingName<'_> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Display for OutgoingName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// The three forms are three ways to hold one name, so equality and hashing read the name and
+// never the form it came in.
+impl PartialEq for OutgoingName<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for OutgoingName<'_> {}
+
+impl Hash for OutgoingName<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl<'a> From<&'a str> for OutgoingName<'a> {
+    fn from(name: &'a str) -> Self {
+        Self::Borrowed(name)
+    }
+}
+
+impl From<String> for OutgoingName<'_> {
+    fn from(name: String) -> Self {
+        Self::Owned(name)
+    }
+}
+
+impl From<Str> for OutgoingName<'_> {
+    fn from(name: Str) -> Self {
+        Self::Shared(name)
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
+    fn from(name: Cow<'a, str>) -> Self {
+        match name {
+            Cow::Borrowed(name) => Self::Borrowed(name),
+            Cow::Owned(name) => Self::Owned(name),
+        }
+    }
 }
 
 /// An [`Outgoing`] payload: the bytes as they arrived, until something writes to them.
@@ -74,11 +203,11 @@ impl Payload<'_> {
 impl<'a> Outgoing<'a> {
     /// Creates an outgoing message with no headers.
     ///
-    /// Pass a `&str` (a borrowed destination, the no-allocation case) or a `String` (a computed
-    /// owned one) for `name`; pass a [`BytesMut`] (codec output moves in) or a `&[u8]` for the
-    /// payload.
+    /// Pass a `&str` (a borrowed destination, the no-allocation case), a `String` (a computed
+    /// owned one) or a [`Str`] (a buffer something else already holds) for `name`; pass a
+    /// [`BytesMut`] (codec output moves in) or a `&[u8]` for the payload.
     #[must_use]
-    pub fn new(name: impl Into<Cow<'a, str>>, payload: impl Into<BytesMut>) -> Self {
+    pub fn new(name: impl Into<OutgoingName<'a>>, payload: impl Into<BytesMut>) -> Self {
         Self {
             name: name.into(),
             payload: Payload::Owned(payload.into()),
@@ -88,7 +217,7 @@ impl<'a> Outgoing<'a> {
 
     /// The same over bytes the caller keeps alive: what a publish stage rebuilding a message
     /// starts from, so a message nothing writes to is never copied.
-    pub(crate) fn lending(name: impl Into<Cow<'a, str>>, payload: &'a [u8]) -> Self {
+    pub(crate) fn lending(name: impl Into<OutgoingName<'a>>, payload: &'a [u8]) -> Self {
         Self {
             name: name.into(),
             payload: Payload::Lent(payload),
@@ -103,7 +232,20 @@ impl<'a> Outgoing<'a> {
     }
 
     /// Sets the destination name.
-    pub fn set_name(&mut self, name: impl Into<Cow<'a, str>>) {
+    ///
+    /// A literal or a borrow costs nothing, a computed `String` moves in, and a [`Str`] read off
+    /// the delivery shares its buffer rather than copying out of it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::runtime::Outgoing;
+    ///
+    /// let mut out = Outgoing::new("answers", b"{}".as_slice());
+    /// out.set_name("replies.inbox");
+    /// assert_eq!(out.name(), "replies.inbox");
+    /// ```
+    pub fn set_name(&mut self, name: impl Into<OutgoingName<'a>>) {
         self.name = name.into();
     }
 
@@ -140,7 +282,7 @@ impl<'a> Outgoing<'a> {
     ///
     /// What the last stage of a publish uses to hand the message on: the map the transforms
     /// filled travels into the broker's message rather than being cloned into it.
-    pub(crate) fn into_parts(self) -> (Cow<'a, str>, Payload<'a>, HeaderMap) {
+    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, HeaderMap) {
         (self.name, self.payload, self.headers)
     }
 }

@@ -109,13 +109,13 @@ pub use publish::{
     BatchPublishTransform, BatchPublishTransformStack, BatchTransformIdentity, BoundSegment,
     CallCodec, ContextKind, EncodedWire, ForBatch, ForReply, ForSlot, HeaderSource, HeadersUnset,
     MapHeaders, MessageBody, MessageWire, MissingSegment, Names, OutPipeline, Outgoing,
-    PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext, PublishDynLayer,
-    PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders, PublishIdentity,
-    PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack, PublishTransform,
-    PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName, SatisfiesContract,
-    SerializePayloadError, SerializedWire, SlotContext, SuppliedName, TemplateAddress,
-    TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction, UnnamedCodec,
-    for_batch,
+    OutgoingName, PipelinePublishError, PublishAt, PublishBuilder, PublishCodec, PublishContext,
+    PublishDynLayer, PublishDynNext, PublishDynStack, PublishError, PublishExt, PublishHeaders,
+    PublishIdentity, PublishLayer, PublishNext, PublishPipeline, PublishSink, PublishStack,
+    PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, ResolvedName,
+    SatisfiesContract, SerializePayloadError, SerializedWire, SlotContext, SuppliedName,
+    TemplateAddress, TransactionPublishError, TransactionScope, TypedHeaders, TypedTransaction,
+    UnnamedCodec, for_batch,
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.

@@ -3,7 +3,7 @@
   "crate": "ruststream",
   "crate_version": "0.7.0-rc.7",
   "core_version": "0.7.0-rc.7",
-  "measured_at": "2026-09-19",
+  "measured_at": "2026-09-20",
   "environment": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
     "architecture": "x86_64 (x86-64-v4)",
@@ -28,7 +28,7 @@
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15945,
+        "instructions": 15948,
         "allocations": 26
       },
       "gated": true
@@ -50,11 +50,11 @@
       "name": "consume on the byte lane, no codec",
       "messages": 1000,
       "framework": {
-        "instructions": 1390.5,
+        "instructions": 1386.5,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15150,
+        "instructions": 15146,
         "allocations": 26
       },
       "gated": true
@@ -76,7 +76,7 @@
       "name": "consume through a middleware stack of four",
       "messages": 1000,
       "framework": {
-        "instructions": 2310.5,
+        "instructions": 2310.4,
         "allocations": 0.0
       },
       "cold": {
@@ -89,11 +89,11 @@
       "name": "consume in batches of 64",
       "messages": 1000,
       "framework": {
-        "instructions": 1974.7,
+        "instructions": 1973.4,
         "allocations": 0.094
       },
       "cold": {
-        "instructions": 17759,
+        "instructions": 17717,
         "allocations": 29
       },
       "gated": true
@@ -102,11 +102,11 @@
       "name": "reply, encoded to a declared destination",
       "messages": 1000,
       "framework": {
-        "instructions": 3687.4,
+        "instructions": 3706.4,
         "allocations": 4.0
       },
       "cold": {
-        "instructions": 18057,
+        "instructions": 18076,
         "allocations": 31
       },
       "gated": true
@@ -115,11 +115,11 @@
       "name": "publish through an Out slot with one transform",
       "messages": 1000,
       "framework": {
-        "instructions": 5529.4,
+        "instructions": 5543.4,
         "allocations": 10.0
       },
       "cold": {
-        "instructions": 21143,
+        "instructions": 21159,
         "allocations": 37
       },
       "gated": true
@@ -128,11 +128,11 @@
       "name": "publish with a typed header contract",
       "messages": 1000,
       "framework": {
-        "instructions": 5678.7,
+        "instructions": 5679.7,
         "allocations": 10.0
       },
       "cold": {
-        "instructions": 21041,
+        "instructions": 21040,
         "allocations": 37
       },
       "gated": true
@@ -141,11 +141,11 @@
       "name": "read a typed header contract, then publish",
       "messages": 1000,
       "framework": {
-        "instructions": 5627.2,
+        "instructions": 5629.3,
         "allocations": 4.0
       },
       "cold": {
-        "instructions": 19766,
+        "instructions": 19768,
         "allocations": 31
       },
       "gated": true
@@ -154,11 +154,11 @@
       "name": "request and reply, one round trip",
       "messages": 1000,
       "framework": {
-        "instructions": 11397.0,
+        "instructions": 11317.0,
         "allocations": 18.0
       },
       "cold": {
-        "instructions": 26212,
+        "instructions": 26139,
         "allocations": 44
       },
       "gated": true
@@ -167,11 +167,11 @@
       "name": "a delivery that asks to be redelivered, and the copy",
       "messages": 1000,
       "framework": {
-        "instructions": 6746.3,
+        "instructions": 6763.5,
         "allocations": 1.0
       },
       "cold": {
-        "instructions": 22215,
+        "instructions": 22208,
         "allocations": 27
       },
       "gated": false,
