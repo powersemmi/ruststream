@@ -189,6 +189,9 @@ pub trait IncomingMessage: Send + Sync {
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Publisher: Send + Sync {
+    /// 你的传输层怎样消费载荷：只读它就是 `Lend`，你的客户端要留着它就是 `Take`。
+    type Payload: PayloadForm;
+
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// 你的 Broker 的逐条消息设置。每个字段都是可选的；没有这类设置就写 `()`。
@@ -196,7 +199,7 @@ pub trait Publisher: Send + Sync {
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error>;
 
@@ -205,13 +208,32 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
+客户端在调用结束之后还留着载荷 - 它收下的是 `Vec<u8>`、`Bytes` 或别的自有值 - 就声明 `Take`；传输层
+只是把字节写进自己的帧、批或者套接字缓冲区，就声明 `Lend`。几乎每一种线上协议都属于后者。
+
+你收到的消息跟着这个声明走，框架在你上面做的事情也一样：
+
+<!-- inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less -->
+```rust
+// Take：框架写好的那个缓冲区，归你。
+async fn publish(&self, msg: OutgoingMessage<'_, BytesMut>, options: Option<&()>) -> Result<(), Error>
+
+// Lend：字节就在它原来的地方，在这次调用期间有效。
+async fn publish(&self, msg: OutgoingMessage<'_, &[u8]>, options: Option<&()>) -> Result<(), Error>
+```
+
+声明 `Take` 的发布者拿到的是编解码器自己的缓冲区，写成什么样就是什么样。`Vec::from(payload)` 不花
+代价，因为那个缓冲区本身就是向量；`payload.freeze()` 花的是让所有权可共享的那一个内存块；只有借来
+别人字节的那种发布才会在进来的路上复制一次。
+
+声明 `Lend` 的发布者拿到的是 `&[u8]`，没有什么需要释放。在派发循环里，框架把一个循环一份的缓冲区借
+给它，每条消息都清空重写，所以经由你这个 Broker 的回复在每次投递上一次内存分配都没有。这正是这个声
+明存在的理由：运行时不能把你可能留下的东西借出去。
+
 `OutgoingMessage` 借用自己的名字，载荷和消息头映射则是你的传输层可以接管而不必复制的东西。读用
-`msg.payload()` 和 `msg.headers()`，照旧给出 `&[u8]` 和 `&HeaderMap`。接管整条消息的传输层用
-`msg.into_parts()` 取走它的各个部分 - 目的地、载荷和映射一次移动交出，什么都不复制 - 再按客户端要
-的形态在载荷上调用 `into_vec()` 或 `into_bytes()`：它拿到的是框架造出来的缓冲区 - 普通发布、回复、
-通过槽位发送时编解码器的输出 - 只有在发布只是借来别人的字节时才复制一次。向量不花任何代价，因为那个
-缓冲区本身就是向量；`Bytes` 花的是让所有权可共享的那一个内存块。只有接管载荷的传输层才付出代价，而
-且只为它要的那种形态付出。
+`msg.payload()` 和 `msg.headers()`，无论你声明的是哪种形态，它们都给出 `&[u8]` 和 `&HeaderMap`。接管
+整条消息的传输层用 `msg.into_parts()` 取走它的各个部分 - 目的地、载荷和映射一次移动交出，什么都不
+复制。
 
 服务写的不是这个方法，而是构建器：`publisher.message(&value).publish()` 选定目的地、编解码器和消息
 头，然后恰好调用一次 `publish`。实现 `publish`，整个构建器就在它之上工作起来。
@@ -231,8 +253,9 @@ pub trait Publisher: Send + Sync {
 这份基础消息头为起点，再把调用点的消息头逐个键写在上面，所以同一个键上留下的是调用点的值
 （参见[消息头从哪里来](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)）。
 
-`Transaction` 指定自己的 `Options`，也带同样的默认 `base_headers`。事务是一个独立的发布面，所以它
-认可的设置可以和开启它的发布者不同。多数 Broker 在这里写的就是发布者的设置类型。自身没有常量的句
+`Transaction` 指定自己的 `Options` 和 `Payload`，也带同样的默认 `base_headers`。事务是一个独立的发布
+面，所以它认可的设置可以和开启它的发布者不同，而客户端缓冲区会留着载荷，直接发布却只是读它。多数
+Broker 在这两处写的都是发布者自己的类型。自身没有常量的句
 柄，两处的 `base_headers` 都停在默认实现上。
 
 ### `PublishPolicy`

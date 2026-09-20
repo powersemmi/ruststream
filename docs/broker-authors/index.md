@@ -208,6 +208,10 @@ one that honoured the delay, and run its own fallback.
 <!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
 ```rust
 pub trait Publisher: Send + Sync {
+    /// How your transport consumes the payload: `Lend` when it reads the bytes, `Take` when
+    /// your client keeps them.
+    type Payload: PayloadForm;
+
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Your broker's per-message settings. Every field optional; `()` when you have none.
@@ -215,7 +219,7 @@ pub trait Publisher: Send + Sync {
 
     async fn publish(
         &self,
-        msg: OutgoingMessage<'_>,
+        msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error>;
 
@@ -224,16 +228,37 @@ pub trait Publisher: Send + Sync {
 }
 ```
 
-`OutgoingMessage` borrows its name, and carries a payload and a header map your transport may
+Declare `Take` when your client keeps the payload past the call - it takes a `Vec<u8>`, a
+`Bytes`, anything it owns - and `Lend` when your transport only reads the bytes, because it
+writes them into a frame, a batch or a socket buffer of its own. Nearly every wire protocol is
+the second kind.
+
+The message you receive follows the declaration, and so does what the framework does above you:
+
+<!-- inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less -->
+```rust
+// Take: the buffer the framework wrote, yours to keep.
+async fn publish(&self, msg: OutgoingMessage<'_, BytesMut>, options: Option<&()>) -> Result<(), Error>
+
+// Lend: the bytes where they already are, valid for the length of the call.
+async fn publish(&self, msg: OutgoingMessage<'_, &[u8]>, options: Option<&()>) -> Result<(), Error>
+```
+
+A `Take` publisher is handed the codec's own buffer, as it was written. `Vec::from(payload)` is
+free, because that buffer is the vector; `payload.freeze()` costs the one block that makes
+ownership shareable; and only a publish lending bytes the framework does not own is copied into
+the buffer on the way in.
+
+A `Lend` publisher is handed `&[u8]` and nothing to release. Inside a dispatch loop the framework
+lends it one buffer per loop, cleared and written again for every message, so a reply through
+your broker allocates nothing at all per delivery. That is the whole reason the declaration
+exists: the runtime cannot lend what you might keep.
+
+`OutgoingMessage` borrows its name and carries the payload and a header map your transport may
 take rather than copy. Read them with `msg.payload()` and `msg.headers()`, which answer `&[u8]`
-and `&HeaderMap` as they always did. A transport that consumes the message takes its parts with
-`msg.into_parts()` - the destination, the payload and the map in one move, nothing copied - and
-then calls `into_vec()` or `into_bytes()` on the payload, whichever its client wants: what it
-gets is the buffer the framework produced - the codec's own output on an ordinary publish, a
-reply, a slot - and it is copied only where the publish was lending bytes it does not own. A
-vector costs nothing, because that buffer is the vector; a `Bytes` costs the one block that makes
-its ownership shareable. Only a transport that takes the payload pays anything at all, and only
-for the form it asked for.
+and `&HeaderMap` whichever form you declared. A transport that consumes the message takes its
+parts with `msg.into_parts()` - the destination, the payload and the map in one move, nothing
+copied.
 
 A service writes the builder, not this method: `publisher.message(&value).publish()` picks the
 destination, the codec and the headers, and makes exactly one call to `publish`. Implement
@@ -258,10 +283,11 @@ every message of this handle carries. The builder starts the outgoing headers fr
 writes the call site's headers over it key by key, so on a shared key the call site's value stays
 (see [where the headers come from](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#headers-and-per-message-settings)).
 
-`Transaction` names an `Options` of its own and carries the same defaulted `base_headers`. A
-transaction is a publish surface of its own, so it may honour settings the publisher it was opened
-from does not. Most brokers name the publisher's options type there. A handle with no constant of
-its own leaves `base_headers` defaulted in both places.
+`Transaction` names an `Options` and a `Payload` of its own, and carries the same defaulted
+`base_headers`. A transaction is a publish surface of its own, so it may honour settings the
+publisher it was opened from does not, and a client buffer keeps the payload where the direct
+publish only reads it. Most brokers name the publisher's own types in both places. A handle with
+no constant of its own leaves `base_headers` defaulted in both places.
 
 ### `PublishPolicy`
 
