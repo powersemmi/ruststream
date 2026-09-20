@@ -157,6 +157,16 @@ pub trait PayloadForm: sealed::Sealed {
 ///
 /// What every transport that writes the payload into a frame of its own declares. See
 /// [`PayloadForm`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{Lend, PayloadForm};
+///
+/// // What a lending transport is handed: the bytes where the framework wrote them.
+/// let handed: <Lend as PayloadForm>::Form<'_> = b"{}".as_slice();
+/// assert_eq!(handed, b"{}");
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Lend;
 
@@ -165,6 +175,17 @@ pub struct Lend;
 ///
 /// The buffer arrives as it was written, so `Vec::from` and [`BytesMut::freeze`] turn it into
 /// what the client speaks without copying it. See [`PayloadForm`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::{BytesMut, PayloadForm, Take};
+///
+/// // What a taking transport is handed: the buffer itself, to keep in the form its client
+/// // speaks.
+/// let handed: <Take as PayloadForm>::Form<'static> = BytesMut::from(&b"{}"[..]);
+/// assert_eq!(handed.freeze(), b"{}".as_slice());
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Take;
 
