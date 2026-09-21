@@ -25,7 +25,7 @@ use tracing::{error, warn};
 use crate::{BuildBatchContext, IncomingMessage};
 
 use super::context::Context;
-use super::dispatch::{Delivery, Workers, settle_outcome};
+use super::dispatch::{Delivery, Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
@@ -544,7 +544,7 @@ async fn settle_split_batch<M, C>(
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
             settle_outcome(
-                msg,
+                &mut Slot::new(msg),
                 outcome,
                 subscription,
                 delivery,
@@ -558,7 +558,7 @@ async fn settle_split_batch<M, C>(
             .unwrap_or_else(HandlerOutcome::retry);
         let after = result.take_after();
         settle_outcome(
-            msg,
+            &mut Slot::new(msg),
             result.outcome(),
             subscription,
             delivery,
@@ -593,7 +593,14 @@ pub(crate) async fn settle_batch<M, C>(
             for msg in accepted {
                 #[cfg(feature = "testing")]
                 batch.settled(status);
-                settle_outcome(msg, status, subscription, delivery, C::build as fn(&M) -> C).await;
+                settle_outcome(
+                    &mut Slot::new(msg),
+                    status,
+                    subscription,
+                    delivery,
+                    C::build as fn(&M) -> C,
+                )
+                .await;
             }
             // The one uniform continuation runs after the whole batch is settled, on the
             // tracked set so a graceful shutdown drains it (at-most-once, like the
@@ -621,7 +628,7 @@ pub(crate) async fn settle_batch<M, C>(
                 #[cfg(feature = "testing")]
                 batch.settled(result.outcome());
                 settle_outcome(
-                    msg,
+                    &mut Slot::new(msg),
                     result.outcome(),
                     subscription,
                     delivery,
@@ -784,7 +791,7 @@ where
         if rejected.peek().is_some_and(|(at, _)| *at == index) {
             let (_, outcome) = rejected.next().expect("peeked");
             settle_outcome(
-                msg,
+                &mut Slot::new(msg),
                 outcome,
                 subscription,
                 delivery,
