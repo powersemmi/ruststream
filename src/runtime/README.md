@@ -600,7 +600,10 @@ broker's typed per-delivery fields read by key with [`context`](Context::context
 slot middleware writes with [`set`](Context::set), and the post-settle hooks:
 [`after_ack`](Context::after_ack), [`after_settle`](Context::after_settle) and
 [`after(outcome).then(..)`](Context::after) run off the delivery path once the message has
-settled, at most once. A [`Ctx<K>`] parameter binds one broker field without the context
+settled, at most once. The headers cost what is read: the delivery is asked for its map by the
+first [`headers`](Context::headers) call and by nothing else, so a handler over a decoded payload
+never reaches the broker's accessor, and the map is copied by the first
+[`headers_mut`](Context::headers_mut). A [`Ctx<K>`] parameter binds one broker field without the context
 parameter, and a key the broker does not have is a compile error.
 
 ```

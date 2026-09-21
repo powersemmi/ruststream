@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::batch::BatchHandler;
-use super::context::Context;
+use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishContext;
@@ -797,7 +797,10 @@ async fn dispatch<H, M, C, St>(
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle.
     let cx = C::build(&msg);
-    let mut ctx = Context::new(name, msg.headers(), state, cx, delivery)
+    // The delivery itself, not its header map: a handler that reads no headers never reaches the
+    // broker's accessor, which is a parse and a buffer on most transports.
+    let source = FromDelivery(&msg);
+    let mut ctx = Context::new(name, &source, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
         .with_decode_policy(failure.policies.decode);

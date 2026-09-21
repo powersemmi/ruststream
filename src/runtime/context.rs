@@ -5,20 +5,49 @@
 //! into the handler. It carries the channel the message arrived on, a working copy of the
 //! headers (middleware may enrich them), the typed shared application state ([`Context::state`]),
 //! and the broker's typed per-delivery context read by key ([`Context::context`] /
-//! [`Context::set`]). The copy is lazy: the message headers are borrowed until the first
-//! [`headers_mut`](Context::headers_mut), so a delivery whose middleware never touches them pays no
-//! clone.
+//! [`Context::set`]). Both steps are lazy: the delivery is asked for its header map the first time
+//! anything reads it, and the map is borrowed until the first
+//! [`headers_mut`](Context::headers_mut), so a delivery whose handler and middleware never touch
+//! the headers pays neither the broker's accessor nor a clone.
 
+use std::cell::OnceCell;
 use std::future::Future;
 use std::pin::Pin;
 
 use bytes::BytesMut;
 
-use crate::{Field, FieldMut, HeaderMap};
+use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
 use super::dispatch::Delivery;
 use super::failure::{ErrorShutdown, FailurePolicy};
 use super::handler::{HandlerOutcome, HandlerResult};
+
+/// Where one delivery's header map comes from.
+///
+/// The map is a broker accessor, and answering it is work on most transports: a shadow buffer
+/// over the record's header block, a parse, and the buffer's destruction. Most deliveries never
+/// read the answer, so the context holds the source rather than the map and asks it at most once.
+pub(crate) trait HeaderSource {
+    /// This delivery's headers as the broker reports them.
+    fn headers(&self) -> &HeaderMap;
+}
+
+/// A map that is already built: the batch path, which carries no single delivery's headers, and
+/// the tests that drive a context directly.
+impl HeaderSource for HeaderMap {
+    fn headers(&self) -> &HeaderMap {
+        self
+    }
+}
+
+/// The delivery itself, which is what the dispatch path hands the context.
+pub(crate) struct FromDelivery<'m, M>(pub(crate) &'m M);
+
+impl<M: IncomingMessage> HeaderSource for FromDelivery<'_, M> {
+    fn headers(&self) -> &HeaderMap {
+        self.0.headers()
+    }
+}
 
 /// A post-settle continuation: a boxed `Send` future the dispatcher runs after the message (or
 /// batch) has been settled.
@@ -63,12 +92,15 @@ struct AfterHook {
 /// [`headers`](Self::headers) (middleware may enrich them for the handler; the broker message
 /// itself is untouched), the typed shared application [state](Self::state) (where a publisher to
 /// publish from a handler lives), and the broker's typed per-delivery context read by key
-/// ([`context`](Self::context) / [`set`](Self::set)). The headers copy is made lazily on the first
+/// ([`context`](Self::context) / [`set`](Self::set)). The delivery's map is taken off the broker on
+/// the first read of it, and the working copy is made on the first
 /// [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit it: replies and manual
 /// publishes start from fresh headers, shaped by the publish pipeline.
 pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
-    original: &'a HeaderMap,
+    source: &'a (dyn HeaderSource + Sync),
+    /// The delivery's own map, resolved off [`Context::source`] the first time anything reads it.
+    original: OnceCell<&'a HeaderMap>,
     modified: Option<HeaderMap>,
     state: &'a S,
     cx: C,
@@ -100,19 +132,20 @@ impl<C, S> std::fmt::Debug for Context<'_, C, S> {
 }
 
 impl<'a, C, S> Context<'a, C, S> {
-    /// Creates a context for one delivery, borrowing the message headers until first mutation and
-    /// carrying the typed per-delivery context `cx` (built by
+    /// Creates a context for one delivery, taking the headers off `source` when something first
+    /// asks for them and carrying the typed per-delivery context `cx` (built by
     /// [`BuildContext`](crate::BuildContext) from the broker message).
     pub(crate) fn new(
         name: &'a str,
-        headers: &'a HeaderMap,
+        source: &'a (dyn HeaderSource + Sync),
         state: &'a S,
         cx: C,
         delivery: &'a Delivery<C>,
     ) -> Self {
         Self {
             name,
-            original: headers,
+            source,
+            original: OnceCell::new(),
             modified: None,
             state,
             cx,
@@ -222,16 +255,25 @@ impl<'a, C, S> Context<'a, C, S> {
         self.name
     }
 
+    /// The delivery's own headers, taken off the broker on the first call and kept for the rest
+    /// of the delivery.
+    fn original(&self) -> &'a HeaderMap {
+        self.original.get_or_init(|| self.source.headers())
+    }
+
     /// The working copy of the message headers.
     #[must_use]
     pub fn headers(&self) -> &HeaderMap {
-        self.modified.as_ref().unwrap_or(self.original)
+        self.modified
+            .as_ref()
+            .map_or_else(|| self.original(), |modified| modified)
     }
 
     /// The working copy of the message headers, mutably. The first call clones the message
     /// headers; later calls return the same copy.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
-        self.modified.get_or_insert_with(|| self.original.clone())
+        let original = self.original();
+        self.modified.get_or_insert_with(|| original.clone())
     }
 
     /// Returns the shared application state: the typed `S` the app's `on_startup` produced (or

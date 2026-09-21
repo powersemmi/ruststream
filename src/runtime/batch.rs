@@ -753,7 +753,7 @@ where
     // delivered, so the accepted deliveries cost nothing to carry.
     let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
     for (index, msg) in batch.iter().enumerate() {
-        match Input::decode(codec, msg.payload(), msg.headers()) {
+        match Input::decode(codec, msg) {
             Ok(value) => values.push(value),
             Err(err) => {
                 warn!(

@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
-use crate::HeaderMap;
+use crate::IncomingMessage;
 use crate::codec::{Codec, CodecError};
 
 /// One kind of handler input: the owned decode product and the borrowed view lent to the
@@ -46,9 +46,10 @@ pub trait InputKind: Send + Sync + 'static {
 /// An [`InputKind`] that knows how to decode itself with the codec `C`.
 ///
 /// Split from [`InputKind`] so the view machinery stays codec-free: [`Provided<F>`] implements
-/// this for every `C` without touching the payload. The delivery's headers travel next to the
-/// payload so a pair input (`DecodedPair`) materializes its typed header contract in the same
-/// stage, under the same decode failure policy.
+/// this for every `C` without touching the payload. The delivery itself is what a kind decodes
+/// from, so a kind reads only what it needs of it: a payload input never asks for the header map,
+/// and a pair input (`DecodedPair`) asks for it because its typed header contract materializes in
+/// the same stage, under the same decode failure policy.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be decoded with the codec `{DecodeCodec}`",
     note = "a typed input needs `serde::de::DeserializeOwned`; a `Deserialized` input decodes \
@@ -69,11 +70,7 @@ pub trait DecodeWith<DecodeCodec>: InputKind {
     ///
     /// Returns [`CodecError`] when the payload or the header contract does not decode; the
     /// adapter applies the definition's decode failure policy.
-    fn decode(
-        codec: &DecodeCodec,
-        payload: &[u8],
-        headers: &HeaderMap,
-    ) -> Result<Self::Owned, CodecError>;
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self::Owned, CodecError>;
 }
 
 /// The typed input kind: the payload decodes into an owned `T`, the handler borrows `&T`.
@@ -103,8 +100,8 @@ impl<DecodeCodec: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
 
-    fn decode(codec: &DecodeCodec, payload: &[u8], _headers: &HeaderMap) -> Result<T, CodecError> {
-        codec.decode(payload)
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
+        codec.decode(msg.payload())
     }
 }
 
@@ -137,11 +134,7 @@ impl<F: Send + Sync + 'static> InputKind for Provided<F> {
 }
 
 impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided<F> {
-    fn decode(
-        _codec: &DecodeCodec,
-        _payload: &[u8],
-        _headers: &HeaderMap,
-    ) -> Result<(), CodecError> {
+    fn decode<M: IncomingMessage>(_codec: &DecodeCodec, _msg: &M) -> Result<(), CodecError> {
         Ok(())
     }
 }
@@ -181,15 +174,12 @@ where
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
 
-    fn decode(
-        codec: &DecodeCodec,
-        payload: &[u8],
-        headers: &HeaderMap,
-    ) -> Result<Self::Owned, CodecError> {
-        let contract: H = headers
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self::Owned, CodecError> {
+        let contract: H = msg
+            .headers()
             .to_typed()
             .map_err(|err| CodecError::Decode(Box::from(err.to_string())))?;
-        let body: P = codec.decode(payload)?;
+        let body: P = codec.decode(msg.payload())?;
         Ok(crate::runtime::Message::new(contract, body))
     }
 }

@@ -90,7 +90,7 @@ where
         // The decode product lives on this stack frame and the handler borrows its view, so the
         // input path allocates nothing of its own (a raw input borrows the payload straight out
         // of the broker's buffer).
-        match Input::decode(&self.codec, msg.payload(), msg.headers()) {
+        match Input::decode(&self.codec, msg) {
             Ok(owned) => {
                 self.inner
                     .handle(Input::view(&owned, msg.payload()), ctx)
@@ -125,15 +125,19 @@ mod tests {
     use std::future::ready;
     use std::sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     };
 
-    use super::typed;
+    use serde::Deserialize;
+
+    use super::{Typed, typed};
     use crate::codec::JsonCodec;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
+    use crate::runtime::handle::Message;
     use crate::runtime::handler::{Handler, HandlerOutcome, HandlerResult};
+    use crate::runtime::input::DecodedPair;
     use crate::{AckError, HeaderMap, IncomingMessage};
 
     struct StubMsg(Vec<u8>, HeaderMap);
@@ -309,6 +313,109 @@ mod tests {
         assert_eq!(
             decode_event.get("message_type").map(String::as_str),
             Some("u32")
+        );
+    }
+
+    /// A delivery that counts the calls to [`IncomingMessage::headers`]: on a broker where the
+    /// accessor materializes the map, that count is what the input kind costs.
+    struct CountingMsg {
+        payload: Vec<u8>,
+        headers: HeaderMap,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl IncomingMessage for CountingMsg {
+        fn payload(&self) -> &[u8] {
+            &self.payload
+        }
+
+        fn headers(&self) -> &HeaderMap {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            &self.headers
+        }
+
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+            ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_decoded_input_never_asks_the_delivery_for_its_headers() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
+
+        let msg = CountingMsg {
+            payload: b"7".to_vec(),
+            headers: HeaderMap::new(),
+            reads: Arc::clone(&reads),
+        };
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert_eq!(seen.load(Ordering::SeqCst), 7);
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            0,
+            "a payload decode reads the payload and nothing else"
+        );
+    }
+
+    /// The header contract of the pair input below.
+    #[derive(Deserialize)]
+    struct Tenant {
+        tenant: String,
+    }
+
+    #[tokio::test]
+    async fn a_pair_input_asks_the_delivery_for_its_headers_once() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let paired = Arc::new(AtomicBool::new(false));
+        let inner = {
+            let paired = Arc::clone(&paired);
+            move |msg: &Message<Tenant, u32>, _ctx: &mut Context| {
+                let paired = Arc::clone(&paired);
+                let matched = msg.headers.tenant == "acme" && msg.body == 7;
+                async move {
+                    paired.store(matched, Ordering::SeqCst);
+                    HandlerOutcome::ack()
+                }
+            }
+        };
+        let handler = Typed::<CountingMsg, DecodedPair<Tenant, u32>, _, _>::over(JsonCodec, inner);
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("pair", &headers, &state, (), &delivery);
+
+        let mut delivered = HeaderMap::new();
+        delivered.insert("tenant", "acme");
+        let msg = CountingMsg {
+            payload: b"7".to_vec(),
+            headers: delivered,
+            reads: Arc::clone(&reads),
+        };
+        assert_eq!(
+            handler.handle(&msg, &mut ctx).await.outcome(),
+            HandlerResult::Ack
+        );
+        assert!(
+            paired.load(Ordering::SeqCst),
+            "the pair reached the handler"
+        );
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "the kind that needs the map asks for it, once"
         );
     }
 }

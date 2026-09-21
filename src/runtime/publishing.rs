@@ -378,11 +378,7 @@ where
         // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
         // (with any `and_after` continuation it carries) settles the delivery directly. The
         // decode product lives on this stack frame and the handler borrows its view.
-        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
-            &self.codec,
-            msg.payload(),
-            msg.headers(),
-        ) {
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg) {
             Ok(value) => value,
             Err(err) => {
                 warn!(
