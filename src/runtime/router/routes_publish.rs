@@ -274,7 +274,7 @@ where
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown, token| {
+            Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
                     let publisher = publisher
                         .pair(connected.as_ref())
@@ -302,11 +302,11 @@ where
                             decode: policies.decode,
                         },
                     );
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch_workers(
                         subscriber,
                         Arc::new(handler),
-                        token,
+                        shutdown,
                         name,
                         state,
                         delivery,
@@ -380,7 +380,7 @@ where
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown, token| {
+            Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
                     let publisher = publisher
                         .pair(connected.as_ref())
@@ -408,11 +408,11 @@ where
                             decode: policies.decode,
                         },
                     );
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch_workers(
                         subscriber,
                         Arc::new(handler),
-                        token,
+                        shutdown,
                         name,
                         state,
                         delivery,

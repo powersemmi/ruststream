@@ -8,13 +8,12 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
 use crate::runtime::publish_source::Bound;
+use crate::runtime::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{self, HealthProbe, HealthState};
@@ -166,17 +165,22 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             connected.push(ConnectedEntry { lifecycle, label });
         }
 
-        let token = CancellationToken::new();
-        // Shared with every dispatch task: a fail-fast failure records its reason here and cancels
-        // the token, which both stops the loops and resolves `stopping()`.
-        let error_shutdown = ErrorShutdown::new(token.clone());
+        // Shared with every dispatch task: a fail-fast failure records its reason here and raises
+        // the signal, which both stops the loops and resolves `stopping()`.
+        let shutdown = Shutdown::new();
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = match starter(state.clone(), error_shutdown.clone(), token.clone()).await {
+            let handle = match starter(state.clone(), shutdown.clone()).await {
                 Ok(handle) => handle,
                 Err(err) => {
-                    unwind_started(&token, handles, shutdown_timeout, connected, continuations)
-                        .await;
+                    unwind_started(
+                        &shutdown,
+                        handles,
+                        shutdown_timeout,
+                        connected,
+                        continuations,
+                    )
+                    .await;
                     return Err(RustStreamError::Subscribe(err));
                 }
             };
@@ -194,7 +198,14 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         }
         for hook in after_startup {
             if let Err(err) = hook(Arc::clone(&state)).await {
-                unwind_started(&token, handles, shutdown_timeout, connected, continuations).await;
+                unwind_started(
+                    &shutdown,
+                    handles,
+                    shutdown_timeout,
+                    connected,
+                    continuations,
+                )
+                .await;
                 return Err(RustStreamError::Startup(err));
             }
         }
@@ -202,26 +213,10 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
         let health = health::channel();
-        // The watcher flips the probe on a fail-fast teardown even when nobody ever calls
-        // `shutdown`: the process may stay alive serving healthz from a sibling task, which is
-        // exactly when the probe matters. Every transition uses `send_replace`, not `send`:
-        // `send` drops the value when no probe is subscribed yet, and a probe taken after the
-        // transition must still observe the terminal state.
-        {
-            let health = health.clone();
-            let error_shutdown = error_shutdown.clone();
-            let token = token.clone();
-            tokio::spawn(async move {
-                token.cancelled().await;
-                if let Some(reason) = error_shutdown.peek_failure() {
-                    health.send_replace(HealthState::Failed { reason });
-                }
-            });
-        }
+        watch_for_failure(shutdown.clone(), health.clone());
 
         Ok(RunningApp {
-            token,
-            error_shutdown,
+            shutdown,
             handles,
             on_shutdown: bind_hooks(on_shutdown, &state),
             after_shutdown: bind_hooks(after_shutdown, &state),
@@ -256,8 +251,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 /// ```
 #[must_use = "dropping the handle detaches the service without graceful shutdown"]
 pub struct RunningApp {
-    token: CancellationToken,
-    error_shutdown: ErrorShutdown,
+    shutdown: Shutdown,
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
@@ -290,7 +284,7 @@ impl RunningApp {
     ///
     /// Cancel-safe: dropping the future loses nothing; a fresh call observes the same state.
     pub fn stopping(&self) -> impl Future<Output = ()> + Send + 'static {
-        self.token.clone().cancelled_owned()
+        self.shutdown.token().clone().cancelled_owned()
     }
 
     /// Hands out a [`HealthProbe`]: a cheap, cloneable view of the service's lifecycle state for
@@ -381,8 +375,7 @@ impl RunningApp {
     /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
         let Self {
-            token,
-            error_shutdown,
+            shutdown,
             handles,
             on_shutdown,
             after_shutdown,
@@ -394,7 +387,7 @@ impl RunningApp {
 
         health.send_replace(HealthState::ShuttingDown);
         let outcome = teardown(
-            token,
+            shutdown.clone(),
             handles,
             on_shutdown,
             after_shutdown,
@@ -407,7 +400,7 @@ impl RunningApp {
             Ok(()) => {
                 // A fail-fast failure tore the service down: surface it so an orchestrator
                 // restarts the service and the operator sees a non-zero exit, not a silent stop.
-                if let Some(reason) = error_shutdown.taken_failure() {
+                if let Some(reason) = shutdown.taken_failure() {
                     health.send_replace(HealthState::Failed {
                         reason: reason.clone(),
                     });
@@ -426,19 +419,35 @@ impl RunningApp {
     }
 }
 
+/// Reports a fail-fast teardown on the health probe even when nobody ever calls
+/// [`RunningApp::shutdown`]: the process may stay alive serving healthz from a sibling task, which
+/// is exactly when the probe matters.
+///
+/// Every transition uses `send_replace` rather than `send`: `send` drops the value when no probe
+/// is subscribed yet, and a probe taken after the transition must still observe the terminal
+/// state.
+fn watch_for_failure(shutdown: Shutdown, health: watch::Sender<HealthState>) {
+    tokio::spawn(async move {
+        shutdown.cancelled().await;
+        if let Some(reason) = shutdown.peek_failure() {
+            health.send_replace(HealthState::Failed { reason });
+        }
+    });
+}
+
 /// Best-effort unwind of a startup that failed after dispatch tasks were spawned: stops the
 /// tasks, drains their post-settle continuations, then shuts the connected brokers down - the
 /// same ordering the graceful teardown keeps, so continuations never run against a closed
 /// broker. Failures are logged, not returned, so the original startup error stays the caller's
 /// answer.
 async fn unwind_started(
-    token: &CancellationToken,
+    shutdown: &Shutdown,
     handles: Vec<JoinHandle<()>>,
     shutdown_timeout: Option<Duration>,
     brokers: Vec<ConnectedEntry>,
     continuations: TaskTracker,
 ) {
-    token.cancel();
+    shutdown.cancel();
     if let Err(err) = drain_handles(handles, shutdown_timeout).await {
         warn!(
             target: "ruststream::lifecycle",
@@ -474,7 +483,7 @@ async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
 /// The fallible half of the graceful teardown, factored out so [`RunningApp::shutdown`] can map
 /// its outcome onto the health probe's terminal state in one place.
 async fn teardown(
-    token: CancellationToken,
+    shutdown: Shutdown,
     handles: Vec<JoinHandle<()>>,
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
@@ -488,7 +497,7 @@ async fn teardown(
         }
     }
 
-    token.cancel();
+    shutdown.cancel();
     debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
     drain_handles(handles, shutdown_timeout).await?;
 

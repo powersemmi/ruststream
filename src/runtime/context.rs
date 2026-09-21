@@ -19,8 +19,9 @@ use bytes::BytesMut;
 use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
 use super::dispatch::Delivery;
-use super::failure::{ErrorShutdown, FailurePolicy};
+use super::failure::FailurePolicy;
 use super::handler::{HandlerOutcome, HandlerResult};
+use super::shutdown::Shutdown;
 
 /// Where one delivery's header map comes from.
 ///
@@ -106,7 +107,7 @@ pub struct Context<'a, C = (), S = ()> {
     cx: C,
     delivery: &'a Delivery<C>,
     after: Vec<AfterHook>,
-    failfast: Option<&'a ErrorShutdown>,
+    failfast: Option<&'a Shutdown>,
     /// The dispatch loop's encode buffer, lent to this delivery's reply. `None` where the
     /// context was built without one, and then the reply encodes into a buffer of its own.
     encode: Option<&'a mut BytesMut>,
@@ -184,7 +185,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// service down from inside the handler. The dispatch loop sets this; contexts built in tests
     /// leave it unset (a fail-fast there logs but cannot reach the run loop).
     #[must_use]
-    pub(crate) fn with_failfast(mut self, failfast: &'a ErrorShutdown) -> Self {
+    pub(crate) fn with_failfast(mut self, failfast: &'a Shutdown) -> Self {
         self.failfast = Some(failfast);
         self
     }

@@ -12,7 +12,6 @@ use std::future::{Future, ready};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 
 use crate::codec::JsonCodec;
 use crate::memory::{
@@ -25,12 +24,13 @@ use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
 use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::runtime::context::Context;
 use crate::runtime::dispatch::Delivery;
-use crate::runtime::failure::{ErrorShutdown, FailurePolicy};
+use crate::runtime::failure::FailurePolicy;
 use crate::runtime::handler::{Handler, HandlerOutcome};
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef};
 use crate::runtime::publish::PublishIdentity;
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
+use crate::runtime::shutdown::Shutdown;
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{
     Deserialized, Handle, Input, Message, Outs, Reads, Reply, Router, Slot, SoloDeserialized,
@@ -770,8 +770,7 @@ fn a_refused_construction_settles_by_the_decode_policy() {
 /// torn down: the teardown is what makes the failure loud.
 #[test]
 fn a_refused_construction_under_fail_fast_tears_the_service_down() {
-    let token = CancellationToken::new();
-    let shutdown = ErrorShutdown::new(token.clone());
+    let shutdown = Shutdown::new();
     let state = ();
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
@@ -783,7 +782,7 @@ fn a_refused_construction_under_fail_fast_tears_the_service_down() {
         .err()
         .expect("the frame is refused");
     assert!(outcome.is_drop());
-    assert!(token.is_cancelled());
+    assert!(shutdown.is_cancelled());
 }
 
 /// The diagnostic names the subscription and the input type, so the offending producer is

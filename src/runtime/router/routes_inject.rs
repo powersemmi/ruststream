@@ -188,7 +188,7 @@ where
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
         sink.push_raw(
-            Box::new(move |connected, state, scope, shutdown, token| {
+            Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
@@ -210,11 +210,11 @@ where
                             decode: policies.decode,
                         },
                     );
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch_workers(
                         subscriber,
                         Arc::new(handler),
-                        token,
+                        shutdown,
                         name,
                         state,
                         delivery,

@@ -14,9 +14,10 @@ use crate::runtime::redelivery::bare_retry_publisher;
 /// would see.
 fn unit_cx<M>(_msg: &M) {}
 use crate::memory::MemoryBroker;
-use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::handler::HandlerResult;
+use crate::runtime::shutdown::Shutdown;
 use crate::{
     AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, RetryDeclaration,
 };
@@ -274,10 +275,7 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
 }
 
 fn dispatch_failure() -> DispatchFailure {
-    DispatchFailure::new(
-        FailurePolicies::default(),
-        ErrorShutdown::new(CancellationToken::new()),
-    )
+    DispatchFailure::new(FailurePolicies::default(), Shutdown::new())
 }
 
 /// Drives one scripted subscriber through `workers` and returns the payloads that reached the
@@ -287,7 +285,7 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
     let joined = spawn_dispatch_workers(
         scripted(payloads),
         Arc::new(ReportingHandler { seen }),
-        CancellationToken::new(),
+        Shutdown::new(),
         Arc::from("orders"),
         Arc::new(()),
         Arc::new(Delivery::empty()),
@@ -404,7 +402,7 @@ const BATCH_FORMS: [Workers; 2] = [
 fn reporting_workers<S>(
     subscriber: S,
     workers: Workers,
-) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
+) -> impl FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
 where
     S: Subscriber<Message = PlainMessage> + Send + 'static,
 {
@@ -426,7 +424,7 @@ where
 fn reporting_batches<S>(
     subscriber: S,
     workers: Workers,
-) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
+) -> impl FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
 where
     S: BatchSubscriber<Message = PlainMessage, Batch = Vec<PlainMessage>> + Send + 'static,
 {
@@ -451,9 +449,9 @@ where
 /// through.
 async fn handled_before_shutdown<Spawn>(spawn: Spawn) -> Option<Vec<usize>>
 where
-    Spawn: FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
+    Spawn: FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
 {
-    let shutdown = CancellationToken::new();
+    let shutdown = Shutdown::new();
     let (seen, mut arrived) = mpsc::unbounded_channel();
     let joined = spawn(shutdown.clone(), seen);
     // One delivery in, so the loop is running rather than about to start.

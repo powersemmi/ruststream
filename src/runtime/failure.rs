@@ -6,13 +6,10 @@
 //! consumer down.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio_util::sync::CancellationToken;
-use tracing::error;
-
 use super::handler::HandlerResult;
+use super::shutdown::Shutdown;
 
 /// What a subscriber does when it cannot process a message.
 ///
@@ -127,60 +124,8 @@ impl Default for FailurePolicies {
     }
 }
 
-/// The runtime handle a dispatch task uses to tear the whole service down on a fail-fast failure.
-///
-/// It bundles the app's shutdown [`CancellationToken`] with a shared slot recording the first
-/// failure's description. [`RustStream::run`](super::RustStream::run) watches the token and, after
-/// graceful teardown, returns the recorded failure as an error. Cloning shares both the token and
-/// the slot, so any dispatch task can trigger the same shutdown.
-#[derive(Debug, Clone)]
-pub(crate) struct ErrorShutdown {
-    token: CancellationToken,
-    failure: Arc<Mutex<Option<String>>>,
-}
-
-impl ErrorShutdown {
-    /// Builds a handle over `token`, with no failure recorded yet.
-    pub(crate) fn new(token: CancellationToken) -> Self {
-        Self {
-            token,
-            failure: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Records `reason` (only the first wins) and cancels the shutdown token, starting graceful
-    /// teardown. Logs a loud error naming the subscription. Idempotent: a second call after one
-    /// failure is already recorded only re-cancels the (already cancelled) token.
-    pub(crate) fn signal(&self, subscription: &str, reason: &str) {
-        error!(
-            target: "ruststream::dispatch",
-            subscription = %subscription,
-            reason = %reason,
-            "fail-fast: a dispatch failure is tearing the service down",
-        );
-        // Keep the lock only long enough to record the first failure; never held across an await.
-        if let Ok(mut slot) = self.failure.lock() {
-            slot.get_or_insert_with(|| format!("{subscription}: {reason}"));
-        }
-        self.token.cancel();
-    }
-
-    /// Returns the first recorded failure description, if any. Read by the run loop after the
-    /// service has drained, to decide whether to return an error.
-    pub(crate) fn taken_failure(&self) -> Option<String> {
-        self.failure.lock().ok().and_then(|mut slot| slot.take())
-    }
-
-    /// Returns a clone of the first recorded failure description without consuming it: the
-    /// health-probe watcher reports it without racing `shutdown`'s consuming read, and the test
-    /// harness reports `run_result` more than once.
-    pub(crate) fn peek_failure(&self) -> Option<String> {
-        self.failure.lock().ok().and_then(|slot| slot.clone())
-    }
-}
-
 /// What one dispatch loop needs to apply a [`FailurePolicy`]: the per-subscriber [policies] and the
-/// app-level [error-shutdown handle](ErrorShutdown). The policies are captured when the subscriber
+/// app-level [shutdown signal](Shutdown). The policies are captured when the subscriber
 /// is mounted (like [`Workers`](super::Workers)); the handle is supplied once at run time, shared
 /// by every loop so any of them can tear the service down.
 ///
@@ -188,12 +133,12 @@ impl ErrorShutdown {
 #[derive(Debug, Clone)]
 pub(crate) struct DispatchFailure {
     pub(crate) policies: FailurePolicies,
-    pub(crate) shutdown: ErrorShutdown,
+    pub(crate) shutdown: Shutdown,
 }
 
 impl DispatchFailure {
     /// Bundles the per-subscriber `policies` with the app-level error-shutdown `shutdown` handle.
-    pub(crate) fn new(policies: FailurePolicies, shutdown: ErrorShutdown) -> Self {
+    pub(crate) fn new(policies: FailurePolicies, shutdown: Shutdown) -> Self {
         Self { policies, shutdown }
     }
 }
@@ -262,24 +207,5 @@ mod tests {
 
         let other: &(dyn Any + Send) = &42_u8;
         assert_eq!(panic_reason(other), "handler panicked");
-    }
-
-    #[test]
-    fn signal_records_first_failure_and_cancels() {
-        let token = CancellationToken::new();
-        let shutdown = ErrorShutdown::new(token.clone());
-        assert!(!token.is_cancelled());
-
-        shutdown.signal("orders.inbound", "handler panicked");
-        assert!(token.is_cancelled());
-
-        // The second failure does not overwrite the first.
-        shutdown.signal("other", "second");
-        assert_eq!(
-            shutdown.taken_failure().as_deref(),
-            Some("orders.inbound: handler panicked")
-        );
-        // Taking it clears the slot.
-        assert_eq!(shutdown.taken_failure(), None);
     }
 }

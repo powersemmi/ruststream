@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use thiserror::Error;
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
@@ -18,8 +17,8 @@ use crate::OutgoingDestination;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
-    ConnectedLifecycle, ErrorShutdown, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    PublishSink, RegisteredBroker, RustStream, RustStreamError, Starter, TestParts,
+    ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder, PublishSink,
+    RegisteredBroker, RustStream, RustStreamError, Shutdown, Starter, TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Lend, OutgoingMessage};
@@ -209,8 +208,7 @@ pub struct TestApp<State> {
     coordinator: Coordinator,
     #[allow(dead_code)]
     state: Arc<State>,
-    error_shutdown: ErrorShutdown,
-    token: CancellationToken,
+    shutdown: Shutdown,
     handles: Vec<JoinHandle<()>>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
@@ -343,11 +341,10 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             shutdown_timeout,
             state,
         } = args;
-        let token = CancellationToken::new();
-        let error_shutdown = ErrorShutdown::new(token.clone());
+        let shutdown = Shutdown::new();
         let mut handles = Vec::with_capacity(starters.len());
         for starter in starters {
-            let handle = starter(state.clone(), error_shutdown.clone(), token.clone())
+            let handle = starter(state.clone(), shutdown.clone())
                 .await
                 .map_err(TestError::Subscribe)?;
             handles.push(handle);
@@ -359,8 +356,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             entries,
             coordinator,
             state,
-            error_shutdown,
-            token,
+            shutdown,
             handles,
             continuations,
             shutdown_timeout,
@@ -490,7 +486,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             scope_id,
             coordinator: &self.coordinator,
             testable: entry.testable(),
-            token: &self.token,
+            shutdown: &self.shutdown,
             label: entry.display(),
         }
     }
@@ -622,7 +618,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Returns [`RustStreamError::Dispatch`] when a handler panic (or a fail-fast decode failure)
     /// triggered shutdown.
     pub fn run_result(&self) -> Result<(), RustStreamError> {
-        self.error_shutdown
+        self.shutdown
             .peek_failure()
             .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
     }
@@ -634,9 +630,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Panics if a fail-fast failure has torn the service down.
     pub fn assert_running(&self) {
         assert!(
-            !self.token.is_cancelled(),
+            !self.shutdown.is_cancelled(),
             "expected the service to be running, but it was shut down: {:?}",
-            self.error_shutdown.peek_failure(),
+            self.shutdown.peek_failure(),
         );
     }
 
@@ -647,7 +643,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Panics if the service is still running.
     pub fn assert_shut_down(&self) {
         assert!(
-            self.token.is_cancelled(),
+            self.shutdown.is_cancelled(),
             "expected the service to be shut down, but it was still running",
         );
     }
@@ -659,7 +655,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        self.token.cancel();
+        self.shutdown.cancel();
         match self.shutdown_timeout {
             Some(timeout) => {
                 for handle in self.handles {
@@ -674,7 +670,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         }
         self.continuations.close();
         self.continuations.wait().await;
-        self.error_shutdown
+        self.shutdown
             .taken_failure()
             .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
     }
@@ -696,7 +692,7 @@ pub struct BrokerHandle<'a> {
     scope_id: usize,
     coordinator: &'a Coordinator,
     testable: Option<&'a dyn TestableBroker>,
-    token: &'a CancellationToken,
+    shutdown: &'a Shutdown,
     label: String,
 }
 
@@ -728,7 +724,7 @@ enum Target<'a> {
     Broker {
         coordinator: &'a Coordinator,
         testable: Option<&'a dyn TestableBroker>,
-        token: &'a CancellationToken,
+        shutdown: &'a Shutdown,
         label: String,
     },
     Ambiguous,
@@ -756,13 +752,13 @@ impl PublishSink for InjectSink<'_> {
         let Target::Broker {
             coordinator,
             testable,
-            token,
+            shutdown,
             label,
         } = &self.0
         else {
             return Err(TestError::Ambiguous);
         };
-        if token.is_cancelled() {
+        if shutdown.is_cancelled() {
             return Err(TestError::ShutDown);
         }
         let transport = testable.ok_or_else(|| TestError::NoTransport(label.clone()))?;
@@ -835,7 +831,7 @@ impl<'a> BrokerHandle<'a> {
         InjectSink(Target::Broker {
             coordinator: self.coordinator,
             testable: self.testable,
-            token: self.token,
+            shutdown: self.shutdown,
             label: self.label.clone(),
         })
     }

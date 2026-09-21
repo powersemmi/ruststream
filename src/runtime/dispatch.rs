@@ -16,7 +16,6 @@ use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
-use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
@@ -33,6 +32,7 @@ use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
+use super::shutdown::Shutdown;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
 
@@ -289,7 +289,7 @@ impl<M> Slot<M> {
 pub(crate) fn spawn_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -364,10 +364,11 @@ enum Turn<T> {
 ///
 /// The stream is polled first and `cancelled` only where it answers `Pending`, so a turn that
 /// finds a delivery ready never touches the token's waiter list: what shutdown costs a busy
-/// subscription is the one flag read above. `cancelled` is the token's own wait future, built
-/// once per subscription by the caller and pinned across the whole loop, so the turn that does
-/// park registers with the waiter list once rather than on every iteration, which is what a
-/// `select!` over `cancelled()` charges.
+/// subscription is the one relaxed load above, which is why [`Shutdown`] carries a flag beside
+/// its token. `cancelled` is the token's own wait future, built once per subscription by the
+/// caller and pinned across the whole loop, so the turn that does park registers with the waiter
+/// list once rather than on every iteration, which is what a `select!` over `cancelled()`
+/// charges.
 ///
 /// # Cancel safety
 ///
@@ -380,7 +381,7 @@ enum Turn<T> {
 /// one instantiation shared with them is enough for the compiler to stop inlining it here, and
 /// the call frame it leaves costs the sequential path five instructions a delivery.
 async fn turn<St, Wait>(
-    shutdown: &CancellationToken,
+    shutdown: &Shutdown,
     mut stream: Pin<&mut St>,
     mut cancelled: Pin<&mut Wait>,
 ) -> Turn<St::Item>
@@ -438,7 +439,7 @@ where
 pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -472,7 +473,7 @@ where
 fn spawn_dispatch_pool<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -570,7 +571,7 @@ where
 fn spawn_dispatch_lanes<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -703,7 +704,7 @@ fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
 pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
