@@ -6,11 +6,10 @@ on:
   pull_request:
     # A pull request runs on every base. A draft runs nothing until it is marked ready for
     # review, which is what `ready_for_review` is here for: an agent opens its work as a draft,
-    # and the maintainer decides when CI spends its time on it. `labeled` is here for the cost
-    # job below, which a pull request runs under the `run-bench` label. A first pull request
-    # from outside the organisation waits for the approval GitHub asks for, which is a
-    # repository setting.
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    # and the maintainer decides when CI spends its time on it. A first pull request from
+    # outside the organisation waits for the approval GitHub asks for, which is a repository
+    # setting.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -442,14 +441,13 @@ jobs:
   bench:
     name: Cost of the code
     needs: changes
-    # Ten minutes of valgrind, twice over on a pull request: the head and the branch it targets.
-    # On `main` that is worth paying whenever the measured code changes. On a pull request it
-    # waits for the `run-bench` label, so a series of commits is not measured one by one; without
-    # the label the job is skipped rather than failed, and the pull request stays mergeable.
+    # Ten minutes of valgrind on `main`, whenever the measured code changes, so the published
+    # document is checked against the code that is published. A pull request is not measured
+    # here: instructions are the author's to measure, with `just bench --baseline=main`, and the
+    # floors that hold are the allocation counts the benchmark sources declare.
     if: >-
       needs.changes.outputs.bench == 'true'
-      && (github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'run-bench'))
+      && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # The job leaves its report on the pull request, which the workflow's read-only default
     # cannot do.
