@@ -79,10 +79,10 @@ jobs:
               - '.github/workflows/ci.yml'
 
   lint:
-    name: Lint, coverage and templates
+    name: Lint, coverage, features and templates
     needs: changes
     # One runner for the checks that need one toolchain each: formatting, lints, the dependency
-    # graph, line coverage and the scaffold. Not path-gated as a whole: advisories arrive over
+    # graph, line coverage, each feature alone and the scaffold. Not path-gated as a whole: advisories arrive over
     # time, not only with manifest changes, so `cargo deny` runs on every pull request, the Rust
     # steps run when the Rust sources changed, and the scaffold when it or the crate did. Each check runs whatever the one before it did, so a red
     # formatting step does not hide a lint or a coverage verdict.
@@ -118,6 +118,12 @@ jobs:
       - name: Cache cargo
         if: "!cancelled() && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true')"
         uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-hack
 
       - name: Install cargo-generate
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
@@ -216,6 +222,13 @@ jobs:
             echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
           } >> "$RUNNER_TEMP/smoke/Cargo.toml"
           cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
+
+      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
+      # It also rewrites the manifests while it runs, which is why this is the last step and the
+      # one without --locked.
+      - name: cargo hack check (each feature)
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo hack check --workspace --each-feature --no-dev-deps
 
   rust:
     name: Build and test (${{ matrix.toolchain }})
@@ -330,33 +343,6 @@ jobs:
       - name: Drop the trybuild scratch tree
         if: always()
         run: rm -rf target/tests
-
-  features:
-    name: Each feature alone
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-hack
-
-      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
-      # It also rewrites the manifests in place, which is why this is the one job without
-      # --locked.
-      - name: cargo hack check (each feature)
-        run: cargo hack check --workspace --each-feature --no-dev-deps
 
   minimal-versions:
     name: Minimal versions
@@ -575,7 +561,6 @@ jobs:
     needs:
       - changes
       - rust
-      - features
       - minimal-versions
       - external-types
       - lint
