@@ -442,6 +442,8 @@ allowed_external_types = [
     "tracing_subscriber::filter::directive::ParseError",
     "opentelemetry_otlp::exporter::ExporterBuildError",
     "opentelemetry_sdk::error::OTelSdkError",
+    "opentelemetry_sdk::metrics::instrument::Instrument",
+    "opentelemetry_sdk::metrics::instrument::Stream",
     "opentelemetry_sdk::metrics::meter_provider::SdkMeterProvider",
     "opentelemetry_sdk::trace::provider::SdkTracerProvider",
 ]

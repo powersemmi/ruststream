@@ -80,6 +80,10 @@
 //! | `ruststream.batch.size` | histogram | decoded batch sizes handed to batch handlers |
 //! | `ruststream.app.state` | observable gauge | the lifecycle state, from [`Otel::observe_health`] |
 //!
+//! The duration histograms carry the bucket boundaries the messaging semantic conventions advise
+//! (5 ms to 10 s); [`OtelBuilder::view`] overrides them per instrument, or makes a histogram
+//! exponential, through the standard OpenTelemetry view.
+//!
 //! Business instruments need no wiring of their own: build them once at startup against the
 //! global meter, share them through the typed state, and they export through the same pipeline.
 //! Call [`Otel::shutdown`] after the app's graceful shutdown to flush the last spans and points.
