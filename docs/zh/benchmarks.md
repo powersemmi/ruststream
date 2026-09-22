@@ -16,9 +16,11 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 ### 与裸客户端对照 { #against-a-raw-client }
 
-数值是三个交替轮次中的最佳值，括号里是最差的一轮。“Broker crate”一列是该 crate 自己的消费者
-和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上多付
-多少。
+数值是三个交替轮次中的最佳值，括号里是这三轮的中位数。最佳的一轮最接近未受干扰的开销，中位的
+一轮则是重跑一次通常会得到的那一轮。最差的一轮同样公布，但不进入单元格。`无法区分` 的判定要
+用到它：判定依据的是最佳一轮到最差一轮之间的波动范围。“Broker crate”一列是该 crate 自己的
+消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上
+多付多少。
 
 <div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
@@ -112,9 +114,12 @@ Broker 会在自己的页面上说明。
 
 ### 报告 { #the-report }
 
-- **两侧都报告最佳的一轮和最差的一轮。** 机器上的噪声只会让运行变慢，所以最快的一轮最接近
-  未受干扰的开销，最慢的一轮则说明机器离安静有多远。单次运行的单个数字不算结果。
-- **小于波动范围的差异公布为 `无法区分`，** 而不是一个百分比：低于运行间噪声的数值，读起来
+- **每个循环都报告三轮：最佳、中位和最差。** 机器上的噪声只会让运行变慢，所以最快的一轮最接近
+  未受干扰的开销，中位的一轮是典型的一轮，最慢的一轮则说明机器离安静有多远。单次运行的单个
+  数字不算结果。
+- **表格里印出最佳的一轮，括号里是中位数。** 最差的一轮留在文档里，不进入单元格：它的用处是
+  波动范围，也就是最佳的一轮到最差的一轮之间的距离。
+- **小于该波动范围的差异公布为 `无法区分`，** 而不是一个百分比：低于运行间噪声的数值，读起来
   像是从未测到过的精度。
 - **饱和的消费者要标注出来。** 当裸的一侧整个运行都在等 Broker 时，该行带上 `broker-bound`。
 - **环境与数字一起公布**：CPU 型号与核心数、内核、Broker 如何启动（镜像、容器、主机）、rustc
@@ -187,9 +192,9 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "unit": "msg/s",
       "messages": 200000,
       "pairs": 3,
-      "raw": { "best": 129604, "worst": 126980 },
-      "adapter": { "best": 129310, "worst": 126700 },
-      "framework": { "best": 129020, "worst": 126100 },
+      "raw": { "best": 129604, "median": 128470, "worst": 126980 },
+      "adapter": { "best": 129310, "median": 128040, "worst": 126700 },
+      "framework": { "best": 129020, "median": 127640, "worst": 126100 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
       "adapter_verdict": "indistinguishable",
@@ -209,7 +214,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 }
 ```
 
-`schema` 是这份文档的版本：3 为每个循环报告最佳和最差的一轮，2 增加了 `code` 一节，模式 1 的文档报告的是中位数及其两端。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
+`schema` 是这份文档的版本：3 为每个循环报告三轮（`best`、`median` 和 `worst`），2 增加了 `code`
+一节，模式 1 的文档报告的是中位数及其两端。表格里印出 `best`，括号里是 `median`；`worst` 只读
+不印，判定规则依据的是最佳一轮与最差一轮之间的距离。模式 3 的文档若没有 `median`，括号里仍是
+最差的一轮，这也正是该字段出现之前的印法。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，
+而不是一句话。
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`；`adapter_verdict` 把同一条波动规则
 用在 crate 与裸客户端的那项差值上；crate 没有给出它时，页面就按已公布的波动范围自己套同一条
 规则，使同一行的两列不会对“什么是可见的”给出相反的说法。`environment` 里还可以带 `round_trip`，即 `broker_bound`

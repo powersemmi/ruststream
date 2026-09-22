@@ -19,9 +19,12 @@ next time it publishes its documentation.
 
 ### Against a raw client
 
-The best of three interleaved rounds, with the slowest round in parentheses. `Broker crate` is the
-crate's own consumer and publisher driven without the runtime, so the two differences read apart:
-what the crate costs over the client it wraps, and what the runtime costs on top of that.
+The best of three interleaved rounds, with the median round in parentheses. The best round is the
+closest to the undisturbed cost, and the median is the one a rerun typically repeats. The slowest
+round is published with them and kept out of the cell. It is what the `indistinguishable` verdict
+rests on: the spread from the best round to the worst. `Broker crate` is the crate's own consumer
+and publisher driven without the runtime, so the two differences read apart: what the crate costs
+over the client it wraps, and what the runtime costs on top of that.
 
 <div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start"}'></div>
 
@@ -139,10 +142,14 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
 
 ### The report
 
-- **Every loop reports its best round and its worst.** Noise on the machine only ever slows a run
-  down, so the fastest round is the closest to the undisturbed cost, and the slowest says how far
-  from quiet the machine was. A single number from a single run is not a result.
-- **A difference smaller than the spread is published as `indistinguishable`,** never as a
+- **Every loop reports three rounds: its best, its median and its worst.** Noise on the machine
+  only ever slows a run down, so the fastest round is the closest to the undisturbed cost, the
+  median is the round a rerun typically repeats, and the slowest says how far from quiet the
+  machine was. A single number from a single run is not a result.
+- **The table prints the best round with the median in parentheses.** The worst round stays in the
+  document and out of the cell, because what it is there for is the spread: the distance from the
+  best round to the worst.
+- **A difference smaller than that spread is published as `indistinguishable`,** never as a
   percentage: a figure below the run-to-run noise reads as precision that was never measured.
 - **A saturated consumer is flagged.** When the raw side spends the run waiting on the broker, the
   row is marked `broker-bound`.
@@ -230,9 +237,9 @@ it. The broker sites share this site's origin, so this page reads them directly.
       "unit": "msg/s",
       "messages": 200000,
       "pairs": 3,
-      "raw": { "best": 129604, "worst": 126980 },
-      "adapter": { "best": 129310, "worst": 126700 },
-      "framework": { "best": 129020, "worst": 126100 },
+      "raw": { "best": 129604, "median": 128470, "worst": 126980 },
+      "adapter": { "best": 129310, "median": 128040, "worst": 126700 },
+      "framework": { "best": 129020, "median": 127640, "worst": 126100 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
       "adapter_verdict": "indistinguishable",
@@ -252,8 +259,12 @@ it. The broker sites share this site's origin, so this page reads them directly.
 }
 ```
 
-`schema` is the version of this document: 3 reports each loop as its best and worst round, 2 added
-the `code` section, and a schema 1 document carried a median with its extremes. `unit` is a short
+`schema` is the version of this document: 3 reports each loop as three rounds (`best`, `median` and
+`worst`), 2 added the `code` section, and a schema 1 document carried a median with its extremes.
+The table prints `best` with `median` in parentheses. `worst` is read rather than printed: the
+verdict rule rests on the distance between the best round and the worst. A schema 3 document
+without `median` keeps the worst round in parentheses, which is what it printed before the field
+existed. `unit` is a short
 label rendered next to every value in the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
 `overhead_percent` is recorded either way and displayed only when the verdict is `measured`. It is
 the framework against the raw client, end to end. `adapter` and `adapter_overhead_percent` are the
