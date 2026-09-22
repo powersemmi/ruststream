@@ -657,3 +657,38 @@ jobs:
             echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
           } >> "$RUNNER_TEMP/smoke/Cargo.toml"
           cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
+
+  result:
+    name: CI result
+    # The one check the `main` ruleset requires. The jobs above are gated by path, and a
+    # skipped matrix job reports under its unexpanded name, so none of them can be required on
+    # its own: this job speaks for all of them. Skipped counts as passed, anything else fails.
+    # A draft skips it with the rest, and the run that marking it ready starts reports again.
+    needs:
+      - changes
+      - rust
+      - features
+      - minimal-versions
+      - external-types
+      - coverage
+      - package
+      - bench
+      - scripts
+      - security
+      - templates
+    if: >-
+      always()
+      && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
