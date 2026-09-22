@@ -30,6 +30,7 @@ jobs:
       dist: ${{ steps.filter.outputs.dist }}
       templates: ${{ steps.filter.outputs.templates }}
       scripts: ${{ steps.filter.outputs.scripts }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -58,6 +59,18 @@ jobs:
               - '.github/workflows/ci.yml'
             scripts:
               - 'scripts/**'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - 'properdocs.yml'
+              - 'overrides/**'
+              - 'examples/**'
+              # the testing and conformance pages embed their snippets from these test files
+              - 'tests/doc_*.rs'
+              - 'tests/conformance_self.rs'
+              - 'scripts/lint_doc_fences.py'
+              - 'scripts/check_doc_i18n.py'
+              - 'scripts/doc_glossary.toml'
               - '.github/workflows/ci.yml'
             templates:
               - 'templates/**'
@@ -494,6 +507,65 @@ jobs:
       - name: Unit-test the report formatters
         run: python3 -m unittest discover --start-directory scripts/tests
 
+  docs:
+    name: Build site
+    needs: [changes, lint]
+    # After the lint job, and only when it passed: a site built from code that fails its own
+    # gates is not worth the runner.
+    if: >-
+      needs.changes.outputs.docs == 'true'
+      && needs.lint.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install docs toolchain
+        run: pip install -r docs/requirements.txt
+
+      - name: Lint doc code fences
+        run: python3 scripts/lint_doc_fences.py
+
+      - name: Check translated pages against their originals
+        run: python3 scripts/check_doc_i18n.py
+
+      - name: Build site (strict)
+        run: properdocs build --strict
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    needs: lint
+    # After the lint job, and only when it passed. The scan lives here rather than in the
+    # default setup, which cannot be ordered after anything. None of the three languages needs a
+    # build: Rust and Python are extracted from source, and `actions` reads the workflows.
+    if: needs.lint.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python, rust]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+
   result:
     name: CI result
     # The one check the `main` ruleset requires. The jobs above are gated by path, and a
@@ -509,6 +581,8 @@ jobs:
       - lint
       - package
       - scripts
+      - docs
+      - codeql
     if: >-
       always()
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
