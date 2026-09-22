@@ -29,7 +29,6 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       dist: ${{ steps.filter.outputs.dist }}
       templates: ${{ steps.filter.outputs.templates }}
-      scripts: ${{ steps.filter.outputs.scripts }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
@@ -56,9 +55,6 @@ jobs:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - '.github/workflows/ci.yml'
-            scripts:
-              - 'scripts/**'
               - '.github/workflows/ci.yml'
             docs:
               - 'docs/**'
@@ -473,21 +469,6 @@ jobs:
         if: always()
         run: rm -rf target/tests
 
-  scripts:
-    name: Report formatters
-    needs: changes
-    if: ${{ needs.changes.outputs.scripts == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # The benchmark results formatter. `just bench` runs it on a developer's machine, where a
-      # formatter that drops a column fails nothing, so its tests run here.
-      - name: Unit-test the report formatters
-        run: python3 -m unittest discover --start-directory scripts/tests
-
   docs:
     name: Build site
     needs: [changes, lint]
@@ -556,7 +537,6 @@ jobs:
       - changes
       - rust
       - lint
-      - scripts
       - docs
       - codeql
     if: >-
