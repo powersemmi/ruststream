@@ -9,7 +9,7 @@
     clippy::needless_pass_by_value
 )]
 //! Consuming a small JSON body: the dispatcher decodes it into a struct, the handler reads a
-//! field and the runtime acks. The twin decodes the same bytes with the same codec.
+//! field and the runtime acks.
 
 mod common;
 

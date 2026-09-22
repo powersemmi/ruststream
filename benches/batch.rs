@@ -9,8 +9,7 @@
     clippy::needless_pass_by_value
 )]
 //! Consuming in batches of 64: the subscription hands the handler a slice, and the runtime
-//! settles every delivery in it. The twin reads the same batches through the broker's own batch
-//! capability.
+//! settles every delivery in it.
 
 mod common;
 

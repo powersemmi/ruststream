@@ -9,7 +9,7 @@
     clippy::needless_pass_by_value
 )]
 //! Publishing with a typed header contract: the message type declares the contract, and the
-//! publish does not compile without it. The twin builds the same two header entries by hand.
+//! publish does not compile without it.
 
 mod common;
 
