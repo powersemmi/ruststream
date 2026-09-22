@@ -99,3 +99,44 @@ clean:
     cargo clean
 
 ci: check test
+
+# Each `ruststream-*` repository next to this one runs `cargo test --workspace --all-features`
+# with its `ruststream` dependency patched to this checkout, on whatever branch it has checked
+# out, so a core change and the broker adaptations it needs are tested together before either is
+# committed. A broker's lock file is put back afterwards, so the run leaves its tree as it found
+# it. `just brokers nats fred` runs the named ones; with no names it runs every one it finds.
+# Every broker crate's test suite against this working tree of the core.
+brokers *names:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    core="$(pwd)"
+    root="$(dirname "$core")"
+    if [ -n "{{ names }}" ]; then
+        repos=()
+        for name in {{ names }}; do repos+=("$root/ruststream-$name"); done
+    else
+        repos=("$root"/ruststream-*)
+    fi
+    passed=()
+    failed=()
+    for repo in "${repos[@]}"; do
+        name="$(basename "$repo")"
+        # The dashboard repository has no crate.
+        [ -f "$repo/Cargo.toml" ] || continue
+        echo "==> $name ($(git -C "$repo" branch --show-current))"
+        lock="$(mktemp)"
+        had_lock=false
+        if [ -f "$repo/Cargo.lock" ]; then cp "$repo/Cargo.lock" "$lock"; had_lock=true; fi
+        if (cd "$repo" && cargo test --workspace --all-features \
+            --config "patch.crates-io.ruststream.path='$core'"); then
+            passed+=("$name")
+        else
+            failed+=("$name")
+        fi
+        if $had_lock; then cp "$lock" "$repo/Cargo.lock"; else rm -f "$repo/Cargo.lock"; fi
+        rm -f "$lock"
+    done
+    echo
+    echo "passed: ${passed[*]:-none}"
+    echo "failed: ${failed[*]:-none}"
+    [ ${#failed[@]} -eq 0 ]
