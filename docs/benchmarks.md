@@ -175,14 +175,15 @@ run, while the published document and the CI gate stay at the default.
   The difference between the last two is what a message costs once the service is running; the
   single delivery is the cold start. Nothing has to be switched off part way through a run, which
   is what makes this work for the allocation counter, whose counting cannot be toggled at all.
-- **Three numbers per scenario.** Instructions from callgrind, which is exact and the gate;
-  allocations from DHAT, which is exact and the gate; wall time from a separate run, which is noisy
-  and informational.
-- **A gate on the change, not on the value.** A pull request carrying the `run-bench` label is
-  measured against the same benchmarks run on the target branch: more than two percent of
-  instructions in a gated scenario fails it, and so does an allocation above what the scenario
-  declares. The table lands as a comment on the pull request. The cold start and the wall clock
-  only print.
+- **Three numbers per scenario.** Instructions from callgrind, which is exact and compared;
+  allocations from DHAT, which is exact and held to the floor the scenario declares; wall time from
+  a separate run, which is noisy and informational.
+- **A comparison, not a threshold.** `just bench --baseline=main` measures a branch against the
+  same benchmarks run on the branch it targets and reports more than two percent of instructions
+  in a scenario as a failure, and so an allocation above what the scenario declares. Nothing of
+  this runs in CI on a pull request: the numbers a pull request cites are its author's, taken that
+  way, and a change that lowers a scenario lowers its declared floor in the same pull request.
+  The cold start and the wall clock only print.
 
 ## Publishing results
 
