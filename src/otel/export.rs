@@ -52,6 +52,7 @@
 //! # }
 //! ```
 
+use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 use std::thread;
@@ -63,7 +64,7 @@ use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkError;
-use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::metrics::{Instrument, MeterProviderBuilder, SdkMeterProvider, Stream};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use thiserror::Error;
@@ -112,8 +113,21 @@ pub struct OtelBuilder {
     endpoint: Option<String>,
     messaging_system: Option<String>,
     attributes: Vec<KeyValue>,
+    views: Views,
     tracing_bridge: bool,
     stamp_publish_time: bool,
+}
+
+type View = Arc<dyn Fn(&Instrument) -> Option<Stream> + Send + Sync>;
+
+/// The views [`OtelBuilder::init`] registers on the meter provider, in the order added.
+#[derive(Clone, Default)]
+struct Views(Vec<View>);
+
+impl fmt::Debug for Views {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Views").field("len", &self.0.len()).finish()
+    }
 }
 
 impl OtelBuilder {
@@ -150,6 +164,45 @@ impl OtelBuilder {
     pub fn attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.attributes
             .push(KeyValue::new(key.into(), value.into()));
+        self
+    }
+
+    /// A metric view for the meter provider [`init`](Self::init) builds: the OpenTelemetry way
+    /// to change how an instrument is aggregated, renamed or dropped.
+    ///
+    /// The duration histograms carry the bucket boundaries the messaging semantic conventions
+    /// advise (5 ms to 10 s). A view overrides them for one instrument, or turns a histogram
+    /// into a base-2 exponential one that needs no boundaries at all. The SDK applies the views
+    /// in the order they are added; an instrument no view matches keeps its advised
+    /// aggregation.
+    ///
+    /// [`attach`](Self::attach) takes a caller-built provider, so views for that path go on
+    /// the caller's own `SdkMeterProvider::builder()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use opentelemetry_sdk::metrics::{Aggregation, Instrument, Stream};
+    /// use ruststream::otel::Otel;
+    ///
+    /// let builder = Otel::builder().view(|instrument: &Instrument| {
+    ///     (instrument.name() == "ruststream.message.queue_time").then(|| {
+    ///         Stream::builder()
+    ///             .with_aggregation(Aggregation::ExplicitBucketHistogram {
+    ///                 boundaries: vec![0.001, 0.01, 0.1, 1.0, 10.0, 60.0],
+    ///                 record_min_max: true,
+    ///             })
+    ///             .build()
+    ///             .ok()
+    ///     })?
+    /// });
+    /// # let _ = builder;
+    /// ```
+    pub fn view<V>(mut self, view: V) -> Self
+    where
+        V: Fn(&Instrument) -> Option<Stream> + Send + Sync + 'static,
+    {
+        self.views.0.push(Arc::new(view));
         self
     }
 
@@ -198,7 +251,8 @@ impl OtelBuilder {
             .with_batch_exporter(span_exporter.build()?)
             .with_resource(resource.clone())
             .build();
-        let meter_provider = SdkMeterProvider::builder()
+        let meter_provider = self
+            .meter_provider_builder()
             .with_periodic_exporter(metric_exporter.build()?)
             .with_resource(resource)
             .build();
@@ -219,6 +273,18 @@ impl OtelBuilder {
         global::set_meter_provider(meter_provider.clone());
 
         Ok(self.attach(tracer_provider, meter_provider))
+    }
+
+    /// The meter provider builder `init` starts from: the registered views, and nothing that
+    /// needs a collector, so a test can finish it with an in-memory exporter.
+    fn meter_provider_builder(&self) -> MeterProviderBuilder {
+        self.views
+            .0
+            .iter()
+            .cloned()
+            .fold(SdkMeterProvider::builder(), |builder, view| {
+                builder.with_view(move |instrument: &Instrument| view(instrument))
+            })
     }
 
     /// Attaches to caller-built providers without touching the process globals or installing a
@@ -255,8 +321,8 @@ pub struct Otel {
     meter_provider: SdkMeterProvider,
 }
 
-impl std::fmt::Debug for Otel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Otel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Otel").finish_non_exhaustive()
     }
 }
@@ -453,8 +519,8 @@ pub struct OtelConsumeLayer {
     instruments: Arc<Instruments>,
 }
 
-impl std::fmt::Debug for OtelConsumeLayer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for OtelConsumeLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OtelConsumeLayer").finish_non_exhaustive()
     }
 }
@@ -489,8 +555,8 @@ pub struct OtelConsumeHandler<H> {
     instruments: Arc<Instruments>,
 }
 
-impl<H> std::fmt::Debug for OtelConsumeHandler<H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<H> fmt::Debug for OtelConsumeHandler<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OtelConsumeHandler").finish_non_exhaustive()
     }
 }
@@ -572,8 +638,8 @@ pub struct OtelPublishLayer {
     stamp_publish_time: bool,
 }
 
-impl std::fmt::Debug for OtelPublishLayer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for OtelPublishLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OtelPublishLayer").finish_non_exhaustive()
     }
 }
@@ -640,6 +706,58 @@ mod tests {
                 1
             ))),
             "retry_after"
+        );
+    }
+
+    #[test]
+    fn a_view_overrides_the_advised_buckets() {
+        use opentelemetry::metrics::MeterProvider as _;
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        use opentelemetry_sdk::metrics::{Aggregation, InMemoryMetricExporter};
+
+        let exporter = InMemoryMetricExporter::default();
+        let provider = Otel::builder()
+            .view(|instrument: &Instrument| {
+                (instrument.name() == "ruststream.message.queue_time").then(|| {
+                    Stream::builder()
+                        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                            boundaries: vec![1.0, 60.0],
+                            record_min_max: false,
+                        })
+                        .build()
+                        .ok()
+                })?
+            })
+            .meter_provider_builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        let instruments = Instruments::new(&provider.meter("ruststream"), None);
+        instruments.queue_time.record(0.5, &[]);
+        instruments.process_duration.record(0.5, &[]);
+        provider.force_flush().expect("flush failed");
+
+        let bounds = |name: &str| -> Vec<f64> {
+            exporter
+                .get_finished_metrics()
+                .expect("exporter drained")
+                .iter()
+                .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+                .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+                .filter(|metric| metric.name() == name)
+                .flat_map(|metric| match metric.data() {
+                    AggregatedMetrics::F64(MetricData::Histogram(histogram)) => histogram
+                        .data_points()
+                        .flat_map(|point| point.bounds().collect::<Vec<_>>())
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        assert_eq!(bounds("ruststream.message.queue_time"), vec![1.0, 60.0]);
+        assert_eq!(
+            bounds("messaging.process.duration"),
+            SEMCONV_DURATION_BUCKETS.to_vec(),
+            "an instrument the view does not match keeps its advised buckets",
         );
     }
 
