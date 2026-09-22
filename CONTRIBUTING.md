@@ -100,8 +100,8 @@ stand with `just brokers-down`.
 
 - One logical change per pull request.
 - Open it as a draft. CI runs when it is marked ready for review.
-- Merging needs the `CI result` check, one approving review, linear history (rebase or squash),
-  and signed commits.
+- A pull request merges as one squashed commit, after the `CI result` check and one approving
+  review. Commits are signed.
 - Documentation changes with the code. An item's rustdoc says what it is and does. A module
   overview says how a topic is done. The site holds the entry pages in English, Russian and
   Chinese, and an edit reaches all three.
