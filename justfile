@@ -62,8 +62,8 @@ test:
 #
 # Extra arguments reach the benchmark runner: `just bench --save-baseline=main` records a
 # baseline, `just bench --baseline=main` measures against it.
-# `messages` is the deliveries per measured run: the default is what the published document and
-# the CI gate are measured at, a larger count buys a steadier number for a longer run
+# `messages` is the deliveries per measured run: the default is what the published document is
+# measured at, a larger count buys a steadier number for a longer run
 # (`just bench 5000`). The benches read it at build time, so a new count rebuilds them.
 bench messages="1000" *ARGS:
     RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES={{ messages }} cargo bench {{ cost_benches }} --no-fail-fast \

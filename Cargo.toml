@@ -520,8 +520,8 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 tracing-opentelemetry = { version = "0.33", optional = true }
 
 # One scenario per file, each with the hand-written twin it is compared against; `benches/common`
-# is the shared setup. `just bench` and the CI job name them, so a new file is added in three
-# places and `scripts/bench_results.py` fails loudly when one of them is missed.
+# is the shared setup. `just bench` names them, so a new file is added in two places and
+# `scripts/bench_results.py` fails loudly when one of them is missed.
 [[bench]]
 name = "consume_json"
 harness = false

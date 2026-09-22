@@ -162,7 +162,7 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
 `just bench` in the crate's repository produces the second table. It needs valgrind and the
 benchmark runner pinned to the version the crate depends on. `just bench 5000` measures
 every scenario over five thousand deliveries instead of a thousand: a steadier number for a longer
-run, while the published document and the CI gate stay at the default.
+run, while the published document stays at the default.
 
 - **Every scenario is the service a user writes**, started through the real runtime with the test
   harness compiled out, so what is measured is the code that ships. Nothing is compared against a
@@ -188,7 +188,7 @@ run, while the published document and the CI gate stay at the default.
 - **A comparison, not a threshold.** `just bench --baseline=main` measures a branch against the
   same benchmarks run on the branch it targets and reports more than two percent of instructions
   in a scenario as a failure, and so an allocation above what the scenario declares. Nothing of
-  this runs in CI on a pull request: the numbers a pull request cites are its author's, taken that
+  this runs in CI: the numbers a pull request cites are its author's, taken that
   way, and a change that lowers a scenario lowers its declared floor in the same pull request.
   The cold start and the wall clock only print.
 
@@ -285,7 +285,7 @@ Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays
 
 `code` is the second table, one entry per scenario. `framework` is per message in the steady state;
 `cold` is the whole cost of starting the service and taking the first delivery, not divided by
-anything. `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios`
+anything. `gated` says whether a regression in it fails `just bench --baseline=main`. A crate that publishes `scenarios`
 alone declares `schema` 1 and keeps its row in the first table. A crate that measures no broker of
 its own leaves `scenarios` out instead of publishing it empty, and appears in the second table
 only.
