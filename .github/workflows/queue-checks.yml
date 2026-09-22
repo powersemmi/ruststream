@@ -1,0 +1,139 @@
+name: Queue checks
+
+# The half of CI a pull request leaves out to stay quick: each feature alone, minimal versions
+# and CodeQL. CI calls it from one job in the merge queue, on `main` and weekly, so a pull
+# request shows one skipped line instead of every job here, and the `CI result` gate still
+# covers them.
+on:
+  workflow_call:
+    inputs:
+      rust:
+        description: Whether the Rust sources changed; the CodeQL scan runs either way.
+        type: boolean
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  features:
+    name: Each feature alone
+    if: inputs.rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-hack
+
+      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
+      # It also rewrites the manifests in place, which is why this is the one job without
+      # --locked.
+      - name: cargo hack check (each feature)
+        run: cargo hack check --workspace --each-feature --no-dev-deps
+
+  minimal-versions:
+    name: Minimal versions
+    if: inputs.rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nightly (resolver only)
+        uses: dtolnay/rust-toolchain@nightly
+
+      # The floor, for the build step below. Keep the version in step with
+      # `rust-version` in the workspace manifest.
+      - name: Install the MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-hack
+
+      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
+      # graph unverified, and that is what a user builds. It costs the pinning list below.
+      - name: Resolve minimal versions
+        run: cargo +nightly update -Z minimal-versions
+
+      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
+      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
+      - name: Pin dependencies whose declared bounds are too loose
+        run: cargo update -p termcolor --precise 1.0.4
+
+      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
+      # Resolution above needs nightly, so only this step drops to the floor.
+      - name: Build and test against minimal versions
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast
+
+      # Everything above still sees dev-dependencies, which raise shared floors before the library
+      # is built: the run proves the workspace resolves, not that the manifest is honest for a
+      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
+      # because it rewrites the manifests in place.
+      - name: Resolve minimal versions without dev-dependencies
+        run: |
+          cargo hack --remove-dev-deps
+          cargo +nightly update -Z minimal-versions
+
+      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
+      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
+      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
+        run: cargo update -p tower@0.5.0 --precise 0.5.1
+
+      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
+      # manifests it checks.
+      - name: Check the library against its own declared floors
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo hack check --workspace --no-dev-deps --all-features
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    # None of the three languages needs a build: Rust and Python are extracted from source, and
+    # `actions` reads the workflows. Runs on every call, the weekly one included.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python, rust]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
