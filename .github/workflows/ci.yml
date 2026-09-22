@@ -79,17 +79,21 @@ jobs:
               - '.github/workflows/ci.yml'
 
   lint:
-    name: Lint, coverage, features and templates
+    name: Lint and checks
     needs: changes
-    # One runner for the checks that need one toolchain each: formatting, lints, the dependency
-    # graph, line coverage, each feature alone and the scaffold. Not path-gated as a whole: advisories arrive over
-    # time, not only with manifest changes, so `cargo deny` runs on every pull request, the Rust
-    # steps run when the Rust sources changed, and the scaffold when it or the crate did. Each check runs whatever the one before it did, so a red
+    # One runner for every check that is not the test matrix: formatting, lints, the dependency
+    # graph, the public API surface, the publish dry-run, the scaffold, line coverage, each
+    # feature alone and minimal versions. Not path-gated as a whole: advisories arrive over
+    # time, not only with manifest changes, so `cargo deny` runs on every pull request, and each
+    # other step runs when its own sources changed. The order matters twice: the dry-run
+    # packages the tree before coverage leaves its reports in it, and minimal versions rewrites
+    # the lock file and the manifests for good, so it comes last. Each check runs whatever the one before it did, so a red
     # formatting step does not hide a lint or a coverage verdict.
     runs-on: ubuntu-latest
     env:
       RUST_CHANGED: ${{ needs.changes.outputs.rust }}
       TEMPLATES_CHANGED: ${{ needs.changes.outputs.templates }}
+      DIST_CHANGED: ${{ needs.changes.outputs.dist }}
       # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile
       # together if coverage climbs further.
       COVERAGE_GATE: "95"
@@ -104,10 +108,20 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
 
       - name: Install Rust toolchain
-        if: "!cancelled() && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true')"
+        if: >-
+          !cancelled()
+          && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true'
+            || env.DIST_CHANGED == 'true')
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
+
+      # The rest are installed beside stable, which `rust-toolchain.toml` keeps the default: the
+      # floor for minimal versions, a nightly for its resolver, and the nightly the rustdoc JSON
+      # tool was built for (move that date and the tool version together).
+      - name: Install the extra toolchains
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: rustup toolchain install --profile minimal 1.88 nightly nightly-2026-03-20
 
       - name: Install cargo-llvm-cov
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
@@ -116,7 +130,10 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Cache cargo
-        if: "!cancelled() && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true')"
+        if: >-
+          !cancelled()
+          && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true'
+            || env.DIST_CHANGED == 'true')
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-hack
@@ -124,6 +141,10 @@ jobs:
         uses: taiki-e/install-action@v2.87.15
         with:
           tool: cargo-hack
+
+      - name: Install cargo-check-external-types
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo install --locked cargo-check-external-types@0.5.0
 
       - name: Install cargo-generate
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
@@ -144,6 +165,57 @@ jobs:
           cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
             -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json
+
+      # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
+      # for every broker crate downstream, so a new leak is added deliberately or not at all.
+      - name: cargo check-external-types
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo +nightly-2026-03-20 check-external-types --all-features
+
+      # Both packages in one invocation: packaging strips the path from the lockstep
+      # `ruststream-macros` dependency, and between a version bump and the release that version
+      # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
+      # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
+      - name: cargo publish dry-run (no upload)
+        if: "!cancelled() && env.DIST_CHANGED == 'true'"
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
+        run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
+
+      # The dry-run verifies each package by building it under `target/package/<crate>`, whose
+      # inner trees the cache action cannot read as cargo profiles either (same annotation as
+      # the trybuild scratch above). Verification output is per-run; nothing here is reusable.
+      - name: Drop the packaging scratch tree
+        if: always() && env.DIST_CHANGED == 'true'
+        run: rm -rf target/package
+
+      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
+      # first build. The rendered project is patched to this checkout. No --locked: a fresh
+      # scaffold has no lock file, which is the situation a user starts from.
+      - name: Render and check templates/memory
+        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
+        run: |
+          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
+          # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
+          # package discovery never parses its placeholder name. Assert that cargo-generate did
+          # drop the suffix, otherwise the append below would quietly write a manifest of its own.
+          test -f "$RUNNER_TEMP/smoke/Cargo.toml"
+          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
+          # Cargo keeps pre-releases out of a range that does not name one. So while the
+          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
+          # Point the rendered copy at the version actually being built; the template keeps the
+          # requirement a user writes for the release it targets.
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "ruststream") | .version')
+          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
+            "$RUNNER_TEMP/smoke/Cargo.toml"
+          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
+          {
+            echo ""
+            echo "[patch.crates-io]"
+            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
+          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
+          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
 
       # Stale instrumented artifacts from the cache double-count files and crater the total.
       - name: Clean stale coverage artifacts
@@ -195,40 +267,66 @@ jobs:
           format: lcov
           fail-on-error: false
 
-      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
-      # first build. The rendered project is patched to this checkout. No --locked: a fresh
-      # scaffold has no lock file, which is the situation a user starts from.
-      - name: Render and check templates/memory
-        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
-        run: |
-          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
-          # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
-          # package discovery never parses its placeholder name. Assert that cargo-generate did
-          # drop the suffix, otherwise the append below would quietly write a manifest of its own.
-          test -f "$RUNNER_TEMP/smoke/Cargo.toml"
-          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
-          # Cargo keeps pre-releases out of a range that does not name one. So while the
-          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
-          # Point the rendered copy at the version actually being built; the template keeps the
-          # requirement a user writes for the release it targets.
-          VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "ruststream") | .version')
-          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
-            "$RUNNER_TEMP/smoke/Cargo.toml"
-          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
-          {
-            echo ""
-            echo "[patch.crates-io]"
-            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
-          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
-          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
-
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
       # one without --locked.
       - name: cargo hack check (each feature)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: cargo hack check --workspace --each-feature --no-dev-deps
+
+      # Minimal versions is one chain: each step runs only when the one before it succeeded, since
+      # a step on a graph that failed to resolve checks nothing.
+      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
+      # graph unverified, and that is what a user builds. It costs the pinning list below.
+      - name: Resolve minimal versions
+        id: minimal-resolve
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo +nightly update -Z minimal-versions
+
+      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
+      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
+      - name: Pin dependencies whose declared bounds are too loose
+        id: minimal-pin
+        if: "!cancelled() && steps.minimal-resolve.outcome == 'success'"
+        run: cargo update -p termcolor --precise 1.0.4
+
+      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
+      # Resolution above needs nightly, so only this step drops to the floor.
+      - name: Build and test against minimal versions
+        id: minimal-test
+        if: "!cancelled() && steps.minimal-pin.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast
+
+      # Everything above still sees dev-dependencies, which raise shared floors before the library
+      # is built: the run proves the workspace resolves, not that the manifest is honest for a
+      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
+      # because it rewrites the manifests in place.
+      - name: Resolve minimal versions without dev-dependencies
+        id: minimal-resolve-lib
+        if: "!cancelled() && steps.minimal-test.outcome == 'success'"
+        run: |
+          cargo hack --remove-dev-deps
+          cargo +nightly update -Z minimal-versions
+
+      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
+      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
+      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
+        id: minimal-pin-lib
+        if: "!cancelled() && steps.minimal-resolve-lib.outcome == 'success'"
+        run: cargo update -p tower@0.5.0 --precise 0.5.1
+
+      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
+      # manifests it checks.
+      - name: Check the library against its own declared floors
+        id: minimal-check-lib
+        if: "!cancelled() && steps.minimal-pin-lib.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo hack check --workspace --no-dev-deps --all-features
 
   rust:
     name: Build and test (${{ matrix.toolchain }})
@@ -344,140 +442,6 @@ jobs:
         if: always()
         run: rm -rf target/tests
 
-  minimal-versions:
-    name: Minimal versions
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install nightly (resolver only)
-        uses: dtolnay/rust-toolchain@nightly
-
-      # The floor, for the build step below. Keep the version in step with
-      # `rust-version` in the workspace manifest.
-      - name: Install the MSRV toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.88"
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-hack
-
-      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
-      # graph unverified, and that is what a user builds. It costs the pinning list below.
-      - name: Resolve minimal versions
-        run: cargo +nightly update -Z minimal-versions
-
-      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
-      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
-      - name: Pin dependencies whose declared bounds are too loose
-        run: cargo update -p termcolor --precise 1.0.4
-
-      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
-      # Resolution above needs nightly, so only this step drops to the floor.
-      - name: Build and test against minimal versions
-        env:
-          RUSTUP_TOOLCHAIN: "1.88"
-        run: |
-          cargo check --locked --workspace --lib --bins --tests --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast
-
-      # Everything above still sees dev-dependencies, which raise shared floors before the library
-      # is built: the run proves the workspace resolves, not that the manifest is honest for a
-      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
-      # because it rewrites the manifests in place.
-      - name: Resolve minimal versions without dev-dependencies
-        run: |
-          cargo hack --remove-dev-deps
-          cargo +nightly update -Z minimal-versions
-
-      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
-      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
-      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
-        run: cargo update -p tower@0.5.0 --precise 0.5.1
-
-      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
-      # manifests it checks.
-      - name: Check the library against its own declared floors
-        env:
-          RUSTUP_TOOLCHAIN: "1.88"
-        run: cargo hack check --workspace --no-dev-deps --all-features
-
-  external-types:
-    name: Public API surface
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # The tool reads rustdoc JSON, whose format is unstable, so it works only against the
-      # nightly it was built for. Move this date and the tool version together.
-      - name: Install nightly for rustdoc JSON
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-03-20
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-check-external-types
-        run: cargo install --locked cargo-check-external-types@0.5.0
-
-      # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
-      # for every broker crate downstream, so a new leak is added deliberately or not at all.
-      - name: cargo check-external-types
-        run: cargo +nightly-2026-03-20 check-external-types --all-features
-
-  package:
-    name: Package (publish dry-run)
-    needs: changes
-    if: ${{ needs.changes.outputs.dist == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Both packages in one invocation: packaging strips the path from the lockstep
-      # `ruststream-macros` dependency, and between a version bump and the release that version
-      # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
-      # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
-      - name: cargo publish dry-run (no upload)
-        env:
-          CARGO_HTTP_MULTIPLEXING: "false"
-        run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
-
-      # The dry-run verifies each package by building it under `target/package/<crate>`, whose
-      # inner trees the cache action cannot read as cargo profiles either (same annotation as
-      # the trybuild scratch above). Verification output is per-run; nothing here is reusable.
-      - name: Drop the packaging scratch tree
-        if: always()
-        run: rm -rf target/package
-
   scripts:
     name: Report formatters
     needs: changes
@@ -561,10 +525,7 @@ jobs:
     needs:
       - changes
       - rust
-      - minimal-versions
-      - external-types
       - lint
-      - package
       - scripts
       - docs
       - codeql
