@@ -1,9 +1,14 @@
 name: Docs
 
 on:
-  push:
-    branches: [main]
-    paths: &docs-paths
+  pull_request:
+    # The site itself builds in the CI workflow, after its lint job; this one keeps the
+    # translation-parity check, which has to re-run on a label and would drag the whole CI
+    # along with it there. `ready_for_review` is here because a draft runs nothing, as in the
+    # CI workflow. `labeled` / `unlabeled` are here because applying the escape-hatch label has
+    # to re-run the check, or the label leaves a stale red run blocking the merge.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    paths:
       - docs/**
       - properdocs.yml
       - overrides/**
@@ -16,14 +21,6 @@ on:
       - scripts/check_doc_parity.py
       - scripts/doc_glossary.toml
       - .github/workflows/docs.yml
-  pull_request:
-    # `ready_for_review` is here because a draft runs nothing, as in the CI workflow.
-    # `labeled` / `unlabeled` are here for the translation-parity job below: applying its
-    # escape-hatch label has to re-run the check, or the label leaves a stale red run
-    # blocking the merge.
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
-    paths: *docs-paths
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,34 +30,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build site
-    # A draft pull request runs nothing until it is marked ready for review, as in the CI
-    # workflow.
-    if: >-
-      github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Install docs toolchain
-        run: pip install -r docs/requirements.txt
-
-      - name: Lint doc code fences
-        run: python3 scripts/lint_doc_fences.py
-
-      - name: Check translated pages against their originals
-        run: python3 scripts/check_doc_i18n.py
-
-      - name: Build site (strict)
-        run: properdocs build --strict
-
   translation-parity:
     name: Translation parity
     # The label is for an edit confined to one language: spelling, grammar, or a word choice

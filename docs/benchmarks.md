@@ -162,13 +162,12 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
 `just bench` in the crate's repository produces the second table. It needs valgrind and the
 benchmark runner pinned to the version the crate depends on. `just bench 5000` measures
 every scenario over five thousand deliveries instead of a thousand: a steadier number for a longer
-run, while the published document and the CI gate stay at the default.
+run, while the published document stays at the default.
 
 - **Every scenario is the service a user writes**, started through the real runtime with the test
-  harness compiled out, so what is measured is the code that ships. Nothing is compared against a
-  hand-written loop here: the queue such a loop would read is this crate's own in-memory broker,
-  which makes the comparison a crate measuring itself. The comparison against a client someone
-  else wrote is the first table, and it is the broker crates that produce it.
+  harness compiled out, so what is measured is the code that ships. The numbers are absolute: the
+  framework's own cost. The comparison against a client someone else wrote is the first table,
+  and the broker crates produce it.
 - **The transport is in process.** The framework's own code is the subject, so the numbers must not
   move with a socket, a server's load or a network. Both halves pay the same transport cost anyway,
   and it cancels in the difference.
@@ -187,9 +186,9 @@ run, while the published document and the CI gate stay at the default.
   a separate run, which is noisy and informational.
 - **A comparison, not a threshold.** `just bench --baseline=main` measures a branch against the
   same benchmarks run on the branch it targets and reports more than two percent of instructions
-  in a scenario as a failure, and so an allocation above what the scenario declares. Nothing of
-  this runs in CI on a pull request: the numbers a pull request cites are its author's, taken that
-  way, and a change that lowers a scenario lowers its declared floor in the same pull request.
+  in a scenario as a failure, and so an allocation above what the scenario declares. The author of
+  a pull request runs it and cites its numbers, and a change that lowers a scenario lowers its
+  declared floor in the same pull request.
   The cold start and the wall clock only print.
 
 ## Publishing results
@@ -285,7 +284,7 @@ Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays
 
 `code` is the second table, one entry per scenario. `framework` is per message in the steady state;
 `cold` is the whole cost of starting the service and taking the first delivery, not divided by
-anything. `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios`
+anything. `gated` says whether a regression in it fails `just bench --baseline=main`. A crate that publishes `scenarios`
 alone declares `schema` 1 and keeps its row in the first table. A crate that measures no broker of
 its own leaves `scenarios` out instead of publishing it empty, and appears in the second table
 only.
