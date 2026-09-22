@@ -33,6 +33,12 @@ check:
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    # The compile-fail snapshots: rustc's exact wording on the stable toolchain this repository
+    # selects, which is what CI records them with. REQUIRE_UI_TESTS turns a skip into a failure,
+    # so a lost opt-in shows here. `ui_codec_free` holds the errors that exist only where no
+    # codec resolves, so it builds without one.
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --all-features --test ui
+    RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing --test ui_codec_free
 
 test:
     cargo test --workspace --all-features
@@ -40,8 +46,7 @@ test:
     # is invisible to the all-features run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
     # resolves, and `lane_traits_without_macros` only where the derives are gone. The UI
-    # snapshots themselves stay opt-in (`RUN_UI_TESTS=1`), because they record one toolchain's
-    # exact wording; the run here is what compiles the target.
+    # snapshots themselves run in `check`; the run here is what compiles the target.
     cargo test --no-default-features --lib
     cargo test --no-default-features --features macros,memory,testing --test raw_subscriber
     cargo test --no-default-features --features macros,memory,testing --test codec_free_lanes
@@ -99,3 +104,44 @@ clean:
     cargo clean
 
 ci: check test
+
+# Each `ruststream-*` repository next to this one runs `cargo test --workspace --all-features`
+# with its `ruststream` dependency patched to this checkout, on whatever branch it has checked
+# out, so a core change and the broker adaptations it needs are tested together before either is
+# committed. A broker's lock file is put back afterwards, so the run leaves its tree as it found
+# it. `just brokers nats fred` runs the named ones; with no names it runs every one it finds.
+# Every broker crate's test suite against this working tree of the core.
+brokers *names:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    core="$(pwd)"
+    root="$(dirname "$core")"
+    if [ -n "{{ names }}" ]; then
+        repos=()
+        for name in {{ names }}; do repos+=("$root/ruststream-$name"); done
+    else
+        repos=("$root"/ruststream-*)
+    fi
+    passed=()
+    failed=()
+    for repo in "${repos[@]}"; do
+        name="$(basename "$repo")"
+        # The dashboard repository has no crate.
+        [ -f "$repo/Cargo.toml" ] || continue
+        echo "==> $name ($(git -C "$repo" branch --show-current))"
+        lock="$(mktemp)"
+        had_lock=false
+        if [ -f "$repo/Cargo.lock" ]; then cp "$repo/Cargo.lock" "$lock"; had_lock=true; fi
+        if (cd "$repo" && cargo test --workspace --all-features \
+            --config "patch.crates-io.ruststream.path='$core'"); then
+            passed+=("$name")
+        else
+            failed+=("$name")
+        fi
+        if $had_lock; then cp "$lock" "$repo/Cargo.lock"; else rm -f "$repo/Cargo.lock"; fi
+        rm -f "$lock"
+    done
+    echo
+    echo "passed: ${passed[*]:-none}"
+    echo "failed: ${failed[*]:-none}"
+    [ ${#failed[@]} -eq 0 ]
