@@ -73,5 +73,9 @@ jobs:
       - name: Squash gh-pages history and push
         run: |
           git checkout gh-pages
-          git reset --hard "$(git commit-tree -m 'docs: deploy' 'HEAD^{tree}')"
+          # The llms.txt convention looks for the file at the site root, which mike leaves to the
+          # version directories, so the root carries a copy of the latest one.
+          cp latest/llms.txt llms.txt
+          git add llms.txt
+          git reset --hard "$(git commit-tree -m 'docs: deploy' "$(git write-tree)")"
           git push --force origin gh-pages
