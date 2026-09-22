@@ -23,22 +23,16 @@ use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
-use crate::runtime::failure::ErrorShutdown;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
+use crate::runtime::shutdown::Shutdown;
 
-/// A registration deferred until [`RustStream::run`]: given the app's error-shutdown handle and the
-/// shutdown token, it opens the subscription (after the broker is connected) and spawns the dispatch
-/// task. The broker, source and handler are captured and type-erased.
+/// A registration deferred until [`RustStream::run`]: given the app's shutdown signal, it opens
+/// the subscription (after the broker is connected) and spawns the dispatch task. The broker,
+/// source and handler are captured and type-erased.
 pub(crate) type Starter<St> = Box<
-    dyn FnOnce(
-            Arc<St>,
-            ErrorShutdown,
-            CancellationToken,
-        ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
-        + Send,
+    dyn FnOnce(Arc<St>, Shutdown) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>> + Send,
 >;
 
 /// The state initializer: produces the app state `St` once at startup (before brokers connect).

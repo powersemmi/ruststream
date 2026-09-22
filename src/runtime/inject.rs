@@ -284,11 +284,7 @@ where
         // The decode product lives on this stack frame and the handler borrows its view, so
         // the input path allocates nothing of its own (a raw input borrows the payload
         // straight out of the broker's buffer).
-        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(
-            &self.codec,
-            msg.payload(),
-            msg.headers(),
-        ) {
+        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg) {
             Ok(value) => value,
             Err(err) => {
                 warn!(

@@ -14,9 +14,10 @@ use crate::runtime::redelivery::bare_retry_publisher;
 /// would see.
 fn unit_cx<M>(_msg: &M) {}
 use crate::memory::MemoryBroker;
-use crate::runtime::failure::{ErrorShutdown, FailurePolicies};
+use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::handler::HandlerResult;
+use crate::runtime::shutdown::Shutdown;
 use crate::{
     AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, RetryDeclaration,
 };
@@ -274,10 +275,7 @@ fn scripted(payloads: &[&'static str]) -> ScriptedSubscriber {
 }
 
 fn dispatch_failure() -> DispatchFailure {
-    DispatchFailure::new(
-        FailurePolicies::default(),
-        ErrorShutdown::new(CancellationToken::new()),
-    )
+    DispatchFailure::new(FailurePolicies::default(), Shutdown::new())
 }
 
 /// Drives one scripted subscriber through `workers` and returns the payloads that reached the
@@ -287,7 +285,7 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
     let joined = spawn_dispatch_workers(
         scripted(payloads),
         Arc::new(ReportingHandler { seen }),
-        CancellationToken::new(),
+        Shutdown::new(),
         Arc::from("orders"),
         Arc::new(()),
         Arc::new(Delivery::empty()),
@@ -404,7 +402,7 @@ const BATCH_FORMS: [Workers; 2] = [
 fn reporting_workers<S>(
     subscriber: S,
     workers: Workers,
-) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
+) -> impl FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
 where
     S: Subscriber<Message = PlainMessage> + Send + 'static,
 {
@@ -426,7 +424,7 @@ where
 fn reporting_batches<S>(
     subscriber: S,
     workers: Workers,
-) -> impl FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
+) -> impl FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>
 where
     S: BatchSubscriber<Message = PlainMessage, Batch = Vec<PlainMessage>> + Send + 'static,
 {
@@ -451,9 +449,9 @@ where
 /// through.
 async fn handled_before_shutdown<Spawn>(spawn: Spawn) -> Option<Vec<usize>>
 where
-    Spawn: FnOnce(CancellationToken, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
+    Spawn: FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
 {
-    let shutdown = CancellationToken::new();
+    let shutdown = Shutdown::new();
     let (seen, mut arrived) = mpsc::unbounded_channel();
     let joined = spawn(shutdown.clone(), seen);
     // One delivery in, so the loop is running rather than about to start.
@@ -533,7 +531,7 @@ async fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
 async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
     // Settlement is best-effort: a broker that rejects the ack must not take the loop down.
     settle_outcome(
-        UnsettleableMessage,
+        &mut Slot::new(UnsettleableMessage),
         HandlerResult::Ack,
         "orders",
         &Delivery::empty(),
@@ -541,7 +539,7 @@ async fn a_failed_acknowledgement_is_logged_rather_than_propagated() {
     )
     .await;
     settle_outcome(
-        UnsettleableMessage,
+        &mut Slot::new(UnsettleableMessage),
         HandlerResult::drop(),
         "orders",
         &Delivery::empty(),
@@ -559,7 +557,7 @@ async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
     );
     let settled = Arc::new(AtomicU8::new(0));
     settle_nack_after(
-        plain(&[], &settled),
+        &mut Slot::new(plain(&[], &settled)),
         "orders",
         Duration::from_secs(1),
         &delivery,
@@ -622,7 +620,7 @@ async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
     let delivered = plain(&[], &settled);
     let delivered_at = delivered.payload().as_ptr() as usize;
     settle_nack_after(
-        delivered,
+        &mut Slot::new(delivered),
         "orders",
         Duration::from_secs(30),
         &delivery,
@@ -657,7 +655,7 @@ async fn fallback_defers_republish_to_the_reported_address_with_incremented_retr
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
     settle_nack_after(
-        msg,
+        &mut Slot::new(msg),
         "orders-workers",
         Duration::from_secs(30),
         &delivery,
@@ -697,9 +695,15 @@ async fn fallback_defers_republish_when_the_transport_cannot_settle() {
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Unsupported);
-    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
-        .await
-        .expect("an unsettleable transport is not a settle failure");
+    settle_nack_after(
+        &mut Slot::new(msg),
+        "orders",
+        Duration::from_secs(30),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .expect("an unsettleable transport is not a settle failure");
     // The drop is still attempted; the transport just has nothing to drop it with.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
 
@@ -728,9 +732,15 @@ async fn a_rejected_settle_aborts_the_fallback() {
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain_on(&[], &settled, Settlement::Rejected);
-    let failed = settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
-        .await
-        .expect_err("a broker that rejected the settle must be reported");
+    let failed = settle_nack_after(
+        &mut Slot::new(msg),
+        "orders",
+        Duration::from_secs(30),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .expect_err("a broker that rejected the settle must be reported");
     assert!(matches!(failed, AckError::Timeout));
     // The abort happens at the settle, so the drop was attempted before it was reported.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
@@ -755,9 +765,15 @@ async fn fallback_increments_an_existing_retry_count() {
 
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[(RETRY_COUNT_HEADER, "4")], &settled);
-    settle_nack_after(msg, "orders", Duration::from_secs(1), &delivery, unit_cx)
-        .await
-        .unwrap();
+    settle_nack_after(
+        &mut Slot::new(msg),
+        "orders",
+        Duration::from_secs(1),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .unwrap();
 
     tokio::time::advance(Duration::from_secs(1)).await;
     tokio::task::yield_now().await;
@@ -772,9 +788,15 @@ async fn without_a_copy_path_a_delay_falls_back_to_a_requeue() {
     let delivery = Delivery::empty();
     let settled = Arc::new(AtomicU8::new(0));
     let msg = plain(&[], &settled);
-    settle_nack_after(msg, "orders", Duration::from_secs(30), &delivery, unit_cx)
-        .await
-        .unwrap();
+    settle_nack_after(
+        &mut Slot::new(msg),
+        "orders",
+        Duration::from_secs(30),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .unwrap();
     // The broker moves this subscription's deliveries itself and has no delayed redelivery to
     // ride, so the requeue is all that is left - rather than dropping the message silently.
     assert_eq!(settled.load(Ordering::SeqCst), 2);
@@ -805,9 +827,15 @@ async fn native_support_defers_to_the_broker_nack_after() {
         stream.next().await.unwrap().unwrap()
     };
     assert!(msg.supports_nack_after());
-    settle_nack_after(msg, "orders", Duration::from_secs(5), &delivery, unit_cx)
-        .await
-        .unwrap();
+    settle_nack_after(
+        &mut Slot::new(msg),
+        "orders",
+        Duration::from_secs(5),
+        &delivery,
+        unit_cx,
+    )
+    .await
+    .unwrap();
 
     tokio::time::advance(Duration::from_secs(5)).await;
     tokio::task::yield_now().await;
@@ -827,7 +855,7 @@ async fn a_broker_moved_subscription_keeps_its_own_requeue_under_a_cap() {
         .declaring(RetryDeclaration::new().with_max_attempts(crate::nonzero!(3u32)));
     let settled = Arc::new(AtomicU8::new(0));
     settle_outcome(
-        plain(&[], &settled),
+        &mut Slot::new(plain(&[], &settled)),
         HandlerResult::retry(),
         "orders",
         &delivery,
@@ -849,7 +877,7 @@ async fn a_broker_moved_spent_delivery_stays_the_brokers_requeue() {
     );
     let settled = Arc::new(AtomicU8::new(0));
     settle_outcome(
-        plain(&[], &settled),
+        &mut Slot::new(plain(&[], &settled)),
         HandlerResult::retry(),
         "orders",
         &delivery,
@@ -871,7 +899,7 @@ async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
     );
     let settled = Arc::new(AtomicU8::new(0));
     settle_outcome(
-        plain(&[], &settled),
+        &mut Slot::new(plain(&[], &settled)),
         HandlerResult::retry(),
         "orders",
         &delivery,
@@ -879,4 +907,95 @@ async fn an_undeclared_immediate_retry_stays_a_broker_requeue() {
     )
     .await;
     assert_eq!(settled.load(Ordering::SeqCst), 2);
+}
+
+/// A delivery whose size is its own: `BULK` is what makes one message type bigger than another,
+/// and both settle through a ready future, so what a dispatch future holds of the delivery is the
+/// only thing that can make it grow.
+struct SizedMessage<const BULK: usize> {
+    headers: HeaderMap,
+    /// The delivery's bytes, held inline the way a broker's message holds its record: this is
+    /// what makes one message type bigger than another.
+    bulk: [u8; BULK],
+}
+
+impl<const BULK: usize> SizedMessage<BULK> {
+    fn new() -> Self {
+        Self {
+            headers: HeaderMap::new(),
+            bulk: [0; BULK],
+        }
+    }
+}
+
+impl<const BULK: usize> IncomingMessage for SizedMessage<BULK> {
+    fn payload(&self) -> &[u8] {
+        &self.bulk
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    // The delivery is dropped here rather than carried into the settle future: what a settle
+    // costs is the broker's business, and this one makes it nothing, so the only thing that can
+    // make a dispatch future grow with `BULK` is the dispatch itself.
+    fn ack(self) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
+    }
+
+    fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
+        ready(Ok(()))
+    }
+}
+
+/// Acks whatever arrives, for any delivery size.
+struct AckAnything;
+
+impl<C, St, const BULK: usize> Handler<SizedMessage<BULK>, C, St> for AckAnything
+where
+    C: Send,
+    St: Send + Sync,
+{
+    fn handle(
+        &self,
+        _msg: &SizedMessage<BULK>,
+        _ctx: &mut Context<'_, C, St>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        ready(HandlerOutcome::ack())
+    }
+}
+
+/// The size of the future one delivery of `SizedMessage<BULK>` is dispatched through.
+fn dispatch_future_size<const BULK: usize>() -> usize {
+    let state = ();
+    let delivery: Delivery<()> = Delivery::empty();
+    let failure = dispatch_failure();
+    let mut encode = BytesMut::new();
+    let mut slot = Slot::new(SizedMessage::<BULK>::new());
+    let dispatching = dispatch(
+        &AckAnything,
+        &mut slot,
+        &mut encode,
+        "orders",
+        &state,
+        &delivery,
+        &failure,
+    );
+    size_of_val(&dispatching)
+}
+
+#[test]
+fn the_dispatch_future_holds_a_pointer_to_the_delivery_rather_than_the_delivery() {
+    let small = dispatch_future_size::<0>();
+    let large = dispatch_future_size::<4096>();
+
+    assert_eq!(
+        small, large,
+        "the dispatch future grew with the delivery, so it carries the value",
+    );
+    assert!(
+        large < size_of::<SizedMessage<4096>>(),
+        "the dispatch future is at least as large as the delivery it dispatches: {large} bytes",
+    );
 }

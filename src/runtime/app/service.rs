@@ -659,13 +659,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
             let scope_delivery = scope_delivery.clone();
-            self.starters.push(Box::new(move |state, shutdown, token| {
+            self.starters.push(Box::new(move |state, shutdown| {
                 let connected = slot
                     .lock()
                     .expect("connected slot mutex poisoned")
                     .clone()
                     .expect("brokers connect before subscriptions open");
-                bound(connected, state, scope_delivery, shutdown, token)
+                bound(connected, state, scope_delivery, shutdown)
             }));
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.

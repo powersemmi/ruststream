@@ -24,6 +24,7 @@ mod redelivery;
 mod retry;
 mod router;
 mod settings;
+mod shutdown;
 mod slot;
 mod subscriber_def;
 mod typed;
@@ -53,8 +54,6 @@ pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use extract::{Ctx, FromContext, FromRef, Headers, State};
-#[cfg(feature = "testing")]
-pub(crate) use failure::ErrorShutdown;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
@@ -152,6 +151,8 @@ pub use settings::{
 };
 #[doc(hidden)]
 pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
+#[cfg(feature = "testing")]
+pub(crate) use shutdown::Shutdown;
 #[doc(hidden)]
 pub use slot::{
     AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,

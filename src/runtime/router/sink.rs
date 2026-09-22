@@ -3,7 +3,6 @@
 use std::{fmt, future::Future, num::NonZeroUsize, sync::Arc};
 
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
@@ -11,27 +10,27 @@ use crate::runtime::batch::BatchHandler;
 use crate::runtime::dispatch::{
     Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
 };
-use crate::runtime::failure::{DispatchFailure, ErrorShutdown, FailurePolicies};
+use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::handler::Handler;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::redelivery::{
     CopyPathAddress, RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
 };
+use crate::runtime::shutdown::Shutdown;
 
 use super::SourceMessage;
 
 /// A deferred registration: given the broker's connected form (produced by
 /// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the scope's publish
-/// context, and the shutdown token, it opens the subscription and spawns the dispatch task. The
+/// context and the shutdown signal, it opens the subscription and spawns the dispatch task. The
 /// source and handler are captured and type-erased.
 pub(crate) type BoundStarter<B, State> = Box<
     dyn FnOnce(
             Arc<Connected<B>>,
             Arc<State>,
             Arc<ScopeDelivery>,
-            ErrorShutdown,
-            CancellationToken,
+            Shutdown,
         ) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>>
         + Send,
 >;
@@ -79,19 +78,18 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
-        self.starters.push(Box::new(
-            move |_connected, state, scope, shutdown, token| {
+        self.starters
+            .push(Box::new(move |_connected, state, scope, shutdown| {
                 Box::pin(async move {
                     // No descriptor to ask where a copy of a delivery would go, and no mount chain
                     // that can bind one here, so this mount carries no retry path at all.
                     let delivery = open_mounted_subscriber(&scope);
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch(
-                        subscriber, handler, token, name, state, delivery, failure,
+                        subscriber, handler, shutdown, name, state, delivery, failure,
                     ))
                 })
-            },
-        ));
+            }));
         self.handlers.push(meta);
     }
 
@@ -122,7 +120,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
                 Box::pin(async move {
                     let (subscriber, delivery) = open_subscription::<B, _, _>(
                         source,
@@ -132,11 +130,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         setup,
                     )
                     .await?;
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     // Turbofish: the adapter handlers are generic over the batch context, so
                     // the pushed definition's own context names it.
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
-                        subscriber, handler, token, name, state, delivery, failure, workers,
+                        subscriber, handler, shutdown, name, state, delivery, failure, workers,
                         batch_size,
                     ))
                 })
@@ -166,7 +164,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
                 Box::pin(async move {
                     let (subscriber, delivery) = open_subscription::<B, _, _>(
                         source,
@@ -176,9 +174,9 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         setup,
                     )
                     .await?;
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch_workers(
-                        subscriber, handler, token, name, state, delivery, failure, workers,
+                        subscriber, handler, shutdown, name, state, delivery, failure, workers,
                     ))
                 })
             },
@@ -221,7 +219,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(
-            move |connected: Arc<Connected<B>>, state, scope, shutdown, token| {
+            move |connected: Arc<Connected<B>>, state, scope, shutdown| {
                 Box::pin(async move {
                     let (subscriber, delivery) = open_subscription::<B, _, _>(
                         source,
@@ -233,11 +231,11 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     .await?;
                     let (subscriber, handler) =
                         make_handler(Arc::clone(&connected), subscriber).await?;
-                    let failure = DispatchFailure::new(policies, shutdown);
+                    let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_batch_dispatch::<_, _, HandlerCx, _>(
                         subscriber,
                         Arc::new(handler),
-                        token,
+                        shutdown,
                         name,
                         state,
                         delivery,

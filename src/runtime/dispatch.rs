@@ -16,7 +16,6 @@ use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
-use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
@@ -26,13 +25,14 @@ use crate::{
 };
 
 use super::batch::BatchHandler;
-use super::context::Context;
+use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
+use super::shutdown::Shutdown;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Delivered, HarnessScope, Record, TestHooks, in_harness_scope};
 
@@ -241,13 +241,55 @@ impl<C> fmt::Debug for Delivery<C> {
     }
 }
 
+/// One delivery, between the stream that yielded it and the settle that consumes it.
+///
+/// Everything on the path borrows the delivery out of the slot and the settle takes it, so a
+/// delivery is copied twice whatever its size: once out of the stream, once into
+/// [`ack(self)`](IncomingMessage::ack). The futures in between hold a pointer to the slot rather
+/// than the value, which is what keeps a pinned dispatch the same size for a 16-byte delivery and
+/// a 16-kilobyte one.
+///
+/// The inside is an `Option` because Rust cannot move a value out of a place its caller owns, not
+/// because a slot is ever empty on the dispatch path: it is filled where it is declared, and
+/// taking the delivery is the last thing that happens to it.
+pub(crate) struct Slot<M>(Option<M>);
+
+/// What a slot says when it is read after the settle has taken the delivery.
+const SETTLED: &str = "the delivery has already been settled";
+
+impl<M> Slot<M> {
+    /// The slot holding `msg`.
+    pub(crate) const fn new(msg: M) -> Self {
+        Self(Some(msg))
+    }
+
+    /// The delivery, for everything that only reads it.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the settle has taken the delivery, which is the last thing the dispatch path
+    /// does with a slot.
+    pub(crate) fn get(&self) -> &M {
+        self.0.as_ref().expect(SETTLED)
+    }
+
+    /// The delivery, for the settle that consumes it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called twice; see [`Slot::get`].
+    pub(crate) fn take(&mut self) -> M {
+        self.0.take().expect(SETTLED)
+    }
+}
+
 /// Spawns a task that drives `subscriber` through `handler` until `shutdown` is triggered or the
 /// stream terminates. Each delivery is given a [`Context`] built from `name`, the message headers,
 /// shared `state`, and the `delivery` publish context.
 pub(crate) fn spawn_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -269,13 +311,16 @@ where
         loop {
             match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
                 Turn::Delivery(Ok(msg)) => {
+                    // The loop's slot: the delivery lands here and leaves at the settle, and
+                    // the dispatch below borrows it.
+                    let mut slot = Slot::new(msg);
                     // Pinned rather than awaited in place: a delivery's future carries the
                     // context, the handler's own state and the settle path, and awaiting the
                     // call expression makes the loop build it on the stack and copy it into
                     // its own state on every delivery.
                     let handling = std::pin::pin!(dispatch(
                         &*handler,
-                        msg,
+                        &mut slot,
                         &mut encode,
                         &name,
                         &state,
@@ -319,10 +364,11 @@ enum Turn<T> {
 ///
 /// The stream is polled first and `cancelled` only where it answers `Pending`, so a turn that
 /// finds a delivery ready never touches the token's waiter list: what shutdown costs a busy
-/// subscription is the one flag read above. `cancelled` is the token's own wait future, built
-/// once per subscription by the caller and pinned across the whole loop, so the turn that does
-/// park registers with the waiter list once rather than on every iteration, which is what a
-/// `select!` over `cancelled()` charges.
+/// subscription is the one relaxed load above, which is why [`Shutdown`] carries a flag beside
+/// its token. `cancelled` is the token's own wait future, built once per subscription by the
+/// caller and pinned across the whole loop, so the turn that does park registers with the waiter
+/// list once rather than on every iteration, which is what a `select!` over `cancelled()`
+/// charges.
 ///
 /// # Cancel safety
 ///
@@ -335,7 +381,7 @@ enum Turn<T> {
 /// one instantiation shared with them is enough for the compiler to stop inlining it here, and
 /// the call frame it leaves costs the sequential path five instructions a delivery.
 async fn turn<St, Wait>(
-    shutdown: &CancellationToken,
+    shutdown: &Shutdown,
     mut stream: Pin<&mut St>,
     mut cancelled: Pin<&mut Wait>,
 ) -> Turn<St::Item>
@@ -393,7 +439,7 @@ where
 pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -427,7 +473,7 @@ where
 fn spawn_dispatch_pool<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -482,9 +528,11 @@ where
                     let failure = failure.clone();
                     let mut encode = spare.pop().unwrap_or_default();
                     tasks.spawn(async move {
+                        // The worker's own slot, for the one delivery it took.
+                        let mut slot = Slot::new(msg);
                         dispatch(
                             &*handler,
-                            msg,
+                            &mut slot,
                             &mut encode,
                             &name,
                             &state,
@@ -523,7 +571,7 @@ where
 fn spawn_dispatch_lanes<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -555,9 +603,11 @@ where
                 // is a sequential loop over the keys that hash to it.
                 let mut encode = BytesMut::new();
                 while let Some(msg) = rx.recv().await {
+                    // The lane's slot, one delivery at a time: a lane is a sequential loop.
+                    let mut slot = Slot::new(msg);
                     dispatch(
                         &*handler,
-                        msg,
+                        &mut slot,
                         &mut encode,
                         &name,
                         &state,
@@ -654,7 +704,7 @@ fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
 pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     mut subscriber: S,
     handler: Arc<H>,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     name: Arc<str>,
     state: Arc<St>,
     delivery: Arc<Delivery<C>>,
@@ -771,7 +821,7 @@ where
 
 async fn dispatch<H, M, C, St>(
     handler: &H,
-    msg: M,
+    slot: &mut Slot<M>,
     encode: &mut BytesMut,
     name: &str,
     state: &St,
@@ -795,9 +845,14 @@ async fn dispatch<H, M, C, St>(
         coordinator.enqueued();
     }
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
-    // handle.
-    let cx = C::build(&msg);
-    let mut ctx = Context::new(name, msg.headers(), state, cx, delivery)
+    // handle. The delivery is borrowed out of the slot for the whole handler phase and moves
+    // only at the settle below.
+    let msg = slot.get();
+    let cx = C::build(msg);
+    // The delivery itself, not its header map: a handler that reads no headers never reaches the
+    // broker's accessor, which is a parse and a buffer on most transports.
+    let source = FromDelivery(msg);
+    let mut ctx = Context::new(name, &source, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
         .with_decode_policy(failure.policies.decode);
@@ -809,11 +864,11 @@ async fn dispatch<H, M, C, St>(
     #[cfg(feature = "testing")]
     let result = in_harness_scope(
         harness_scope(delivery),
-        AssertUnwindSafe(handler.handle(&msg, &mut ctx)).catch_unwind(),
+        AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind(),
     )
     .await;
     #[cfg(not(feature = "testing"))]
-    let result = AssertUnwindSafe(handler.handle(&msg, &mut ctx))
+    let result = AssertUnwindSafe(handler.handle(msg, &mut ctx))
         .catch_unwind()
         .await;
     #[cfg(feature = "testing")]
@@ -875,7 +930,7 @@ async fn dispatch<H, M, C, St>(
     if let Some(mut s) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_outcome(msg, s.outcome(), name, delivery, C::build as fn(&M) -> C);
+        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build as fn(&M) -> C);
         settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking
@@ -1022,7 +1077,7 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
 /// second one would be free to answer a [`NackAfter`](HandlerResult::NackAfter) differently, and
 /// the retry path below is exactly the part that is easy to leave out.
 pub(crate) async fn settle_outcome<M, C>(
-    msg: M,
+    slot: &mut Slot<M>,
     outcome: HandlerResult,
     name: &str,
     delivery: &Delivery<C>,
@@ -1032,11 +1087,11 @@ pub(crate) async fn settle_outcome<M, C>(
     C: Send + Sync + 'static,
 {
     let ack_result = match outcome {
-        HandlerResult::Ack => msg.ack().await,
-        HandlerResult::Nack { requeue: false } => msg.nack(false).await,
-        HandlerResult::Nack { requeue: true } => settle_retry(msg, name, delivery, build_cx).await,
+        HandlerResult::Ack => slot.take().ack().await,
+        HandlerResult::Nack { requeue: false } => slot.take().nack(false).await,
+        HandlerResult::Nack { requeue: true } => settle_retry(slot, name, delivery, build_cx).await,
         HandlerResult::NackAfter { delay } => {
-            settle_nack_after(msg, name, delay, delivery, build_cx).await
+            settle_nack_after(slot, name, delay, delivery, build_cx).await
         }
     };
     if let Err(err) = ack_result {
@@ -1119,7 +1174,7 @@ fn redelivery_of<'d, M: IncomingMessage>(
 ///
 /// Returns the [`AckError`] from settling the original delivery.
 async fn settle_retry<M, C>(
-    msg: M,
+    slot: &mut Slot<M>,
     name: &str,
     delivery: &Delivery<C>,
     build_cx: fn(&M) -> C,
@@ -1129,32 +1184,34 @@ where
     C: Send + Sync + 'static,
 {
     if delivery.declaration.declares_nothing() {
-        return msg.nack(true).await;
+        return slot.take().nack(true).await;
     }
     // The broker moves this subscription's deliveries itself: its requeue is what an immediate
     // retry is, and the declaration is the broker's to apply, so no cap is read here, as on the
     // native delayed path.
     let Some(retry) = delivery.retry.as_ref() else {
-        return msg.nack(true).await;
+        return slot.take().nack(true).await;
     };
-    match redelivery_of(&msg, &delivery.declaration) {
+    match redelivery_of(slot.get(), &delivery.declaration) {
         // The broker counts its own redeliveries, so its requeue carries the count forward and
         // there is nothing for a copy to add.
-        Redelivery::Subscription if msg.redelivery_count().is_some() => msg.nack(true).await,
+        Redelivery::Subscription if slot.get().redelivery_count().is_some() => {
+            slot.take().nack(true).await
+        }
         Redelivery::Subscription => {
             let destination = retry.destination.clone();
-            publish_copy(msg, name, destination, None, retry, delivery, build_cx).await
+            publish_copy(slot, name, destination, None, retry, delivery, build_cx).await
         }
         Redelivery::DeadLetter {
             destination,
             at_cap,
         } => {
             if at_cap {
-                warn_at_cap(name, attempt_of(&msg), Some(destination));
+                warn_at_cap(name, attempt_of(slot.get()), Some(destination));
             }
             let destination = Arc::from(destination);
             publish_copy(
-                msg,
+                slot,
                 name,
                 Some(destination),
                 None,
@@ -1165,8 +1222,8 @@ where
             .await
         }
         Redelivery::Reject => {
-            warn_at_cap(name, attempt_of(&msg), None);
-            msg.nack(false).await
+            warn_at_cap(name, attempt_of(slot.get()), None);
+            slot.take().nack(false).await
         }
     }
 }
@@ -1212,7 +1269,7 @@ where
 /// deferred message is lost, since the original has already been dropped. Brokers that need
 /// at-least-once delayed redelivery across a crash must provide native support.
 async fn settle_nack_after<M, C>(
-    msg: M,
+    slot: &mut Slot<M>,
     name: &str,
     delay: Duration,
     delivery: &Delivery<C>,
@@ -1222,7 +1279,7 @@ where
     M: IncomingMessage,
     C: Send + Sync + 'static,
 {
-    if msg.supports_nack_after() {
+    if slot.get().supports_nack_after() {
         // The cap is read before the delay reaches the broker: a native redelivery would otherwise
         // circle past a cap nothing in this process ever gets to apply. It is read wherever this
         // process publishes the subscription's copies, because a crate that honours the delay by
@@ -1232,12 +1289,12 @@ where
         if let Some(retry) = delivery.retry.as_ref()
             && delivery.declaration.max_attempts().is_some()
         {
-            match redelivery_of(&msg, &delivery.declaration) {
+            match redelivery_of(slot.get(), &delivery.declaration) {
                 Redelivery::DeadLetter { destination, .. } => {
-                    warn_at_cap(name, attempt_of(&msg), Some(destination));
+                    warn_at_cap(name, attempt_of(slot.get()), Some(destination));
                     let destination = Arc::from(destination);
                     return publish_copy(
-                        msg,
+                        slot,
                         name,
                         Some(destination),
                         None,
@@ -1248,13 +1305,13 @@ where
                     .await;
                 }
                 Redelivery::Reject => {
-                    warn_at_cap(name, attempt_of(&msg), None);
-                    return msg.nack(false).await;
+                    warn_at_cap(name, attempt_of(slot.get()), None);
+                    return slot.take().nack(false).await;
                 }
                 Redelivery::Subscription => {}
             }
         }
-        return msg.nack_after(delay).await;
+        return slot.take().nack_after(delay).await;
     }
 
     let Some(retry) = delivery.retry.as_ref() else {
@@ -1264,14 +1321,14 @@ where
             "retry_after on a broker with neither native delayed redelivery nor a copy path of \
              its own; requeuing immediately (the delay is dropped)",
         );
-        return msg.nack(true).await;
+        return slot.take().nack(true).await;
     };
 
-    match redelivery_of(&msg, &delivery.declaration) {
+    match redelivery_of(slot.get(), &delivery.declaration) {
         Redelivery::Subscription => {
             let destination = retry.destination.clone();
             publish_copy(
-                msg,
+                slot,
                 name,
                 destination,
                 Some(delay),
@@ -1286,13 +1343,13 @@ where
             at_cap,
         } => {
             if at_cap {
-                warn_at_cap(name, attempt_of(&msg), Some(destination));
+                warn_at_cap(name, attempt_of(slot.get()), Some(destination));
             }
             // A delivery that has run out of attempts is not retried, so the delay it asked for
             // does not apply to the copy that carries it away.
             let destination = Arc::from(destination);
             publish_copy(
-                msg,
+                slot,
                 name,
                 Some(destination),
                 None,
@@ -1303,8 +1360,8 @@ where
             .await
         }
         Redelivery::Reject => {
-            warn_at_cap(name, attempt_of(&msg), None);
-            msg.nack(false).await
+            warn_at_cap(name, attempt_of(slot.get()), None);
+            slot.take().nack(false).await
         }
     }
 }
@@ -1343,7 +1400,7 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
 /// settle: the delivery then stays with the broker, and a copy on top of it would duplicate the
 /// message.
 async fn publish_copy<M, C>(
-    msg: M,
+    slot: &mut Slot<M>,
     name: &str,
     destination: Option<Arc<str>>,
     delay: Option<Duration>,
@@ -1364,19 +1421,20 @@ where
     // transform on this position reads. The bytes are lent on from here rather than handed over:
     // this path runs only after a delivery has failed, so a broker that keeps owned bytes copies
     // once there, where handing them over would cost the runtime a conversion on every retry.
+    let msg = slot.get();
     let payload = Bytes::copy_from_slice(msg.payload());
     let delivered = msg.headers().clone();
     let mut headers = delivered.clone();
     let next_count = current_retry_count(&headers) + 1;
     headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
-    let context = build_cx(&msg);
+    let context = build_cx(msg);
 
     // Drop the original so the broker does not also redeliver it; the copy carries the retry
     // forward. A transport with no settlement at all has nothing to drop and no redelivery of its
     // own, so there the copy is the only way the message survives: aborting on that error would
     // lose it. Any other settle failure leaves the delivery with the broker, which will redeliver
     // it on its own timers, so a copy on top would duplicate it.
-    match msg.nack(false).await {
+    match slot.take().nack(false).await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(err) => return Err(err),
     }

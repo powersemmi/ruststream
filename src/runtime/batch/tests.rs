@@ -5,12 +5,11 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
-use super::super::failure::ErrorShutdown;
 use super::super::input::Decoded;
+use super::super::shutdown::Shutdown;
 use super::*;
 use crate::codec::JsonCodec;
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
@@ -314,8 +313,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     })
     .with_decode(FailurePolicy::FailFast);
 
-    let token = CancellationToken::new();
-    let shutdown = ErrorShutdown::new(token.clone());
+    let shutdown = Shutdown::new();
     let state = ();
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
@@ -325,7 +323,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
     assert_eq!(batch.len(), 2);
     handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
 
-    assert!(token.is_cancelled(), "a fail-fast decode must tear down");
+    assert!(shutdown.is_cancelled(), "a fail-fast decode must tear down");
     let failure = shutdown.peek_failure().expect("a failure must be recorded");
     assert!(failure.contains("ff-batch"), "{failure}");
     assert!(failure.contains("batch decode failed"), "{failure}");
