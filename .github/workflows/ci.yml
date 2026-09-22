@@ -65,6 +65,110 @@ jobs:
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
+  lint:
+    name: Lint and coverage
+    needs: changes
+    # One runner for the checks that need one toolchain each: formatting, lints, the dependency
+    # graph and line coverage. Not path-gated as a whole: advisories arrive over time, not only
+    # with manifest changes, so `cargo deny` runs on every pull request, and the Rust steps run
+    # when the Rust sources changed. Each check runs whatever the one before it did, so a red
+    # formatting step does not hide a lint or a coverage verdict.
+    runs-on: ubuntu-latest
+    env:
+      RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+      # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile
+      # together if coverage climbs further.
+      COVERAGE_GATE: "95"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Dependency-graph gate: RustSec advisories, license allow-list, duplicate versions, and
+      # registry sources, per the checked-in deny.toml.
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Install Rust toolchain
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Cache cargo
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo fmt --all -- --check
+
+      # The benchmarks are not in the all-features lints: they are built with the production
+      # feature set, and the harness feature is a compile error in them. CI only keeps them
+      # compiling; `just bench` runs them.
+      - name: cargo clippy
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: |
+          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+            -- -D warnings
+          cargo check --locked --benches --no-default-features --features memory,macros,json
+
+      # Stale instrumented artifacts from the cache double-count files and crater the total.
+      - name: Clean stale coverage artifacts
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo llvm-cov clean --workspace
+
+      # Run the suite under instrumentation once, then format the collected data twice:
+      # a human-readable table into the run's job summary, and an lcov file as a downloadable
+      # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
+      - name: Run tests under coverage
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
+
+      # The summary is written before the gate's exit code propagates, so it shows up even on a
+      # failure.
+      - name: Coverage summary and gate
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: |
+          set +e
+          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo '## Coverage'
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Export lcov report
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+      # Uploaded even when the gate fails, so the badge shows reality. Advisory: a Coveralls
+      # outage must not fail the pipeline.
+      - name: Upload to Coveralls
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        uses: coverallsapp/github-action@v2
+        with:
+          file: lcov.info
+          format: lcov
+          fail-on-error: false
+
   rust:
     name: Build and test (${{ matrix.toolchain }})
     needs: changes
@@ -89,24 +193,10 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: rustfmt, clippy
+          components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-
-      - name: cargo fmt
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-
-      # The benchmarks are not in the all-features legs: they are built with the production
-      # feature set, and the harness feature is a compile error in them. CI only keeps them
-      # compiling; `just bench` runs them.
-      - name: cargo clippy
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
-            -- -D warnings
-          cargo check --locked --benches --no-default-features --features memory,macros,json
 
       # Advisory, not a gate: surfaces a lint added by the next clippy release six weeks
       # before it turns the build red.
@@ -322,80 +412,6 @@ jobs:
       - name: cargo check-external-types
         run: cargo +nightly-2026-03-20 check-external-types --all-features
 
-  coverage:
-    name: Coverage
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile together
-    # if coverage climbs further.
-    env:
-      COVERAGE_GATE: "95"
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Stale instrumented artifacts from the cache double-count files and crater the total.
-      - name: Clean stale coverage artifacts
-        run: cargo llvm-cov clean --workspace
-
-      # Run the suite under instrumentation once, then format the collected data twice:
-      # a human-readable table into the run's job summary, and an lcov file as a downloadable
-      # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
-      - name: Run tests under coverage
-        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
-
-      # The summary is written before the gate's exit code propagates, so it shows up even on a
-      # failure.
-      - name: Coverage summary and gate
-        run: |
-          set +e
-          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
-          rc=${PIPESTATUS[0]}
-          {
-            echo '## Coverage'
-            echo
-            echo '```'
-            cat coverage.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      - name: Export lcov report
-        if: always()
-        run: cargo llvm-cov report --lcov --output-path lcov.info
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-lcov
-          path: lcov.info
-
-      # Uploaded even when the gate fails, so the badge shows reality. Advisory: a Coveralls
-      # outage must not fail the pipeline.
-      - name: Upload to Coveralls
-        if: always()
-        uses: coverallsapp/github-action@v2
-        with:
-          file: lcov.info
-          format: lcov
-          fail-on-error: false
-
   package:
     name: Package (publish dry-run)
     needs: changes
@@ -442,22 +458,6 @@ jobs:
       # formatter that drops a column fails nothing, so its tests run here.
       - name: Unit-test the report formatters
         run: python3 -m unittest discover --start-directory scripts/tests
-
-  security:
-    name: Security scans
-    if: >-
-      github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # Dependency-graph gate: RustSec advisories, license allow-list, duplicate
-      # versions, and registry sources, per the checked-in deny.toml. Not path-
-      # gated: advisories arrive over time, not only with manifest changes.
-      - name: cargo deny
-        uses: EmbarkStudios/cargo-deny-action@v2
 
   templates:
     name: Templates (render + compile)
@@ -519,10 +519,9 @@ jobs:
       - features
       - minimal-versions
       - external-types
-      - coverage
+      - lint
       - package
       - scripts
-      - security
       - templates
     if: >-
       always()
