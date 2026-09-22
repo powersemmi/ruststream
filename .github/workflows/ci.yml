@@ -66,16 +66,17 @@ jobs:
               - '.github/workflows/ci.yml'
 
   lint:
-    name: Lint and coverage
+    name: Lint, coverage and templates
     needs: changes
     # One runner for the checks that need one toolchain each: formatting, lints, the dependency
-    # graph and line coverage. Not path-gated as a whole: advisories arrive over time, not only
-    # with manifest changes, so `cargo deny` runs on every pull request, and the Rust steps run
-    # when the Rust sources changed. Each check runs whatever the one before it did, so a red
+    # graph, line coverage and the scaffold. Not path-gated as a whole: advisories arrive over
+    # time, not only with manifest changes, so `cargo deny` runs on every pull request, the Rust
+    # steps run when the Rust sources changed, and the scaffold when it or the crate did. Each check runs whatever the one before it did, so a red
     # formatting step does not hide a lint or a coverage verdict.
     runs-on: ubuntu-latest
     env:
       RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+      TEMPLATES_CHANGED: ${{ needs.changes.outputs.templates }}
       # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile
       # together if coverage climbs further.
       COVERAGE_GATE: "95"
@@ -90,7 +91,7 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
 
       - name: Install Rust toolchain
-        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        if: "!cancelled() && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true')"
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
@@ -102,8 +103,14 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Cache cargo
-        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        if: "!cancelled() && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true')"
         uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-generate
+        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-generate
 
       - name: cargo fmt
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
@@ -168,6 +175,34 @@ jobs:
           file: lcov.info
           format: lcov
           fail-on-error: false
+
+      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
+      # first build. The rendered project is patched to this checkout. No --locked: a fresh
+      # scaffold has no lock file, which is the situation a user starts from.
+      - name: Render and check templates/memory
+        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
+        run: |
+          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
+          # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
+          # package discovery never parses its placeholder name. Assert that cargo-generate did
+          # drop the suffix, otherwise the append below would quietly write a manifest of its own.
+          test -f "$RUNNER_TEMP/smoke/Cargo.toml"
+          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
+          # Cargo keeps pre-releases out of a range that does not name one. So while the
+          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
+          # Point the rendered copy at the version actually being built; the template keeps the
+          # requirement a user writes for the release it targets.
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "ruststream") | .version')
+          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
+            "$RUNNER_TEMP/smoke/Cargo.toml"
+          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
+          {
+            echo ""
+            echo "[patch.crates-io]"
+            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
+          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
+          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
 
   rust:
     name: Build and test (${{ matrix.toolchain }})
@@ -459,54 +494,6 @@ jobs:
       - name: Unit-test the report formatters
         run: python3 -m unittest discover --start-directory scripts/tests
 
-  templates:
-    name: Templates (render + compile)
-    needs: changes
-    if: ${{ needs.changes.outputs.templates == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-generate
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-generate
-
-      # Renders the scaffold and compiles it, so template drift fails here and not on a user's
-      # first build. The rendered project is patched to this checkout. No --locked: a fresh
-      # scaffold has no lock file, which is the situation a user starts from.
-      - name: Render and check templates/memory
-        run: |
-          cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
-          # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
-          # package discovery never parses its placeholder name. Assert that cargo-generate did
-          # drop the suffix, otherwise the append below would quietly write a manifest of its own.
-          test -f "$RUNNER_TEMP/smoke/Cargo.toml"
-          # `[patch]` redirects where a crate comes from, not what the manifest asks for, and
-          # Cargo keeps pre-releases out of a range that does not name one. So while the
-          # workspace is on a pre-release the scaffold's own `0.7` would reject this checkout.
-          # Point the rendered copy at the version actually being built; the template keeps the
-          # requirement a user writes for the release it targets.
-          VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "ruststream") | .version')
-          sed -i "s|^ruststream = { version = \"[^\"]*\"|ruststream = { version = \"$VERSION\"|" \
-            "$RUNNER_TEMP/smoke/Cargo.toml"
-          grep -q "version = \"$VERSION\"" "$RUNNER_TEMP/smoke/Cargo.toml"
-          {
-            echo ""
-            echo "[patch.crates-io]"
-            echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
-          } >> "$RUNNER_TEMP/smoke/Cargo.toml"
-          cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
-
   result:
     name: CI result
     # The one check the `main` ruleset requires. The jobs above are gated by path, and a
@@ -522,7 +509,6 @@ jobs:
       - lint
       - package
       - scripts
-      - templates
     if: >-
       always()
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
