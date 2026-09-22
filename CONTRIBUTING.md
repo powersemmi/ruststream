@@ -54,16 +54,13 @@ done
 ## Checking a change to the core
 
 ```bash
-just check   # rustfmt, clippy, cargo check on the feature edges, rustdoc
+just check   # rustfmt, clippy, cargo check on the feature edges, rustdoc, compile-fail snapshots
 just test    # the test suite, the reduced-feature legs, doctests on both feature edges
 just ci      # both
 ```
 
-The compile-fail snapshots record the exact wording of stable rustc and run on request:
-
-```bash
-RUN_UI_TESTS=1 cargo test --all-features --test ui
-```
+The compile-fail snapshots record the exact wording of the stable rustc that
+`rust-toolchain.toml` selects, so `just check` runs them on stable.
 
 `just cov` holds line coverage at 95%, the same floor CI holds. `just bench --baseline=main`
 compares instructions and allocations per message against `main`, and a pull request that changes
