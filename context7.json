@@ -13,7 +13,7 @@
     "Broker-specific settings live on the broker crate's subscription descriptor and publish policy, in that crate's vocabulary; the core exposes none.",
     "A transform that names a destination per delivery reads the address with `HeaderMap::get_shared` and passes the `Str` to `Outgoing::set_name`, so the name shares the delivery's buffer instead of being copied out of it.",
     "Misuse is rejected at compile time by design: read the compiler error, it names the missing derive, the unbound slot or the wrong position; do not work around it with runtime checks.",
-    "Check what a change costs per message with `just bench`: it measures the framework against a hand-written loop over the same queue, and CI fails a pull request that adds more than two percent of instructions or a new allocation on a gated path.",
+    "Check what a change costs per message with `just bench --baseline=main`: it counts instructions and allocations per delivery on the core's own scenarios, reports more than two percent more instructions or an allocation above a scenario's declared floor as a failure, and its numbers are the ones a pull request cites.",
     "Open a pull request as a draft and leave it a draft until the maintainer marks it ready for review: CI runs nothing on a draft, so its time is spent once, on the work the maintainer wants checked."
   ]
 }

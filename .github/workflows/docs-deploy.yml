@@ -4,7 +4,7 @@ on:
   # The published site tracks releases, not main. A docs change merged today describes the
   # crate that will ship, not the one a reader has installed, so publishing it immediately puts
   # instructions for unreleased API in front of everyone on the current version. Deploying from
-  # the release keeps each documented version next to the code it documents; `docs.yml` still
+  # the release keeps each documented version next to the code it documents; the CI workflow still
   # builds and lints every docs change on its PR, so nothing reaches main unchecked.
   release:
     types: [published]

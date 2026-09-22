@@ -28,9 +28,8 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       dist: ${{ steps.filter.outputs.dist }}
-      bench: ${{ steps.filter.outputs.bench }}
       templates: ${{ steps.filter.outputs.templates }}
-      scripts: ${{ steps.filter.outputs.scripts }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,17 +56,17 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.github/workflows/ci.yml'
-            bench:
-              - 'src/**'
-              - 'crates/**'
-              - 'benches/**'
-              - 'scripts/bench_results.py'
-              - 'scripts/bench_comment.py'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.github/workflows/ci.yml'
-            scripts:
-              - 'scripts/**'
+            docs:
+              - 'docs/**'
+              - 'properdocs.yml'
+              - 'overrides/**'
+              - 'examples/**'
+              # the testing and conformance pages embed their snippets from these test files
+              - 'tests/doc_*.rs'
+              - 'tests/conformance_self.rs'
+              - 'scripts/lint_doc_fences.py'
+              - 'scripts/check_doc_i18n.py'
+              - 'scripts/doc_glossary.toml'
               - '.github/workflows/ci.yml'
             templates:
               - 'templates/**'
@@ -75,358 +74,96 @@ jobs:
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
-  rust:
-    name: Build and test (${{ matrix.toolchain }})
+  lint:
+    name: Lint and checks
     needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
+    # One runner for every check outside the build job: formatting, lints, the dependency
+    # graph, the public API surface, the publish dry-run, the scaffold, each feature alone and
+    # minimal versions. Not path-gated as a whole: advisories arrive over time, not only with
+    # manifest changes, so `cargo deny` runs on every pull request, and each other step runs
+    # when its own sources changed. Each check runs whatever the one before it did, so a red
+    # formatting step hides no later verdict. Minimal versions rewrites the lock file and the
+    # manifests for good, so it comes last.
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # The floor, what users build with, and the early warning. Releases in between add
-        # nothing: what fails on a later one fails on the floor too.
-        toolchain: [stable, beta, "1.88"]
-    # Installing a toolchain does not select it: `rust-toolchain.toml` outranks the rustup
-    # default the install action sets. RUSTUP_TOOLCHAIN outranks the file.
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+      RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+      TEMPLATES_CHANGED: ${{ needs.changes.outputs.templates }}
+      DIST_CHANGED: ${{ needs.changes.outputs.dist }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      # Dependency-graph gate: RustSec advisories, license allow-list, duplicate versions, and
+      # registry sources, per the checked-in deny.toml.
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        if: >-
+          !cancelled()
+          && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true'
+            || env.DIST_CHANGED == 'true')
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: cargo fmt
-        if: matrix.toolchain == 'stable'
-        run: cargo fmt --all -- --check
-
-      # The benchmarks are not in the all-features legs: they are built with the production
-      # feature set, and the harness feature is a compile error in them. The `Cost of the code`
-      # job builds and runs them.
-      - name: cargo clippy
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
-            -- -D warnings
-          cargo check --locked --benches --no-default-features --features memory,macros,json
-
-      # Advisory, not a gate: surfaces a lint added by the next clippy release six weeks
-      # before it turns the build red.
-      - name: cargo clippy (beta, advisory)
-        if: matrix.toolchain == 'beta'
-        continue-on-error: true
-        run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
-            -- -D warnings
-
-      - name: cargo check (no default features)
-        run: cargo check --locked --workspace --no-default-features
-
-      - name: cargo check (all features)
-        run: |
-          cargo check --locked --workspace --lib --bins --tests --examples --all-features
-          cargo check --locked --benches --no-default-features --features memory,macros,json
-
-      # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
-      # on, so neither the all-features build nor the all-features tests ever compile them. Build
-      # each single-codec configuration so the alias and its default-codec call sites stay valid.
-      - name: cargo check (single-codec default fallbacks)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo check --locked --no-default-features --features cbor,memory,macros
-          cargo check --locked --no-default-features --features msgpack,memory,macros
-
-      # Stable only: the UI snapshots record rustc's exact wording, and beta renders wording
-      # stable has not shipped. Unset elsewhere, the two tests skip themselves. REQUIRE_UI_TESTS
-      # makes a skip a failure wherever the opt-in is set, so losing the opt-in turns this job red
-      # instead of leaving a green run in which the compile-fail cases checked nothing.
-      - name: cargo test
-        env:
-          RUN_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
-          REQUIRE_UI_TESTS: ${{ matrix.toolchain == 'stable' && '1' || '0' }}
-        # --no-fail-fast: a failing target must not hide failures in the targets behind it;
-        # the log then lists every red test, not just the first binary's.
-        run: cargo test --locked --workspace --all-features --no-fail-fast
-
-      # The tests themselves on a reduced feature set. Everything above either builds the tests
-      # with every feature on, or builds the library alone without them - so a test that reached
-      # for a gated item, or a mount that demanded a codec the self-carrying lanes never use,
-      # compiled nowhere and rotted unnoticed. Those lanes are what must hold with no codec at
-      # all: a `Deserialized` input in, a `Serialized` value out, through the same typed publish
-      # entry a service always writes. `ui_codec_free` pins the errors the other side of that
-      # line produces, which exist only where no codec resolves. `lane_traits_without_macros`
-      # builds with `macros` off, where the derives are gone and the prelude alone has to carry
-      # every name the hand-written lane impls spell.
-      - name: cargo test (reduced features)
-        if: matrix.toolchain == 'stable'
-        env:
-          RUN_UI_TESTS: '1'
-          REQUIRE_UI_TESTS: '1'
-        run: |
-          cargo test --locked --no-default-features --lib
-          cargo check --locked --workspace --no-default-features --features testing,memory,macros
-          cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
-          cargo test --locked --no-default-features --features macros,memory,testing --test codec_free_lanes
-          cargo test --locked --no-default-features --features macros,memory,testing --test ui_codec_free
-          cargo test --locked --no-default-features --features memory,testing --test lane_traits_without_macros
-
-      # All-features hides a doc example that names a feature-gated item without gating itself.
-      # Both ends of the range catch it.
-      - name: cargo test --doc (feature edges)
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo test --locked --workspace --doc
-          cargo test --locked --workspace --doc --no-default-features
-
-      # The crate-root missing_docs deny covers item docs; this gate catches what rustc
-      # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
-      - name: cargo doc
-        if: matrix.toolchain == 'stable'
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --workspace --all-features --no-deps
-
-      # trybuild compiles each UI case in a scratch crate under `target/tests`, which is not a
-      # cargo profile directory. The cache action walks `target` before it saves, cannot read
-      # that tree as one, and reports the miss as a job annotation - a red mark on a green run.
-      # The scratch is rebuilt per run anyway, so there is nothing to keep. Runs last and
-      # unconditionally: a failing test must not leave the tree behind either.
-      - name: Drop the trybuild scratch tree
-        if: always()
-        run: rm -rf target/tests
-
-  features:
-    name: Each feature alone
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # The rest are installed beside stable, which `rust-toolchain.toml` keeps the default: the
+      # floor for minimal versions, a nightly for its resolver, and the nightly the rustdoc JSON
+      # tool was built for (move that date and the tool version together).
+      - name: Install the extra toolchains
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: rustup toolchain install --profile minimal 1.88 nightly nightly-2026-03-20
 
       - name: Cache cargo
+        if: >-
+          !cancelled()
+          && (env.RUST_CHANGED == 'true' || env.TEMPLATES_CHANGED == 'true'
+            || env.DIST_CHANGED == 'true')
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-hack
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
         uses: taiki-e/install-action@v2.87.15
         with:
           tool: cargo-hack
-
-      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
-      # It also rewrites the manifests in place, which is why this is the one job without
-      # --locked.
-      - name: cargo hack check (each feature)
-        run: cargo hack check --workspace --each-feature --no-dev-deps
-
-  minimal-versions:
-    name: Minimal versions
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install nightly (resolver only)
-        uses: dtolnay/rust-toolchain@nightly
-
-      # The floor, for the build step below. Keep the version in step with
-      # `rust-version` in the workspace manifest.
-      - name: Install the MSRV toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.88"
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-hack
-
-      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
-      # graph unverified, and that is what a user builds. It costs the pinning list below.
-      - name: Resolve minimal versions
-        run: cargo +nightly update -Z minimal-versions
-
-      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
-      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
-      - name: Pin dependencies whose declared bounds are too loose
-        run: cargo update -p termcolor --precise 1.0.4
-
-      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
-      # Resolution above needs nightly, so only this step drops to the floor.
-      - name: Build and test against minimal versions
-        env:
-          RUSTUP_TOOLCHAIN: "1.88"
-        run: |
-          cargo check --locked --workspace --lib --bins --tests --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast
-
-      # Everything above still sees dev-dependencies, which raise shared floors before the library
-      # is built: the run proves the workspace resolves, not that the manifest is honest for a
-      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
-      # because it rewrites the manifests in place.
-      - name: Resolve minimal versions without dev-dependencies
-        run: |
-          cargo hack --remove-dev-deps
-          cargo +nightly update -Z minimal-versions
-
-      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
-      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
-      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
-        run: cargo update -p tower@0.5.0 --precise 0.5.1
-
-      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
-      # manifests it checks.
-      - name: Check the library against its own declared floors
-        env:
-          RUSTUP_TOOLCHAIN: "1.88"
-        run: cargo hack check --workspace --no-dev-deps --all-features
-
-  external-types:
-    name: Public API surface
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # The tool reads rustdoc JSON, whose format is unstable, so it works only against the
-      # nightly it was built for. Move this date and the tool version together.
-      - name: Install nightly for rustdoc JSON
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-03-20
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-check-external-types
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: cargo install --locked cargo-check-external-types@0.5.0
+
+      - name: Install cargo-generate
+        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-generate
+
+      - name: cargo fmt
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo fmt --all -- --check
+
+      # The benchmarks are not in the all-features lints: they are built with the production
+      # feature set, and the harness feature is a compile error in them. CI only keeps them
+      # compiling; `just bench` runs them.
+      - name: cargo clippy
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: |
+          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+            -- -D warnings
+          cargo check --locked --benches --no-default-features --features memory,macros,json
 
       # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
       # for every broker crate downstream, so a new leak is added deliberately or not at all.
       - name: cargo check-external-types
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: cargo +nightly-2026-03-20 check-external-types --all-features
-
-  coverage:
-    name: Coverage
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
-    runs-on: ubuntu-latest
-    # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile together
-    # if coverage climbs further.
-    env:
-      COVERAGE_GATE: "95"
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Stale instrumented artifacts from the cache double-count files and crater the total.
-      - name: Clean stale coverage artifacts
-        run: cargo llvm-cov clean --workspace
-
-      # Run the suite under instrumentation once, then format the collected data twice:
-      # a human-readable table into the run's job summary, and an lcov file as a downloadable
-      # artifact. `report` reuses the profile from `--no-report`, so neither re-runs the tests.
-      - name: Run tests under coverage
-        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
-
-      # The summary is written before the gate's exit code propagates, so it shows up even on a
-      # failure.
-      - name: Coverage summary and gate
-        run: |
-          set +e
-          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
-          rc=${PIPESTATUS[0]}
-          {
-            echo '## Coverage'
-            echo
-            echo '```'
-            cat coverage.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
-
-      - name: Export lcov report
-        if: always()
-        run: cargo llvm-cov report --lcov --output-path lcov.info
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-lcov
-          path: lcov.info
-
-      # Uploaded even when the gate fails, so the badge shows reality. Advisory: a Coveralls
-      # outage must not fail the pipeline.
-      - name: Upload to Coveralls
-        if: always()
-        uses: coverallsapp/github-action@v2
-        with:
-          file: lcov.info
-          format: lcov
-          fail-on-error: false
-
-  package:
-    name: Package (publish dry-run)
-    needs: changes
-    if: ${{ needs.changes.outputs.dist == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
 
       # Both packages in one invocation: packaging strips the path from the lockstep
       # `ruststream-macros` dependency, and between a version bump and the release that version
       # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
       # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
       - name: cargo publish dry-run (no upload)
+        if: "!cancelled() && env.DIST_CHANGED == 'true'"
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
@@ -435,206 +172,14 @@ jobs:
       # inner trees the cache action cannot read as cargo profiles either (same annotation as
       # the trybuild scratch above). Verification output is per-run; nothing here is reusable.
       - name: Drop the packaging scratch tree
-        if: always()
+        if: always() && env.DIST_CHANGED == 'true'
         run: rm -rf target/package
-
-  bench:
-    name: Cost of the code
-    needs: changes
-    # Ten minutes of valgrind on `main`, whenever the measured code changes, so the published
-    # document is checked against the code that is published. A pull request is not measured
-    # here: instructions are the author's to measure, with `just bench --baseline=main`, and the
-    # floors that hold are the allocation counts the benchmark sources declare.
-    if: >-
-      needs.changes.outputs.bench == 'true'
-      && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    # The job leaves its report on the pull request, which the workflow's read-only default
-    # cannot do.
-    permissions:
-      contents: read
-      pull-requests: write
-    # A machine-specific `-C target-cpu=native` would make the numbers incomparable and valgrind
-    # abort on instructions it does not model; the empty value is also what `just bench` uses.
-    env:
-      RUSTFLAGS: ""
-      # The production surface of the service the scenarios measure, and nothing else; the same
-      # list as `bench_features` in the justfile. Default features are off, so `json` is named.
-      FEATURES: memory,macros,json
-      # One benchmark file per scenario; the wall-clock one runs on its own below. Keep the list
-      # in step with the `cost_benches` variable in the justfile.
-      COST_BENCHES: >-
-        --bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          # The comparison needs the base commit of the pull request, not just its merge result.
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install valgrind
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind
-
-      # The runner has to match the crate exactly, so the version here moves with the
-      # dev-dependency in Cargo.toml.
-      - name: Install the benchmark runner
-        run: cargo install --locked gungraun-runner --version =0.19.4
-
-      # The baseline: the target branch's library, measured by this pull request's own suite,
-      # profile and lock file. The suite lives in the pull request (the target branch may carry
-      # none, or an older one), so taking it along is what makes the two sides comparable: one set
-      # of benchmark binaries, differing in the library code they call. Best effort - a pull
-      # request that changes the surface the benchmarks use cannot build them against the base,
-      # and then the run below reports without comparing rather than failing on something it
-      # cannot measure.
-      - name: Measure the merge base
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        run: |
-          git checkout --detach "${{ github.event.pull_request.base.sha }}"
-          git checkout "${{ github.sha }}" -- benches Cargo.toml Cargo.lock
-          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
-            --save-baseline=base
-
-      - name: Restore the pull request
-        if: github.event_name == 'pull_request'
-        run: git checkout --force "${{ github.sha }}"
-
-      # More than two percent more instructions in a gated scenario is a failure, and so is any
-      # allocation above the count the scenario declares. Neither stops the run: --no-fail-fast
-      # keeps cargo going through the remaining benchmark binaries, the runner's own default
-      # carries each binary to its end, and the verdict is applied by the last step of the job.
-      # A run that stopped at the first tripped limit reported one scenario and left the other
-      # eleven unmeasured, which is the opposite of what a regression needs.
-      - name: Measure
-        run: |
-          set +e
-          cargo bench $COST_BENCHES --no-fail-fast --no-default-features --features "$FEATURES" -- \
-            ${{ github.event_name == 'pull_request' && '--baseline=base' || '' }} \
-            --output-format=json > bench-summary.json
-          echo "MEASURE_STATUS=$?" >> "$GITHUB_ENV"
-
-      # Wall time, printed and never gated.
-      - name: Wall clock
-        run: cargo bench --bench wall_clock --no-default-features --features "$FEATURES"
-
-      # Rebuilds the published document from this run and fails when a scenario disappeared or
-      # collapsed, neither of which the benchmark output itself shows.
-      - name: Check the published results
-        run: |
-          python3 scripts/bench_results.py bench-summary.json bench-results.json | tee table.txt
-          {
-            echo '## Cost of the code'
-            echo
-            echo '```'
-            cat table.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Posted whether or not a limit failed the run: a comment naming the scenario that moved,
-      # and by how much, is what a red run is for. The values reach the shell through the
-      # environment, because a pull request's own fields are attacker-controlled input.
-      - name: Report the drift on the pull request
-        if: always() && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_FORK: ${{ github.event.pull_request.head.repo.fork }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ ! -s bench-summary.json ]; then
-            echo "The run produced no measurement to report."
-            exit 0
-          fi
-          python3 scripts/bench_comment.py bench-summary.json \
-            --head "$HEAD_SHA" --base "$BASE_SHA" > bench-comment.md
-          bash scripts/pr_comment.sh ruststream:cost bench-comment.md
-
-      - name: Upload the measurement
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: bench-summary
-          path: bench-summary.json
-
-      # The verdict, after everything has been measured, published and posted: the job goes red
-      # for a tripped limit, naming every scenario that tripped one. The exit code is the
-      # measurement's own, so a run that failed for another reason - a crashed benchmark, a
-      # missing valgrind - fails here too instead of passing on an empty list.
-      - name: Gate on the limits
-        if: always()
-        run: |
-          if [ -s bench-summary.json ]; then
-            python3 scripts/bench_comment.py bench-summary.json --limits
-          fi
-          exit "${MEASURE_STATUS:-1}"
-
-  scripts:
-    name: Report formatters
-    needs: changes
-    if: ${{ needs.changes.outputs.scripts == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # The two report formatters against recorded runs. They read what the benchmark and
-      # coverage jobs produce, and neither job can be the place their formatting is checked: the
-      # benchmark one runs on demand, and a formatter that drops a column fails nothing there.
-      - name: Unit-test the report formatters
-        run: python3 -m unittest discover --start-directory scripts/tests
-
-  security:
-    name: Security scans
-    if: >-
-      github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # Dependency-graph gate: RustSec advisories, license allow-list, duplicate
-      # versions, and registry sources, per the checked-in deny.toml. Not path-
-      # gated: advisories arrive over time, not only with manifest changes.
-      - name: cargo deny
-        uses: EmbarkStudios/cargo-deny-action@v2
-
-  templates:
-    name: Templates (render + compile)
-    needs: changes
-    if: ${{ needs.changes.outputs.templates == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-generate
-        uses: taiki-e/install-action@v2.87.15
-        with:
-          tool: cargo-generate
 
       # Renders the scaffold and compiles it, so template drift fails here and not on a user's
       # first build. The rendered project is patched to this checkout. No --locked: a fresh
       # scaffold has no lock file, which is the situation a user starts from.
       - name: Render and check templates/memory
+        if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
         run: |
           cargo generate --path templates/memory --name smoke --destination "$RUNNER_TEMP" --vcs none
           # The scaffold manifest is checked in as `Cargo.toml.liquid` so that cargo's git-source
@@ -657,3 +202,356 @@ jobs:
             echo "ruststream = { path = \"$GITHUB_WORKSPACE\" }"
           } >> "$RUNNER_TEMP/smoke/Cargo.toml"
           cargo check --manifest-path "$RUNNER_TEMP/smoke/Cargo.toml"
+
+      # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
+      # It also rewrites the manifests while it runs, which is why this is the last step and the
+      # one without --locked.
+      - name: cargo hack check (each feature)
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo hack check --workspace --each-feature --no-dev-deps
+
+      # Minimal versions is one chain: each step runs only when the one before it succeeded, since
+      # a step on a graph that failed to resolve checks nothing.
+      # The full flag rather than -Z direct-minimal-versions: the narrow one leaves the assembled
+      # graph unverified, and that is what a user builds. It costs the pinning list below.
+      - name: Resolve minimal versions
+        id: minimal-resolve
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        run: cargo +nightly update -Z minimal-versions
+
+      # trybuild 1.0.0 declares `termcolor = "1.0"` but needs `Color: Copy`, added in 1.0.4.
+      # A too-loose bound in a third-party manifest; drop this when trybuild's floor moves.
+      - name: Pin dependencies whose declared bounds are too loose
+        id: minimal-pin
+        if: "!cancelled() && steps.minimal-resolve.outcome == 'success'"
+        run: cargo update -p termcolor --precise 1.0.4
+
+      # Minimum dependencies on the minimum compiler: the worst case a user can assemble.
+      # Resolution above needs nightly, so only this step drops to the floor.
+      - name: Build and test against minimal versions
+        id: minimal-test
+        if: "!cancelled() && steps.minimal-pin.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast
+
+      # Everything above still sees dev-dependencies, which raise shared floors before the library
+      # is built: the run proves the workspace resolves, not that the manifest is honest for a
+      # consumer. Drop them and resolve again, so the graph is the one a dependent gets. Runs last
+      # because it rewrites the manifests in place.
+      - name: Resolve minimal versions without dev-dependencies
+        id: minimal-resolve-lib
+        if: "!cancelled() && steps.minimal-test.outcome == 'success'"
+        run: |
+          cargo hack --remove-dev-deps
+          cargo +nightly update -Z minimal-versions
+
+      # tonic 0.14 declares `tower = "0.5"`, but `ServiceBuilder::new` only became const-callable
+      # in 0.5.1. Another too-loose third-party bound, masked above by a higher tower.
+      - name: Pin dependencies whose declared bounds are too loose (no dev-dependencies)
+        id: minimal-pin-lib
+        if: "!cancelled() && steps.minimal-resolve-lib.outcome == 'success'"
+        run: cargo update -p tower@0.5.0 --precise 0.5.1
+
+      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
+      # manifests it checks.
+      - name: Check the library against its own declared floors
+        id: minimal-check-lib
+        if: "!cancelled() && steps.minimal-pin-lib.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo hack check --workspace --no-dev-deps --all-features
+
+  rust:
+    name: Build and test
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    # Stable first, then the early warning and the floor on the same runner, and those two only
+    # once stable passed as a whole: a break stable already reports is not worth two more
+    # builds. Releases between the floor and stable add nothing: what fails on a later one fails
+    # on the floor too. Stable is the default through `rust-toolchain.toml`; the other two steps
+    # name theirs through RUSTUP_TOOLCHAIN, which outranks the file.
+    runs-on: ubuntu-latest
+    env:
+      # The line-coverage floor, at the 95% DoD target. Raise it here and in the justfile
+      # together if coverage climbs further.
+      COVERAGE_GATE: "95"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2.87.15
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install beta and the floor
+        run: |
+          rustup toolchain install --profile minimal --component clippy beta
+          rustup toolchain install --profile minimal 1.88
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check (no default features)
+        run: cargo check --locked --workspace --no-default-features
+
+      - name: cargo check (all features)
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo check --locked --benches --no-default-features --features memory,macros,json
+
+      # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
+      # on, so neither the all-features build nor the all-features tests ever compile them. Build
+      # each single-codec configuration so the alias and its default-codec call sites stay valid.
+      - name: cargo check (single-codec default fallbacks)
+        run: |
+          cargo check --locked --no-default-features --features cbor,memory,macros
+          cargo check --locked --no-default-features --features msgpack,memory,macros
+
+      # Stale instrumented artifacts from the cache double-count files and crater the total.
+      - name: Clean stale coverage artifacts
+        run: cargo llvm-cov clean --workspace
+
+      # Stable runs its suite once, under instrumentation: the coverage run is the test run, and
+      # the two report steps below reuse its profile without re-running anything. The UI snapshots record rustc's exact wording, which is stable's, so they run here and
+      # nowhere else. REQUIRE_UI_TESTS makes a skip a failure, so losing the opt-in turns this
+      # job red instead of leaving a green run in which the compile-fail cases checked nothing.
+      # --no-fail-fast: a failing target must not hide failures in the targets behind it.
+      - name: Run tests under coverage
+        env:
+          RUN_UI_TESTS: '1'
+          REQUIRE_UI_TESTS: '1'
+        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
+
+      # The summary is written before the gate's exit code propagates, so it shows up even on a
+      # failure.
+      - name: Coverage summary and gate
+        run: |
+          set +e
+          cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_GATE" | tee coverage.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo '## Coverage'
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Export lcov report
+        if: "!cancelled()"
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        if: "!cancelled()"
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+      # Uploaded even when the gate fails, so the badge shows reality. Advisory: a Coveralls
+      # outage must not fail the pipeline.
+      - name: Upload to Coveralls
+        if: "!cancelled()"
+        uses: coverallsapp/github-action@v2
+        with:
+          file: lcov.info
+          format: lcov
+          fail-on-error: false
+
+      # The tests themselves on a reduced feature set. Everything above either builds the tests
+      # with every feature on, or builds the library alone without them - so a test that reached
+      # for a gated item, or a mount that demanded a codec the self-carrying lanes never use,
+      # compiled nowhere and rotted unnoticed. Those lanes are what must hold with no codec at
+      # all: a `Deserialized` input in, a `Serialized` value out, through the same typed publish
+      # entry a service always writes. `ui_codec_free` pins the errors the other side of that
+      # line produces, which exist only where no codec resolves. `lane_traits_without_macros`
+      # builds with `macros` off, where the derives are gone and the prelude alone has to carry
+      # every name the hand-written lane impls spell.
+      - name: cargo test (reduced features)
+        env:
+          RUN_UI_TESTS: '1'
+          REQUIRE_UI_TESTS: '1'
+        run: |
+          cargo test --locked --no-default-features --lib
+          cargo check --locked --workspace --no-default-features --features testing,memory,macros
+          cargo test --locked --no-default-features --features macros,memory,testing --test raw_subscriber
+          cargo test --locked --no-default-features --features macros,memory,testing --test codec_free_lanes
+          cargo test --locked --no-default-features --features macros,memory,testing --test ui_codec_free
+          cargo test --locked --no-default-features --features memory,testing --test lane_traits_without_macros
+
+      # All-features hides a doc example that names a feature-gated item without gating itself.
+      # Both ends of the range catch it.
+      - name: cargo test --doc (feature edges)
+        run: |
+          cargo test --locked --workspace --doc
+          cargo test --locked --workspace --doc --no-default-features
+
+      # The crate-root missing_docs deny covers item docs; this gate catches what rustc
+      # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --all-features --no-deps
+
+      # The gate the later toolchains wait on: it succeeds only when every stable step did.
+      - name: Stable passed
+        id: stable
+        run: echo "stable passed"
+
+      # Advisory, not a gate: surfaces a lint added by the next clippy release six weeks
+      # before it turns the build red.
+      - name: cargo clippy (beta, advisory)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        continue-on-error: true
+        env:
+          RUSTUP_TOOLCHAIN: beta
+        run: |
+          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+            -- -D warnings
+
+      - name: cargo check (no default features, beta)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "beta"
+        run: cargo check --locked --workspace --no-default-features
+
+      - name: cargo check (all features, beta)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "beta"
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo check --locked --benches --no-default-features --features memory,macros,json
+
+      - name: cargo test (beta)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "beta"
+        run: cargo test --locked --workspace --all-features --no-fail-fast
+
+      - name: cargo check (no default features, 1.88)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo check --locked --workspace --no-default-features
+
+      - name: cargo check (all features, 1.88)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: |
+          cargo check --locked --workspace --lib --bins --tests --examples --all-features
+          cargo check --locked --benches --no-default-features --features memory,macros,json
+
+      - name: cargo test (1.88)
+        if: "!cancelled() && steps.stable.outcome == 'success'"
+        env:
+          RUSTUP_TOOLCHAIN: "1.88"
+        run: cargo test --locked --workspace --all-features --no-fail-fast
+
+      # trybuild compiles each UI case in a scratch crate under `target/tests`, which is not a
+      # cargo profile directory. The cache action walks `target` before it saves, cannot read
+      # that tree as one, and reports the miss as a job annotation - a red mark on a green run.
+      # The scratch is rebuilt per run anyway, so there is nothing to keep. Runs last and
+      # unconditionally: a failing test must not leave the tree behind either.
+      - name: Drop the trybuild scratch tree
+        if: always()
+        run: rm -rf target/tests
+
+  docs:
+    name: Build site
+    needs: [changes, lint]
+    # After the lint job, and only when it passed: a site built from code that fails its own
+    # gates is not worth the runner.
+    if: >-
+      needs.changes.outputs.docs == 'true'
+      && needs.lint.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install docs toolchain
+        run: pip install -r docs/requirements.txt
+
+      - name: Lint doc code fences
+        run: python3 scripts/lint_doc_fences.py
+
+      - name: Check translated pages against their originals
+        run: python3 scripts/check_doc_i18n.py
+
+      - name: Build site (strict)
+        run: properdocs build --strict
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    needs: lint
+    # After the lint job, and only when it passed. The scan lives here rather than in the
+    # default setup, which cannot be ordered after anything. None of the three languages needs a
+    # build: Rust and Python are extracted from source, and `actions` reads the workflows.
+    if: needs.lint.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, python, rust]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+
+  result:
+    name: CI result
+    # The one check the `main` ruleset requires: it speaks for every job above, so a job that
+    # comes, goes or is renamed never touches the ruleset. Skipped counts as passed, anything else fails.
+    # A draft skips it with the rest, and the run that marking it ready starts reports again.
+    needs:
+      - changes
+      - rust
+      - lint
+      - docs
+      - codeql
+    if: >-
+      always()
+      && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
