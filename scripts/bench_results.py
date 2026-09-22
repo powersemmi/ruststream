@@ -517,7 +517,9 @@ def main():
         "core_version": version,
         "measured_at": datetime.now(timezone.utc).date().isoformat(),
         "environment": environment(args.output),
-        "scenarios": [],
+        # No `scenarios`: that section is a comparison against a broker's own client, and this
+        # crate has no broker of its own to compare on. An empty list would claim a measurement
+        # that is not coming.
         "code": build(measurements(args.summary)),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -233,7 +233,8 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 
 `code` 是第二张表，每个场景一条记录。`framework` 是稳态下每条消息的量，`cold` 则是启动服务加
 第一条消息的全部开销，没有除以任何东西。`gated` 说明该场景出现回归时 CI 是否失败。只公布
-`scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。
+`scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。自己不测量 Broker 的
+crate 则根本不写 `scenarios`，而不是留下一个空数组，它只出现在第二张表里。
 
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。

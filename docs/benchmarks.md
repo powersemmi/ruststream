@@ -285,7 +285,9 @@ Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays
 `code` is the second table, one entry per scenario. `framework` is per message in the steady state;
 `cold` is the whole cost of starting the service and taking the first delivery, not divided by
 anything. `gated` says whether CI fails on a regression in it. A crate that publishes `scenarios`
-alone declares `schema` 1 and keeps its row in the first table.
+alone declares `schema` 1 and keeps its row in the first table. A crate that measures no broker of
+its own leaves `scenarios` out instead of publishing it empty, and appears in the second table
+only.
 
 A document that does not load, or that declares a `schema` this page does not know, leaves its
 broker in the "no results published yet" line. A broken publish is visible instead of silently
