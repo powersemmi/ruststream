@@ -48,6 +48,11 @@ async fn confirm(order: &Order) -> Order {
     Order { id: order.id }
 }
 
+#[subscriber("otel.confirmations")]
+async fn settle(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
 /// Serializes the tests that touch the process-global OpenTelemetry providers (`init()` and the
 /// batch test's `set_meter_provider`): interleaving them could rebind the global mid-test, and
 /// the batch-size instrument binds to whatever provider is global at its first use.
@@ -150,6 +155,25 @@ fn u64_histogram_points(
                         .map(|kv| kv.value.to_string());
                     (point.count(), point.sum(), destination)
                 })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// The bucket boundaries of every point of the f64 histogram `name`, with the point's count.
+fn f64_histogram_bounds(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(u64, Vec<f64>)> {
+    exporter
+        .get_finished_metrics()
+        .expect("exporter drained")
+        .iter()
+        .flat_map(ResourceMetrics::scope_metrics)
+        .flat_map(ScopeMetrics::metrics)
+        .filter(|metric| metric.name() == name)
+        .flat_map(|metric| match metric.data() {
+            AggregatedMetrics::F64(MetricData::Histogram(histogram)) => histogram
+                .data_points()
+                .map(|point| (point.count(), point.bounds().collect()))
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         })
@@ -460,6 +484,47 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
         histogram_count(&exporter, "messaging.client.operation.duration"),
         1
     );
+}
+
+// Queue time is measured in seconds, and a stamped delivery on one process lands in
+// milliseconds: under the SDK's default boundaries (0, 5, 10, 25, ..) every sample falls into
+// the first bucket and a p99 reads as seconds of lag that never happened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn queue_time_is_bucketed_like_the_other_durations() {
+    let (otel, provider, exporter) = otel_with_memory_exporter();
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .layer(otel.consume_layer())
+        .publish_layer(otel.publish_layer())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm);
+            b.include(settle);
+        });
+
+    let tb = TestApp::start(app).await.expect("harness start failed");
+    tb.message(&Order { id: 5 })
+        .to("otel.requests")
+        .publish()
+        .await
+        .expect("publish failed");
+    tb.broker::<MemoryBroker>()
+        .subscriber("otel.confirmations")
+        .assert_called(1);
+    tb.shutdown().await.expect("graceful shutdown failed");
+
+    provider.force_flush().expect("flush failed");
+    let queue_time = f64_histogram_bounds(&exporter, "ruststream.message.queue_time");
+    let process = f64_histogram_bounds(&exporter, "messaging.process.duration");
+    assert!(
+        queue_time.iter().any(|(count, _)| *count > 0),
+        "the stamped reply must record a queue time: {queue_time:?}",
+    );
+    let (_, expected) = process.first().expect("a process duration was recorded");
+    for (_, bounds) in &queue_time {
+        assert_eq!(
+            bounds, expected,
+            "queue time must share the semantic-convention duration buckets",
+        );
+    }
 }
 
 #[subscriber("otel.batches")]

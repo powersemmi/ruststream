@@ -373,6 +373,7 @@ impl Instruments {
             queue_time: meter
                 .f64_histogram("ruststream.message.queue_time")
                 .with_unit("s")
+                .with_boundaries(SEMCONV_DURATION_BUCKETS.to_vec())
                 .with_description(
                     "Time from publish to handler start, where the publish stamped its \
                      timestamp header.",
