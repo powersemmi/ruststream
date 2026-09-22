@@ -259,8 +259,8 @@ pub fn measure<T>(body: impl FnOnce() -> T) -> T {
 /// An allocation counts when the benchmark's own frame is in its stack, and valgrind records
 /// only the innermost frames - twelve by default. A publish from inside a dispatched handler sits
 /// far deeper than that, so with the default window the framework's allocations were dropped
-/// from the count and its publish path reported zero allocations against a hand-written loop's
-/// five per message.
+/// from the count and the publish path reported a flat zero per message: an allocation-free
+/// publish that was nothing of the kind.
 fn dhat() -> Dhat {
     let mut dhat = Dhat::with_args(["--num-callers=128"]);
     dhat.entry_point(EntryPoint::Custom(REGION.to_owned()));
@@ -297,7 +297,8 @@ pub fn worker_runtime() -> Runtime {
 /// Counts deliveries down and wakes the benchmark body when the last one has been handled.
 ///
 /// Handlers reach it as the application state, which is how a service shares anything with its
-/// handlers. The hand-written half calls the same methods, so both halves pay for the signal.
+/// handlers. Every scenario signals through one of these, so what it costs is in every published
+/// number alike.
 ///
 /// What a delivery pays for it is one relaxed decrement and the branch that reads it; the waiter
 /// is a single future for the whole run, woken once, when the last delivery lands. A signal that
@@ -582,7 +583,7 @@ pub struct Ready {
     _app: RunningApp,
 }
 
-/// Starts the service, fills its queue, and drains it: the framework half of every pair.
+/// Starts the service, fills its queue, and drains it: the shape of every scenario here.
 ///
 /// Two measured regions, and the fill between them is in neither. The first region is the cold
 /// start - connect, subscription, the allocations behind them - and the second is the deliveries.

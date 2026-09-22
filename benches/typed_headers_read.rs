@@ -9,7 +9,7 @@
     clippy::needless_pass_by_value
 )]
 //! Reading a typed header contract off the delivery and publishing an event. The contract is
-//! parsed before the body runs; the twin reads the same two entries and parses them itself.
+//! parsed before the body runs.
 
 mod common;
 

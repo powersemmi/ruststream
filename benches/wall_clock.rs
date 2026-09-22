@@ -8,7 +8,7 @@
     clippy::must_use_candidate,
     clippy::needless_pass_by_value
 )]
-//! Wall time per message over the in-process transport, framework against a hand-written loop.
+//! Wall time per message over the in-process transport, for the framework's own code alone.
 //!
 //! Informational, never a gate. It shows what an instruction count cannot - caches, branch
 //! prediction, the scheduler - and it is noisy enough on a busy machine that a percent of

@@ -10,7 +10,7 @@
 )]
 //! The cold path: a delivery that answers `retry_after` and the copy that comes back. Measured
 //! and reported, never gated - a retry is not on the steady-state path, and its cost is dominated
-//! by the republish the fallback makes. It has no hand-written twin.
+//! by the republish the fallback makes.
 
 mod common;
 
