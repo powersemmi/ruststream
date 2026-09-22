@@ -18,7 +18,6 @@
     "features": "--no-default-features --features memory,macros,json",
     "rustflags": ""
   },
-  "scenarios": [],
   "code": [
     {
       "name": "consume, JSON decode into a small struct",

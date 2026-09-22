@@ -42,8 +42,9 @@
   // part of the stable path rather than an implementation detail of the deploy.
   const RESULTS = "/latest/benchmarks/results.json";
   const PAGE = "/latest/benchmarks/";
-  // Schema 2 added the `code` section; a schema 1 document still renders in the first table.
-  const SCHEMAS = [1, 2];
+  // Schema 2 added the `code` section and schema 3 reports each loop as three rounds: its best,
+  // its median and its worst. A schema 1 document still renders in the first table.
+  const SCHEMAS = [1, 2, 3];
   const TIMEOUT_MS = 8000;
   // What a cell shows when the document does not carry that measurement at all.
   const EMPTY = "-";
@@ -86,6 +87,19 @@
     if (!measurement) {
       return "-";
     }
+    if (typeof measurement.best === "number") {
+      const best = number(measurement.best, lang) + " " + unit;
+      // The parenthesis is the typical round: the median where the document carries one, and the
+      // worst round where it does not, which is what such a document printed before the field
+      // existed. The worst round stays out of the cell either way, because what it is there for is
+      // the spread the verdict rule reads.
+      const typical =
+        typeof measurement.median === "number" ? measurement.median : measurement.worst;
+      if (typeof typical !== "number") {
+        return best;
+      }
+      return best + " (" + number(typical, lang) + ")";
+    }
     const median = number(measurement.median, lang) + " " + unit;
     if (typeof measurement.min !== "number" || typeof measurement.max !== "number") {
       return median;
@@ -106,7 +120,16 @@
     return value;
   }
 
+  // The figure a comparison is drawn from. A schema 3 loop names it `best` and carries a median of
+  // its own, which is a typical round rather than the undisturbed one; a schema 1 loop published a
+  // median and nothing faster, so that is what it is compared on.
+  const figure = (measurement) =>
+    typeof measurement?.best === "number" ? measurement.best : measurement?.median;
+
   function spread(measurement) {
+    if (typeof measurement?.best === "number" && typeof measurement?.worst === "number") {
+      return measurement.best - measurement.worst;
+    }
     if (!measurement || typeof measurement.min !== "number" || typeof measurement.max !== "number") {
       return null;
     }
@@ -124,7 +147,7 @@
     if (ours === null || theirs === null) {
       return false;
     }
-    return Math.abs(scenario.raw.median - scenario.adapter.median) < Math.max(ours, theirs);
+    return Math.abs(figure(scenario.raw) - figure(scenario.adapter)) < Math.max(ours, theirs);
   }
 
   function adapter(scenario, lang, labels) {

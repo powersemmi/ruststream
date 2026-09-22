@@ -16,9 +16,11 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 
 ### 与裸客户端对照 { #against-a-raw-client }
 
-数值是交替轮次的中位数，括号里是观察到的波动范围。“Broker crate”一列是该 crate 自己的消费者
-和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上多付
-多少。
+数值是三个交替轮次中的最佳值，括号里是这三轮的中位数。最佳的一轮最接近未受干扰的开销，中位的
+一轮则是重跑一次通常会得到的那一轮。最差的一轮同样公布，但不进入单元格。`无法区分` 的判定要
+用到它：判定依据的是最佳一轮到最差一轮之间的波动范围。“Broker crate”一列是该 crate 自己的
+消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上
+多付多少。
 
 <div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
@@ -93,9 +95,9 @@ Broker 会在自己的页面上说明。
   `std::hint::black_box` 访问其中一个字段。省掉这一步，最容易得出错误的数字：解码结果没有人
   用，优化器就会把解码删掉，裸的一侧于是悄悄不再解码。
 - **载荷逐字节相同。** 每个循环消费的消息体都来自同一个生成器。
-- **运行时相同。** tokio 的 flavor、工作线程数和同时在处理的消息条数，三者一致。
+- **运行时相同。** tokio 的 flavor、工作线程数和同时在处理的消息条数，在三个循环里都一样。
 - **构建相同。** 构建配置、`RUSTFLAGS` 和分配器一致，可观测性 feature（`logging`、`metrics`、
-  `otel`）要么两边都关，要么两边都开。环境里带着 `-C target-cpu=native` 的机器，产出的数字
+  `otel`）要么每个循环都关，要么每个循环都开。环境里带着 `-C target-cpu=native` 的机器，产出的数字
   别的机器复现不了，因此这些标志与结果一起公布。
 
 ### 运行 { #the-run }
@@ -104,17 +106,21 @@ Broker 会在自己的页面上说明。
   的是实时投递，而在多数 Broker 里这是两条不同的路径。
 - **每次运行都用自己的名字。** subject、队列、流或 consumer group 每次运行都新建，这样第 N 次
   运行绝不会看到第 N-1 次留下的东西。
-- **计时窗口从收到第一条消息开始，到最后一条完成 ack 结束。** 测量的运行之前，先跑一次预热
-  并丢弃结果。建立连接、注册消费者和最初的内存分配属于启动开销，不属于每条消息的开销。
+- **计时窗口从收到第一条消息开始，到最后一条完成 ack 结束。** 测量的运行之前，先跑一次校准
+  运行并丢弃结果。建立连接、注册消费者和最初的内存分配属于启动开销，不属于每条消息的开销。
 - **消息条数要让一次运行至少持续五秒**，这样启动阶段的瞬态和计时器精度都落在噪声范围内。
-- **配对是交替的，不是分块的。** 裸、框架、裸、框架，如此往复，至少十一对，丢弃第一对。先把
-  一侧全部跑完再跑另一侧，会把机器的全部漂移（发热、后台负载、页缓存）算到跑在后面的那一侧
-  头上。
+- **各个循环是交替的，不是分块的。** 裸、crate、框架，裸、crate、框架，如此往复，共三轮。先把
+  一个循环整个跑完再跑下一个，会把机器的全部漂移（发热、后台负载、页缓存）算到最后跑的那个
+  循环头上。
 
 ### 报告 { #the-report }
 
-- **两侧都报告中位数和波动范围**，统计的是保留下来的那些配对。单次运行的单个数字不算结果。
-- **小于波动范围的差异公布为 `无法区分`，** 而不是一个百分比：低于运行间噪声的数值，读起来
+- **每个循环都报告三轮：最佳、中位和最差。** 机器上的噪声只会让运行变慢，所以最快的一轮最接近
+  未受干扰的开销，中位的一轮是典型的一轮，最慢的一轮则说明机器离安静有多远。单次运行的单个
+  数字不算结果。
+- **表格里印出最佳的一轮，括号里是中位数。** 最差的一轮留在文档里，不进入单元格：它的用处是
+  波动范围，也就是最佳的一轮到最差的一轮之间的距离。
+- **小于该波动范围的差异公布为 `无法区分`，** 而不是一个百分比：低于运行间噪声的数值，读起来
   像是从未测到过的精度。
 - **饱和的消费者要标注出来。** 当裸的一侧整个运行都在等 Broker 时，该行带上 `broker-bound`。
 - **环境与数字一起公布**：CPU 型号与核心数、内核、Broker 如何启动（镜像、容器、主机）、rustc
@@ -162,7 +168,7 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "crate": "ruststream-nats",
   "crate_version": "0.7.0",
   "core_version": "0.7.0",
@@ -187,10 +193,10 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
       "name": "core NATS, 512 B JSON, ack each",
       "unit": "msg/s",
       "messages": 200000,
-      "pairs": 11,
-      "raw": { "median": 128412, "min": 126980, "max": 129604 },
-      "adapter": { "median": 128090, "min": 126700, "max": 129310 },
-      "framework": { "median": 127905, "min": 126100, "max": 129020 },
+      "pairs": 3,
+      "raw": { "best": 129604, "median": 128470, "worst": 126980 },
+      "adapter": { "best": 129310, "median": 128040, "worst": 126700 },
+      "framework": { "best": 129020, "median": 127640, "worst": 126100 },
       "overhead_percent": 0.4,
       "adapter_overhead_percent": 0.3,
       "adapter_verdict": "indistinguishable",
@@ -210,7 +216,11 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 }
 ```
 
-`schema` 是这份文档的版本。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，而不是一句话。
+`schema` 是这份文档的版本：3 为每个循环报告三轮（`best`、`median` 和 `worst`），2 增加了 `code`
+一节，模式 1 的文档报告的是中位数及其两端。表格里印出 `best`，括号里是 `median`；`worst` 只读
+不印，判定规则依据的是最佳一轮与最差一轮之间的距离。模式 3 的文档若没有 `median`，括号里仍是
+最差的一轮，这也正是该字段出现之前的印法。`unit` 是该行每个数值旁边的短标签，所以填 `msg/s`，
+而不是一句话。
 `verdict` 按上面的规则取 `measured` 或 `indistinguishable`；`adapter_verdict` 把同一条波动规则
 用在 crate 与裸客户端的那项差值上；crate 没有给出它时，页面就按已公布的波动范围自己套同一条
 规则，使同一行的两列不会对“什么是可见的”给出相反的说法。`environment` 里还可以带 `round_trip`，即 `broker_bound`
@@ -225,7 +235,8 @@ https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
 
 `code` 是第二张表，每个场景一条记录。`framework` 是稳态下每条消息的量，`cold` 则是启动服务加
 第一条消息的全部开销，没有除以任何东西。`gated` 说明该场景出现回归时 CI 是否失败。只公布
-`scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。
+`scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。自己不测量 Broker 的
+crate 则根本不写 `scenarios`，而不是留下一个空数组，它只出现在第二张表里。
 
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。
