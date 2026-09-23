@@ -559,8 +559,8 @@ pub trait SubscriberSettings: Declared {
         self.declare().apply_name(name.into())
     }
 
-    /// Processes up to `count` deliveries (or batches) of this subscriber concurrently, each in
-    /// its own task. The mount-site spelling of `workers(n)`.
+    /// Processes up to `count` deliveries (or batches) of this subscriber concurrently. The
+    /// mount-site spelling of `workers(n)`.
     fn workers(self, count: NonZeroUsize) -> <Self::Settings as WorkersStep>::Out
     where
         Self::Settings: WorkersStep,

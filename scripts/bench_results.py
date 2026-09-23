@@ -103,6 +103,11 @@ SCENARIOS = [
         "consume_lane/service",
     ),
     Scenario(
+        "consume through a pool of four workers",
+        "pool4",
+        "consume_pool/service",
+    ),
+    Scenario(
         "consume through a middleware stack of one",
         "mw1",
         "middleware/service_one",

@@ -15,7 +15,7 @@ mod common;
 
 use std::{
     future::{Future, ready},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -23,7 +23,7 @@ use common::Order;
 use futures::future::join_all;
 use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
-use ruststream::testing::TestApp;
+use ruststream::testing::{Outcome, TestApp};
 use tokio::sync::Barrier;
 
 /// The deadline every "did the pool run these together?" wait rides. A pool that dispatched
@@ -133,6 +133,142 @@ async fn by_key_lanes_preserve_per_key_order() {
             "per-key order lost in band {band}: {ids:?}",
         );
     }
+}
+
+/// How long the deferring handlers below ask to wait.
+const RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// The orders a handler has already seen once, and the threads it ran on: application state, the
+/// way a service shares anything with its handlers.
+#[derive(Default)]
+struct Seen {
+    orders: Mutex<Vec<u32>>,
+    threads: Mutex<Vec<Option<String>>>,
+}
+
+impl Seen {
+    /// Records `id` and the thread handling it, and reports whether this is its first sighting.
+    fn first(&self, id: u32) -> bool {
+        let thread = std::thread::current().name().map(str::to_owned);
+        self.threads.lock().expect("unpoisoned").push(thread);
+        let mut orders = self.orders.lock().expect("unpoisoned");
+        if orders.contains(&id) {
+            false
+        } else {
+            orders.push(id);
+            true
+        }
+    }
+}
+
+/// Defers the first sight of every order, acks its redelivery.
+#[subscriber("deferred", workers(4))]
+async fn defer_pooled(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// The same over keyed lanes.
+#[subscriber("deferred", workers(4, by_key))]
+async fn defer_laned(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
+        HandlerOutcome::retry_after(RETRY_DELAY)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// Publishes two orders to a deferring pool on a paused clock and walks the clock to the delay:
+/// the workers run on the test's runtime, so the redeliveries they arm wait for `advance` and
+/// land on the tick that reaches the delay.
+async fn deferred_redeliveries_follow_the_harness_clock(tb: &TestApp<Arc<Seen>>) {
+    let orders = [Order { id: 1 }, Order { id: 2 }];
+    for result in join_all(
+        orders
+            .iter()
+            .map(|order| tb.message(order).to("deferred").publish()),
+    )
+    .await
+    {
+        result.expect("publish");
+    }
+    tb.broker::<MemoryBroker>()
+        .subscriber("deferred")
+        .assert_called(2);
+
+    tb.advance(RETRY_DELAY.saturating_sub(Duration::from_millis(1)))
+        .await
+        .expect("settle");
+    tb.broker::<MemoryBroker>()
+        .subscriber("deferred")
+        .assert_called(2);
+
+    tb.advance(Duration::from_millis(1)).await.expect("settle");
+    let mut outcomes = tb
+        .broker::<MemoryBroker>()
+        .subscriber("deferred")
+        .outcomes();
+    outcomes.sort_by_key(|outcome| *outcome == Outcome::Ack);
+    assert_eq!(
+        outcomes,
+        [Outcome::Nack, Outcome::Nack, Outcome::Ack, Outcome::Ack],
+        "both redeliveries must land on the tick that reaches the delay",
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pool_arms_its_redeliveries_on_the_harness_clock() {
+    let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Seen::default())))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(defer_pooled);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    deferred_redeliveries_follow_the_harness_clock(&tb).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn keyed_lanes_arm_their_redeliveries_on_the_harness_clock() {
+    let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Seen::default())))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(defer_laned);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    deferred_redeliveries_follow_the_harness_clock(&tb).await;
+}
+
+/// Under the harness a pool's workers run on the test's own runtime, whatever the runtime's
+/// flavor: every delivery is handled on one of its worker threads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pool_under_the_harness_runs_on_the_test_runtime() {
+    let seen = Arc::new(Seen::default());
+    let state = Arc::clone(&seen);
+    let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(state))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(defer_pooled);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.message(&Order { id: 1 })
+        .to("deferred")
+        .publish()
+        .await
+        .expect("publish");
+
+    // What the test runtime calls its worker threads, read off one of them.
+    let worker = tokio::spawn(async { std::thread::current().name().map(str::to_owned) })
+        .await
+        .expect("a task on the test runtime");
+    let threads = seen.threads.lock().expect("unpoisoned").clone();
+    assert_eq!(
+        threads,
+        [worker],
+        "the delivery must be handled on the test runtime's own threads",
+    );
 }
 
 /// Batch form composing with a pool: up to two batches in flight.
