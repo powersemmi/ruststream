@@ -249,9 +249,12 @@ fn callgrind() -> Callgrind {
 ///
 /// It has to be a frame of its own whose name appears nowhere else in the binary, which is why
 /// the body goes in a closure here rather than in the benchmark function (see the module notes).
+/// The frame also has to outlive the body: a call in tail position may compile to a jump, which
+/// leaves this frame before the body runs, and both tools would then count nothing of it. The
+/// result goes through `black_box` so the body's call is never the last thing this frame does.
 #[inline(never)]
 pub fn measure<T>(body: impl FnOnce() -> T) -> T {
-    body()
+    black_box(body())
 }
 
 /// DHAT with a stack window deep enough to reach the benchmark function.
