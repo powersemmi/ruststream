@@ -1324,7 +1324,8 @@ where
 /// declaration is the subscription descriptor's to map onto the broker's own mechanism.
 ///
 /// Without native support this captures the message, drops the original, and schedules a copy of it
-/// after the delay, with the [`RETRY_COUNT_HEADER`] incremented. The copy goes to the address the
+/// after the delay, with the [`RETRY_COUNT_HEADER`] incremented. A zero delay publishes the copy at
+/// once, on the dispatch path, as an immediate retry does. The copy goes to the address the
 /// subscription's descriptor reported at startup, not to the subscription's name: the two differ
 /// wherever a subscription is a resource of its own. It leaves through the registration's retry
 /// slot, so the mount site's transforms and the publisher's own headers reach it as they reach any
@@ -1347,7 +1348,7 @@ where
 ///
 /// # Cancel safety
 ///
-/// The deferred copy runs on a detached task that sleeps for `delay`. It is at-most-once over
+/// A deferred copy runs on a detached task that sleeps for `delay`. It is at-most-once over
 /// that window: if the process exits (or the runtime is dropped) before the timer fires, the
 /// deferred message is lost, since the original has already been dropped. Brokers that need
 /// at-least-once delayed redelivery across a crash must provide native support.
@@ -1471,7 +1472,8 @@ fn warn_at_cap(name: &str, attempt: u64, destination: Option<&str>) {
     }
 }
 
-/// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`.
+/// Drops the original delivery and sends a copy of it to `destination`, now or after `delay`; a
+/// zero delay is now.
 ///
 /// `destination` is `None` only where the registration's transforms name one per delivery; the
 /// copy then starts at the subscription's own name, which is what the transforms read as the
@@ -1536,7 +1538,9 @@ where
         }
     };
 
-    let Some(delay) = delay else {
+    // A zero delay is an immediate copy: a timer task for it would cost a task allocation and
+    // two scheduler turns to publish the same copy a little later.
+    let Some(delay) = delay.filter(|delay| !delay.is_zero()) else {
         // An immediate copy is awaited on the dispatch path: there is no timer to wait for, and a
         // detached task would let the loop pull the next delivery before this one is back.
         republish.await;

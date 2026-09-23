@@ -156,6 +156,22 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
     }
 }
 
+/// Asks for the first delivery of every message back after no delay at all, acks the copy.
+#[subscriber(BoundSubscription::new("refunds-workers", "refunds"))]
+async fn refund(order: &Order, ctx: &mut Context) -> HandlerOutcome {
+    let attempt = ctx
+        .headers()
+        .get_str(RETRY_COUNT_HEADER)
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    if attempt == 0 {
+        assert_eq!(order.id, 1);
+        HandlerOutcome::retry_after(Duration::ZERO)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
 /// Defers the first delivery and answers the copy, so one registration carries both a reply and
 /// a deferred retry.
 #[subscriber(
@@ -258,6 +274,33 @@ async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
     tb.broker::<MemoryBroker>()
         .published::<Order>("orders")
         .with_raw(&delivered);
+}
+
+/// A zero delay is no delay: the runtime publishes its copy at once, so the copy arrives in the
+/// reaction of the publish itself and no `advance` is needed. The runtime has worker threads, so a
+/// copy left to a timer task would still be on its way when the publish returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_zero_delay_copy_arrives_without_advancing_the_clock() {
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(refund).out_retry(MemoryPublish);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("refunds")
+        .publish()
+        .await
+        .expect("publish");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("refunds-workers")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+        "the zero-delay copy must reach the handler within the publish",
+    );
 }
 
 /// The router surface binds the position the same way: a registration grouped in a `Router` names
