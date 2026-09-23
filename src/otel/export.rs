@@ -76,7 +76,7 @@ use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, HealthProbe, HealthState, Layer,
     Outgoing, PublishLayer, PublishNext, PublishPipeline,
 };
-use crate::{HeaderMap, Publisher};
+use crate::{HeaderMap, Publisher, Str};
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -660,8 +660,10 @@ impl PublishLayer for OtelPublishLayer {
         if self.stamp_publish_time
             && let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH)
         {
-            out.headers_mut()
-                .insert(PUBLISH_TIME_HEADER, now.as_millis().to_string());
+            out.headers_mut().insert(
+                Str::from_static(PUBLISH_TIME_HEADER),
+                now.as_millis().to_string(),
+            );
         }
         let name = out.name().to_owned();
         #[allow(clippy::cast_possible_truncation)] // Payloads beyond u64 bytes do not exist.

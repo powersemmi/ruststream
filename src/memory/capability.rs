@@ -32,7 +32,7 @@ use super::{
 use crate::testing::coordinator::Coordinator;
 use crate::{
     BatchSubscriber, BytesMut, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned,
-    Positioned, Publisher, RequestReply, Seekable, Seeker, Subscriber, Take, Transaction,
+    Positioned, Publisher, RequestReply, Seekable, Seeker, Str, Subscriber, Take, Transaction,
     TransactionalPublisher,
 };
 
@@ -168,7 +168,7 @@ impl RequestReply for MemoryRequester {
         // The name is the caller's buffer, so it outlives the message consumed here; the inbox
         // is written into the request's own map rather than into a copy of it.
         let (subject, payload, mut headers) = msg.into_parts();
-        headers.insert("reply-to", inbox.clone());
+        headers.insert(Str::from_static("reply-to"), inbox.clone());
         if self
             .state
             .fanout(subject, payload.freeze(), headers)

@@ -54,11 +54,11 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{IdGenerator, RandomIdGenerator};
 use tracing::Instrument;
 
-use crate::HeaderMap;
 use crate::runtime::{
     BlanketLayer, Context, ForReply, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
     PublishTransform, Reads,
 };
+use crate::{HeaderMap, Str};
 
 /// The HTTP header carrying the W3C trace context.
 const TRACEPARENT: &str = "traceparent";
@@ -88,6 +88,13 @@ impl Injector for HeaderInjector<'_> {
         // The SDK always writes `tracestate`, even when empty; skip the noise header so a
         // delivery without one does not grow it.
         if !value.is_empty() {
+            // The propagator names its two headers with constants: those enter the map as the
+            // static strings they are, anything else as an owned copy moved in whole.
+            let key = match key {
+                TRACEPARENT => Str::from_static(TRACEPARENT),
+                TRACESTATE => Str::from_static(TRACESTATE),
+                other => Str::from(other.to_owned()),
+            };
             self.0.insert(key, value);
         }
     }
@@ -266,11 +273,13 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for TracePropagation {
         cx: &PublishContext<'_, C>,
     ) {
         if let Some(traceparent) = cx.headers().get_str(TRACEPARENT) {
-            out.headers_mut()
-                .insert(TRACEPARENT, traceparent.as_bytes().to_vec());
+            out.headers_mut().insert(
+                Str::from_static(TRACEPARENT),
+                traceparent.as_bytes().to_vec(),
+            );
             if let Some(tracestate) = cx.headers().get_str(TRACESTATE) {
                 out.headers_mut()
-                    .insert(TRACESTATE, tracestate.as_bytes().to_vec());
+                    .insert(Str::from_static(TRACESTATE), tracestate.as_bytes().to_vec());
             }
         }
     }
