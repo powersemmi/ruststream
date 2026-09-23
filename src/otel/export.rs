@@ -694,6 +694,9 @@ impl PublishLayer for OtelPublishLayer {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::process::Command;
+
     use super::*;
 
     #[test]
@@ -769,6 +772,30 @@ mod tests {
 
     #[test]
     fn an_endpoint_without_a_scheme_fails_at_init_without_tls() {
+        // `OTEL_EXPORTER_OTLP_INSECURE=true` in the environment turns a schemeless endpoint into a
+        // plaintext one. The crate forbids the unsafe in-process `set_var`, so the test runs itself
+        // again in a child process with every `OTEL_*` variable removed.
+        const CLEAN_ENV: &str = "RUSTSTREAM_TEST_OTEL_CLEAN_ENV";
+        if env::var_os(CLEAN_ENV).is_none() {
+            let path = module_path!().split_once("::").map_or("", |(_, path)| path);
+            let name = format!("{path}::an_endpoint_without_a_scheme_fails_at_init_without_tls");
+            let mut child = Command::new(env::current_exe().expect("test binary path"));
+            child.args([name.as_str(), "--exact"]).env(CLEAN_ENV, "1");
+            for (key, _) in env::vars_os() {
+                if key.to_str().is_some_and(|key| key.starts_with("OTEL_")) {
+                    child.env_remove(key);
+                }
+            }
+            let output = child.output().expect("child test process");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed"),
+                "{stdout}{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
         // The exporter reads a schemeless endpoint as `https://`, and the crate enables no TLS
         // feature, so the misconfiguration surfaces at startup instead of in every export.
         let err = Otel::builder()
