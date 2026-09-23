@@ -42,6 +42,13 @@ async fn consume(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutc
     HandlerOutcome::ack()
 }
 
+#[subscriber("orders", workers(4))]
+async fn pooled(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutcome {
+    black_box((order.id, order.quantity));
+    ctx.state().arrived();
+    HandlerOutcome::ack()
+}
+
 #[subscriber("orders", publish)]
 async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmation {
     ctx.state().arrived();
@@ -77,6 +84,15 @@ fn consuming_across_threads() -> Started {
     .started()
 }
 
+// The pool of four on a runtime with worker threads: the workers are pinned to threads of the
+// subscription's own, and every delivery crosses from the loop to one of them.
+fn pooled_across_threads() -> Started {
+    common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
+        b.include(pooled);
+    })
+    .started()
+}
+
 #[divan::bench]
 fn consume_json(bencher: Bencher) {
     bencher
@@ -98,5 +114,13 @@ fn consume_json_across_threads(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(consuming_across_threads)
+        .bench_local_values(|started| started.publish_and_drain());
+}
+
+#[divan::bench]
+fn pool_across_threads(bencher: Bencher) {
+    bencher
+        .counter(ItemsCount::new(MESSAGES))
+        .with_inputs(pooled_across_threads)
         .bench_local_values(|started| started.publish_and_drain());
 }

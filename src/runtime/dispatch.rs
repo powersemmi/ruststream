@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
-use tokio::sync::mpsc;
+use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
@@ -146,6 +146,13 @@ pub(crate) struct Delivery<C = ()> {
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
+    /// The runtime the subscription was opened on, where the tasks a delivery leaves behind run.
+    ///
+    /// A pinned worker dispatches on a thread and a runtime of its own, which stop with the
+    /// subscription's pool; a continuation or a deferred retry copy spawned there would stop
+    /// with them instead of being drained by the app's shutdown. `None` only outside a runtime,
+    /// in the tests that build a context directly.
+    home: Option<Handle>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -167,10 +174,34 @@ impl<C> Delivery<C> {
             retry,
             declaration,
             tasks: scope.tasks().clone(),
+            home: Handle::try_current().ok(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
             scope_id: scope.scope_id(),
+        }
+    }
+
+    /// Spawns `task` onto the continuation tracker, on the subscription's own runtime, so a
+    /// graceful shutdown drains it wherever the delivery was dispatched.
+    pub(crate) fn spawn_tracked<Task>(&self, task: Task)
+    where
+        Task: Future<Output = ()> + Send + 'static,
+    {
+        match &self.home {
+            Some(home) => drop(self.tasks.spawn_on(task, home)),
+            None => drop(self.tasks.spawn(task)),
+        }
+    }
+
+    /// Spawns `task` detached, on the subscription's own runtime.
+    fn spawn_detached<Task>(&self, task: Task)
+    where
+        Task: Future<Output = ()> + Send + 'static,
+    {
+        match &self.home {
+            Some(home) => drop(home.spawn(task)),
+            None => drop(tokio::spawn(task)),
         }
     }
 
@@ -182,6 +213,7 @@ impl<C> Delivery<C> {
             retry,
             declaration: RetryDeclaration::new(),
             tasks,
+            home: Handle::try_current().ok(),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -426,13 +458,13 @@ where
     .await
 }
 
-/// Spawns a task that drives `subscriber` through `handler` with a bounded worker pool: up to
-/// `workers.count` deliveries in flight, each handled (and settled) in its own task. With
-/// `by_key`, the pool becomes per-key sequential lanes instead.
+/// Spawns a task that drives `subscriber` through `handler` with `workers.count` long-lived
+/// workers: a pool that hands each delivery to a free worker, or with `by_key` lanes that hand it
+/// to the worker its key hashes to (see [`pool`]).
 ///
 /// Sequential policies delegate to [`spawn_dispatch`]. On shutdown the stream stops being
-/// polled and in-flight workers drain; if the app's `shutdown_timeout` aborts this task, the
-/// owned worker tasks abort with it.
+/// polled and the workers drain what they hold; if the app's `shutdown_timeout` aborts this task,
+/// the workers abort with it.
 // The parts are independent and each spawn site passes its own; bundling them into a struct
 // would hide that.
 #[allow(clippy::too_many_arguments)]
@@ -458,234 +490,9 @@ where
             subscriber, handler, shutdown, name, state, delivery, failure,
         );
     }
-    if workers.by_key {
-        spawn_dispatch_lanes(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers,
-        )
-    } else {
-        spawn_dispatch_pool(
-            subscriber, handler, shutdown, name, state, delivery, failure, workers,
-        )
-    }
-}
-
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_pool<S, H, C, St>(
-    mut subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-) -> JoinHandle<()>
-where
-    S: Subscriber + Send + 'static,
-    S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    tokio::spawn(async move {
-        let shared = Arc::new(PoolShared {
-            handler,
-            name,
-            state,
-            delivery,
-            failure,
-        });
-        let name = &shared.name;
-        let mut stream = std::pin::pin!(subscriber.stream());
-        let mut cancelled = std::pin::pin!(shutdown.cancelled());
-        let mut tasks = JoinSet::new();
-        // A worker takes one delivery, so what carries an encode buffer from one delivery to the
-        // next is the pool: a worker hands its buffer back when it is reaped, and the next one
-        // takes it, so a lending reply grows a buffer once per pool slot and not once per
-        // delivery. The list starts empty rather than sized: it grows once, when the first
-        // worker comes back, and a loop that never reaps pays nothing for it.
-        let mut spare: Vec<BytesMut> = Vec::new();
-        loop {
-            if shutdown.is_cancelled() {
-                break;
-            }
-            if tasks.len() >= workers.count {
-                // The pool is full: reap a finished worker before polling for more.
-                match reap(&mut tasks, cancelled.as_mut()).await {
-                    Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
-                    // A full pool holds a worker, so `Ended` is shutdown's twin here: either
-                    // way the drain below joins whatever is still running.
-                    Turn::Ended | Turn::Shutdown => break,
-                }
-                continue;
-            }
-            // The stream first, the token only where the stream has nothing: see `turn`, whose
-            // wait this is.
-            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
-                Poll::Ready(None) => Poll::Ready(Turn::Ended),
-                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-            })
-            .await;
-            match pulled {
-                Turn::Delivery(Ok(msg)) => {
-                    // One count per worker for everything the loop shares with it: five clones
-                    // would cost five increments and five decrements per delivery, two of them
-                    // the cancellation token's mutex, on counters every worker thread writes.
-                    let shared = Arc::clone(&shared);
-                    let mut encode = spare.pop().unwrap_or_default();
-                    tasks.spawn(async move {
-                        // The worker's own slot, for the one delivery it took.
-                        let mut slot = Slot::new(msg);
-                        dispatch(
-                            &*shared.handler,
-                            &mut slot,
-                            &mut encode,
-                            &shared.name,
-                            &shared.state,
-                            &shared.delivery,
-                            &shared.failure,
-                        )
-                        .await;
-                        encode
-                    });
-                }
-                Turn::Delivery(Err(err)) => {
-                    error!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "subscriber stream error",
-                    );
-                }
-                Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscriber = %name,
-                        "subscriber stream ended",
-                    );
-                    break;
-                }
-                Turn::Shutdown => break,
-            }
-        }
-        while let Some(joined) = tasks.join_next().await {
-            log_worker_exit(joined);
-        }
-    })
-}
-
-/// What a pooled loop shares with every worker it spawns, behind one reference count.
-struct PoolShared<H, St, C> {
-    handler: Arc<H>,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-}
-
-#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
-fn spawn_dispatch_lanes<S, H, C, St>(
-    mut subscriber: S,
-    handler: Arc<H>,
-    shutdown: Shutdown,
-    name: Arc<str>,
-    state: Arc<St>,
-    delivery: Arc<Delivery<C>>,
-    failure: DispatchFailure,
-    workers: Workers,
-) -> JoinHandle<()>
-where
-    S: Subscriber + Send + 'static,
-    S::Message: Send + Sync + 'static,
-    H: Handler<S::Message, C, St> + 'static,
-    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
-    St: Send + Sync + 'static,
-{
-    tokio::spawn(async move {
-        // One sequential worker per lane, fed by a capacity-1 channel: a keyed delivery always
-        // lands in the lane its key hashes to, so per-key order is preserved. In-flight cap is
-        // one processing plus one queued delivery per lane.
-        let mut lanes = Vec::with_capacity(workers.count);
-        let mut tasks = JoinSet::new();
-        for _ in 0..workers.count {
-            let (tx, mut rx) = mpsc::channel::<S::Message>(1);
-            let handler = Arc::clone(&handler);
-            let name = Arc::clone(&name);
-            let state = Arc::clone(&state);
-            let delivery = Arc::clone(&delivery);
-            let failure = failure.clone();
-            tasks.spawn(async move {
-                // One buffer per lane, for the same reason the sequential loop has one: a lane
-                // is a sequential loop over the keys that hash to it.
-                let mut encode = BytesMut::new();
-                while let Some(msg) = rx.recv().await {
-                    // The lane's slot, one delivery at a time: a lane is a sequential loop.
-                    let mut slot = Slot::new(msg);
-                    dispatch(
-                        &*handler,
-                        &mut slot,
-                        &mut encode,
-                        &name,
-                        &state,
-                        &delivery,
-                        &failure,
-                    )
-                    .await;
-                }
-            });
-            lanes.push(tx);
-        }
-
-        let mut stream = std::pin::pin!(subscriber.stream());
-        let mut cancelled = std::pin::pin!(shutdown.cancelled());
-        let mut unkeyed_rotation = 0usize;
-        loop {
-            match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
-                Turn::Delivery(Ok(msg)) => {
-                    // No key: any lane will do; rotate to spread the load.
-                    let lane = msg.partition_key().map_or_else(
-                        || {
-                            unkeyed_rotation = (unkeyed_rotation + 1) % workers.count;
-                            unkeyed_rotation
-                        },
-                        |key| lane_of(key, workers.count),
-                    );
-                    if lanes[lane].send(msg).await.is_err() {
-                        // A lane only disappears if its task panicked; stop pulling rather
-                        // than silently dropping deliveries for that key range.
-                        error!(
-                            target: "ruststream::dispatch",
-                            subscriber = %name,
-                            lane,
-                            "worker lane terminated; stopping dispatch",
-                        );
-                        break;
-                    }
-                }
-                Turn::Delivery(Err(err)) => {
-                    error!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "subscriber stream error",
-                    );
-                }
-                Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscriber = %name,
-                        "subscriber stream ended",
-                    );
-                    break;
-                }
-                Turn::Shutdown => break,
-            }
-        }
-        // Closing the channels lets each lane drain its queued delivery and exit.
-        drop(lanes);
-        while let Some(joined) = tasks.join_next().await {
-            log_worker_exit(joined);
-        }
-    })
+    pool::spawn_dispatch_pool(
+        subscriber, handler, shutdown, name, state, delivery, failure, workers,
+    )
 }
 
 fn lane_of(key: &[u8], lanes: usize) -> usize {
@@ -952,7 +759,7 @@ async fn dispatch<H, M, C, St>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.tasks.spawn(after);
+            delivery.spawn_tracked(after);
         }
     }
     // Context-registered hooks run after the message is settled: at-most-once, off the delivery
@@ -960,7 +767,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.tasks.spawn(fut);
+            delivery.spawn_tracked(fut);
         }
     }
     #[cfg(feature = "testing")]
@@ -1038,7 +845,7 @@ async fn run_batch<H, M, C, St>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.tasks.spawn(fut);
+                    delivery.spawn_tracked(fut);
                 }
             }
         }
@@ -1484,15 +1291,13 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
-    #[cfg(not(feature = "testing"))]
-    let _ = delivery;
-
-    tokio::spawn(async move {
+    delivery.spawn_detached(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });
     Ok(())
 }
 
+mod pool;
 #[cfg(all(test, feature = "memory"))]
 mod tests;

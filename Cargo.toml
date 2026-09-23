@@ -519,9 +519,9 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
-# One scenario per file, each with the hand-written twin it is compared against; `benches/common`
-# is the shared setup. `just bench` names them, so a new file is added in two places and
-# `scripts/bench_results.py` fails loudly when one of them is missed.
+# One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
+# file is added in two places and `scripts/bench_results.py` fails loudly when one of them is
+# missed.
 [[bench]]
 name = "consume_json"
 harness = false
@@ -534,6 +534,11 @@ required-features = ["memory", "json", "macros"]
 
 [[bench]]
 name = "consume_lane"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
+name = "consume_pool"
 harness = false
 required-features = ["memory", "json", "macros"]
 
