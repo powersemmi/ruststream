@@ -515,7 +515,7 @@ anyhow = { version = "1.0.1", optional = true }
 # register. Development setups on mold or lld happen to hide it.
 inventory = { version = "0.3.5", optional = true }
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"], optional = true }
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio"], optional = true }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
 tracing-opentelemetry = { version = "0.33", optional = true }
 
@@ -603,7 +603,7 @@ trybuild = "1"
 # the test writes out what a generator's `message_attribute` config would have emitted.
 prost = "0.14"
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
 gungraun = "=0.19.4"
 divan = "0.1.21"
 
