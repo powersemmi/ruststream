@@ -1045,6 +1045,8 @@ impl Publisher for MemoryPublisher {
 /// Consumers call [`IncomingMessage::ack`] to confirm processing or
 /// [`IncomingMessage::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
 /// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
+/// [`nack_after`](IncomingMessage::nack_after) pushes it back once the delay has elapsed, and at
+/// once for a zero delay.
 pub struct MemoryMessage<Log = Discarding> {
     delivery: Option<MemoryDelivery>,
     /// The subscription this delivery came from, which a requeue goes back to and the seek
@@ -1106,6 +1108,28 @@ impl<Log> MemoryMessage<Log> {
     }
 }
 
+impl<Log> MemoryMessage<Log> {
+    /// Puts `delivery` back on its subscription's queue now.
+    fn requeue_now(&self, delivery: MemoryDelivery) {
+        // An inbox reply has no subscription to come back to; see `subscription`.
+        let Some(subscription) = &self.subscription else {
+            return;
+        };
+        let sent = subscription.requeue.send(delivery);
+        // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
+        // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
+        #[cfg(feature = "testing")]
+        if sent.is_ok()
+            && let Some(coordinator) = &self.coordinator
+        {
+            coordinator.enqueued();
+        }
+        // The subscriber may be gone by now; a dropped receiver is not an error.
+        #[cfg(not(feature = "testing"))]
+        let _ = sent;
+    }
+}
+
 impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     fn payload(&self) -> &[u8] {
         self.delivery
@@ -1139,18 +1163,8 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
 
     fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        if requeue && let Some(subscription) = &self.subscription {
-            let sent = subscription.requeue.send(delivery.redelivered());
-            // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
-            // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
-            #[cfg(feature = "testing")]
-            if sent.is_ok()
-                && let Some(coordinator) = &self.coordinator
-            {
-                coordinator.enqueued();
-            }
-            #[cfg(not(feature = "testing"))]
-            let _ = sent;
+        if requeue {
+            self.requeue_now(delivery.redelivered());
         }
         ready(Ok(()))
     }
@@ -1160,13 +1174,20 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     }
 
     /// Native delayed redelivery: the message returns to the same subscriber's queue once
-    /// `delay` has elapsed, not immediately, and counts as one more delivery.
+    /// `delay` has elapsed and counts as one more delivery. A zero delay returns it at once, as
+    /// `nack(true)` does, so under `TestApp` it arrives without an `advance`.
     fn nack_after(mut self, delay: Duration) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self
             .delivery
             .take()
             .expect("delivery already consumed")
             .redelivered();
+        // A zero delay is a requeue that counts as a redelivery: a timer task for it would cost a
+        // task allocation and two scheduler turns to reach the same place in the queue.
+        if delay.is_zero() {
+            self.requeue_now(delivery);
+            return ready(Ok(()));
+        }
         // Taken rather than cloned: the message is consumed here, so its count moves to the
         // redelivery. An inbox reply has no subscription to come back to; see `subscription`.
         let Some(subscription) = self.subscription.take() else {
