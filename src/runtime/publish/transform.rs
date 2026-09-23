@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 
 use super::Outgoing;
 use crate::HeaderMap;
+use crate::runtime::context::DeliveryHeaders;
 
 /// A read-only view of the originating delivery, handed to a [`PublishTransform`].
 ///
@@ -22,14 +23,18 @@ use crate::HeaderMap;
 /// whose [`context`](Self::context) is the broker's batch context.
 pub struct PublishContext<'a, C = ()> {
     name: &'a str,
-    headers: &'a HeaderMap,
+    headers: DeliveryHeaders<'a>,
     cx: &'a C,
 }
 
 impl<'a, C> PublishContext<'a, C> {
     /// Builds the view from the parts the runtime already holds at publish time.
-    pub(crate) fn new(name: &'a str, headers: &'a HeaderMap, cx: &'a C) -> Self {
-        Self { name, headers, cx }
+    pub(crate) fn new(name: &'a str, headers: impl Into<DeliveryHeaders<'a>>, cx: &'a C) -> Self {
+        Self {
+            name,
+            headers: headers.into(),
+            cx,
+        }
     }
 
     /// The channel the originating message was delivered on.
@@ -41,7 +46,7 @@ impl<'a, C> PublishContext<'a, C> {
     /// The originating message's headers (the working copy the handler saw).
     #[must_use]
     pub fn headers(&self) -> &HeaderMap {
-        self.headers
+        self.headers.get()
     }
 
     /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`,
