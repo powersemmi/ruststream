@@ -488,6 +488,14 @@ where
     St: Send + Sync + 'static,
 {
     tokio::spawn(async move {
+        let shared = Arc::new(PoolShared {
+            handler,
+            name,
+            state,
+            delivery,
+            failure,
+        });
+        let name = &shared.name;
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut cancelled = std::pin::pin!(shutdown.cancelled());
         let mut tasks = JoinSet::new();
@@ -521,23 +529,22 @@ where
             .await;
             match pulled {
                 Turn::Delivery(Ok(msg)) => {
-                    let handler = Arc::clone(&handler);
-                    let name = Arc::clone(&name);
-                    let state = Arc::clone(&state);
-                    let delivery = Arc::clone(&delivery);
-                    let failure = failure.clone();
+                    // One count per worker for everything the loop shares with it: five clones
+                    // would cost five increments and five decrements per delivery, two of them
+                    // the cancellation token's mutex, on counters every worker thread writes.
+                    let shared = Arc::clone(&shared);
                     let mut encode = spare.pop().unwrap_or_default();
                     tasks.spawn(async move {
                         // The worker's own slot, for the one delivery it took.
                         let mut slot = Slot::new(msg);
                         dispatch(
-                            &*handler,
+                            &*shared.handler,
                             &mut slot,
                             &mut encode,
-                            &name,
-                            &state,
-                            &delivery,
-                            &failure,
+                            &shared.name,
+                            &shared.state,
+                            &shared.delivery,
+                            &shared.failure,
                         )
                         .await;
                         encode
@@ -565,6 +572,15 @@ where
             log_worker_exit(joined);
         }
     })
+}
+
+/// What a pooled loop shares with every worker it spawns, behind one reference count.
+struct PoolShared<H, St, C> {
+    handler: Arc<H>,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
 }
 
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
