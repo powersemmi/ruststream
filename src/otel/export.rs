@@ -145,8 +145,14 @@ impl OtelBuilder {
         self
     }
 
-    /// The OTLP/gRPC endpoint. When not set, the exporter falls back to its standard
-    /// environment configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`, default `localhost:4317`).
+    /// The OTLP/gRPC endpoint, scheme included: `http://collector:4317`.
+    ///
+    /// A plaintext collector takes `http://`. An `https://` endpoint needs the TLS features of
+    /// `opentelemetry-otlp` enabled in the service's own manifest, or [`init`](Self::init)
+    /// returns [`OtelInitError::Exporter`]. An endpoint without a scheme is read as `https://`,
+    /// unless `OTEL_EXPORTER_OTLP_INSECURE=true` makes it `http://`. When not set, the exporter
+    /// takes its standard environment configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`, default
+    /// `http://localhost:4317`).
     pub fn otlp_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
@@ -759,6 +765,18 @@ mod tests {
             SEMCONV_DURATION_BUCKETS.to_vec(),
             "an instrument the view does not match keeps its advised buckets",
         );
+    }
+
+    #[test]
+    fn an_endpoint_without_a_scheme_fails_at_init_without_tls() {
+        // The exporter reads a schemeless endpoint as `https://`, and the crate enables no TLS
+        // feature, so the misconfiguration surfaces at startup instead of in every export.
+        let err = Otel::builder()
+            .otlp_endpoint("collector:4317")
+            .tracing_bridge(false)
+            .init()
+            .expect_err("a schemeless endpoint must not build a plaintext exporter");
+        assert!(matches!(err, OtelInitError::Exporter(_)), "{err:?}");
     }
 
     #[cfg(feature = "json")]
