@@ -52,6 +52,7 @@
 //! # }
 //! ```
 
+use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -61,7 +62,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use opentelemetry::metrics::{Counter, Histogram, Meter, MeterProvider as _, UpDownCounter};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::{KeyValue, global};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_otlp::{ExporterBuildError, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkError;
 use opentelemetry_sdk::metrics::{Instrument, MeterProviderBuilder, SdkMeterProvider, Stream};
@@ -71,11 +72,11 @@ use thiserror::Error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::HeaderMap;
 use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, HealthProbe, HealthState, Layer,
     Outgoing, PublishLayer, PublishNext, PublishPipeline,
 };
+use crate::{HeaderMap, Publisher};
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -96,13 +97,13 @@ const SEMCONV_DURATION_BUCKETS: [f64; 14] = [
 pub enum OtelInitError {
     /// Building an OTLP exporter failed (bad endpoint, TLS configuration).
     #[error("failed to build the OTLP exporter")]
-    Exporter(#[from] opentelemetry_otlp::ExporterBuildError),
+    Exporter(#[from] ExporterBuildError),
     /// A global `tracing` subscriber was already installed, so the span bridge cannot be.
     ///
     /// Install the bridge into your own subscriber stack instead, or build with
     /// [`tracing_bridge(false)`](OtelBuilder::tracing_bridge).
     #[error("a tracing subscriber is already installed")]
-    TracingInit(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+    TracingInit(#[source] Box<dyn StdError + Send + Sync + 'static>),
 }
 
 /// Builder for [`Otel`]; obtained from [`Otel::builder`].
@@ -145,8 +146,14 @@ impl OtelBuilder {
         self
     }
 
-    /// The OTLP/gRPC endpoint. When not set, the exporter falls back to its standard
-    /// environment configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`, default `localhost:4317`).
+    /// The OTLP/gRPC endpoint, scheme included: `http://collector:4317`.
+    ///
+    /// A plaintext collector takes `http://`. An `https://` endpoint needs the TLS features of
+    /// `opentelemetry-otlp` enabled in the service's own manifest, or [`init`](Self::init)
+    /// returns [`OtelInitError::Exporter`]. An endpoint without a scheme is read as `https://`,
+    /// unless `OTEL_EXPORTER_OTLP_INSECURE=true` makes it `http://`. When not set, the exporter
+    /// takes its standard environment configuration (`OTEL_EXPORTER_OTLP_ENDPOINT`, default
+    /// `http://localhost:4317`).
     pub fn otlp_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
@@ -645,12 +652,11 @@ impl fmt::Debug for OtelPublishLayer {
 }
 
 impl PublishLayer for OtelPublishLayer {
-    fn on_publish<'a, N: PublishPipeline, P: crate::Publisher>(
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
-    {
+    ) -> impl Future<Output = Result<(), Box<dyn StdError + Send + Sync>>> + Send + 'a {
         if self.stamp_publish_time
             && let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH)
         {
@@ -688,6 +694,9 @@ impl PublishLayer for OtelPublishLayer {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::process::Command;
+
     use super::*;
 
     #[test]
@@ -761,28 +770,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_endpoint_without_a_scheme_fails_at_init_without_tls() {
+        // `OTEL_EXPORTER_OTLP_INSECURE=true` in the environment turns a schemeless endpoint into a
+        // plaintext one. The crate forbids the unsafe in-process `set_var`, so the test runs itself
+        // again in a child process with every `OTEL_*` variable removed.
+        const CLEAN_ENV: &str = "RUSTSTREAM_TEST_OTEL_CLEAN_ENV";
+        if env::var_os(CLEAN_ENV).is_none() {
+            let path = module_path!().split_once("::").map_or("", |(_, path)| path);
+            let name = format!("{path}::an_endpoint_without_a_scheme_fails_at_init_without_tls");
+            let mut child = Command::new(env::current_exe().expect("test binary path"));
+            child.args([name.as_str(), "--exact"]).env(CLEAN_ENV, "1");
+            for (key, _) in env::vars_os() {
+                if key.to_str().is_some_and(|key| key.starts_with("OTEL_")) {
+                    child.env_remove(key);
+                }
+            }
+            let output = child.output().expect("child test process");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("test result: ok. 1 passed"),
+                "{stdout}{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
+        // The exporter reads a schemeless endpoint as `https://`, and the crate enables no TLS
+        // feature, so the misconfiguration surfaces at startup instead of in every export.
+        let err = Otel::builder()
+            .otlp_endpoint("collector:4317")
+            .tracing_bridge(false)
+            .init()
+            .expect_err("a schemeless endpoint must not build a plaintext exporter");
+        assert!(matches!(err, OtelInitError::Exporter(_)), "{err:?}");
+    }
+
     #[cfg(feature = "json")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_layer_splits_failures_by_error_type() {
         use std::future::ready;
+        use std::io;
 
         use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 
         use crate::codec::JsonCodec;
         use crate::runtime::{PublishContext, PublishIdentity, PublishStack, TypedPublisher};
+        use crate::{BytesMut, Lend, OutgoingMessage, PayloadForm};
 
         /// A publisher with no broker behind it: every publish fails.
         struct Failing;
-        impl crate::Publisher for Failing {
-            type Payload = crate::Lend;
-            type Error = std::io::Error;
+        impl Publisher for Failing {
+            type Payload = Lend;
+            type Error = io::Error;
             type Options = ();
             fn publish(
                 &self,
-                _msg: crate::OutgoingMessage<'_, &[u8]>,
+                _msg: OutgoingMessage<'_, &[u8]>,
                 _options: Option<&Self::Options>,
             ) -> impl Future<Output = Result<(), Self::Error>> {
-                ready(Err(std::io::Error::other("no broker")))
+                ready(Err(io::Error::other("no broker")))
             }
         }
 
@@ -802,7 +849,7 @@ mod tests {
                 &7_u32,
                 &pipeline,
                 &cx,
-                <crate::Lend as crate::PayloadForm>::encode_slot(&mut crate::BytesMut::new()),
+                <Lend as PayloadForm>::encode_slot(&mut BytesMut::new()),
             )
             .await;
         assert!(
