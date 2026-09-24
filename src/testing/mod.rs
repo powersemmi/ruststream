@@ -114,6 +114,10 @@
 //! The decoding assertions use the default codec; a mounting with another codec passes it
 //! through the `with_codec`, `received_with` and `decoded_with` variants.
 //!
+//! The harness runs every subscription loop and every worker of `workers(n)` on the test's own
+//! runtime, so [`advance`](TestApp::advance) reaches every timer the app arms and
+//! [`settle`](TestApp::settle) sees every delivery.
+//!
 //! The harness runs dispatch under the app's real failure policy. A panic under the default
 //! `fail_fast` shuts the service down, [`run_result`](TestApp::run_result) returns what `run`
 //! would, and [`assert_running`](TestApp::assert_running) states the opposite. A handler

@@ -5,6 +5,7 @@ use std::sync::{
 };
 
 use futures::{StreamExt, poll, stream};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use super::*;
@@ -601,6 +602,125 @@ async fn a_panicking_worker_is_reported_when_joined() {
     let joined = tokio::spawn(async { panic!("worker down") }).await;
     assert!(joined.is_err());
     log_worker_exit(joined);
+}
+
+/// A handler that never finishes, holding the sender it reported its start on: the channel
+/// closes only once every copy of the handler and its future are gone.
+struct StuckHandler {
+    started: mpsc::UnboundedSender<()>,
+}
+
+impl Handler<PlainMessage, (), ()> for StuckHandler {
+    fn handle(
+        &self,
+        _msg: &PlainMessage,
+        _ctx: &mut Context<'_, (), ()>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        let started = self.started.clone();
+        async move {
+            started.send(()).expect("the test holds the receiver");
+            std::future::pending::<()>().await;
+            HandlerOutcome::ack()
+        }
+    }
+}
+
+// Paused time: the waits below resolve as soon as nothing else can run, which is exactly when
+// the loop is parked joining its stuck worker.
+#[tokio::test(start_paused = true)]
+async fn an_aborted_loop_takes_its_running_workers_down() {
+    for form in [WORKER_FORMS[1], WORKER_FORMS[2]] {
+        let shutdown = Shutdown::new();
+        let (started, mut running) = mpsc::unbounded_channel();
+        let mut joined = spawn_dispatch_workers(
+            QuietSubscriber,
+            Arc::new(StuckHandler { started }),
+            shutdown.clone(),
+            Arc::from("orders"),
+            Arc::new(()),
+            Arc::new(Delivery::empty()),
+            dispatch_failure(),
+            form,
+        );
+        running.recv().await.expect("the handler started");
+        shutdown.cancel();
+        // The loop now waits for its worker, which the stuck handler never lets finish: what the
+        // app's shutdown timeout runs into, and answers by aborting the loop.
+        assert!(timeout(Duration::from_secs(1), &mut joined).await.is_err());
+        joined.abort();
+        let _ = joined.await;
+        assert!(
+            timeout(Duration::from_secs(1), running.recv())
+                .await
+                .is_ok_and(|message| message.is_none()),
+            "{form:?} left a worker running its handler after the loop was aborted",
+        );
+    }
+}
+
+/// A handler whose `handle` panics before it returns a future for the delivery `boom`: the one
+/// panic the dispatch cannot catch, since it guards the future, not the call that makes it.
+struct PanickingHandler {
+    seen: mpsc::UnboundedSender<Bytes>,
+}
+
+impl Handler<PlainMessage, (), ()> for PanickingHandler {
+    fn handle(
+        &self,
+        msg: &PlainMessage,
+        _ctx: &mut Context<'_, (), ()>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        assert!(msg.payload != "boom", "the handler could not start");
+        let sent = self.seen.send(msg.payload.clone());
+        async move {
+            sent.expect("the test holds the receiver");
+            HandlerOutcome::ack()
+        }
+    }
+}
+
+/// Replays a script and then waits for more that never comes, as a live subscription does.
+struct HangingSubscriber {
+    items: Vec<PlainMessage>,
+}
+
+impl Subscriber for HangingSubscriber {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        stream::iter(std::mem::take(&mut self.items).into_iter().map(Ok)).chain(stream::pending())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
+    let items = ["boom", "a", "b", "c"]
+        .iter()
+        .map(|payload| PlainMessage {
+            payload: Bytes::from_static(payload.as_bytes()),
+            headers: HeaderMap::new(),
+            settled: Arc::new(AtomicU8::new(0)),
+            settlement: Settlement::Accepted,
+        })
+        .collect();
+    let (seen, _arrived) = mpsc::unbounded_channel();
+    let joined = spawn_dispatch_workers(
+        HangingSubscriber { items },
+        Arc::new(PanickingHandler { seen }),
+        Shutdown::new(),
+        Arc::from("orders"),
+        Arc::new(()),
+        Arc::new(Delivery::empty()),
+        dispatch_failure(),
+        WORKER_FORMS[1],
+    );
+    // The keyed lanes and the sequential loop stop on a worker that is gone; a pool that kept
+    // going on the workers left would run at a capacity nobody configured, and say nothing.
+    timeout(Duration::from_secs(1), joined)
+        .await
+        .expect("the pool kept dispatching on one worker of two")
+        .expect("dispatch task should not panic");
 }
 
 /// The bytes of a deferred copy are the dispatch's own - it read them off the delivery before
