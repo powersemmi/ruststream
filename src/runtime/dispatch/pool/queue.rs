@@ -202,6 +202,7 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     let name = &shared.name;
     let mut stream = pin!(subscriber.stream());
     let mut cancelled = pin!(shutdown.cancelled());
+    let mut pushed = 0u64;
     loop {
         if shutdown.is_cancelled() {
             break;
@@ -237,6 +238,7 @@ pub(super) async fn run<Sub, Body, Cx, State>(
                 if feed.queue.push(msg).is_err() {
                     unreachable!("the loop pushes only after it saw room");
                 }
+                pushed += 1;
                 feed.wake_one();
             }
             Turn::Delivery(Err(err)) => {
@@ -260,6 +262,13 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     }
     // What the queue holds is handled and settled before the workers exit: nothing pulled off
     // the stream is dropped unsettled unless the shutdown timeout aborts the loop.
+    let queued = feed.queue.len();
     feed.close();
     crew.join().await;
+    if std::env::var_os("RUSTSTREAM_RESEARCH_TRACE").is_some() {
+        eprintln!(
+            "queue loop: pushed {pushed}, queued at close {queued}, left after join {}",
+            feed.queue.len()
+        );
+    }
 }

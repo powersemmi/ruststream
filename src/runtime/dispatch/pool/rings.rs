@@ -5,11 +5,18 @@
 //! Per delivery, under load: a plain store to push and one to pop (`rtrb`, a preallocated ring
 //! whose sides read each other's index only when their cached copy runs out, so a worker reads the
 //! loop's index once per burst it drains), and one `SeqCst` fence on each side for the park and
-//! room handshakes; no allocation, no wake. Picking the ring with the most room reads every
-//! worker's index, `n` cross-core loads per delivery; round-robin reads none. Read-ahead: per
-//! ring, one delivery in process plus the ring's capacity. A key always goes to the same ring, and
-//! a ring is drained in order by one worker, so per-key order holds; the loop waits on a full ring
-//! rather than reorder a key.
+//! room handshakes; no allocation, no wake. Round-robin fills a ring with up to half its capacity
+//! before it moves on, and the loop waiting on a full ring is woken only once that ring has
+//! drained to half, so a saturated pool wakes its loop about once per half ring rather than once
+//! per delivery. Picking the ring with the most room reads every worker's index, `n` cross-core
+//! loads per delivery; round-robin reads none. Read-ahead: per ring, one delivery in process plus
+//! the ring's capacity. A key always goes to the same ring, and a ring is drained in order by one
+//! worker, so per-key order holds; the loop waits on a full ring rather than reorder a key.
+//!
+//! A producer is `Send` and not `Sync`: the loop's task owns them all, and when a multi-threaded
+//! runtime moves that task to another thread, the scheduler's hand-off orders everything the task
+//! did before the move before everything it does after, so the producer's unsynchronized cached
+//! index stays one thread's at a time.
 
 use std::future::{Future, poll_fn};
 use std::pin::pin;
@@ -29,12 +36,18 @@ use super::{Crew, Placement, Shared};
 use crate::runtime::dispatch::{Handler, Shutdown, Turn, Workers, lane_of};
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
+/// What `loop_waiting` holds while the loop waits for room in any ring.
+const ANY: usize = usize::MAX;
+
 /// Who waits on whom: a worker on its empty ring, the loop on room.
 struct Signals {
     parked: Box<[CachePadded<AtomicBool>]>,
     wakers: Box<[CachePadded<AtomicWaker>]>,
-    loop_waiting: CachePadded<AtomicBool>,
+    /// 0 while the loop pulls; the waited ring's index plus one, or [`ANY`], while it waits.
+    loop_waiting: CachePadded<AtomicUsize>,
     loop_waker: AtomicWaker,
+    /// A ring the loop waits on wakes it once it holds no more than this.
+    low_water: usize,
     /// The workers still running; the last one out wakes the loop.
     alive: AtomicUsize,
 }
@@ -49,7 +62,7 @@ enum Which {
 }
 
 impl Signals {
-    fn new(count: usize) -> Self {
+    fn new(count: usize, capacity: usize) -> Self {
         Self {
             parked: (0..count)
                 .map(|_| CachePadded::new(AtomicBool::new(false)))
@@ -57,19 +70,27 @@ impl Signals {
             wakers: (0..count)
                 .map(|_| CachePadded::new(AtomicWaker::new()))
                 .collect(),
-            loop_waiting: CachePadded::new(AtomicBool::new(false)),
+            loop_waiting: CachePadded::new(AtomicUsize::new(0)),
             loop_waker: AtomicWaker::new(),
+            low_water: capacity / 2,
             alive: AtomicUsize::new(count),
         }
     }
 
-    /// A worker freed a slot of its ring: wakes the loop if it waits for room.
-    fn freed(&self) {
+    /// Worker `index` freed a slot of its ring, which now holds `held()`: wakes the loop if it
+    /// waits for this ring, or any, and the ring has drained to low water.
+    fn freed(&self, index: usize, held: impl FnOnce() -> usize) {
         // Orders the ring's index store before the flag's load, against the loop's flag store
         // before its ring load.
         fence(Ordering::SeqCst);
-        if self.loop_waiting.load(Ordering::Relaxed)
-            && self.loop_waiting.swap(false, Ordering::SeqCst)
+        let waiting = self.loop_waiting.load(Ordering::Relaxed);
+        if waiting != 0
+            && (waiting == ANY || waiting == index + 1)
+            && held() <= self.low_water
+            && self
+                .loop_waiting
+                .compare_exchange(waiting, 0, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
         {
             self.loop_waker.wake();
         }
@@ -116,10 +137,14 @@ impl Signals {
             return Poll::Ready(Some(index));
         }
         self.loop_waker.register(cx.waker());
-        self.loop_waiting.store(true, Ordering::SeqCst);
+        let waiting = match which {
+            Which::One(index) => index + 1,
+            Which::Most(_) => ANY,
+        };
+        self.loop_waiting.store(waiting, Ordering::SeqCst);
         fence(Ordering::SeqCst);
         if let Some(index) = pick() {
-            self.loop_waiting.store(false, Ordering::SeqCst);
+            self.loop_waiting.store(0, Ordering::SeqCst);
             return Poll::Ready(Some(index));
         }
         if self.alive.load(Ordering::SeqCst) == 0 {
@@ -173,12 +198,12 @@ async fn work<Message, Body, Cx, State>(
                         shared.handle(msg, &mut encode).await;
                     }
                 }
-                signals.freed();
+                signals.freed(index, || ring.slots());
                 continue;
             }
         } else if let Ok(msg) = ring.pop() {
             // Freed before the handler runs, so the loop refills the ring meanwhile.
-            signals.freed();
+            signals.freed(index, || ring.slots());
             shared.handle(msg, &mut encode).await;
             continue;
         }
@@ -227,7 +252,8 @@ pub(super) async fn run<Sub, Body, Cx, State>(
 {
     let count = workers.count;
     let keyed = workers.by_key;
-    let signals = Arc::new(Signals::new(count));
+    let signals = Arc::new(Signals::new(count, knobs.ring));
+    let batch = knobs.batch();
     let mut rings = Vec::with_capacity(count);
     let mut crew = Crew(Vec::with_capacity(count));
     for index in 0..count {
@@ -243,8 +269,11 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     let name = &shared.name;
     let mut stream = pin!(subscriber.stream());
     let mut cancelled = pin!(shutdown.cancelled());
-    // The next ring in turn: the pool's round-robin, and where keyless deliveries of the lanes go.
+    // The next ring in turn: the pool's round-robin, and where keyless deliveries of the lanes go;
+    // and how many deliveries the pool has put in it this turn.
     let mut turn = 0usize;
+    let mut in_turn = 0usize;
+    let mut pushed = 0u64;
     'pull: loop {
         if shutdown.is_cancelled() {
             break;
@@ -291,7 +320,14 @@ pub(super) async fn run<Sub, Body, Cx, State>(
             Turn::Delivery(Ok(msg)) => {
                 let index = picked
                     .unwrap_or_else(|| msg.partition_key().map_or(turn, |key| lane_of(key, count)));
-                if picked.is_some() || msg.partition_key().is_none() {
+                if picked.is_some() && !knobs.least {
+                    // A turn fills its ring with up to `batch` deliveries, or until it is full.
+                    in_turn += 1;
+                    if in_turn >= batch || rings[index].is_full() {
+                        turn = (index + 1) % count;
+                        in_turn = 0;
+                    }
+                } else if picked.is_some() || msg.partition_key().is_none() {
                     turn = (index + 1) % count;
                 }
                 if keyed {
@@ -315,6 +351,7 @@ pub(super) async fn run<Sub, Body, Cx, State>(
                 if rings[index].push(msg).is_err() {
                     unreachable!("the loop pushes only after it saw room");
                 }
+                pushed += 1;
                 signals.pushed(index);
             }
             Turn::Delivery(Err(err)) => {
@@ -338,7 +375,14 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     }
     // Letting go of the rings tells each worker to drain what its ring holds and exit: what was
     // pulled off the stream is handled and settled unless the shutdown timeout aborts the loop.
+    let queued: usize = rings
+        .iter()
+        .map(|ring| ring.buffer().capacity() - ring.slots())
+        .sum();
     drop(rings);
     signals.close();
     crew.join().await;
+    if std::env::var_os("RUSTSTREAM_RESEARCH_TRACE").is_some() {
+        eprintln!("rings loop: pushed {pushed}, queued at close {queued}");
+    }
 }

@@ -10,7 +10,9 @@
 //! - `RUSTSTREAM_RESEARCH_CHUNK`: `1` makes a ring worker take everything available as one chunk
 //!   that it frees once the whole chunk is handled;
 //! - `RUSTSTREAM_RESEARCH_PICK`: `rr` (the default) spreads deliveries over the rings round-robin
-//!   and waits on the chosen ring when it is full, `least` picks the ring with the most room.
+//!   and waits on the chosen ring when it is full, `least` picks the ring with the most room;
+//! - `RUSTSTREAM_RESEARCH_BATCH`: how many deliveries a round-robin turn puts in one ring, half
+//!   the ring by default.
 
 use std::env;
 use std::hint::spin_loop;
@@ -77,6 +79,7 @@ pub(super) struct Knobs {
     pub(super) spin: Spin,
     pub(super) chunk: bool,
     pub(super) least: bool,
+    batch: Option<usize>,
 }
 
 impl Knobs {
@@ -108,7 +111,13 @@ impl Knobs {
             spin,
             chunk: var("RUSTSTREAM_RESEARCH_CHUNK").as_deref() == Some("1"),
             least: var("RUSTSTREAM_RESEARCH_PICK").as_deref() == Some("least"),
+            batch: number("RUSTSTREAM_RESEARCH_BATCH").and_then(|v| usize::try_from(v).ok()),
         }
+    }
+
+    /// How many deliveries a round-robin turn puts in one ring.
+    pub(super) fn batch(&self) -> usize {
+        self.batch.unwrap_or(self.ring / 2).max(1)
     }
 
     /// The shared queue's capacity for `count` workers.
