@@ -339,6 +339,19 @@ struct Timer {
     handle: tokio::task::JoinHandle<()>,
 }
 
+/// An open slot in the in-flight count, released on drop; see [`Coordinator::hold`].
+pub(crate) struct InFlightHold {
+    coordinator: Coordinator,
+}
+
+impl Drop for InFlightHold {
+    fn drop(&mut self) {
+        let inner = &self.coordinator.inner;
+        inner.in_flight.fetch_sub(1, Ordering::SeqCst);
+        inner.notify.notify_waiters();
+    }
+}
+
 impl Coordinator {
     /// Creates a coordinator that gives up after `max_steps` dispatched deliveries without
     /// reaching quiescence (a guard against perpetual-requeue handlers).
@@ -372,6 +385,18 @@ impl Coordinator {
         self.inner.processed.fetch_add(1, Ordering::SeqCst);
         self.inner.in_flight.fetch_sub(1, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
+    }
+
+    /// Keeps the reaction open until the returned guard drops, without counting a delivery.
+    ///
+    /// The runtime's immediate retry copy settles the original before it publishes the copy, and
+    /// the copy's enqueue is what counts it; between the two the in-flight count would read zero
+    /// and [`drive`](Self::drive) would return before the copy arrived.
+    pub(crate) fn hold(&self) -> InFlightHold {
+        self.inner.in_flight.fetch_add(1, Ordering::SeqCst);
+        InFlightHold {
+            coordinator: self.clone(),
+        }
     }
 
     /// Records what a handler saw and how it settled. Called from `dispatch` before the message is
@@ -589,5 +614,30 @@ mod tests {
         coordinator.enqueued();
         let busy = format!("{coordinator:?}");
         assert!(busy.contains("in_flight: 1"), "{busy}");
+    }
+
+    #[tokio::test]
+    async fn a_hold_keeps_the_reaction_open_across_a_settle_and_its_copy() {
+        let coordinator = Coordinator::new(16);
+        // The original delivery is in flight; the retry path takes a hold, then settles it.
+        coordinator.enqueued();
+        let hold = coordinator.hold();
+        coordinator.consumed();
+
+        // The gap before the copy is enqueued: the reaction must not read as settled.
+        let mut drive = Box::pin(coordinator.drive());
+        assert!(
+            futures::poll!(drive.as_mut()).is_pending(),
+            "drive returned between the settle and the copy"
+        );
+
+        // The copy is counted, the hold released, then the copy settles.
+        coordinator.enqueued();
+        drop(hold);
+        assert!(futures::poll!(drive.as_mut()).is_pending());
+        coordinator.consumed();
+        drive
+            .await
+            .expect("the reaction settles once the copy is handled");
     }
 }

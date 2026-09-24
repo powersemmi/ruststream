@@ -582,7 +582,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// due, and drives the resulting reaction to a standstill. Use it to test delayed redeliveries:
     /// `publish` records the immediate `NackAfter` settlement and returns; `advance` then delivers
     /// the message again. A broker's native delayed redelivery and the runtime's deferred
-    /// re-publish both arrive this way.
+    /// re-publish both arrive this way; the copy the runtime publishes for a zero delay does not
+    /// wait for it.
     ///
     /// Requires a paused clock (`#[tokio::test(start_paused = true)]` or `tokio::time::pause`); on a
     /// live clock `tokio::time::advance` panics.
