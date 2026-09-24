@@ -176,12 +176,15 @@ same mnemonic holds on the way out: a reply or a published value deriving
 ## Workers
 
 Dispatch is sequential per subscriber: a delivery is settled before the next one is pulled.
-`workers(n)` handles up to `n` deliveries at once, each in its own task, and the stream is
-not polled while `n` are in flight. Global order is lost by design. `workers(n, by_key)`
-splits the work into `n` sequential lanes by the message's partition key
-([`Partitioned`](crate::Partitioned)), so messages sharing a key never reorder. Batch forms
-take a plain pool of batches. On shutdown the workers in flight finish within the
-[`shutdown_timeout`](RustStream::shutdown_timeout).
+`workers(n)` handles up to `n` deliveries at once on `n` long-lived workers, tasks of the
+runtime the app runs on, and the stream is not polled while `n` are in flight. Global order is
+lost by design. `workers(n, by_key)` makes the same workers `n` sequential lanes by the
+message's partition key ([`Partitioned`](crate::Partitioned)), so messages sharing a key never
+reorder. The workers start with the subscription, so a delivery costs its handoff and no
+allocation. Batch forms take a plain pool of batches, each batch in a task of its own. On shutdown the workers in flight finish within the
+[`shutdown_timeout`](RustStream::shutdown_timeout). A panic outside the handler's future (in a
+manual handler's `handle` call, say) ends its worker, and the subscription stops dispatching,
+as the sequential loop does.
 
 ## Delayed redelivery and its cap
 

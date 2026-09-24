@@ -132,7 +132,7 @@ use parse::{SubscriberArgs, doc_description};
 /// batch.
 ///
 /// A `workers(n)` clause processes up to `n` deliveries (or batches) of this subscriber
-/// concurrently, each in its own task; global processing order is lost by design, and
+/// concurrently on long-lived workers; global processing order is lost by design, and
 /// back-pressure holds at `n` in-flight deliveries. `workers(n, by_key)` switches to `n`
 /// sequential lanes keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
