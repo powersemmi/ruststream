@@ -20,7 +20,7 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
 
 use crate::{
-    AckError, BatchSubscriber, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration,
+    AckError, BatchSubscriber, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration, Str,
     Subscriber,
 };
 
@@ -1509,7 +1509,7 @@ where
     let delivered = msg.headers().clone();
     let mut headers = delivered.clone();
     let next_count = current_retry_count(&headers) + 1;
-    headers.insert(RETRY_COUNT_HEADER, next_count.to_string());
+    headers.insert(Str::from_static(RETRY_COUNT_HEADER), next_count.to_string());
     let context = build_cx(msg);
 
     // Drop the original so the broker does not also redeliver it; the copy carries the retry
