@@ -1000,3 +1000,68 @@ fn the_dispatch_future_holds_a_pointer_to_the_delivery_rather_than_the_delivery(
         "the dispatch future is at least as large as the delivery it dispatches: {large} bytes",
     );
 }
+
+/// Research (#417): a handler on dedicated threads may hold `!Send` state across an `.await`: its
+/// future is built and polled on one thread, which is not the runtime the loop runs on. The same
+/// body does not compile as a [`Handler`] (see the `compile_fail` example on `LocalHandler`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_local_handler_holds_rc_across_an_await_on_its_own_thread() {
+    let loop_threads: Arc<std::sync::Mutex<Vec<std::thread::ThreadId>>> = Arc::default();
+    let (seen, mut arrived) = mpsc::unbounded_channel();
+    let handler = Arc::new(crate::runtime::Local(
+        move |_msg: &PlainMessage, _ctx: &mut Context<'_, (), ()>| {
+            let seen = seen.clone();
+            async move {
+                let ids =
+                    std::rc::Rc::new(std::cell::RefCell::new(vec![std::thread::current().id()]));
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                ids.borrow_mut().push(std::thread::current().id());
+                // The thread runs a `LocalSet`: a `!Send` task spawned from the handler runs
+                // beside it, on the same thread.
+                let local = std::rc::Rc::clone(&ids);
+                tokio::task::spawn_local(async move {
+                    local.borrow_mut().push(std::thread::current().id());
+                })
+                .await
+                .expect("the local task runs");
+                seen.send(ids.borrow().clone())
+                    .expect("the test holds the receiver");
+                HandlerOutcome::ack()
+            }
+        },
+    ));
+    // The runtime's own threads, as the loop sees them.
+    for _ in 0..8 {
+        let threads = Arc::clone(&loop_threads);
+        tokio::spawn(async move {
+            threads.lock().unwrap().push(std::thread::current().id());
+        })
+        .await
+        .unwrap();
+    }
+    let joined = spawn_dispatch_threads_local(
+        scripted(&["a", "b", "c"]),
+        handler,
+        Shutdown::new(),
+        Arc::from("orders"),
+        Arc::new(()),
+        Arc::new(Delivery::empty()),
+        dispatch_failure(),
+        crate::nonzero!(2usize),
+    );
+    let runtime = loop_threads.lock().unwrap().clone();
+    for _ in 0..3 {
+        let ids = arrived.recv().await.expect("delivery should be handled");
+        assert_eq!(ids.len(), 3);
+        assert!(
+            ids.iter().all(|id| *id == ids[0]),
+            "the handler or its local task moved threads: {ids:?}"
+        );
+        assert!(
+            !runtime.contains(&ids[0]),
+            "the handler ran on the runtime's thread {:?}",
+            ids[0]
+        );
+    }
+    joined.await.expect("dispatch task should not panic");
+}

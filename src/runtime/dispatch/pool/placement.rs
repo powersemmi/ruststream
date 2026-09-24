@@ -5,7 +5,7 @@ use std::thread;
 
 use tokio::runtime::Builder;
 use tokio::sync::oneshot;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::{JoinError, JoinHandle, LocalSet};
 use tracing::error;
 
 /// Where a subscription's workers run.
@@ -13,9 +13,12 @@ use tracing::error;
 pub(super) enum Placement {
     /// As tasks of the runtime the loop runs on.
     Runtime,
-    /// Each worker on a thread of its own running a current-thread runtime, so a worker's handler
-    /// computes there without holding a thread of the app's runtime, and its timers and the tasks
-    /// it spawns run there too.
+    /// Each worker on a thread of its own running a current-thread runtime and a `LocalSet`, so a
+    /// worker's handler computes there without holding a thread of the app's runtime. The
+    /// handler's future is polled by that thread alone, from its first poll to its end: nothing
+    /// can move it. Its timers fire there, and what it spawns with `tokio::spawn` or
+    /// `spawn_local` runs there; `spawn_blocking` leaves the thread by the user's choice, and
+    /// `block_in_place` panics, as it does on any current-thread runtime.
     Pinned,
 }
 
@@ -75,45 +78,55 @@ impl Placement {
     {
         match self {
             Self::Runtime => Member::Task(tokio::spawn(work())),
-            Self::Pinned => {
-                let (done_side, done) = oneshot::channel();
-                let (abort, mut aborted) = oneshot::channel::<()>();
-                let spawned = thread::Builder::new()
-                    .name(format!("ruststream-worker-{index}"))
-                    .spawn(move || {
-                        let runtime = match Builder::new_current_thread().enable_all().build() {
-                            Ok(runtime) => runtime,
-                            Err(err) => {
-                                error!(
-                                    target: "ruststream::dispatch",
-                                    error = %err,
-                                    "a worker thread could not build its runtime",
-                                );
-                                return;
-                            }
-                        };
-                        runtime.block_on(async move {
-                            let work = work();
-                            tokio::select! {
-                                biased;
-                                _ = &mut aborted => {}
-                                () = work => {}
-                            }
-                        });
-                        // The runtime goes before the report, so a joined worker has let go of
-                        // everything it spawned on its thread.
-                        drop(runtime);
-                        let _ = done_side.send(());
-                    });
-                if let Err(err) = spawned {
+            Self::Pinned => start_thread(index, work),
+        }
+    }
+}
+
+/// Starts worker `index` on a thread of its own. The worker's future is built on that thread and
+/// never leaves it, so it need not be `Send`: only what builds it crosses.
+pub(super) fn start_thread<Work, Fut>(index: usize, work: Work) -> Member
+where
+    Work: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    let (done_side, done) = oneshot::channel();
+    let (abort, mut aborted) = oneshot::channel::<()>();
+    let spawned = thread::Builder::new()
+        .name(format!("ruststream-worker-{index}"))
+        .spawn(move || {
+            let runtime = match Builder::new_current_thread().enable_all().build() {
+                Ok(runtime) => runtime,
+                Err(err) => {
                     error!(
                         target: "ruststream::dispatch",
                         error = %err,
-                        "a worker thread could not start",
+                        "a worker thread could not build its runtime",
                     );
+                    return;
                 }
-                Member::Thread { done, abort }
-            }
-        }
+            };
+            let local = LocalSet::new();
+            local.block_on(&runtime, async move {
+                let work = work();
+                tokio::select! {
+                    biased;
+                    _ = &mut aborted => {}
+                    () = work => {}
+                }
+            });
+            // The runtime goes before the report, so a joined worker has let go of everything it
+            // spawned on its thread.
+            drop(local);
+            drop(runtime);
+            let _ = done_side.send(());
+        });
+    if let Err(err) = spawned {
+        error!(
+            target: "ruststream::dispatch",
+            error = %err,
+            "a worker thread could not start",
+        );
     }
+    Member::Thread { done, abort }
 }

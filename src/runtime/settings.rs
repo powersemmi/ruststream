@@ -568,6 +568,16 @@ pub trait SubscriberSettings: Declared {
         self.declare().apply_workers(Workers::pool(count))
     }
 
+    /// Research (#417): runs `count` workers on threads of their own, each with a current-thread
+    /// runtime, fed by the subscription's loop on the app's runtime. For handlers that compute:
+    /// they no longer hold the app's runtime threads.
+    fn threads(self, count: NonZeroUsize) -> <Self::Settings as WorkersStep>::Out
+    where
+        Self::Settings: WorkersStep,
+    {
+        self.declare().apply_workers(Workers::threads(count))
+    }
+
     /// Runs `count` sequential lanes keyed by the message's partition key, preserving per-key
     /// ordering. The mount-site spelling of `workers(n, by_key)`.
     fn workers_by_key(self, count: NonZeroUsize) -> <Self::Settings as WorkersStep>::Out

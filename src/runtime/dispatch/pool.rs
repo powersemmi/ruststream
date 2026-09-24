@@ -30,7 +30,10 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use tokio::task::JoinHandle;
 
-use super::{Delivery, DispatchFailure, Handler, Shutdown, Slot, Workers, dispatch};
+use super::{
+    Delivery, DispatchFailure, Handler, LocalHandler, Shutdown, Slot, Workers, dispatch,
+    dispatch_local,
+};
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
 use placement::{Member, Placement};
@@ -57,6 +60,31 @@ impl<Body, State, Cx> Shared<Body, State, Cx> {
     {
         let mut slot = Slot::new(msg);
         dispatch(
+            &*self.handler,
+            &mut slot,
+            encode,
+            &self.name,
+            &self.state,
+            &self.delivery,
+            &self.failure,
+        )
+        .await;
+    }
+}
+
+impl<Body, State, Cx> Shared<Body, State, Cx> {
+    /// [`Shared::handle`] for a [`LocalHandler`], whose future stays on the thread that polls it.
+    // The `!Send` path is a prototype reached from a unit test only, not from a registration.
+    #[cfg_attr(not(test), allow(dead_code))]
+    async fn handle_local<Message>(&self, msg: Message, encode: &mut BytesMut)
+    where
+        Message: IncomingMessage,
+        Body: LocalHandler<Message, Cx, State>,
+        Cx: BuildContext<Message> + Send + Sync + 'static,
+        State: Send + Sync,
+    {
+        let mut slot = Slot::new(msg);
+        dispatch_local(
             &*self.handler,
             &mut slot,
             encode,
@@ -133,12 +161,23 @@ where
         delivery,
         failure,
     });
-    let placement = if knobs.pinned && !on_runtime {
+    let placement = if (knobs.pinned || workers.dedicated) && !on_runtime {
         Placement::Pinned
     } else {
         Placement::Runtime
     };
-    match knobs.feed {
+    // `threads(n)` is the ring feed on dedicated threads, whatever the environment says.
+    let feed = if workers.dedicated {
+        Feed::Rings
+    } else {
+        knobs.feed
+    };
+    let knobs = if workers.dedicated {
+        knobs.dedicated()
+    } else {
+        knobs
+    };
+    match feed {
         // The loop and its workers on one thread of their own: the loop's thread runs the workers
         // as its own tasks. Dropping the member (an abort by the shutdown timeout) cancels them.
         Feed::Whole if !on_runtime => tokio::spawn(async move {
@@ -158,4 +197,40 @@ where
             subscriber, shared, shutdown, workers, placement, knobs,
         )),
     }
+}
+
+/// Research (#417): spawns the loop of a subscription whose `count` workers run on dedicated
+/// threads with a [`LocalHandler`], whose future need not be `Send`.
+// The `!Send` path is a prototype reached from a unit test only, not from a registration.
+#[cfg_attr(not(test), allow(dead_code))]
+// See `spawn_dispatch_workers`: each part is the registration's own.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_dispatch_threads_local<Sub, Body, Cx, State>(
+    subscriber: Sub,
+    handler: Arc<Body>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<State>,
+    delivery: Arc<Delivery<Cx>>,
+    failure: DispatchFailure,
+    workers: Workers,
+) -> JoinHandle<()>
+where
+    Sub: Subscriber + Send + 'static,
+    Sub::Message: Send + Sync + 'static,
+    Body: LocalHandler<Sub::Message, Cx, State> + 'static,
+    Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    State: Send + Sync + 'static,
+{
+    let knobs = Knobs::from_env().dedicated();
+    let shared = Arc::new(Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    });
+    tokio::spawn(rings::run_local(
+        subscriber, shared, shutdown, workers, knobs,
+    ))
 }

@@ -27,7 +27,7 @@ use crate::{
 use super::batch::BatchHandler;
 use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
-use super::handler::{Handler, HandlerResult};
+use super::handler::{Handler, HandlerResult, LocalHandler};
 use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
@@ -89,6 +89,9 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 pub struct Workers {
     count: usize,
     by_key: bool,
+    /// Research (#417): the workers run on threads of their own rather than as tasks of the app's
+    /// runtime.
+    dedicated: bool,
 }
 
 impl Workers {
@@ -98,6 +101,7 @@ impl Workers {
         Self {
             count: 1,
             by_key: false,
+            dedicated: false,
         }
     }
 
@@ -107,6 +111,19 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: false,
+            dedicated: false,
+        }
+    }
+
+    /// Research (#417): `count` workers, each on a thread of its own with a current-thread
+    /// runtime, fed through a ring each by the subscription's loop on the app's runtime. A
+    /// delivery handed to a thread is handled there from the handler's first poll to its end.
+    #[must_use]
+    pub const fn threads(count: NonZeroUsize) -> Self {
+        Self {
+            count: count.get(),
+            by_key: false,
+            dedicated: true,
         }
     }
 
@@ -118,12 +135,14 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: true,
+            dedicated: false,
         }
     }
 
-    /// One worker is indistinguishable from the sequential loop.
+    /// One worker on the app's runtime is indistinguishable from the sequential loop; one on a
+    /// thread of its own is not.
     pub(crate) const fn is_sequential(&self) -> bool {
-        self.count <= 1
+        self.count <= 1 && !self.dedicated
     }
 }
 
@@ -184,6 +203,11 @@ impl<C> Delivery<C> {
             #[cfg(feature = "testing")]
             scope_id: scope.scope_id(),
         }
+    }
+
+    /// The runtime the subscription was opened on: the app's own.
+    pub(crate) fn home(&self) -> Handle {
+        self.home.clone().unwrap_or_else(Handle::current)
     }
 
     /// Spawns `task` onto the continuation tracker, on the subscription's own runtime, so a
@@ -543,6 +567,39 @@ where
     )
 }
 
+/// Research (#417): spawns a subscription whose `count` workers run on dedicated threads with a
+/// [`LocalHandler`]. Not wired to a registration: the prototype of the `!Send` path.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_dispatch_threads_local<S, H, C, St>(
+    subscriber: S,
+    handler: Arc<H>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
+    count: NonZeroUsize,
+) -> JoinHandle<()>
+where
+    S: Subscriber + Send + 'static,
+    S::Message: Send + Sync + 'static,
+    H: LocalHandler<S::Message, C, St> + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    pool::spawn_dispatch_threads_local(
+        subscriber,
+        handler,
+        shutdown,
+        name,
+        state,
+        delivery,
+        failure,
+        Workers::threads(count),
+    )
+}
+
 fn lane_of(key: &[u8], lanes: usize) -> usize {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
@@ -744,6 +801,157 @@ async fn dispatch<H, M, C, St>(
         .await;
         #[cfg(not(feature = "testing"))]
         let result = AssertUnwindSafe(handler.handle(msg, &mut ctx))
+            .catch_unwind()
+            .await;
+        #[cfg(feature = "testing")]
+        let panicked = result.is_err();
+        // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None`
+        // means a fail-fast panic tore the service down and left the message unsettled (a broker
+        // with redelivery hands it back after the restart).
+        let settle = match result {
+            Ok(s) => Some(s),
+            Err(payload) => {
+                let reason = panic_reason(payload.as_ref());
+                error!(
+                    target: "ruststream::dispatch",
+                    subscription = %name,
+                    panic = %reason,
+                    "handler panicked",
+                );
+                match failure.policies.panic {
+                    FailurePolicy::FailFast => {
+                        failure
+                            .shutdown
+                            .signal(name, &format!("handler panicked: {reason}"));
+                        None
+                    }
+                    other => Some(
+                        other
+                            .settlement()
+                            .map_or_else(super::handler::HandlerOutcome::drop, Into::into),
+                    ),
+                }
+            }
+        };
+        // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
+        // settling consumes `msg`. The drained futures own their captures. A fail-fast (no
+        // settlement) runs no hooks. Most deliveries register none, and those pay the branch alone:
+        // the list, its scan and the drop glue of both belong to the deliveries that did register
+        // one.
+        let continuations = match settle.as_ref() {
+            Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
+            _ => None,
+        };
+        // The harness records what the handler saw and how it settled, BEFORE settling the
+        // message: the matching decrement runs in the broker message's `Drop` (during
+        // `settle_outcome`, or at the end of this function on the fail-fast path), so the record
+        // is in place by the time `drive` wakes. Captured here because `settle_outcome` consumes
+        // `msg` and dropping `ctx` clears the decode flag.
+        #[cfg(feature = "testing")]
+        if let Some(coordinator) = delivery.hooks.coordinator() {
+            coordinator.record(Record {
+                scope_id: delivery.scope_id,
+                name: name.to_owned(),
+                deliveries: vec![Delivered {
+                    raw: Bytes::copy_from_slice(msg.payload()),
+                    settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
+                }],
+                panicked,
+                decode_failed: ctx.took_decode_failed(),
+            });
+        }
+        (settle, continuations)
+    };
+    if let Some(mut s) = settle {
+        // Named for the same reason as the delivery's own future above: the settle path is
+        // built where it is polled instead of being copied into this future's state.
+        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build as fn(&M) -> C);
+        settling.await;
+        // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
+        // drains it. At-most-once: the message is already settled, so a lost or panicking
+        // continuation never redelivers it.
+        if let Some(after) = s.take_after() {
+            delivery.spawn_tracked(after);
+        }
+    } else {
+        // A fail-fast left the delivery unsettled: it is released here, as it always was at the
+        // end of its dispatch, rather than when the loop's slot is next filled.
+        drop(slot.take());
+    }
+    // Context-registered hooks run after the message is settled: at-most-once, off the delivery
+    // path. They ride the same app-wide tracker as an `and_after` continuation, so one drain
+    // covers both - the harness's `drain` and the shutdown's alike.
+    if let Some(continuations) = continuations {
+        for fut in continuations {
+            delivery.spawn_tracked(fut);
+        }
+    }
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.consumed();
+    }
+}
+
+/// Research (#417): [`dispatch`] for a [`LocalHandler`], whose future need not be `Send`: the
+/// same path, instantiated for a worker that builds and polls it on one thread. A copy rather
+/// than a shared body because one generic body cannot be `Send` for one caller and not for the
+/// other on stable Rust (that is what return type notation would express).
+// The `!Send` path is a prototype reached from a unit test only, not from a registration.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn dispatch_local<H, M, C, St>(
+    handler: &H,
+    slot: &mut Slot<M>,
+    encode: &mut BytesMut,
+    name: &str,
+    state: &St,
+    delivery: &Delivery<C>,
+    failure: &DispatchFailure,
+) where
+    H: LocalHandler<M, C, St>,
+    C: crate::BuildContext<M> + Send + Sync + 'static,
+    M: IncomingMessage,
+    // Polled on the thread that built it, so nothing here needs to cross threads; the bounds
+    // are the ones the context itself asks for.
+    St: Send + Sync,
+{
+    // Settling the message is what releases the harness's quiescence wait, and the post-settle
+    // continuations are spawned after it; one in-flight token spanning the whole dispatch keeps a
+    // `drain` from running before they exist.
+    #[cfg(feature = "testing")]
+    let watcher = delivery.hooks.coordinator().cloned();
+    #[cfg(feature = "testing")]
+    if let Some(coordinator) = &watcher {
+        coordinator.enqueued();
+    }
+    // Build the broker's typed per-delivery context from the message, then attach the fail-fast
+    // handle. The delivery is borrowed out of the slot for the whole handler phase and moves
+    // only at the settle below.
+    // The context lives in a block of its own and is dropped where it stands when the block ends:
+    // a `drop(ctx)` call would move the whole context out of this future's state into the call's
+    // argument first, a `memcpy` of the context per delivery.
+    let (settle, continuations) = {
+        let msg = slot.get();
+        let cx = C::build(msg);
+        // The delivery itself, not its header map: a handler that reads no headers never reaches
+        // the broker's accessor, which is a parse and a buffer on most transports.
+        let source = FromDelivery(msg);
+        let mut ctx = Context::new(name, &source, state, cx, delivery)
+            .with_failfast(&failure.shutdown)
+            .with_encode_buffer(encode)
+            .with_decode_policy(failure.policies.decode);
+        // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop
+        // the subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required
+        // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
+        // Under the harness, the invocation runs in a task-local slot scope so publishes made
+        // through injected `Out` publishers are attributed to their slot.
+        #[cfg(feature = "testing")]
+        let result = in_harness_scope(
+            harness_scope(delivery),
+            AssertUnwindSafe(handler.handle_local(msg, &mut ctx)).catch_unwind(),
+        )
+        .await;
+        #[cfg(not(feature = "testing"))]
+        let result = AssertUnwindSafe(handler.handle_local(msg, &mut ctx))
             .catch_unwind()
             .await;
         #[cfg(feature = "testing")]

@@ -5,11 +5,12 @@
 //! Per delivery, under load: a plain store to push and one to pop (`rtrb`, a preallocated ring
 //! whose sides read each other's index only when their cached copy runs out, so a worker reads the
 //! loop's index once per burst it drains), and one `SeqCst` fence on each side for the park and
-//! room handshakes; no allocation, no wake. Round-robin fills a ring with up to half its capacity
-//! before it moves on, and the loop waiting on a full ring is woken only once that ring has
-//! drained to half, so a saturated pool wakes its loop about once per half ring rather than once
-//! per delivery. Picking the ring with the most room reads every worker's index, `n` cross-core
-//! loads per delivery; round-robin reads none. Read-ahead: per ring, one delivery in process plus
+//! room handshakes; no allocation, no wake. Round-robin puts up to half a ring into the next ring
+//! in turn that has room, skipping full ones, and parks only when every ring is full; the first
+//! ring to drain to half wakes it, so a saturated pool wakes its loop about once per half ring
+//! rather than once per delivery, and no worker idles while the loop waits on another's ring.
+//! Picking the ring with the most room reads every worker's index, `n` cross-core loads per
+//! delivery; round-robin reads a ring's index only when its cached copy says the ring is full. Read-ahead: per ring, one delivery in process plus
 //! the ring's capacity. A key always goes to the same ring, and a ring is drained in order by one
 //! worker, so per-key order holds; the loop waits on a full ring rather than reorder a key.
 //!
@@ -31,9 +32,10 @@ use futures::task::AtomicWaker;
 use rtrb::{Consumer, Producer, RingBuffer};
 use tracing::{debug, error};
 
+use super::placement::{Member, start_thread};
 use super::research::{Knobs, Spin};
 use super::{Crew, Placement, Shared};
-use crate::runtime::dispatch::{Handler, Shutdown, Turn, Workers, lane_of};
+use crate::runtime::dispatch::{Handler, LocalHandler, Shutdown, Turn, Workers, lane_of};
 use crate::{BuildContext, IncomingMessage, Subscriber};
 
 /// What `loop_waiting` holds while the loop waits for room in any ring.
@@ -46,8 +48,10 @@ struct Signals {
     /// 0 while the loop pulls; the waited ring's index plus one, or [`ANY`], while it waits.
     loop_waiting: CachePadded<AtomicUsize>,
     loop_waker: AtomicWaker,
-    /// A ring the loop waits on wakes it once it holds no more than this.
+    /// A ring wakes a loop waiting on any ring once it holds no more than this; a loop waiting on
+    /// one ring (a lane's) is woken as soon as that ring has room.
     low_water: usize,
+    capacity: usize,
     /// The workers still running; the last one out wakes the loop.
     alive: AtomicUsize,
 }
@@ -55,8 +59,10 @@ struct Signals {
 /// Which ring the loop waits on for room.
 #[derive(Clone, Copy)]
 enum Which {
-    /// This one: the next in turn, or the one a key hashes to.
+    /// This one: the one a key hashes to.
     One(usize),
+    /// The first with room from here on, in turn.
+    Next(usize),
     /// Whichever has the most room, ties going to the first from here.
     Most(usize),
 }
@@ -73,20 +79,25 @@ impl Signals {
             loop_waiting: CachePadded::new(AtomicUsize::new(0)),
             loop_waker: AtomicWaker::new(),
             low_water: capacity / 2,
+            capacity,
             alive: AtomicUsize::new(count),
         }
     }
 
     /// Worker `index` freed a slot of its ring, which now holds `held()`: wakes the loop if it
-    /// waits for this ring, or any, and the ring has drained to low water.
+    /// waits for this ring and it has room, or for any ring and this one drained to low water.
     fn freed(&self, index: usize, held: impl FnOnce() -> usize) {
         // Orders the ring's index store before the flag's load, against the loop's flag store
         // before its ring load.
         fence(Ordering::SeqCst);
         let waiting = self.loop_waiting.load(Ordering::Relaxed);
-        if waiting != 0
-            && (waiting == ANY || waiting == index + 1)
-            && held() <= self.low_water
+        let wanted = match waiting {
+            0 => return,
+            ANY => self.low_water,
+            one if one == index + 1 => self.capacity - 1,
+            _ => return,
+        };
+        if held() <= wanted
             && self
                 .loop_waiting
                 .compare_exchange(waiting, 0, Ordering::SeqCst, Ordering::Relaxed)
@@ -117,6 +128,12 @@ impl Signals {
     ) -> Poll<Option<usize>> {
         let pick = || match which {
             Which::One(index) => (!rings[index].is_full()).then_some(index),
+            Which::Next(start) => {
+                let count = rings.len();
+                (0..count)
+                    .map(|offset| (start + offset) % count)
+                    .find(|&index| !rings[index].is_full())
+            }
             Which::Most(start) => {
                 let count = rings.len();
                 let mut best: Option<(usize, usize)> = None;
@@ -139,7 +156,7 @@ impl Signals {
         self.loop_waker.register(cx.waker());
         let waiting = match which {
             Which::One(index) => index + 1,
-            Which::Most(_) => ANY,
+            Which::Next(_) | Which::Most(_) => ANY,
         };
         self.loop_waiting.store(waiting, Ordering::SeqCst);
         fence(Ordering::SeqCst);
@@ -208,6 +225,76 @@ async fn work<Message, Body, Cx, State>(
             continue;
         }
         if ring.is_abandoned() {
+            // The abandonment is read without ordering; this orders the loop's last pushes
+            // before the emptiness check below.
+            fence(Ordering::Acquire);
+            if ring.is_empty() {
+                break;
+            }
+            continue;
+        }
+        // The closures own a unique borrow of the ring: a shared one would make this future
+        // `!Send`, the consumer being `!Sync`.
+        let waiting = &mut ring;
+        if spin.wait(move || !waiting.is_empty()).await {
+            continue;
+        }
+        let waiting = &mut ring;
+        let signals = &*signals;
+        poll_fn(move |cx| {
+            signals.wakers[index].register(cx.waker());
+            signals.parked[index].store(true, Ordering::SeqCst);
+            fence(Ordering::SeqCst);
+            if !waiting.is_empty() || waiting.is_abandoned() {
+                signals.parked[index].store(false, Ordering::SeqCst);
+                return Poll::Ready(());
+            }
+            Poll::Pending
+        })
+        .await;
+    }
+}
+
+/// [`work`] for a [`LocalHandler`]: the same loop, its future built and polled on one thread.
+// The `!Send` path is a prototype reached from a unit test only, not from a registration.
+#[cfg_attr(not(test), allow(dead_code))]
+async fn work_local<Message, Body, Cx, State>(
+    shared: Arc<Shared<Body, State, Cx>>,
+    signals: Arc<Signals>,
+    index: usize,
+    mut ring: Consumer<Message>,
+    spin: Spin,
+    chunk: bool,
+) where
+    Message: IncomingMessage + Send,
+    Body: LocalHandler<Message, Cx, State>,
+    Cx: BuildContext<Message> + Send + Sync + 'static,
+    State: Send + Sync,
+{
+    let _alive = Alive(&signals);
+    let mut encode = BytesMut::new();
+    loop {
+        if chunk {
+            let available = ring.slots();
+            if available > 0 {
+                if let Ok(batch) = ring.read_chunk(available) {
+                    for msg in batch {
+                        shared.handle_local(msg, &mut encode).await;
+                    }
+                }
+                signals.freed(index, || ring.slots());
+                continue;
+            }
+        } else if let Ok(msg) = ring.pop() {
+            // Freed before the handler runs, so the loop refills the ring meanwhile.
+            signals.freed(index, || ring.slots());
+            shared.handle_local(msg, &mut encode).await;
+            continue;
+        }
+        if ring.is_abandoned() {
+            // The abandonment is read without ordering; this orders the loop's last pushes
+            // before the emptiness check below.
+            fence(Ordering::Acquire);
             if ring.is_empty() {
                 break;
             }
@@ -237,7 +324,7 @@ async fn work<Message, Body, Cx, State>(
 
 /// The loop of a pool fed through a ring per worker.
 pub(super) async fn run<Sub, Body, Cx, State>(
-    mut subscriber: Sub,
+    subscriber: Sub,
     shared: Arc<Shared<Body, State, Cx>>,
     shutdown: Shutdown,
     workers: Workers,
@@ -250,6 +337,56 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
+    let (spin, chunk) = (knobs.spin, knobs.chunk);
+    let start = |index, consumer, signals| {
+        let shared = Arc::clone(&shared);
+        placement.start(index, move || {
+            work(shared, signals, index, consumer, spin, chunk)
+        })
+    };
+    feed(subscriber, &shared.name, shutdown, workers, knobs, start).await;
+}
+
+/// Research (#417): the loop of a pool of dedicated threads whose handler's future need not be
+/// `Send`: each worker's future is built on its thread and polled there alone.
+// The `!Send` path is a prototype reached from a unit test only, not from a registration.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) async fn run_local<Sub, Body, Cx, State>(
+    subscriber: Sub,
+    shared: Arc<Shared<Body, State, Cx>>,
+    shutdown: Shutdown,
+    workers: Workers,
+    knobs: Knobs,
+) where
+    Sub: Subscriber + Send + 'static,
+    Sub::Message: Send + Sync + 'static,
+    Body: LocalHandler<Sub::Message, Cx, State> + 'static,
+    Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
+    State: Send + Sync + 'static,
+{
+    let (spin, chunk) = (knobs.spin, knobs.chunk);
+    let start = |index, consumer, signals| {
+        let shared = Arc::clone(&shared);
+        start_thread(index, move || {
+            work_local(shared, signals, index, consumer, spin, chunk)
+        })
+    };
+    feed(subscriber, &shared.name, shutdown, workers, knobs, start).await;
+}
+
+/// The loop over `subscriber`, with a ring per worker that `start` starts.
+async fn feed<Sub, Start>(
+    mut subscriber: Sub,
+    name: &str,
+    shutdown: Shutdown,
+    workers: Workers,
+    knobs: Knobs,
+    mut start: Start,
+) where
+    Sub: Subscriber + Send + 'static,
+    Sub::Message: Send + Sync + 'static,
+    Start: FnMut(usize, Consumer<Sub::Message>, Arc<Signals>) -> Member,
+{
     let count = workers.count;
     let keyed = workers.by_key;
     let signals = Arc::new(Signals::new(count, knobs.ring));
@@ -259,14 +396,8 @@ pub(super) async fn run<Sub, Body, Cx, State>(
     for index in 0..count {
         let (producer, consumer) = RingBuffer::new(knobs.ring);
         rings.push(producer);
-        let shared = Arc::clone(&shared);
-        let signals = Arc::clone(&signals);
-        let (spin, chunk) = (knobs.spin, knobs.chunk);
-        crew.0.push(placement.start(index, move || {
-            work(shared, signals, index, consumer, spin, chunk)
-        }));
+        crew.0.push(start(index, consumer, Arc::clone(&signals)));
     }
-    let name = &shared.name;
     let mut stream = pin!(subscriber.stream());
     let mut cancelled = pin!(shutdown.cancelled());
     // The next ring in turn: the pool's round-robin, and where keyless deliveries of the lanes go;
@@ -286,7 +417,7 @@ pub(super) async fn run<Sub, Body, Cx, State>(
             let which = if knobs.least {
                 Which::Most(turn)
             } else {
-                Which::One(turn)
+                Which::Next(turn)
             };
             // The closure owns a unique borrow of the producers: a shared one would make the loop
             // `!Send`, a producer being `!Sync`.
@@ -321,8 +452,13 @@ pub(super) async fn run<Sub, Body, Cx, State>(
                 let index = picked
                     .unwrap_or_else(|| msg.partition_key().map_or(turn, |key| lane_of(key, count)));
                 if picked.is_some() && !knobs.least {
-                    // A turn fills its ring with up to `batch` deliveries, or until it is full.
+                    // A turn puts up to `batch` deliveries in its ring, or fills it; a full ring
+                    // skipped on the way ends its turn.
+                    if index != turn {
+                        in_turn = 0;
+                    }
                     in_turn += 1;
+                    turn = index;
                     if in_turn >= batch || rings[index].is_full() {
                         turn = (index + 1) % count;
                         in_turn = 0;

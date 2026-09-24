@@ -368,6 +368,77 @@ where
     }
 }
 
+/// Research (#417): a handler whose future need not be `Send`, for workers on threads of their own
+/// ([`Workers::threads`](super::Workers::threads)), where a delivery's future is built and polled
+/// on one thread from its first poll to its end.
+///
+/// A closure takes this form through [`Local`]; state the body holds across an `.await` may then
+/// be `Rc` or `RefCell`, which a [`Handler`] rejects.
+///
+/// # Examples
+///
+/// ```
+/// use std::cell::RefCell;
+/// use std::rc::Rc;
+///
+/// use ruststream::runtime::{Context, HandlerOutcome, Local, LocalHandler};
+///
+/// fn assert_local<M, H: LocalHandler<M>>(_: H) {}
+///
+/// assert_local::<(), _>(Local(|_msg: &(), _ctx: &mut Context| async {
+///     let seen = Rc::new(RefCell::new(0));
+///     tokio::task::yield_now().await;
+///     *seen.borrow_mut() += 1;
+///     HandlerOutcome::ack()
+/// }));
+/// ```
+///
+/// The same body is not a [`Handler`]: its future holds an `Rc` across an `.await`.
+///
+/// ```compile_fail
+/// use std::cell::RefCell;
+/// use std::rc::Rc;
+///
+/// use ruststream::runtime::{Context, Handler, HandlerOutcome};
+///
+/// fn assert_handler<M, H: Handler<M>>(_: H) {}
+///
+/// assert_handler::<(), _>(|_msg: &(), _ctx: &mut Context| async {
+///     let seen = Rc::new(RefCell::new(0));
+///     tokio::task::yield_now().await;
+///     *seen.borrow_mut() += 1;
+///     HandlerOutcome::ack()
+/// });
+/// ```
+pub trait LocalHandler<M: ?Sized, C = (), S = ()>: Send + Sync {
+    /// Handle one input; the future stays on the thread that polls it.
+    fn handle_local(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome>;
+}
+
+/// Research (#417): a closure handler whose future need not be `Send`; see [`LocalHandler`].
+#[derive(Debug, Clone, Copy)]
+pub struct Local<F>(pub F);
+
+impl<M: ?Sized, C, S, F, Fut> LocalHandler<M, C, S> for Local<F>
+where
+    F: Fn(&M, &mut Context<'_, C, S>) -> Fut + Send + Sync,
+    Fut: Future,
+    Fut::Output: IntoOutcome,
+{
+    fn handle_local(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        let fut = (self.0)(msg, ctx);
+        async move { fut.await.into_outcome() }
+    }
+}
+
 impl<M, C, S, H> Handler<M, C, S> for Arc<H>
 where
     H: Handler<M, C, S>,

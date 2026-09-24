@@ -14,6 +14,7 @@ use std::fmt;
 use std::future::Future;
 
 use serde::de::DeserializeOwned;
+use tokio::runtime::Handle as TokioHandle;
 use tracing::warn;
 
 use crate::ContextField;
@@ -148,6 +149,25 @@ where
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
         let value = T::from_ref(ctx.state());
         async move { Ok(Self(value)) }
+    }
+}
+
+/// Research (#417): the app's main runtime, for a handler whose workers run on threads of their
+/// own ([`Workers::threads`](super::Workers::threads)) to send work there explicitly.
+///
+/// A plain `tokio::spawn` in such a handler stays on the handler's thread; a task spawned
+/// through this handle runs on the app's runtime instead, and must be `Send`, since it crosses
+/// threads. On workers that are tasks of the app's runtime it is that same runtime.
+#[derive(Debug, Clone)]
+pub struct MainRuntime(pub TokioHandle);
+
+impl<C, S> FromContext<C, S> for MainRuntime {
+    type Rejection = Infallible;
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+        let handle = ctx.main_runtime();
+        async move { Ok(Self(handle)) }
     }
 }
 

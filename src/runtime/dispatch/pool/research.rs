@@ -76,6 +76,7 @@ pub(super) struct Knobs {
     pub(super) pinned: bool,
     capacity: Option<usize>,
     pub(super) ring: usize,
+    ring_set: bool,
     pub(super) spin: Spin,
     pub(super) chunk: bool,
     pub(super) least: bool,
@@ -108,11 +109,22 @@ impl Knobs {
                 .and_then(|v| usize::try_from(v).ok())
                 .unwrap_or(2)
                 .max(1),
+            ring_set: var("RUSTSTREAM_RESEARCH_RING").is_some(),
             spin,
             chunk: var("RUSTSTREAM_RESEARCH_CHUNK").as_deref() == Some("1"),
             least: var("RUSTSTREAM_RESEARCH_PICK").as_deref() == Some("least"),
             batch: number("RUSTSTREAM_RESEARCH_BATCH").and_then(|v| usize::try_from(v).ok()),
         }
+    }
+
+    /// The knobs of `threads(n)`: rings of 8 unless the environment names a size, round-robin.
+    pub(super) fn dedicated(mut self) -> Self {
+        if !self.ring_set {
+            self.ring = 8;
+        }
+        self.least = false;
+        self.chunk = false;
+        self
     }
 
     /// How many deliveries a round-robin turn puts in one ring.

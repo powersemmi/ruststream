@@ -15,6 +15,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use bytes::BytesMut;
+use tokio::runtime::Handle as TokioHandle;
 
 use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
@@ -343,6 +344,12 @@ impl<'a, C, S> Context<'a, C, S> {
     #[must_use]
     pub fn state(&self) -> &S {
         self.state
+    }
+
+    /// Research (#417): the runtime the app runs on, which a handler on a dedicated thread sends
+    /// work to explicitly.
+    pub(crate) fn main_runtime(&self) -> TokioHandle {
+        self.delivery.home()
     }
 
     /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`.

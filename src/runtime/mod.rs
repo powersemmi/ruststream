@@ -53,7 +53,7 @@ pub use batch::{batch_verdict, uniform_batch};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use extract::{Ctx, FromContext, FromRef, Headers, State};
+pub use extract::{Ctx, FromContext, FromRef, Headers, MainRuntime, State};
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
@@ -75,7 +75,7 @@ pub use handle::{
 };
 #[doc(hidden)]
 pub use handler::IntoOutcome;
-pub use handler::{Handler, HandlerOutcome};
+pub use handler::{Handler, HandlerOutcome, Local, LocalHandler};
 // The status half of `HandlerOutcome`, for the crate's own policies, dispatch and test seams.
 // The consumers outside `runtime` are all feature-gated (metrics, otel, testing), so a minimal
 // build leaves this re-export unused.
