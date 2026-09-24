@@ -993,53 +993,71 @@ Use `thiserror` and one crate-level error enum, with variants by source. Mark pu
 
 ## Test support
 
-Ship an in-process transport implementing `TestableBroker` on its **connected form** under a
-`testing` feature. Register it with `register_testable_broker!` for that connected type: the
-harness connects every broker before recovering its transport. Users can then unit-test handlers
-against your broker with the `TestApp` harness.
+A service tests the app it ships: `TestApp::start(app())` takes the same builder `main` runs and
+connects every broker of it in process, and the test addresses your broker by its production type,
+`tb.broker::<YourBroker>()`. That in-process mode is part of your broker's contract, and your crate
+provides it under a `testing` feature:
 
-The transport does **core routing only**: it dispatches published messages to matching subscribers,
-and it answers `ack` and `nack` the way the real transport answers. Where the real transport
-acknowledges, the stand-in answers in memory: `nack(requeue = true)` puts the delivery back. Where
-it cannot acknowledge at all (ZeroMQ, MQTT `QoS 0`, Redis pub/sub), the answer stays
-`AckError::Unsupported`. A stand-in that claims a settlement its transport never performs is what
-makes a handler's retry pass in a test and lose the message in production.
+- `InProcess` on your production broker: `connect_in_process(self)`, the consuming transition to
+  your own connected form, backed by an in-process transport, with no I/O.
+- `TestableBroker` on that connected form: how the harness injects a message, reads the publish
+  log and installs the coordinator that counts what is in flight.
+- `register_testable_broker!(YourBroker)`, which registers both for the harness.
 
-Do not simulate broker-specific semantics (durable cursors, redelivery timers, offsets,
-dead-letter routing) in it; those are verified end to end against a real server.
+So the connected form, its subscriber, its publishers and its delivery type each gain an in-process
+variant that exists only under the `testing` feature. Without the feature there is one variant and
+no branch, and a service's production build is unchanged: Cargo does not enable a
+dev-dependency's features in a production binary. The in-process transport has no configuration of
+its own. It reads every setting from the broker it was built from (default group, prefetch,
+topology declaration, whatever your real broker applies), so a test cannot run against settings
+production does not have.
 
-The reference is the in-memory broker's own implementation (on `ConnectedMemoryBroker`):
+The in-memory broker has no server, so its in-process mode is its ordinary `connect`, and its
+reference implementation is short:
 
 ```rust
 --8<-- "src/memory/mod.rs:testable"
+```
+
+A broker with a server builds its in-process transport in `connect_in_process` and registers the
+production type:
+
+```rust
+--8<-- "tests/in_process.rs:in_process"
 ```
 
 The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
 `Coordinator::consumed` when a delivery is settled or dropped, so the harness can tell when the
 reaction has settled. It routes delayed redeliveries through `Coordinator::schedule_redelivery`.
 
-That one type works with both `TestApp` and the conformance suite. See
-[Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html) for the user-facing side, and [Conformance](conformance.md) to
-prove the implementation with `run_suite` and the `lifecycle` ladder check.
+The same test also runs against a stand: `TestApp::start_live(app())` connects your broker through
+its ordinary `connect` and needs nothing from your crate beyond the connected form and its
+`DefaultPublish` policy, through which the harness publishes a test's input. See
+[Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html) for the user-facing side,
+and [Conformance](conformance.md) to prove the in-process mode with `run_suite` and the other suites
+in process.
 
 ### Writing one you can trust
 
-A stand-in is the type a service's whole test suite runs against, so every difference between it
-and the real transport is a green test for behaviour production does not have. The differences that
-matter are not exotic ones, and each rule below costs about one test.
+The in-process transport is what a service's whole test suite runs against, so every difference
+between it and the real transport is a green test for behaviour production does not have. It never
+succeeds where the real broker fails: a publish, an acknowledgement, a requeue or a subscription the
+server rejects or strands is rejected in process the same way. The differences that matter are not
+exotic ones, and each rule below costs about one test.
 
-**Run the core's contract suites against the stand-in, not only against a server.** The suites are
-written against the traits and do not care whether a real broker or the stand-in answers them. One
-`#[tokio::test]` is enough:
+**Run the core's contract suites in process, not only against a server.** The suites are written
+against the traits and do not care whether the server or the in-process transport answers them.
+One `#[tokio::test]` is enough:
 
 ```rust
 --8<-- "tests/conformance_self.rs:run_suite"
 ```
 
-Run `lifecycle` first. It walks `new` -> `connect` -> subscribe -> publish -> ack -> `shutdown` and
-then asks what a stand-in almost never gets asked: does a publisher created before the shutdown
-return an error afterwards? A real client answers "not connected". A stand-in whose publish is a
-channel send has no reason to, and accepts the message instead.
+Run `lifecycle` in process too, through `harness::InProcessBroker`. It walks `new` -> `connect` ->
+subscribe -> publish -> ack -> `shutdown` and then asks what an in-process transport almost never
+gets asked: does a publisher created before the shutdown return an error afterwards? A real client
+answers "not connected". A transport whose publish is a channel send has no reason to, and accepts
+the message instead.
 
 ```rust
 --8<-- "tests/conformance_self.rs:lifecycle"
@@ -1047,24 +1065,23 @@ channel send has no reason to, and accepts the message instead.
 
 Add the `capabilities::*` suites the same way, one for each capability you implement.
 
-**Offer the capability surface the real broker offers.** The `testing` feature is for tests, and a
-release build turns it off, which is what makes the two directions unequal. Falling short is the
-expensive direction: a capability the real broker has and the stand-in lacks cannot be mounted in
-process at all, so the behaviour behind it goes untested. Going over is the cheap one: a
-transaction or a request-reply that only the stand-in offers does not compile in your own release
-build, which is annoying and caught at once.
+**Offer the capability surface the real broker offers.** The in-process variant lives in the
+production types, so a mount that compiles against the broker compiles in process, and a capability
+is the same type in both. What remains to get right is that each capability behaves the way the
+server's does.
 
 **Settle the way the transport settles.** The real `ack` returns `AckError::Unsupported` where the
 transport does not acknowledge: a fire-and-forget transport, an at-most-once quality of service.
-The stand-in returns the same. Answering `Ok(())` to keep a suite quiet is how a handler returning
-`HandlerOutcome::retry()` passes in process and loses the message in production. The suites accept
-the honest answer.
+The in-process transport returns the same. Answering `Ok(())` to keep a suite quiet is how a handler
+returning `HandlerOutcome::retry()` passes in process and loses the message in production. The
+suites accept the honest answer.
 
 **Reproduce what the client does; do not fake what the broker does.** The split is not about
 effort, it is about which side the behaviour runs on. Competing consumers, group distribution,
 correlation and reply routing, and buffering until commit are client-side or routing-level, and an
 in-process copy of them is exact. Cluster atomicity, fencing, broker-held timeouts and
-exactly-once are broker-side, and an in-process copy of them is fiction.
+exactly-once are broker-side, and an in-process copy of them is fiction; the live mode
+(`TestApp::start_live`) runs the same test against the server that has them.
 
 Competing consumers is the one to get right, because getting it wrong looks like success. Handing
 every message of a queue to every subscriber of that queue is a fan-out, not a queue. Two workers
@@ -1082,10 +1099,10 @@ is missing; write which test a reader may no longer trust, and what covers it in
 ```
 
 **Pin the gap with a test as well.** A comment goes stale the first time someone "fixes" the
-stand-in to route what it deliberately does not route. A test asserting the handler is *not*
+transport to route what it deliberately does not route. A test asserting the handler is *not*
 reached fails that day and explains itself.
 
-**Mount the stand-in with the production wiring.** Your own subscription sources and publish
-policies have to work against it unchanged, so a service tests the routes file it ships. If a user
-must swap `OrdersStream` for something else to get a test running, the test no longer covers the
-mount.
+**Read the production wiring.** The in-process variant sits under your own subscription sources and
+publish policies, so a service tests the routes file it ships. A check your real broker makes at
+subscribe or publish time (a declaration it refuses, a name too long for the protocol, a header it
+cannot carry) runs in process through the same code.

@@ -3,8 +3,9 @@
 The conformance harness proves your broker honours the core contract. It has two entry points, and
 both panic with a descriptive message on the first contract violation:
 
-- `harness::run_suite` checks the **routing surface** against your in-process transport (the
-  [`TestableBroker`](index.md#test-support) you ship).
+- `harness::run_suite` checks the **routing surface** of your broker's
+  [in-process mode](index.md#test-support): it builds your production broker and connects it
+  through `InProcess::connect_in_process`.
 - `harness::lifecycle` checks the **lifecycle ladder** end to end against the real broker.
 
 Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` -> `connect(self)`
@@ -15,16 +16,17 @@ Run both: `run_suite` for the dispatch guarantees, `lifecycle` to prove `new` ->
 ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
-The `conformance` feature enables `testing`, so the single `TestableBroker` your crate ships serves
-`run_suite` here and the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) harness users write.
+The `conformance` feature enables `testing`, so the one in-process mode your crate ships serves
+`run_suite` here and the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html)
+harness users write.
 
 ## The routing suite
 
-`harness::run_suite` takes a synchronous factory (`Fn() -> B`) that builds a fresh in-process
-transport for each scenario, so no scenario sees another's state. Each scenario connects the broker
-and works with its connected form, your `TestableBroker`, which also implements `Subscribe`. Below
-is the reference in-memory broker's own run of the suite, verbatim; put your transport's constructor
-in the factory:
+`harness::run_suite` takes a synchronous factory (`Fn() -> B`) that builds a fresh production broker
+for each scenario, so no scenario sees another's state. Each scenario connects it through
+`connect_in_process` and works with the connected form, which implements `TestableBroker` and
+`Subscribe`. Below is the reference in-memory broker's own run of the suite, verbatim; put your
+broker's constructor in the factory, configured the way a service configures it:
 
 ```rust
 use ruststream::conformance::harness;
@@ -107,7 +109,20 @@ async fn passes_lifecycle() {
 A broker with no ack semantics (Core NATS) passes by returning `AckError::Unsupported` from `ack`:
 the check accepts that answer as well as a successful ack. `lifecycle` performs a real `connect`, so
 run it against a live server and enable it only when an environment variable like `NATS_TEST_URL` is
-set; the in-memory broker passes it in process.
+set.
+
+## The same suites in process
+
+`lifecycle`, `redelivery_address` and the capability suites connect the broker they are handed with
+`Broker::connect`. Wrap your production broker in `harness::InProcessBroker` and they connect it
+through `connect_in_process` instead, so every suite runs a second time with no server, over your
+own descriptors and publish policies. Run both passes: the in-process one is what keeps the
+in-process mode honest, the live one proves the real transport. Below, a broker whose `connect`
+dials a server passes the routing suite and the ladder in process:
+
+```rust
+--8<-- "tests/in_process.rs:suites"
+```
 
 ## Capability suites
 
@@ -165,9 +180,12 @@ Before publishing a broker crate:
 - [ ] The crate owns its `Config`; fields with no sane default do not get a `Default`.
 - [ ] Capability traits are implemented only where the broker genuinely supports them, and each
       implemented capability passes its `conformance::capabilities` suite.
-- [ ] An in-process transport implementing `TestableBroker` on its connected form is shipped under
-      a `testing` feature (core routing only) and registered with `register_testable_broker!`.
-- [ ] `harness::run_suite` passes (the routing surface).
+- [ ] The in-process mode ships under a `testing` feature: `InProcess` on the broker,
+      `TestableBroker` on its connected form, and `register_testable_broker!(YourBroker)`. The
+      in-process transport reads every setting from the production broker and never succeeds
+      where the real broker fails.
+- [ ] `harness::run_suite` passes (the routing surface), and the other suites pass in process
+      through `harness::InProcessBroker` as well as against a real server.
 - [ ] `harness::lifecycle` passes against a real server, enabled by an environment variable (the
       ladder: sync `new`, consuming `connect`, subscribe, ack, consuming `shutdown`, and the
       aliased-handle error after it).

@@ -25,7 +25,8 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Failure policy](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#failure-policy): what a panic or an undecodable payload does to a delivery
 - [Running beside another server](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server): `start()` and the running handle
 - [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html): JSON, CBOR and MessagePack, where a codec is chosen, and payloads that carry their own bytes
-- [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html): unit-testing a service in process with `TestApp`
+- [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html): testing a service's production app with `TestApp`, every broker in process, addressed by its production type
+- [Testing against a running broker](https://docs.rs/ruststream/latest/ruststream/testing/index.html#against-a-running-broker): `TestApp::start_live`, the same test body against a stand
 - [AsyncAPI](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html): the generated AsyncAPI document and its viewer
 - [OpenTelemetry](https://docs.rs/ruststream/latest/ruststream/otel/index.html): trace propagation, OTLP export and per-handler metrics
 - [Prometheus metrics](https://docs.rs/ruststream/latest/ruststream/metrics/index.html): consume and publish metrics
@@ -51,7 +52,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Broker authors
 
-- [Writing a broker](https://powersemmi.github.io/ruststream/latest/broker-authors/): the traits a broker crate implements and the lazy-startup contract
+- [Writing a broker](https://powersemmi.github.io/ruststream/latest/broker-authors/): the traits a broker crate implements, the lazy-startup contract and the in-process mode
 - [A worked example: NATS](https://powersemmi.github.io/ruststream/latest/broker-authors/example-nats/): a broker crate built step by step
 - [Conformance](https://powersemmi.github.io/ruststream/latest/broker-authors/conformance/): the harness that checks a broker against the contract
 - [Template contract](https://powersemmi.github.io/ruststream/latest/broker-authors/templates/): the `cargo generate` template a broker crate ships

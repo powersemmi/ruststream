@@ -24,7 +24,7 @@ use ruststream::{
         MemorySubscriber, Retaining, Retention,
     },
     nonzero,
-    testing::{Coordinator, TestableBroker},
+    testing::{Coordinator, InProcess, TestableBroker},
 };
 
 /// What a stand-in's deliveries answer when they are settled.
@@ -93,6 +93,16 @@ impl<S: Settlement> Broker for Standin<S> {
             inner,
             settlement: PhantomData,
         })
+    }
+}
+
+/// The stand-in has no server either, so the transition the suite connects through is its
+/// ordinary `connect`.
+impl<S: Settlement> InProcess for Standin<S> {
+    fn connect_in_process(
+        self,
+    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+        self.connect()
     }
 }
 

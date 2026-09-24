@@ -920,9 +920,11 @@ struct Order {
 
 ## Testing
 
-Use the `TestApp` harness (`testing` feature): it drives the built application with no network and
-no server, injects input through the broker bus, and exposes per-broker assertions. `MemoryBroker`
-is a real broker here, driven through the same dispatch path as production.
+Use the `TestApp` harness (`testing` feature) on the service's production app, the builder `main`
+runs: `TestApp::start` connects every broker in process, with no network and no server, injects
+input through the broker, and exposes per-broker assertions addressed by the production broker
+type. `TestApp::start_live` runs the same test body against a running stand. `MemoryBroker` is a
+real broker here, driven through the same dispatch path as production.
 
 ```rust
 use ruststream::memory::prelude::*;
@@ -965,5 +967,6 @@ tb.out::<Telemetry>()
 tb.out::<Notes>().assert_called_once().assert_options_default();
 ```
 
-Broker crates ship their own in-process test broker under their `testing` feature; `TestApp` drives
-those the same way.
+A broker crate provides its in-process mode under its `testing` feature: enable it in
+`[dev-dependencies]`, build the app on the production broker (`KafkaBroker::new(..)`), and address
+it as `tb.broker::<KafkaBroker>()`. A test never names a stand-in type.

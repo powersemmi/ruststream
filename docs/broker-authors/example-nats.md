@@ -15,8 +15,8 @@ and its documentation states it.
 ```toml title="Cargo.toml"
 [features]
 default = []
-# The in-process test broker users get. The conformance harness is a broker-author tool and stays
-# a dev-dependency, not a feature users can turn on.
+# The in-process mode users test the production app with. The conformance harness is a
+# broker-author tool and stays a dev-dependency, not a feature users can turn on.
 testing = ["ruststream/testing"]
 
 [dependencies]
@@ -646,9 +646,10 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## Proving it
 
-Ship an in-process transport under a `testing` feature that does basic routing only: a subject
-matcher that delivers a published message to every subscriber of the subject at once. It
-implements `TestableBroker` on its connected form, and that type is registered with
-`register_testable_broker!`. Run the conformance suite against it. Such a transport must not
-simulate JetStream cursors, redelivery timers or retention: those are checked by the end-to-end
-suite against a real `nats-server`. See [Conformance](conformance.md).
+Ship the in-process mode under a `testing` feature: `InProcess` on `NatsBroker`, whose
+`connect_in_process` gives the connected form a subject matcher in place of the client, delivering
+a published message to every subscriber of the subject at once. The connected form implements
+`TestableBroker`, and `register_testable_broker!(NatsBroker)` registers the production type. Run the
+conformance suites against it, in process and against a server. JetStream cursors, redelivery
+timers and retention belong to the server, and the same tests run against a real `nats-server`
+through `TestApp::start_live`. See [Conformance](conformance.md).

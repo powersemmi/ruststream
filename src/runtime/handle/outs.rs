@@ -100,6 +100,8 @@ use crate::runtime::router::IncludeDef;
 use crate::runtime::slot::{
     BindSlots, ContainsMessage, HasSlots, OutSlot, PublishedThrough, SlotPublisher,
 };
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::{Origin, paired, publishing_to};
 use crate::{
     Connected, ConnectedBroker, HeaderMap, Name, OutgoingDestination, OutgoingFor,
     OwnedTransactions, PairError, PublishPolicy, Publisher, RequestReply, TransactionalPublisher,
@@ -150,6 +152,10 @@ pub struct Slot<M, W, E, Pipe = PublishIdentity, Body = ()> {
     codec: E,
     pipeline: Pipe,
     _declared: PhantomData<fn() -> Body>,
+    /// The broker the slot's publisher was paired against, which its publishes go to, whatever
+    /// broker the handler holding it consumes from.
+    #[cfg(feature = "testing")]
+    origin: Origin,
 }
 
 impl<M, W, E, Pipe, Body> fmt::Debug for Slot<M, W, E, Pipe, Body> {
@@ -420,7 +426,10 @@ impl<M: OutSlot, W: Publisher, E: Send + Sync, Pipe: OutPipeline<W>, Body> Publi
         msg: OutgoingFor<'_, Self::Payload>,
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
-        self.pipeline.send(&self.wired, msg, options).await
+        let publish = self.pipeline.send(&self.wired, msg, options);
+        #[cfg(feature = "testing")]
+        let publish = publishing_to(self.origin, publish);
+        publish.await
     }
 
     fn base_headers(&self) -> Option<&HeaderMap> {
@@ -470,10 +479,10 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
         msg: OutgoingFor<'_, Self::Payload>,
         timeout: Duration,
     ) -> Result<Self::Reply, Self::Error> {
-        self.wired
-            .request(msg, timeout)
-            .await
-            .map_err(Pipe::from_publish_error)
+        let request = self.wired.request(msg, timeout);
+        #[cfg(feature = "testing")]
+        let request = publishing_to(self.origin, request);
+        request.await.map_err(Pipe::from_publish_error)
     }
 }
 
@@ -486,6 +495,8 @@ impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
             codec,
             pipeline,
             _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin: Origin::default(),
         }
     }
 }
@@ -509,7 +520,12 @@ where
         connected: &Connected<B>,
         _subscriber: &Sub,
     ) -> Result<Self, PairError> {
-        let live = policy.pair(connected).await.map_err(|err| {
+        let pairing = policy.pair(connected);
+        #[cfg(feature = "testing")]
+        let (live, origin) = paired(connected, pairing).await;
+        #[cfg(not(feature = "testing"))]
+        let live = pairing.await;
+        let live = live.map_err(|err| {
             PairError::from_boxed(Box::from(format!(
                 "pairing the publisher for the `{}` slot failed: {err}",
                 M::NAME,
@@ -520,6 +536,8 @@ where
             codec,
             pipeline,
             _declared: PhantomData,
+            #[cfg(feature = "testing")]
+            origin,
         })
     }
 }

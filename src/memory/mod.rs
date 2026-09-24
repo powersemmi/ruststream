@@ -710,8 +710,19 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
 }
 
 // --8<-- [start:testable]
-// The harness drives the connected form: TestApp connects every registered broker before it
-// recovers the in-process transport, and run_suite scenarios receive connected brokers.
+// The bus is in-process by nature, so the transition the harness connects through is the ordinary
+// `connect`: the connected form a test drives is the one production gets.
+#[cfg(feature = "testing")]
+impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
+    fn connect_in_process(
+        self,
+    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+        self.connect()
+    }
+}
+
+// The harness drives the connected form that transition produces, and run_suite scenarios
+// receive it too.
 #[cfg(feature = "testing")]
 impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log> {
     fn install_coordinator(&self, coordinator: Coordinator) {
@@ -741,12 +752,12 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
     }
 }
 
-// One registration per log mode: the harness recovers a broker by its concrete type, and the
-// two modes are two types.
+// One registration per log mode: the harness finds a broker by the type the app was built on,
+// and the two modes are two types.
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(ConnectedMemoryBroker<Discarding>);
+crate::register_testable_broker!(MemoryBroker<Discarding>);
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(ConnectedMemoryBroker<Retaining>);
+crate::register_testable_broker!(MemoryBroker<Retaining>);
 // --8<-- [end:testable]
 
 // --8<-- [start:subscribe]

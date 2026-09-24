@@ -148,10 +148,11 @@ templates/memory --name my-service` (each broker crate ships its own template). 
 
 ## Testing the service
 
-Unit-test a built service against the in-memory broker, with no external service. The `TestApp`
-harness drives it through the same dispatch path the production runtime uses, so you assert on
-handler behaviour, middleware, and decoding exactly as in production; what the memory broker does
-and does not model is on
+Test the app the service ships, with no external service. `TestApp::start` takes the builder
+`main` runs and connects every broker of it in process, whichever broker the service is built on,
+and drives it through the same dispatch path the production runtime uses, so you assert on handler
+behaviour, middleware, and decoding exactly as in production. `TestApp::start_live` runs the same
+test against a running broker. The in-memory broker is described on
 [its own page](https://powersemmi.github.io/ruststream/latest/brokers/memory/).
 
 ```rust

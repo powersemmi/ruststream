@@ -35,12 +35,12 @@ use ruststream::runtime::{
     AppInfo, ForReply, HandlerOutcome, Names, Outgoing, PublishContext, PublishTransform,
     RETRY_COUNT_HEADER, Reads, Router, RustStream, State,
 };
-use ruststream::testing::TestApp;
+use ruststream::testing::{Coordinator, InProcess, TestApp, TestableBroker};
 use ruststream::{
     AckError, AddressedCopies, Broker, BrokerMoves, Connected, ConnectedBroker, DeclareRetryError,
     DefaultPublish, FromRef, HeaderMap, IncomingMessage, NamedCopies, OutgoingMessage, PairError,
-    PublishPolicy, Publisher, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration, Subscribe,
-    Subscriber, SubscriptionSource, nonzero, subscriber,
+    PublishPolicy, Publisher, RawMessage, RedeliveryAddress, RedeliveryAddressed, RetryDeclaration,
+    Subscribe, Subscriber, SubscriptionSource, nonzero, register_testable_broker, subscriber,
 };
 use serde::Serialize;
 
@@ -1214,6 +1214,35 @@ impl<Answer: Send + Sync + 'static> ConnectedBroker for ConnectedBus<Answer> {
         Ok(())
     }
 }
+
+/// The bus has no server, so the transition the harness connects through is its ordinary
+/// `connect`.
+impl<Answer: Send + Sync + 'static> InProcess for Bus<Answer> {
+    fn connect_in_process(
+        self,
+    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+        self.connect()
+    }
+}
+
+/// The harness drives the wrapped bus.
+impl<Answer: Send + Sync + 'static> TestableBroker for ConnectedBus<Answer> {
+    fn install_coordinator(&self, coordinator: Coordinator) {
+        self.inner.install_coordinator(coordinator);
+    }
+
+    fn inject(&self, message: OutgoingMessage<'_>) {
+        self.inner.inject(message);
+    }
+
+    fn published(&self, name: &str) -> Vec<RawMessage> {
+        self.inner.published(name)
+    }
+}
+
+register_testable_broker!(Bus<Moved>);
+register_testable_broker!(Bus<Mapped>);
+register_testable_broker!(Bus<Unaddressed>);
 
 /// The bus's own publisher, paired through the broker wrapped around it.
 #[derive(Debug, Default, Clone, Copy)]

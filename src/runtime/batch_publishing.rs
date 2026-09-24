@@ -15,6 +15,8 @@ use bytes::BytesMut;
 use serde::Serialize;
 use tracing::warn;
 
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::{Origin, publishing_to};
 use crate::{BuildBatchContext, IncomingMessage, PayloadForm};
 
 use super::batch::{BatchHandler, BatchResult, decode_batch, settle_batch};
@@ -167,6 +169,9 @@ pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = Publi
     pub(crate) pipeline: PP,
     pub(crate) injections: D::Injections,
     pub(crate) decode: FailurePolicy,
+    /// The broker the reply publisher was paired against, which its replies go to.
+    #[cfg(feature = "testing")]
+    pub(crate) origin: Origin,
 }
 
 impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
@@ -220,11 +225,12 @@ where
                 let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
                 let slot = <R::Payload as PayloadForm>::encode_slot(encode);
                 let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
-                match self
-                    .publisher
-                    .publish_batch(name, &replies, &self.pipeline, &pubcx, slot)
-                    .await
-                {
+                let publish =
+                    self.publisher
+                        .publish_batch(name, &replies, &self.pipeline, &pubcx, slot);
+                #[cfg(feature = "testing")]
+                let publish = publishing_to(self.origin, publish);
+                match publish.await {
                     Ok(()) => BatchResult::Uniform(HandlerOutcome::ack()),
                     Err(err) => {
                         warn!(

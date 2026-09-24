@@ -32,7 +32,7 @@ use crate::{
 };
 
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::TestHooks;
+use crate::testing::coordinator::{Origin, TestHooks, paired, publishing_to};
 
 /// The plain publish policy of a broker's connected form, which is what a retry copy leaves
 /// through until a mount site names another.
@@ -73,6 +73,9 @@ struct RetryLeaf<Live, Stack, Pipeline> {
     live: Live,
     stack: Stack,
     pipeline: Pipeline,
+    /// The broker the retry publisher was paired against, which the copies go to.
+    #[cfg(feature = "testing")]
+    origin: Origin,
 }
 
 impl<Cx, Live, Stack, Pipeline> ErasedRetryPublisher<Cx> for RetryLeaf<Live, Stack, Pipeline>
@@ -114,10 +117,10 @@ where
             // rather than being copied on.
             let mut kept = <Live::Payload as PayloadForm>::Spent::default();
             let sent = <Live::Payload as PayloadForm>::handed_on(out, &mut kept);
-            self.pipeline
-                .send(&self.live, sent, options.as_ref())
-                .await
-                .map_err(|err| Box::new(err) as BoxError)
+            let publish = self.pipeline.send(&self.live, sent, options.as_ref());
+            #[cfg(feature = "testing")]
+            let publish = publishing_to(self.origin, publish);
+            publish.await.map_err(|err| Box::new(err) as BoxError)
         })
     }
 }
@@ -134,6 +137,8 @@ where
         live,
         stack: PublishTransformIdentity,
         pipeline: crate::runtime::publish::PublishIdentity,
+        #[cfg(feature = "testing")]
+        origin: Origin::default(),
     })
 }
 
@@ -429,11 +434,17 @@ where
                 stack,
                 pipeline,
             } = *self;
-            let live = policy.pair(connected).await?;
+            let pairing = policy.pair(connected);
+            #[cfg(feature = "testing")]
+            let (live, origin) = paired(connected, pairing).await;
+            #[cfg(not(feature = "testing"))]
+            let live = pairing.await;
             Ok(Arc::new(RetryLeaf {
-                live,
+                live: live?,
                 stack,
                 pipeline,
+                #[cfg(feature = "testing")]
+                origin,
             }) as Arc<dyn ErasedRetryPublisher<Cx>>)
         })
     }

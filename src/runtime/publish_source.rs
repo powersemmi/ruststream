@@ -14,6 +14,8 @@ use std::sync::Mutex;
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
 use crate::runtime::lifecycle::ConnectedSlot;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::pairs_against;
 use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy};
 
 /// A broker wrapped for token minting before registration.
@@ -208,6 +210,9 @@ where
                  every registered broker",
             ))
         })?;
+    // The token's publisher publishes to its own broker, whatever scope pairs it.
+    #[cfg(feature = "testing")]
+    pairs_against(connected.as_ref());
     source.pair(connected.as_ref()).await
 }
 

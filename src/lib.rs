@@ -45,7 +45,7 @@
 //! * [`codec`]: how payload bytes become values and back, where a codec is chosen, and the byte
 //!   lanes that need none.
 //! * [`memory`]: the in-process broker, a real broker and the reference implementation.
-//! * [`testing`]: unit-testing a service in process, without a server.
+//! * [`testing`]: testing the service's own app, in process or against a running broker.
 //! * [`asyncapi`]: the generated document. [`metrics`], [`logging`], [`otel`]: observability.
 //! * [`runtime::cli`]: the generated entry point and the `ruststream` command.
 //! * [`conformance`]: the contract suite a broker crate runs against itself.
@@ -79,7 +79,8 @@
 //!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
 //!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
 //!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
-//! * `testing`: the [`testing::TestApp`] in-process harness for application unit tests.
+//! * `testing`: the [`testing::TestApp`] harness, which runs the service's production app in
+//!   process or against running brokers.
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,

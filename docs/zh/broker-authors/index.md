@@ -885,47 +885,60 @@ asyncapi = ["ruststream/asyncapi"]
 
 ## 测试支持 { #test-support }
 
-在 `testing` feature 下提供一个进程内传输，在它的**已连接形态**上实现 `TestableBroker`。用
-`register_testable_broker!` 为这个已连接类型注册：测试套件会先连接每一个 Broker，然后才取回它的
-传输。用户于是可以借助 `TestApp`，对着你的 Broker 单元测试处理器。
+服务测试的就是它交付的那个应用：`TestApp::start(app())` 接收 `main` 运行的同一个构造器，在进程内
+连接它的每一个 Broker，测试按生产类型找到你的 Broker：`tb.broker::<YourBroker>()`。这种进程内模式
+是 Broker 契约的一部分，由你的 crate 在 `testing` feature 下提供：
 
-该传输**只做核心路由**：把发布出去的消息分发给匹配的订阅者，对 `ack` 和 `nack` 的答复与真实传输
-一致。传输能确认的地方，就在内存里结算，`nack(requeue = true)` 把这条投递放回去。传输根本无法确认
-的地方（ZeroMQ、MQTT `QoS 0`、Redis pub/sub），答复仍然是 `AckError::Unsupported`。它一旦声称一次
-真实传输做不到的结算，处理器里的重试就会在测试里通过，在生产中丢消息。
+- 生产 Broker 上的 `InProcess`：`connect_in_process(self)`，消费 `self`，转到你自己的已连接形态，
+  背后是一个进程内传输，不做任何 I/O。
+- 这个已连接形态上的 `TestableBroker`：测试套件借它注入消息、读取发布日志，并装上统计在途消息的
+  协调器。
+- `register_testable_broker!(YourBroker)`，把这两样都登记给测试套件。
 
-切勿在传输里模拟 Broker 专有的语义（持久游标、重新投递定时器、偏移量、死信路由），那些要对着一台
-真实的服务器端到端地验证。
+于是，已连接形态、它的订阅者、它的发布者和投递类型，各自多出一个只在 `testing` feature 下存在的
+进程内变体。不开这个 feature 时只有一个变体，也没有分支，服务的生产构建不受影响：Cargo 不会在生产
+二进制里打开 dev-dependency 的 feature。进程内传输没有自己的配置，每项设置都取自构造它的那个
+Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到的一切），所以测试不可能在生产里没有
+的设置下运行。
 
-参考实现就是内存 Broker 自己的那一份（在 `ConnectedMemoryBroker` 上）：
+内存 Broker 没有服务器，它的进程内模式就是普通的 `connect`，参考实现很短：
 
 ```rust
 --8<-- "src/memory/mod.rs:testable"
+```
+
+有服务器的 Broker 在 `connect_in_process` 里构造自己的进程内传输，并登记生产类型：
+
+```rust
+--8<-- "tests/in_process.rs:in_process"
 ```
 
 该传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在结算或丢弃一次投递时调用
 `Coordinator::consumed`，测试套件据此判断这次反应已经结束。延迟的重新投递由它交给
 `Coordinator::schedule_redelivery` 去路由。
 
-同一个类型既适用于 `TestApp`，也适用于 conformance 校验套件。面向用户的那一侧参见
-[测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)；[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和 `lifecycle`
-转移链检查证明你的实现。
+同一个测试也能对着运行中的环境跑：`TestApp::start_live(app())` 用普通的 `connect` 连接你的 Broker，
+除了已连接形态和它的 `DefaultPublish` 策略之外，不需要你的 crate 再提供什么；测试的输入就经由这个
+策略发布。面向用户的那一侧参见 [测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)；
+[Conformance](conformance.md) 讲的是怎样用 `run_suite` 和其余套件在进程内证明进程内模式。
 
 ### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }
 
 一个服务的整套测试都跑在这个进程内传输上。因此它和真实传输之间的每一处差异，都会让一个测试变绿，
-而它测的行为在生产里并不存在。这些差异并不冷僻，而下面每一条规则的代价大约就是一个测试。
+而它测的行为在生产里并不存在。真实 Broker 会失败的地方，它绝不成功：服务器会拒绝或丢下的发布、
+确认、重新入队或订阅，进程内同样拒绝。这些差异并不冷僻，而下面每一条规则的代价大约就是一个测试。
 
-**核心的契约套件不能只跑真实服务器，也要跑进程内传输。**套件是照着 trait 写的，并不区分应答的是
-真实 Broker 还是进程内传输。一个 `#[tokio::test]` 就够：
+**核心的契约套件不能只跑真实服务器，也要在进程内跑。**套件是照着 trait 写的，并不区分应答的是
+服务器还是进程内传输。一个 `#[tokio::test]` 就够：
 
 ```rust
 --8<-- "tests/conformance_self.rs:run_suite"
 ```
 
-先跑 `lifecycle`。它会走一遍 `new` -> `connect` -> 订阅 -> 发布 -> ack -> `shutdown`，然后问出一个
-几乎没人拿去问进程内传输的问题：关闭之前创建的发布者，在关闭之后会不会返回错误？真实客户端答的是
-“未连接”。而发布只是往 channel 里发一条消息的进程内传输没有理由返回错误，它会把消息收下。
+`lifecycle` 也要在进程内跑，经由 `harness::InProcessBroker`。它会走一遍 `new` -> `connect` -> 订阅
+-> 发布 -> ack -> `shutdown`，然后问出一个几乎没人拿去问进程内传输的问题：关闭之前创建的发布者，
+在关闭之后会不会返回错误？真实客户端答的是“未连接”。而发布只是往 channel 里发一条消息的进程内传输
+没有理由返回错误，它会把消息收下。
 
 ```rust
 --8<-- "tests/conformance_self.rs:lifecycle"
@@ -933,10 +946,8 @@ asyncapi = ["ruststream/asyncapi"]
 
 `capabilities::*` 套件照此加上，实现了哪项能力就加哪一个。
 
-**提供的能力要和真实 Broker 一致。**`testing` 这个 feature 是给测试用的，release 构建会把它关掉，
-两个方向的代价因此并不对等。少一项是贵的：真实 Broker 有、进程内传输没有的能力，在进程内根本挂载
-不了，它背后的行为也就没人测。多一项是便宜的：只有进程内传输提供的事务或 request-reply，在你自己的
-release 构建里就编译不过，恼人，但立刻就能发现。
+**提供的能力要和真实 Broker 一致。**进程内变体就在生产类型里，所以能对着 Broker 编译的挂载，在
+进程内也能编译，一项能力在两边是同一个类型。剩下要做对的，是每项能力的行为都和服务器上一样。
 
 **传输怎么结算，你就怎么结算。**真实的 `ack` 在两处返回 `AckError::Unsupported`：发完即忘的传输，
 以及至多一次的服务质量。进程内传输照样返回它。为了让套件通过而回一个 `Ok(())`，会让一个返回
@@ -945,7 +956,8 @@ release 构建里就编译不过，恼人，但立刻就能发现。
 
 **客户端做的事要复刻，Broker 做的事不要假造。**这条界线无关工作量，只看机制运行在哪一侧。竞争
 消费、按组分发、关联与回复路由、提交前的缓冲，都由客户端或路由层完成，进程内复刻是精确的。集群
-原子性、fencing、Broker 侧持有的超时和 exactly-once 由 Broker 完成，进程内复刻就是虚构。
+原子性、fencing、Broker 侧持有的超时和 exactly-once 由 Broker 完成，进程内复刻就是虚构；同一个
+测试用 `TestApp::start_live` 对着具备这些能力的服务器跑。
 
 竞争消费最该做对，因为做错了看着像成功。把每条消息都发给队列的每个订阅者，那已经不是队列。共用
 一条队列的两个工作者于是各自跑完整个流，而一个统计处理条数的测试只看到消息都处理完了，一个错都
@@ -964,6 +976,6 @@ release 构建里就编译不过，恼人，但立刻就能发现。
 **缺口还要用一个测试守住。**某人“修好”进程内传输，让它去路由那些它故意不路由的东西，注释就在那天
 失效。而一个断言这个处理器*没有*运行的测试，会在那天失败，并且自己把话说清楚。
 
-**挂载进程内传输的方式，要和挂载真实 Broker 一样。**你自己的订阅来源和发布策略必须原封不动地对着它
-工作，这样服务测的才是它实际交付的那份路由文件。用户非得把 `OrdersStream` 换成别的东西才能把测试
-跑起来，这个测试就不再检验挂载了。
+**沿用生产里的挂载。**进程内变体就在你自己的订阅来源和发布策略之下，所以服务测的正是它交付的那份
+路由文件。真实 Broker 在订阅或发布时做的检查（拒绝某个声明、协议容不下的过长名称、无法携带的
+头部），在进程内由同一段代码执行。

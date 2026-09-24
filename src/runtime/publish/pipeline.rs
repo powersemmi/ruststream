@@ -4,6 +4,8 @@ use std::{fmt, future::Future, sync::Arc};
 
 use super::{Outgoing, PublishFut};
 use crate::runtime::lifecycle::BoxError;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::PipelinePublish;
 use crate::{PayloadForm, Publisher};
 
 /// A static, app-wide publish pipeline: an around-style chain of [`PublishLayer`] ending in
@@ -43,9 +45,17 @@ impl PublishPipeline for PublishIdentity {
         // The broker is the last reader of this message, so what the stages produced travels
         // into it in the form the publisher declared, and the map they filled moves with it.
         let msg = <P::Payload as PayloadForm>::leaving(out);
-        send.publish(msg, options)
+        #[cfg(feature = "testing")]
+        let recorded = PipelinePublish::capture(&msg);
+        let result = send
+            .publish(msg, options)
             .await
-            .map_err(|e| Box::new(e) as BoxError)
+            .map_err(|e| Box::new(e) as BoxError);
+        #[cfg(feature = "testing")]
+        if result.is_ok() {
+            recorded.sent();
+        }
+        result
     }
 }
 

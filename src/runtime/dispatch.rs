@@ -1163,7 +1163,16 @@ where
                 Redelivery::Subscription => {}
             }
         }
-        return slot.take().nack_after(delay).await;
+        let accepted = slot.take().nack_after(delay).await;
+        // The broker holds this redelivery on its own timer, out of the harness's sight, so the
+        // harness is told when it falls due.
+        #[cfg(feature = "testing")]
+        if accepted.is_ok()
+            && let Some(coordinator) = delivery.hooks.coordinator()
+        {
+            coordinator.expect_redelivery(delivery.scope_id, name, delay);
+        }
+        return accepted;
     }
 
     let Some(retry) = delivery.retry.as_ref() else {
@@ -1311,6 +1320,11 @@ where
             );
         }
     };
+
+    // The copy leaves after the handler returned, so the harness watching the delivery is
+    // handed on to it: the copy is one of the delivery's publishes.
+    #[cfg(feature = "testing")]
+    let republish = in_harness_scope(harness_scope(delivery), republish);
 
     // A zero delay is an immediate copy: a timer task for it would cost a task allocation and
     // two scheduler turns to publish the same copy a little later.

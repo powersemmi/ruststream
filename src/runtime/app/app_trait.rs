@@ -10,8 +10,38 @@ use crate::runtime::metadata::HandlerMetadata;
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
-    pub trait Sealed {}
+    #[cfg(feature = "testing")]
+    use crate::runtime::TestParts;
+
+    /// Closes [`App`](super::App) to [`RustStream`](super::RustStream), and carries what the test
+    /// harness needs from an app a builder hands it as `impl App`.
+    pub trait Sealed {
+        /// The state the app's handlers read, which the test harness is typed by.
+        #[cfg(feature = "testing")]
+        type State: Send + Sync + 'static;
+
+        /// Decomposes the app into what the test harness drives.
+        #[cfg(feature = "testing")]
+        fn into_test_parts(self) -> TestParts<Self::State>;
+    }
+
+    #[cfg(not(feature = "testing"))]
     impl<Layers, State, Pipeline, Phase> Sealed for super::RustStream<Layers, State, Pipeline, Phase> {}
+
+    // The inherent method shares the name, and spelling the type makes clear the call delegates
+    // to it rather than recursing into this one, as in the `App` impl below.
+    #[cfg(feature = "testing")]
+    #[allow(clippy::use_self)]
+    impl<Layers, State, Pipeline, Phase> Sealed for super::RustStream<Layers, State, Pipeline, Phase>
+    where
+        State: Send + Sync + 'static,
+    {
+        type State = State;
+
+        fn into_test_parts(self) -> TestParts<State> {
+            super::RustStream::into_test_parts(self)
+        }
+    }
 }
 
 /// The functional surface of a built [`RustStream`] service: run it, and read the metadata the

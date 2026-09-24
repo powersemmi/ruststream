@@ -1,35 +1,37 @@
-//! The [`TestApp`] harness: drives a built [`RustStream`](crate::runtime::RustStream) application in
-//! process, with no server, and exposes per-broker assertions. Each registered broker's consuming
-//! `connect` runs to produce the connected form the subscriptions need; for an in-process broker
-//! that transition performs no I/O.
+//! The [`TestApp`] harness: drives a built [`RustStream`](crate::runtime::RustStream) application
+//! and exposes per-broker assertions. In process, each broker of the app connects through its
+//! registered [`InProcess`] transition, which produces the production connected form with no I/O;
+//! live, each connects through its ordinary `connect`, against a running stand.
 
+use std::any::{TypeId, type_name};
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant as WallClock};
 
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 
-// The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
-// builder entry points do not, because the value's own wire decides whether a codec is needed.
 use crate::OutgoingDestination;
-#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::{Codec, DefaultCodec};
 use crate::runtime::{
-    ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder, PublishSink,
-    RegisteredBroker, RustStream, RustStreamError, Shutdown, Starter, TestParts,
+    App, ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
+    RegisteredBroker, RustStreamError, Shutdown, Starter, TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
-use crate::{Lend, OutgoingMessage};
+use crate::{Broker, DefaultPublish, PublishPolicy, Publisher};
 
-use super::assertions::{PublishedAssertions, SubscriberAssertions};
-use super::broker::{TestableBroker, TestableRegistration};
-use super::coordinator::Coordinator;
+use super::assertions::PublishedAssertions;
+use super::broker::{LivePublish, TestableBroker, TestableRegistration, live_publish};
+use super::coordinator::{Coordinator, LiveSubscription};
+use super::handle::{BrokerHandle, Harness, InjectSink, Target, Transport};
 
 /// The default cap on dispatched deliveries before [`TestApp::publish`] gives up driving a reaction
 /// to quiescence. Guards against a non-terminating requeue loop.
 const DEFAULT_MAX_STEPS: usize = 10_000;
+
+/// How long a live settle waits by default for the reaction to settle before it reports the
+/// subscription that did not.
+const DEFAULT_SETTLE_DEADLINE: Duration = Duration::from_secs(10);
 
 /// An error from the test harness.
 #[derive(Debug, Error)]
@@ -47,12 +49,40 @@ pub enum TestError {
         /// How many deliveries were dispatched before the harness gave up.
         processed: usize,
     },
-    /// A broker failed its consuming `connect` while starting the harness.
+    /// A live reaction did not settle before the deadline: a subscription had not handled what was
+    /// published to a destination it reads, or a redelivery that fell due, or a handler was still
+    /// running.
+    #[error(
+        "the live reaction did not settle within {deadline:?}: {}",
+        unsettled(subscription.as_deref(), *handled, *expected)
+    )]
+    NotSettled {
+        /// The subscription still owed a delivery, or `None` when every subscription had handled
+        /// what it was owed and a handler was still running.
+        subscription: Option<String>,
+        /// How many deliveries that subscription had handled.
+        handled: usize,
+        /// How many it was owed: the publishes the harness saw to it, and the redeliveries due.
+        expected: usize,
+        /// The deadline the harness was started with.
+        deadline: Duration,
+    },
+    /// A broker failed to connect while starting the harness: its in-process transition, or its
+    /// `connect` in live mode.
     #[error("broker {broker} failed to connect: {source}")]
     Connect {
-        /// The broker's label, or its registration index for unlabeled brokers.
+        /// The broker's label, or its type for unlabeled brokers.
         broker: String,
         /// The broker's own connect error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// A live broker refused a message the test published onto it.
+    #[error("broker {broker} refused the test's publish: {source}")]
+    Publish {
+        /// The broker's label, or its type for unlabeled brokers.
+        broker: String,
+        /// The broker's own publish error.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
@@ -62,19 +92,43 @@ pub enum TestError {
     /// An unscoped [`TestApp::publish`] is ambiguous: more than one broker is registered.
     #[error("more than one broker is registered; address one with broker::<B>() or broker_named()")]
     Ambiguous,
-    /// The addressed broker has no in-process test transport (it does not implement
-    /// [`TestableBroker`](super::TestableBroker), or its feature is disabled).
-    #[error("broker {0} has no in-process test transport")]
+    /// A broker of the app has no in-process mode, so the harness cannot start the app: its type
+    /// is not registered with [`register_testable_broker!`](crate::register_testable_broker),
+    /// which is what a broker crate does under its `testing` feature.
+    ///
+    /// In live mode it reports an injection through an untyped handle (the sole broker,
+    /// [`broker_named`](TestApp::broker_named)) onto a broker of such a type: address it with
+    /// [`broker`](TestApp::broker) instead, which publishes through the type's default policy.
+    #[error(
+        "broker {0} has no in-process mode; enable the `testing` feature of the crate that \
+         provides it in `[dev-dependencies]`"
+    )]
     NoTransport(String),
+    /// [`TestApp::start_live`] was called on a paused clock. A network client's timeouts would
+    /// fire at once against it, so a live test runs on the real clock.
+    #[error(
+        "the clock is paused, and a live test runs against brokers on the real clock; drop \
+         `start_paused` / `tokio::time::pause()` from this test, or start it in process with \
+         `TestApp::start`"
+    )]
+    PausedClock,
     /// The message failed to encode for publishing.
     #[error("failed to encode the message: {0}")]
     Encode(String),
 }
 
-/// One broker registered in the app under test: its label, its erased connected handle (for
-/// type/label addressing), and the registration that recovers its [`TestableBroker`] view (when it
-/// is registered with [`register_testable_broker!`](crate::register_testable_broker)).
-struct BrokerEntry {
+/// What a live settle was still waiting on at its deadline, for [`TestError::NotSettled`].
+fn unsettled(subscription: Option<&str>, handled: usize, expected: usize) -> String {
+    subscription.map_or_else(
+        || "a handler was still running".to_owned(),
+        |name| format!("subscription {name:?} handled {handled} of {expected} deliveries"),
+    )
+}
+
+/// One broker of the app under test: its label, its erased connected handle (for type/label
+/// addressing), and its type's registration, when a broker crate made one. In process every broker
+/// has one, since it connected through it.
+pub(super) struct BrokerEntry {
     label: Option<String>,
     lifecycle: Box<dyn ConnectedLifecycle>,
     registration: Option<&'static TestableRegistration>,
@@ -95,23 +149,23 @@ impl BrokerEntry {
     }
 }
 
-/// Finds the [`TestableBroker`] registration matching this broker and installs the coordinator into
-/// its bus. Returns `None` for a broker whose type was not registered with
+/// How a broker the harness has no registration for is taken to route: to every subscription of
+/// the destination's name.
+fn same_names(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+    subscriptions
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| **name == destination)
+        .map(|(position, _)| position)
+        .collect()
+}
+
+/// The registration of the broker type `broker`, or `None` when no crate registered one with
 /// [`register_testable_broker!`](crate::register_testable_broker).
-fn recover_testable(
-    // The explicit object bound keeps the default from shrinking to the reference lifetime,
-    // which `as_any`'s `Self: 'static` requirement rejects.
-    lifecycle: &(dyn ConnectedLifecycle + 'static),
-    coordinator: &Coordinator,
-) -> Option<&'static TestableRegistration> {
-    let any = lifecycle.as_any();
-    for registration in inventory::iter::<TestableRegistration> {
-        if let Some(broker) = registration.resolve(any) {
-            broker.install_coordinator(coordinator.clone());
-            return Some(registration);
-        }
-    }
-    None
+fn registration_of(broker: TypeId) -> Option<&'static TestableRegistration> {
+    inventory::iter::<TestableRegistration>
+        .into_iter()
+        .find(|registration| registration.registers(broker))
 }
 
 /// Borrowed view of the app's brokers handed to a [`TestApp::with_state`] builder, so it can wire a
@@ -137,31 +191,33 @@ impl TestBrokers<'_> {
     /// Panics if no broker of type `B` is registered, or more than one is (disambiguate the app, or
     /// address by label is not supported when building state).
     #[must_use]
-    pub fn broker<B: crate::Broker + 'static>(&self) -> &B::Connected {
+    pub fn broker<B: Broker + 'static>(&self) -> &B::Connected {
         let mut found = self
             .entries
             .iter()
+            .filter(|e| e.lifecycle.broker_type() == TypeId::of::<B>())
             .filter_map(|e| e.lifecycle.as_any().downcast_ref::<B::Connected>());
-        let first = found.next().unwrap_or_else(|| {
-            panic!(
-                "no registered broker of type {}",
-                std::any::type_name::<B>()
-            )
-        });
+        let first = found
+            .next()
+            .unwrap_or_else(|| panic!("no registered broker of type {}", type_name::<B>()));
         assert!(
             found.next().is_none(),
             "more than one broker of type {} is registered",
-            std::any::type_name::<B>(),
+            type_name::<B>(),
         );
         first
     }
 }
 
-/// In-process harness around a built application.
+/// A test harness around the service's production app.
 ///
-/// Drives input through the broker bus (no server; each broker's consuming `connect` runs, which
-/// is I/O-free for in-process brokers), records what handlers saw and published, and exposes
-/// per-broker assertions.
+/// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
+/// through the broker's [`InProcess`](super::InProcess) transition instead of `connect`, so the
+/// same connected forms carry the routes with no server; [`start_live`](Self::start_live)
+/// connects them through `connect`, against a running stand. Either way the harness drives input
+/// through the broker, records what handlers saw and what the app published, and exposes
+/// per-broker assertions addressed by the production broker type, so one test body runs in both
+/// modes and only the start call differs.
 ///
 /// Build one with [`start`](Self::start) (runs the app's real `on_startup`) or
 /// [`with_state`](Self::with_state) (injects a mirror state for non-broker dependencies). Drive
@@ -171,15 +227,15 @@ impl TestBrokers<'_> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "testing", feature = "memory", feature = "json"))]
-/// # async fn demo() -> Result<(), ruststream::testing::TestError> {
+/// # #[cfg(all(feature = "testing", feature = "memory", feature = "macros", feature = "json"))]
+/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, Context, HandlerOutcome, RustStream};
-/// use ruststream::subscriber;
+/// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 /// use ruststream::testing::TestApp;
+/// use ruststream::{Outgoing, subscriber};
 /// use serde::{Deserialize, Serialize};
 ///
-/// #[derive(Serialize, Deserialize, PartialEq, Debug)]
+/// #[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
 /// struct Order {
 ///     id: u64,
 /// }
@@ -194,7 +250,11 @@ impl TestBrokers<'_> {
 ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
 /// let tb = TestApp::start(app).await?;
 ///
-/// tb.broker::<MemoryBroker>().publish("orders", &Order { id: 1 }).await?;
+/// tb.broker::<MemoryBroker>()
+///     .message(&Order { id: 1 })
+///     .to("orders")
+///     .publish()
+///     .await?;
 /// tb.broker::<MemoryBroker>()
 ///     .subscriber("orders")
 ///     .assert_called_once()
@@ -205,6 +265,7 @@ impl TestBrokers<'_> {
 /// ```
 pub struct TestApp<State> {
     entries: Vec<BrokerEntry>,
+    mode: Mode,
     coordinator: Coordinator,
     #[allow(dead_code)]
     state: Arc<State>,
@@ -217,28 +278,232 @@ pub struct TestApp<State> {
 impl<State> fmt::Debug for TestApp<State> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestApp")
+            .field("mode", &self.mode)
             .field("brokers", &self.entries.len())
             .field("subscribers", &self.handles.len())
             .finish_non_exhaustive()
     }
 }
 
+/// Which transport the harness connected the app's brokers to.
+///
+/// A run-time value rather than a type parameter: every method of the harness has a meaning in
+/// both modes, so nothing is closed off by it.
+#[derive(Debug)]
+pub(super) enum Mode {
+    /// Each broker through its in-process transition: the transports count what is in flight, so
+    /// a settle waits for that count to reach zero.
+    InProcess,
+    /// Each broker through its `connect`, against a running stand.
+    Live {
+        /// How long a settle waits for the reaction.
+        deadline: Duration,
+        /// The app's subscriptions, which a settle waits on.
+        subscriptions: Vec<LiveSubscription>,
+    },
+}
+
+impl Mode {
+    /// Waits for the reaction the harness can see to settle: the in-process transports' count
+    /// reaching zero, or, live, every subscription having handled what it is owed.
+    pub(super) async fn settle(
+        &self,
+        coordinator: &Coordinator,
+        brokers: &[BrokerEntry],
+    ) -> Result<(), TestError> {
+        match self {
+            Self::InProcess => coordinator.drive().await,
+            Self::Live {
+                deadline,
+                subscriptions,
+            } => {
+                // Each broker routes its own publishes: the harness asks it, and knows no routing
+                // but equal names for a broker it has no registration for.
+                let routing = |scope_id: usize, destination: &str, names: &[&str]| {
+                    brokers[scope_id].testable().map_or_else(
+                        || same_names(destination, names),
+                        |broker| broker.routes(destination, names),
+                    )
+                };
+                coordinator
+                    .settle_live(subscriptions, &routing, *deadline)
+                    .await
+            }
+        }
+    }
+}
+
+/// Whether the clock of the current runtime is paused.
+///
+/// Why this is measured rather than asked: tokio exposes no query for it. A paused clock stands
+/// still until a timer is awaited, while a running one moves with the wall clock, so the two
+/// readings below tell them apart.
+fn clock_is_paused() -> bool {
+    let before = tokio::time::Instant::now();
+    let wall = WallClock::now();
+    while wall.elapsed() < Duration::from_micros(50) {
+        std::hint::spin_loop();
+    }
+    tokio::time::Instant::now() == before
+}
+
 impl<State: Send + Sync + 'static> TestApp<State> {
     /// Starts the harness by running the app's real `on_startup` (the existing state and its
-    /// publishers bind to the in-process bus). Each broker's consuming `connect` runs to produce
-    /// the connected form; for an in-process broker that transition performs no I/O.
+    /// publishers bind to the in-process transports). Each broker connects through its
+    /// [`InProcess`](super::InProcess) transition, which performs no I/O; the rest of startup is
+    /// the production one.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a
-    /// broker fails to connect, or [`TestError::Subscribe`] if a subscription fails to open.
+    /// Returns [`TestError::NoTransport`] if a broker of the app has no in-process mode,
+    /// [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a broker fails
+    /// to connect in process, or [`TestError::Subscribe`] if a subscription fails to open.
     /// The app's publish pipeline is whatever it was built with: an app-wide
-    /// [`publish_layer`](RustStream::publish_layer) is already baked into the mounted routes, so
+    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) is already baked into the mounted routes, so
     /// the harness drives the same stack production would.
-    pub async fn start<Layers, Pipeline, Phase>(
-        app: RustStream<Layers, State, Pipeline, Phase>,
-    ) -> Result<Self, TestError> {
+    pub async fn start<A>(app: A) -> Result<Self, TestError>
+    where
+        A: App<State = State>,
+    {
         let (coordinator, entries, parts) = Self::setup(app).await?;
+        Self::run_startup(coordinator, entries, Mode::InProcess, parts).await
+    }
+
+    /// Starts the harness against running brokers: each broker of the app connects through its
+    /// ordinary `connect`, and the rest of startup is the production one, the app's real
+    /// `on_startup` included.
+    ///
+    /// The test body is the one an in-process test runs; only this call differs. What differs
+    /// underneath is how long things take. A publish, [`settle`](Self::settle) and
+    /// [`advance`](Self::advance) wait on the broker's real clock, up to a deadline of ten
+    /// seconds ([`start_live_within`](Self::start_live_within) sets another), for the
+    /// subscriptions to handle what was published to them and what fell due.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::PausedClock`] on a paused clock, [`TestError::Startup`] if a lifecycle
+    /// hook fails, [`TestError::Connect`] if a broker fails to connect, or
+    /// [`TestError::Subscribe`] if a subscription fails to open.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "testing", feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Outgoing, subscriber};
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(accept);
+    ///     })
+    /// }
+    ///
+    /// let tb = TestApp::start_live(app()).await?;
+    /// tb.broker::<MemoryBroker>().message(&Order { id: 1 }).publish().await?;
+    /// tb.broker::<MemoryBroker>().subscriber("orders").assert_called_once();
+    /// tb.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn start_live<A>(app: A) -> Result<Self, TestError>
+    where
+        A: App<State = State>,
+    {
+        Self::start_live_within(app, DEFAULT_SETTLE_DEADLINE).await
+    }
+
+    /// [`start_live`](Self::start_live) with `deadline` as the longest a publish, a settle or an
+    /// advance waits for the reaction to settle.
+    ///
+    /// # Errors
+    ///
+    /// As [`start_live`](Self::start_live).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "testing", feature = "memory"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::testing::TestApp;
+    ///
+    /// // A stand far away: give the reaction half a minute before the test gives up on it.
+    /// let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///     .register_broker(MemoryBroker::new());
+    /// let tb = TestApp::start_live_within(app, Duration::from_secs(30)).await?;
+    /// tb.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn start_live_within<A>(app: A, deadline: Duration) -> Result<Self, TestError>
+    where
+        A: App<State = State>,
+    {
+        if clock_is_paused() {
+            return Err(TestError::PausedClock);
+        }
+        let mut parts = app.into_test_parts();
+        let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
+        parts.test_hooks.install(coordinator.clone());
+        let mut entries = Vec::with_capacity(parts.brokers.len());
+        for RegisteredBroker { lifecycle, label } in std::mem::take(&mut parts.brokers) {
+            let broker = label
+                .clone()
+                .unwrap_or_else(|| lifecycle.broker_name().to_owned());
+            // The registration is not needed to run live; an untyped handle publishes through it.
+            let registration = registration_of(lifecycle.broker_type());
+            let lifecycle = match lifecycle.connect().await {
+                Ok(lifecycle) => lifecycle,
+                Err(source) => {
+                    shut_down(entries).await;
+                    return Err(TestError::Connect { broker, source });
+                }
+            };
+            entries.push(BrokerEntry {
+                label,
+                lifecycle,
+                registration,
+            });
+        }
+        let subscriptions = parts
+            .test_hooks
+            .subscriptions()
+            .into_iter()
+            .map(|(scope_id, name)| LiveSubscription { scope_id, name })
+            .collect();
+        let mode = Mode::Live {
+            deadline,
+            subscriptions,
+        };
+        Self::run_startup(coordinator, entries, mode, parts).await
+    }
+
+    /// Runs the app's `on_startup` and completes the start.
+    async fn run_startup(
+        coordinator: Coordinator,
+        entries: Vec<BrokerEntry>,
+        mode: Mode,
+        parts: TestParts<State>,
+    ) -> Result<Self, TestError> {
         let TestParts {
             starters,
             state_init,
@@ -247,10 +512,17 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             continuations,
             ..
         } = parts;
-        let state = state_init().await.map_err(TestError::Startup)?;
+        let state = match state_init().await {
+            Ok(state) => state,
+            Err(err) => {
+                shut_down(entries).await;
+                return Err(TestError::Startup(err));
+            }
+        };
         Self::spawn(SpawnArgs {
             coordinator,
             entries,
+            mode,
             starters,
             after_startup,
             continuations,
@@ -262,19 +534,18 @@ impl<State: Send + Sync + 'static> TestApp<State> {
 
     /// Starts the harness with an injected mirror `state`, instead of running the app's
     /// `on_startup`. `build` receives the brokers so it can wire the mirror state's publishers onto
-    /// the same bus (`tb.broker::<MemoryBroker>().publisher()`) and supply fakes for non-broker
-    /// dependencies. Each broker's consuming `connect` runs first, so the mirror state's
+    /// the same transports (`tb.broker::<MemoryBroker>().publisher()`) and supply fakes for
+    /// non-broker dependencies. Each broker connects in process first, so the mirror state's
     /// publishers pair against connected brokers.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::Connect`] if a broker fails to connect, or [`TestError::Subscribe`]
-    /// if a subscription fails to open.
-    pub async fn with_state<Layers, Pipeline, F, Phase>(
-        app: RustStream<Layers, State, Pipeline, Phase>,
-        build: F,
-    ) -> Result<Self, TestError>
+    /// Returns [`TestError::NoTransport`] if a broker of the app has no in-process mode,
+    /// [`TestError::Connect`] if a broker fails to connect in process, or
+    /// [`TestError::Subscribe`] if a subscription fails to open.
+    pub async fn with_state<A, F>(app: A, build: F) -> Result<Self, TestError>
     where
+        A: App<State = State>,
         F: FnOnce(&TestBrokers<'_>) -> State,
     {
         let (coordinator, entries, parts) = Self::setup(app).await?;
@@ -289,6 +560,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         Self::spawn(SpawnArgs {
             coordinator,
             entries,
+            mode: Mode::InProcess,
             starters,
             after_startup,
             continuations,
@@ -298,62 +570,102 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         .await
     }
 
-    /// Installs a fresh coordinator into the app's hooks slot, drives each broker's consuming
-    /// `connect`, and recovers the per-broker transports from the connected forms. Returns the
-    /// coordinator, the broker entries, and the remaining parts (the brokers field is now
-    /// consumed and empty).
-    async fn setup<Layers, Pipeline, Phase>(
-        app: RustStream<Layers, State, Pipeline, Phase>,
-    ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError> {
+    /// Installs a fresh coordinator into the app's hooks slot, connects each broker through its
+    /// registered in-process transition, and installs the coordinator into each transport.
+    /// Returns the coordinator, the broker entries, and the remaining parts (the brokers field is
+    /// now consumed and empty).
+    async fn setup<A>(
+        app: A,
+    ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError>
+    where
+        A: App<State = State>,
+    {
         let mut parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
-        let mut entries = Vec::new();
-        for (index, RegisteredBroker { lifecycle, label }) in
-            std::mem::take(&mut parts.brokers).into_iter().enumerate()
-        {
-            // The unconnected erased handle has no type name to report, so the label (or the
-            // registration index) is the identity available before connect succeeds.
-            let broker = label.clone().unwrap_or_else(|| format!("#{index}"));
-            let lifecycle = lifecycle
-                .connect()
+        // Every broker is looked up before any connects, so an app with one unregistered broker
+        // fails without having half-started the others.
+        let mut registered = Vec::with_capacity(parts.brokers.len());
+        for broker in std::mem::take(&mut parts.brokers) {
+            // Why this is a startup error rather than a compile error: `RustStream` erases the
+            // types of its brokers when they are registered, so `TestApp::start` receives an app
+            // whose broker types it cannot name in a bound.
+            let registration = registration_of(broker.lifecycle.broker_type())
+                .ok_or_else(|| TestError::NoTransport(broker.lifecycle.broker_name().to_owned()))?;
+            registered.push((broker, registration));
+        }
+        let mut entries = Vec::with_capacity(registered.len());
+        for (RegisteredBroker { lifecycle, label }, registration) in registered {
+            let broker = label
+                .clone()
+                .unwrap_or_else(|| lifecycle.broker_name().to_owned());
+            let lifecycle = match lifecycle
+                .connect_in_process(registration.transition())
                 .await
-                .map_err(|source| TestError::Connect { broker, source })?;
-            let registration = recover_testable(lifecycle.as_ref(), &coordinator);
-            entries.push(BrokerEntry {
+            {
+                Ok(lifecycle) => lifecycle,
+                Err(source) => {
+                    shut_down(entries).await;
+                    return Err(TestError::Connect { broker, source });
+                }
+            };
+            let entry = BrokerEntry {
                 label,
                 lifecycle,
-                registration,
-            });
+                registration: Some(registration),
+            };
+            entry
+                .testable()
+                .expect("a registration resolves the connected form its own transition produced")
+                .install_coordinator(coordinator.clone());
+            entries.push(entry);
         }
         Ok((coordinator, entries, parts))
     }
 
-    /// Spawns the dispatch loops against the (uninstalled) bus and runs `after_startup`, completing
-    /// the harness. No broker `connect` runs.
+    /// Spawns the dispatch loops against the connected brokers and runs `after_startup`,
+    /// completing the harness.
     async fn spawn(args: SpawnArgs<State>) -> Result<Self, TestError> {
         let SpawnArgs {
             coordinator,
             entries,
+            mode,
             starters,
             after_startup,
             continuations,
             shutdown_timeout,
             state,
         } = args;
+        // A publisher the runtime pairs names the connected broker it was paired against; this
+        // is how the harness knows which registration that is.
+        coordinator.locate(entries.iter().map(|entry| entry.lifecycle.as_any()));
         let shutdown = Shutdown::new();
         let mut handles = Vec::with_capacity(starters.len());
-        for starter in starters {
-            let handle = starter(state.clone(), shutdown.clone())
-                .await
-                .map_err(TestError::Subscribe)?;
-            handles.push(handle);
-        }
-        for hook in after_startup {
-            hook(state.clone()).await.map_err(TestError::Startup)?;
+        let failed = 'start: {
+            for starter in starters {
+                match starter(state.clone(), shutdown.clone()).await {
+                    Ok(handle) => handles.push(handle),
+                    Err(err) => break 'start Some(TestError::Subscribe(err)),
+                }
+            }
+            for hook in after_startup {
+                if let Err(err) = hook(state.clone()).await {
+                    break 'start Some(TestError::Startup(err));
+                }
+            }
+            None
+        };
+        if let Some(err) = failed {
+            // Unwound the way the service unwinds a failed start: what is running stops, and the
+            // brokers already connected are shut down rather than dropped.
+            stop_dispatch(&shutdown, handles, shutdown_timeout).await;
+            drain_continuations(&continuations, shutdown_timeout).await;
+            shut_down(entries).await;
+            return Err(err);
         }
         Ok(Self {
             entries,
+            mode,
             coordinator,
             state,
             shutdown,
@@ -363,32 +675,35 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         })
     }
 
-    /// Addresses the unique broker of type `B`.
+    /// Addresses the unique broker of type `B`, the production type the app was built on.
+    ///
+    /// Live, a test's input reaches the broker through the connected form's
+    /// [`DefaultPublish`] policy, which is what the bound asks for.
     ///
     /// # Panics
     ///
     /// Panics if no broker of type `B` is registered, or more than one is (address by label with
     /// [`broker_named`](Self::broker_named) instead).
     #[must_use]
-    pub fn broker<B: crate::Broker + 'static>(&self) -> BrokerHandle<'_> {
-        let mut matches = self.entries.iter().filter(|e| {
-            e.lifecycle
-                .as_any()
-                .downcast_ref::<B::Connected>()
-                .is_some()
-        });
-        let first = matches.next().unwrap_or_else(|| {
-            panic!(
-                "no registered broker of type {}",
-                std::any::type_name::<B>()
-            )
-        });
+    pub fn broker<B>(&self) -> BrokerHandle<'_>
+    where
+        B: Broker + 'static,
+        B::Connected: DefaultPublish,
+        <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
+    {
+        let mut matches = self
+            .entries
+            .iter()
+            .filter(|e| e.lifecycle.broker_type() == TypeId::of::<B>());
+        let first = matches
+            .next()
+            .unwrap_or_else(|| panic!("no registered broker of type {}", type_name::<B>()));
         assert!(
             matches.next().is_none(),
             "more than one broker of type {} is registered; address one with broker_named(label)",
-            std::any::type_name::<B>(),
+            type_name::<B>(),
         );
-        self.handle(first)
+        self.handle(first, Some(live_publish::<B>))
     }
 
     /// Addresses the broker registered under `label` (see
@@ -404,7 +719,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             .iter()
             .find(|e| e.label.as_deref() == Some(label))
             .unwrap_or_else(|| panic!("no broker labeled {label:?}"));
-        self.handle(entry)
+        self.handle(entry, None)
     }
 
     /// Asserts on what was published through the [`Out`](crate::runtime::Out) slot marked `M`:
@@ -417,8 +732,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// [`with`](PublishedAssertions::with) form.
     ///
     /// Publishes made outside the handler task (a spawned sibling task, a settled owned
-    /// transaction's buffer) are visible in the broker's publish log
-    /// ([`BrokerHandle::published`]) but are not attributed to the slot.
+    /// transaction's buffer) are not attributed to the slot.
     ///
     /// # Examples
     ///
@@ -476,17 +790,38 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         )
     }
 
-    fn handle<'a>(&'a self, entry: &'a BrokerEntry) -> BrokerHandle<'a> {
+    /// The handle of `entry`. `typed` is how a live injection reaches it when the caller named the
+    /// broker type; an untyped handle falls back on the type's registration.
+    fn handle<'a>(
+        &'a self,
+        entry: &'a BrokerEntry,
+        typed: Option<LivePublish>,
+    ) -> BrokerHandle<'a> {
         let scope_id = self
             .entries
             .iter()
             .position(|e| std::ptr::eq(e, entry))
             .expect("entry belongs to this app");
+        let transport = match &self.mode {
+            Mode::InProcess => Transport::InProcess(
+                entry
+                    .testable()
+                    .expect("an in-process broker connected through its registration"),
+            ),
+            Mode::Live { .. } => Transport::Live {
+                connected: entry.lifecycle.as_any(),
+                publish: typed.or_else(|| entry.registration.map(TestableRegistration::live)),
+            },
+        };
         BrokerHandle {
+            harness: Harness {
+                coordinator: &self.coordinator,
+                shutdown: &self.shutdown,
+                mode: &self.mode,
+                brokers: &self.entries,
+            },
             scope_id,
-            coordinator: &self.coordinator,
-            testable: entry.testable(),
-            shutdown: &self.shutdown,
+            transport,
             label: entry.display(),
         }
     }
@@ -507,7 +842,9 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         if self.entries.len() != 1 {
             return Err(TestError::Ambiguous);
         }
-        self.handle(&self.entries[0]).publish(name, value).await
+        self.handle(&self.entries[0], None)
+            .publish(name, value)
+            .await
     }
 
     /// Starts a typed injection on the only registered broker, a convenience for single-broker
@@ -562,40 +899,55 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// The sole broker's sink, or the ambiguous one when the app registered more than one.
     fn sole_sink(&self) -> InjectSink<'_> {
         match self.entries.as_slice() {
-            [only] => self.handle(only).sink(),
+            [only] => self.handle(only, None).sink(),
             _ => InjectSink(Target::Ambiguous),
         }
     }
 
     /// Drives any in-flight reaction to a standstill (handlers run, their publishes cascade) without
-    /// publishing anything new. [`BrokerHandle::publish`] calls this for you; use it after manually
-    /// advancing time for a delayed redelivery.
+    /// publishing anything new. A publish through the harness calls this for you; use it after a
+    /// reaction the test started some other way.
+    ///
+    /// In process it waits for the transports to report nothing in flight. Live, where nothing in
+    /// this process can read the broker's queues, it waits until every subscription has handled
+    /// what the harness saw published to it and every redelivery that fell due, and no handler is
+    /// running, up to the deadline the harness was started with.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::NotQuiescent`] if the reaction does not settle within the step budget.
+    /// Returns [`TestError::NotQuiescent`] if an in-process reaction does not settle within the
+    /// step budget, or [`TestError::NotSettled`] naming the subscription a live reaction left
+    /// unsettled at the deadline.
     pub async fn settle(&self) -> Result<(), TestError> {
-        self.coordinator.drive().await
+        self.mode.settle(&self.coordinator, &self.entries).await
     }
 
-    /// Advances the (paused) clock by `by`, fires every `nack_after` / `retry_after` redelivery now
-    /// due, and drives the resulting reaction to a standstill. Use it to test delayed redeliveries:
-    /// `publish` records the immediate `NackAfter` settlement and returns; `advance` then delivers
-    /// the message again. A broker's native delayed redelivery and the runtime's deferred
-    /// re-publish both arrive this way; the copy the runtime publishes for a zero delay does not
+    /// Lets `by` pass, fires every `nack_after` / `retry_after` redelivery now due, and drives the
+    /// resulting reaction to a standstill. Use it to test delayed redeliveries: `publish` records
+    /// the immediate `NackAfter` settlement and returns; `advance` then delivers the message
+    /// again. A broker's native delayed redelivery and the runtime's deferred re-publish both
+    /// arrive this way, in either mode; the copy the runtime publishes for a zero delay does not
     /// wait for it.
     ///
-    /// Requires a paused clock (`#[tokio::test(start_paused = true)]` or `tokio::time::pause`); on a
-    /// live clock `tokio::time::advance` panics.
+    /// In process it moves the paused clock by `by`, so an in-process test runs on a paused clock
+    /// (`#[tokio::test(start_paused = true)]` or `tokio::time::pause`; on a running clock
+    /// `tokio::time::advance` panics). Live it lets `by` of real time pass, then settles, waiting
+    /// for every redelivery that fell due by then.
     ///
     /// # Errors
     ///
-    /// Returns [`TestError::NotQuiescent`] if the redelivered reaction does not settle within the
-    /// step budget.
+    /// Returns [`TestError::NotQuiescent`] if an in-process reaction does not settle within the
+    /// step budget, or [`TestError::NotSettled`] naming the subscription a live reaction left
+    /// unsettled at the deadline.
     pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
-        tokio::time::advance(by).await;
+        match self.mode {
+            Mode::InProcess => tokio::time::advance(by).await,
+            // Why real time passes here: the delay belongs to the real broker's own timer, which a
+            // paused clock in this process does not reach.
+            Mode::Live { .. } => tokio::time::sleep(by).await,
+        }
         self.coordinator.fire_due_timers().await;
-        self.coordinator.drive().await
+        self.settle().await
     }
 
     /// Waits for the post-settle continuations of everything settled so far to finish, for tests
@@ -650,30 +1002,71 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     }
 
     /// Shuts the harness down: stops the dispatch loops, drains in-flight handlers and post-settle
-    /// continuations (bounded by the app's shutdown timeout), and returns [`run_result`](Self::run_result).
+    /// continuations (bounded by the app's shutdown timeout), shuts each broker down, and returns
+    /// [`run_result`](Self::run_result).
     ///
     /// # Errors
     ///
     /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        self.shutdown.cancel();
-        match self.shutdown_timeout {
-            Some(timeout) => {
-                for handle in self.handles {
-                    let _ = tokio::time::timeout(timeout, handle).await;
-                }
-            }
-            None => {
-                for handle in self.handles {
-                    let _ = handle.await;
-                }
-            }
-        }
+        stop_dispatch(&self.shutdown, self.handles, self.shutdown_timeout).await;
         self.continuations.close();
         self.continuations.wait().await;
+        shut_down(self.entries).await;
         self.shutdown
             .taken_failure()
             .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
+    }
+}
+
+/// Stops the dispatch loops: signals them, and waits for them all, bounded by one shutdown
+/// timeout; the loops still running at its end are aborted with their workers, as the service's
+/// own shutdown does.
+async fn stop_dispatch(
+    shutdown: &Shutdown,
+    handles: Vec<JoinHandle<()>>,
+    timeout: Option<Duration>,
+) {
+    shutdown.cancel();
+    let until = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+    for mut handle in handles {
+        let Some(until) = until else {
+            let _ = handle.await;
+            continue;
+        };
+        if tokio::time::timeout_at(until, &mut handle).await.is_err() {
+            handle.abort();
+            // Awaited, so the loop is gone, not merely told to go, when this returns.
+            let _ = handle.await;
+        }
+    }
+}
+
+/// Closes the post-settle continuations and waits for them, bounded by the app's shutdown timeout.
+async fn drain_continuations(continuations: &TaskTracker, timeout: Option<Duration>) {
+    continuations.close();
+    match timeout {
+        Some(timeout) => {
+            let _ = tokio::time::timeout(timeout, continuations.wait()).await;
+        }
+        None => continuations.wait().await,
+    }
+}
+
+/// Shuts the connected brokers down in reverse connect order, as the service does. A live broker
+/// holds a connection, which is closed the way the service closes it; a teardown failure there
+/// says nothing about the service under test.
+async fn shut_down(entries: Vec<BrokerEntry>) {
+    for entry in entries.into_iter().rev() {
+        let broker = entry.display();
+        if let Err(err) = entry.lifecycle.shutdown().await {
+            tracing::debug!(
+                target: "ruststream::testing",
+                broker = %broker,
+                error = %err,
+                "broker shutdown after the test failed",
+            );
+        }
     }
 }
 
@@ -681,251 +1074,10 @@ impl<State: Send + Sync + 'static> TestApp<State> {
 struct SpawnArgs<State> {
     coordinator: Coordinator,
     entries: Vec<BrokerEntry>,
+    mode: Mode,
     starters: Vec<Starter<State>>,
     after_startup: Vec<LifecycleHook<State>>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
     state: Arc<State>,
-}
-
-/// A handle to one broker in a [`TestApp`]: inject input and assert on its handlers and publishes.
-pub struct BrokerHandle<'a> {
-    scope_id: usize,
-    coordinator: &'a Coordinator,
-    testable: Option<&'a dyn TestableBroker>,
-    shutdown: &'a Shutdown,
-    label: String,
-}
-
-impl fmt::Debug for BrokerHandle<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BrokerHandle")
-            .field("broker", &self.label)
-            .field("testable", &self.testable.is_some())
-            .finish_non_exhaustive()
-    }
-}
-
-/// The publish builder's sink for the harness.
-///
-/// It injects the message onto a broker's in-process transport the way an external producer
-/// would, then drives the resulting reaction to a standstill before the publish returns.
-///
-/// Produced by the `message(..)` entry point of [`TestApp`] and [`BrokerHandle`], so a test
-/// injects through the same positions - destination, typed headers, codec - that the service
-/// itself publishes through. You never name this type.
-pub struct InjectSink<'a>(Target<'a>);
-
-/// What an [`InjectSink`] sends into: a resolved broker, or none because the unscoped entry
-/// point had more than one to choose from.
-///
-/// The unscoped `message(..)` exists whatever the app registered, so the ambiguity rides here
-/// and surfaces from the publish.
-enum Target<'a> {
-    Broker {
-        coordinator: &'a Coordinator,
-        testable: Option<&'a dyn TestableBroker>,
-        shutdown: &'a Shutdown,
-        label: String,
-    },
-    Ambiguous,
-}
-
-impl fmt::Debug for InjectSink<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InjectSink").finish_non_exhaustive()
-    }
-}
-
-impl PublishSink for InjectSink<'_> {
-    // An injection is handed to the in-process transport by reference, which stores what it
-    // keeps: see `TestableBroker::inject`.
-    type Payload = Lend;
-    type Error = TestError;
-    // An injection stands in for an external producer, which reaches no broker's options type.
-    type Options = ();
-
-    async fn send(
-        &mut self,
-        msg: OutgoingMessage<'_, &[u8]>,
-        _options: Option<&Self::Options>,
-    ) -> Result<(), Self::Error> {
-        let Target::Broker {
-            coordinator,
-            testable,
-            shutdown,
-            label,
-        } = &self.0
-        else {
-            return Err(TestError::Ambiguous);
-        };
-        if shutdown.is_cancelled() {
-            return Err(TestError::ShutDown);
-        }
-        let transport = testable.ok_or_else(|| TestError::NoTransport(label.clone()))?;
-        transport.inject(msg);
-        coordinator.drive().await
-    }
-}
-
-impl<'a> BrokerHandle<'a> {
-    /// Starts a typed injection of a `#[derive(Outgoing)]` value onto this broker, encoded with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
-    /// `with_codec(..)`: `handle.message(&order).to("orders").publish().await?`.
-    ///
-    /// The same builder the service publishes through, sending onto the in-process transport as
-    /// an external producer would; awaiting the publish drives the resulting reaction to a
-    /// standstill, so the assertions that follow see a settled service.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
-    /// use ruststream::testing::TestApp;
-    /// use ruststream::{Outgoing, subscriber};
-    /// use serde::{Deserialize, Serialize};
-    ///
-    /// #[derive(Outgoing, Serialize, Deserialize)]
-    /// #[outgoing(name = "orders")]
-    /// struct Order {
-    ///     id: u32,
-    /// }
-    ///
-    /// #[subscriber("orders")]
-    /// async fn handle(order: &Order) -> HandlerOutcome {
-    ///     let _ = order.id;
-    ///     HandlerOutcome::ack()
-    /// }
-    ///
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
-    /// let tb = TestApp::start(app).await?;
-    ///
-    /// tb.broker::<MemoryBroker>()
-    ///     .message(&Order { id: 7 })
-    ///     .publish()
-    ///     .await?;
-    /// tb.broker::<MemoryBroker>()
-    ///     .subscriber("orders")
-    ///     .assert_called_once();
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn message<'v, T>(
-        &self,
-        value: &'v T,
-    ) -> PublishBuilder<InjectSink<'a>, MessageBody<'v, T>, UnnamedCodec, HeadersUnset, T::Form>
-    where
-        T: OutgoingDestination,
-    {
-        // The harness carries no codec of its own, so the position stays unnamed - the same
-        // bottom of the ladder a bare publisher uses.
-        message_of(self.sink(), value, UnnamedCodec::new())
-    }
-
-    /// This handle's transport as a publish sink. It borrows the app, not the handle, so a
-    /// builder started on a temporary handle outlives it.
-    fn sink(&self) -> InjectSink<'a> {
-        InjectSink(Target::Broker {
-            coordinator: self.coordinator,
-            testable: self.testable,
-            shutdown: self.shutdown,
-            label: self.label.clone(),
-        })
-    }
-}
-
-impl BrokerHandle<'_> {
-    /// Publishes `value` (encoded with [`DefaultCodec`](crate::codec::DefaultCodec)) to `name`, then
-    /// drives the resulting reaction to a standstill before returning.
-    ///
-    /// Use it for a `Serialize` type the test does not own: [`message`](Self::message) reads the
-    /// destination form off the value's type through [`OutgoingDestination`], which the orphan
-    /// rule keeps a foreign type from declaring. Inject an owned type through the builder.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TestError::ShutDown`] if the service has been torn down, [`TestError::Encode`]
-    /// if the value does not encode, [`TestError::NoTransport`] if this broker has no
-    /// in-process test transport, or [`TestError::NotQuiescent`] if the reaction does not
-    /// settle.
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-    pub async fn publish<T: serde::Serialize + Sync>(
-        &self,
-        name: &str,
-        value: &T,
-    ) -> Result<(), TestError> {
-        let bytes = DefaultCodec::default()
-            .encode(value)
-            .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink()
-            .send(OutgoingMessage::new(name, &bytes), None)
-            .await
-    }
-
-    /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
-    /// contract serialized into the header map (see
-    /// [`HeaderMap::insert_typed`](crate::HeaderMap::insert_typed)) - the input a
-    /// [`Headers`](crate::runtime::Headers) handler parses.
-    ///
-    /// Same reach as [`publish`](Self::publish): the builder's
-    /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TestError::Encode`] if the value or the headers do not encode, plus the errors
-    /// [`publish`](Self::publish) reports.
-    #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-    pub async fn publish_with_headers<T, H>(
-        &self,
-        name: &str,
-        value: &T,
-        headers: &H,
-    ) -> Result<(), TestError>
-    where
-        T: serde::Serialize + Sync,
-        H: serde::Serialize + Sync,
-    {
-        let bytes = DefaultCodec::default()
-            .encode(value)
-            .map_err(|err| TestError::Encode(err.to_string()))?;
-        let msg = OutgoingMessage::new(name, &bytes)
-            .with_typed_headers(headers)
-            .map_err(|err| TestError::Encode(err.to_string()))?;
-        self.sink().send(msg, None).await
-    }
-
-    /// Asserts on what the handler subscribed to `name` received and how it settled.
-    #[must_use]
-    pub fn subscriber(&self, name: &str) -> SubscriberAssertions<'_> {
-        SubscriberAssertions::new(self.coordinator, self.scope_id, name.to_owned())
-    }
-
-    /// Asserts on what was published to `name` on this broker (the broker's publish log).
-    #[must_use]
-    pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
-        let messages = self.testable.map(|t| t.published(name)).unwrap_or_default();
-        PublishedAssertions::new(
-            name.to_owned(),
-            messages,
-            self.coordinator.reply_published(name),
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{InjectSink, Target};
-
-    /// The sink travels inside a publish builder, which never hands it back, so its `Debug` is
-    /// reachable only from here - and it still has to name the type rather than leak the broker
-    /// handle it borrows.
-    #[test]
-    fn the_injection_sink_names_itself_without_its_broker() {
-        let sink = InjectSink(Target::Ambiguous);
-        assert_eq!(format!("{sink:?}"), "InjectSink { .. }");
-    }
 }

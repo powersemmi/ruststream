@@ -35,7 +35,7 @@ use crate::runtime::router::{
     RawReplyInjectMount, RawReplyMount, ReplyAttachment,
 };
 #[cfg(feature = "testing")]
-use crate::testing::coordinator::record_slot_publish;
+use crate::testing::coordinator::{PipelinePublish, record_slot_publish};
 use crate::{
     Broker, CallerName, Connected, ConnectedBroker, FixedName, HeaderMap, NameTemplate,
     OutgoingDestination, OutgoingFor, OwnedTransactions, PublishPolicy, Publisher, RequestReply,
@@ -432,7 +432,16 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         // A request takes no call-site options, so what it carried is the policy's defaults.
         #[cfg(feature = "testing")]
         record_slot_publish::<P::Options, _>(M::NAME, &msg, None);
-        self.inner.request(msg, timeout).await
+        // A request reaches the broker directly rather than through the publish pipeline, so it
+        // is recorded here for the channel view as well.
+        #[cfg(feature = "testing")]
+        let recorded = PipelinePublish::capture(&msg);
+        let reply = self.inner.request(msg, timeout).await;
+        #[cfg(feature = "testing")]
+        if reply.is_ok() {
+            recorded.sent();
+        }
+        reply
     }
 }
 

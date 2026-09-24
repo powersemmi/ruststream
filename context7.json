@@ -8,7 +8,7 @@
     "Publish from inside a handler through an `Out(out): Out<impl Publisher>` parameter bound at the mount site with `.out(marker, policy).build()`; a handler signature never names a broker's publisher type.",
     "The codec is chosen at the mount site (`with_broker_codec`, `Router::with_codec`, `.out_reply(policy).codec(..)`), never per message type; a type that is its own encoding derives `Serialized` or `Deserialized` and needs no codec.",
     "Cap redeliveries at the mount site with `.max_attempts(n)` and `.dead_letter(name)` right after `include`; `.out_retry(policy)` only replaces the publisher the retry copy leaves through.",
-    "Test a service with `ruststream::testing::TestApp` (feature `testing`) against the broker's in-process transport; do not mock the broker traits.",
+    "Test a service by handing its production app to `ruststream::testing::TestApp::start` (the broker crate's `testing` feature runs each broker in process) and address a broker by its production type, `tb.broker::<KafkaBroker>()`; `TestApp::start_live` runs the same test body against a running stand; do not mock the broker traits or build a second app for tests.",
     "Generate `main` with `#[ruststream::app]` and run the service with `cargo run -- run`; use `start()` only when the service runs beside another server such as an HTTP framework.",
     "Broker-specific settings live on the broker crate's subscription descriptor and publish policy, in that crate's vocabulary; the core exposes none.",
     "A transform that names a destination per delivery reads the address with `HeaderMap::get_shared` and passes the `Str` to `Outgoing::set_name`, so the name shares the delivery's buffer instead of being copied out of it.",
