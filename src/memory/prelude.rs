@@ -36,12 +36,12 @@
 
 pub use crate::prelude::*;
 
-// The broker's own surface: what a service names to build the app and to read a delivery's
-// position. The publisher, requester and message types stay explicit imports - a service that
+// The broker's own surface: what a service names to build the app (the broker, its routing
+// rule, its subscription sources) and to read a delivery's position. The publisher, requester and message types stay explicit imports - a service that
 // names them has left the broker-agnostic path.
 pub use super::{
-    Discarding, MemoryBatchContext, MemoryBroker, MemoryContext, MemoryError, MemoryPosition,
-    MemorySource, Position, Retaining, Retention, SeekHandle,
+    Discarding, MemoryBatchContext, MemoryBroker, MemoryContext, MemoryError, MemoryPattern,
+    MemoryPosition, MemorySource, Position, Retaining, Retention, Routing, SeekHandle,
 };
 
 // The policies under the names every broker's prelude uses, so a mount site reads the same

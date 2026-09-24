@@ -13,6 +13,11 @@ help: the following other types implement trait `SubscriptionSource<C>`
    | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
    |
+  ::: src/memory/pattern.rs
+   |
+   | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPattern {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
+   |
   ::: src/subscription.rs
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {

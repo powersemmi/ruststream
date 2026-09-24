@@ -42,8 +42,9 @@ nothing.
 ## The prelude a mount site imports { #prelude }
 
 `ruststream::memory::prelude` is this broker's glob, built like the prelude of every broker crate.
-It re-exports the core prelude, then the broker's own surface (`MemoryBroker`, `MemorySource`,
-`MemoryError`, `MemoryPosition`, `Retention` with the log modes `Discarding` / `Retaining`, and the
+It re-exports the core prelude, then the broker's own surface (`MemoryBroker` with its `Routing`,
+the subscription sources `MemorySource` and `MemoryPattern`, `MemoryError`, `MemoryPosition`,
+`Retention` with the log modes `Discarding` / `Retaining`, and the
 context keys `MemoryContext` / `MemoryBatchContext` / `Position` / `SeekHandle`), then the publish
 policies under the uniform names `Publish`,
 `TransactionalPublish` and `Request`. All three are aliases of `MemoryPublish` and `MemoryRequest`.
@@ -69,9 +70,9 @@ alone.
 ## Semantics
 
 - **Topic names match in full.** A subscription to `orders` receives the messages published to
-  `orders`.
+  `orders`. A [pattern subscription](#patterns) reads every topic its pattern matches.
 - **Fan-out.** Every subscriber of a topic receives every message published to it after the
-  subscription.
+  subscription. The broker's `Routing` decides which patterns receive it as well.
 - **Ack is a no-op; `nack(requeue: true)` redelivers** the same payload to the same subscriber.
 - **`retry_after` is the broker's own.** The delivery comes back to the same subscriber once the
   delay has elapsed, and nothing is republished in the meantime.
@@ -149,12 +150,63 @@ example:
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```
 
+## Pattern subscriptions { #patterns }
+
+<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+```rust
+use ruststream::memory::prelude::*;
+
+#[subscriber("orders.eu")]
+async fn europe(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+#[subscriber(MemoryPattern::new("orders.*"))]
+async fn other_regions(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+fn app() -> RustStream {
+    let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+        b.include(europe);
+        b.include(other_regions);
+    })
+}
+```
+
+`MemoryPattern` subscribes to a pattern, in the NATS subject syntax. A topic splits into tokens at
+`.`. The token `*` matches exactly one token, and `>` as the last token matches one or more. So
+`orders.*` reads `orders.eu` and `orders.us`, and `orders.>` also reads `orders.eu.created`. The
+broker checks a pattern when the subscription opens. A bad pattern stops the service at startup
+with `MemoryError::InvalidPattern`, and the error names the pattern. A subscription by name
+reads one topic, so a wildcard token there stops the service with `MemoryError::WildcardName`.
+
+`Routing` decides who receives a message that several subscriptions match:
+
+- **`Routing::EveryMatch`**, the default, delivers it to every match, as NATS does. Choose it when
+  a pattern reads alongside the handlers of single topics: an audit trail, a metrics tap.
+- **`Routing::MostSpecific`** delivers it to the subscribers of the exact topic. When there are
+  none, the most specific matching pattern receives it. Choose it when a pattern is the fallback
+  for topics without a handler of their own.
+
+Patterns are compared token by token from the left. At the first token where they differ, a
+literal token beats `*`, and `*` beats `>`. For a publish to `orders.eu.created`, `orders.eu.*`
+beats `orders.*.created`, which beats `orders.>`, which beats `*.eu.created`.
+
+A broker with no pattern subscription routes by the exact topic alone and pays nothing for
+patterns. A pattern subscription cannot seek, even on a retaining broker, because the log is kept
+per topic.
+
 ## For testing
 
 You test an application built on `MemoryBroker` with the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) harness:
 build the app, hand it to `TestApp::start`, publish messages, and assert on what the handlers
 received and published. [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples) walks
 through the full pattern.
+
+The harness reads the broker's `Routing`, so a publish waits on exactly the subscriptions the rule
+picks, under `TestApp::start` and `TestApp::start_live` alike.
 
 The harness records what the service publishes for the length of a run, so `published::<T>(..)`
 assertions read the same list whichever form of the broker the application was built on. Outside

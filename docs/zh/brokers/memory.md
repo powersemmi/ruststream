@@ -38,8 +38,9 @@ let broker = MemoryBroker::new();
 ## 挂载点导入的 prelude { #prelude }
 
 `ruststream::memory::prelude` 是该 Broker 的 glob，形状和每个 Broker crate 的 prelude 一样。它先
-重导出核心 prelude，然后是该 Broker 自己的表面（`MemoryBroker`、`MemorySource`、`MemoryError`、
-`MemoryPosition`、`Retention` 与日志模式 `Discarding` / `Retaining`，以及上下文键 `MemoryContext` /
+重导出核心 prelude，然后是该 Broker 自己的表面（`MemoryBroker` 及其 `Routing`、订阅源
+`MemorySource` 和 `MemoryPattern`、`MemoryError`、`MemoryPosition`、`Retention` 与日志模式
+`Discarding` / `Retaining`，以及上下文键 `MemoryContext` /
 `MemoryBatchContext` / `Position` /
 `SeekHandle`），最后是统一名字下的发布策略：`Publish`、`TransactionalPublish` 和 `Request`。
 这三个名字是 `MemoryPublish` 和 `MemoryRequest` 的别名。该 Broker 的发布者实现了两种事务，因此
@@ -61,8 +62,10 @@ use ruststream::memory::prelude::*;
 
 ## 语义
 
-- **主题名精确匹配。** 对 `orders` 的订阅会收到发布到 `orders` 的消息。
-- **投递给全部订阅者。** 某个主题的每个订阅者，都会收到订阅之后发布到该主题的每条消息。
+- **主题名精确匹配。** 对 `orders` 的订阅会收到发布到 `orders` 的消息。[模式订阅](#patterns)
+  读取与模式匹配的全部主题。
+- **投递给全部订阅者。** 某个主题的每个订阅者，都会收到订阅之后发布到该主题的每条消息。哪些模式
+  也会收到它，由 Broker 的 `Routing` 决定。
 - **ack 是空操作。** 带 `requeue: true` 的 nack 把同一份载荷重新投递给同一个订阅者。
 - **`retry_after` 由 Broker 自己完成。** 延迟过后，这条投递回到同一个订阅者，其间不会重新发布任何副本。
 - **投递会计数。** 每条投递都会报告 Broker 已经把这条消息交给该订阅者多少次，第一次投递也算在内。
@@ -129,11 +132,59 @@ use ruststream::memory::prelude::*;
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```
 
+## 模式订阅 { #patterns }
+
+<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+```rust
+use ruststream::memory::prelude::*;
+
+#[subscriber("orders.eu")]
+async fn europe(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+#[subscriber(MemoryPattern::new("orders.*"))]
+async fn other_regions(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+fn app() -> RustStream {
+    let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+        b.include(europe);
+        b.include(other_regions);
+    })
+}
+```
+
+`MemoryPattern` 订阅一个模式，语法与 NATS 主题相同。主题名按 `.` 切分为若干记号。记号 `*` 恰好
+匹配一个记号，位于末尾的 `>` 匹配一个或多个记号。因此 `orders.*` 读取 `orders.eu` 和
+`orders.us`，`orders.>` 还会读取 `orders.eu.created`。Broker 在打开订阅时检查模式。模式有误时，
+服务在启动阶段停止，返回 `MemoryError::InvalidPattern` 错误，错误中写明该模式。按名字的订阅只读取
+一个主题，因此名字里出现通配记号时，服务同样无法启动，返回 `MemoryError::WildcardName` 错误。
+
+一条消息与多个订阅匹配时，由 `Routing` 决定谁收到它：
+
+- **`Routing::EveryMatch`** 是默认值，把消息投递给每个匹配的订阅，与 NATS 一致。模式与单个主题的
+  处理器并行读取时选它，例如审计日志、指标采集。
+- **`Routing::MostSpecific`** 把消息投递给精确主题名的订阅者。没有这样的订阅者时，由匹配的模式中
+  最具体的那一个收到。模式用来兜底、承接没有专属处理器的主题时选它。
+
+模式按记号从左到右比较。在第一个不同的记号上，字面记号比 `*` 更具体，`*` 比 `>` 更具体。对于发布
+到 `orders.eu.created` 的消息，`orders.eu.*` 比 `orders.*.created` 更具体，后者比 `orders.>`
+更具体，`orders.>` 又比 `*.eu.created` 更具体。
+
+没有模式订阅的 Broker 只按精确主题名路由，不为模式付出任何开销。模式订阅不能重新定位，保留日志的
+Broker 上也一样，因为日志按主题分别保存。
+
 ## 用于测试
 
 `MemoryBroker` 上的应用，你用 [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) 套件来测试：构建应用，交给
 `TestApp::start`，发布消息，然后断言处理器收到了什么、发布了什么。完整用法参见
 [测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples)。
+
+套件读取 Broker 的 `Routing`，因此无论 `TestApp::start` 还是 `TestApp::start_live`，一次发布
+等待的都恰好是规则选中的那些订阅。
 
 在一次测试运行期间，套件会记录服务发布的每一条消息，因此无论应用建立在哪一种形态的 Broker 之上，
 `published::<T>(..)` 断言读到的都是同一份列表。在套件之外，通过 `TestableBroker::published` 读回
