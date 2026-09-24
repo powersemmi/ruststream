@@ -1,9 +1,9 @@
 //! `MessagePack` codec backed by [`rmp_serde`].
 
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
+use crate::codec::{BufWriter, Codec, CodecError, ENCODE_CAPACITY};
 
 /// An `rmp-serde`-based [`Codec`]. Stateless; clone freely.
 #[derive(Debug, Clone, Copy, Default)]
@@ -23,7 +23,7 @@ impl Codec for MsgpackCodec {
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
         // Straight into the caller's buffer: a publish that lends the payload reuses the one
         // its dispatch loop holds, so this writes where the bytes already are.
-        rmp_serde::encode::write(&mut buf.writer(), value)
+        rmp_serde::encode::write(&mut BufWriter(buf), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))
     }
 

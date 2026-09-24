@@ -1,9 +1,9 @@
 //! JSON codec backed by [`serde_json`].
 
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::codec::{Codec, CodecError, ENCODE_CAPACITY};
+use crate::codec::{BufWriter, Codec, CodecError, ENCODE_CAPACITY};
 
 /// A `serde_json`-based [`Codec`]. Stateless; clone freely.
 #[derive(Debug, Clone, Copy, Default)]
@@ -19,7 +19,7 @@ impl Codec for JsonCodec {
         // Written here rather than through `encode_into`: the hop through the trait method costs
         // a taking publish about thirty instructions per message once the two have separate
         // callers, and this is the path every such publish takes.
-        serde_json::to_writer((&mut buf).writer(), value)
+        serde_json::to_writer(BufWriter(&mut buf), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))?;
         Ok(buf)
     }
@@ -27,7 +27,8 @@ impl Codec for JsonCodec {
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
         // Straight into the caller's buffer: a publish that lends the payload reuses the one
         // its dispatch loop holds, so this writes where the bytes already are.
-        serde_json::to_writer(buf.writer(), value).map_err(|err| CodecError::Encode(Box::new(err)))
+        serde_json::to_writer(BufWriter(buf), value)
+            .map_err(|err| CodecError::Encode(Box::new(err)))
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {

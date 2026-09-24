@@ -203,10 +203,41 @@ pub type DefaultCodec = CborCodec;
 pub type DefaultCodec = MsgpackCodec;
 
 use std::error::Error as StdError;
+#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+use std::io;
 
 use bytes::BytesMut;
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
+
+/// The [`io::Write`] a serializer writes an encode buffer through: every write is an append.
+///
+/// `bytes`' own writer answers `write_all` with the trait's default loop over `write`, which the
+/// optimizer inlines or not depending on what else the binary holds; the difference is several
+/// hundred instructions per encoded message. These methods are appends marked for inlining, so
+/// the encode path costs the same whatever else changes around it.
+#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+pub(crate) struct BufWriter<'a>(pub(crate) &'a mut BytesMut);
+
+#[cfg(any(feature = "json", feature = "msgpack", feature = "cbor"))]
+impl io::Write for BufWriter<'_> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.0.extend_from_slice(buf);
+        Ok(())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Errors returned by codec implementations.
 #[derive(Debug, Error)]
