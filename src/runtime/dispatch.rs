@@ -9,7 +9,7 @@ use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::Poll;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
@@ -249,9 +249,10 @@ impl<C> fmt::Debug for Delivery<C> {
 /// than the value, which is what keeps a pinned dispatch the same size for a 16-byte delivery and
 /// a 16-kilobyte one.
 ///
-/// The inside is an `Option` because Rust cannot move a value out of a place its caller owns, not
-/// because a slot is ever empty on the dispatch path: it is filled where it is declared, and
-/// taking the delivery is the last thing that happens to it.
+/// The inside is an `Option` because Rust cannot move a value out of a place its caller owns. A
+/// slot is never empty on the dispatch path: the sequential loop's one slot is filled by the poll
+/// that takes a delivery off the stream and emptied by the settle, and a pooled worker's is filled
+/// where it is declared; taking the delivery is the last thing that happens to it.
 pub(crate) struct Slot<M>(Option<M>);
 
 /// What a slot says when it is read after the settle has taken the delivery.
@@ -261,6 +262,16 @@ impl<M> Slot<M> {
     /// The slot holding `msg`.
     pub(crate) const fn new(msg: M) -> Self {
         Self(Some(msg))
+    }
+
+    /// A slot with nothing in it yet: the sequential loop's own, which the stream fills in place.
+    const fn empty() -> Self {
+        Self(None)
+    }
+
+    /// Puts the next delivery in the slot.
+    fn fill(&mut self, msg: M) {
+        self.0 = Some(msg);
     }
 
     /// The delivery, for everything that only reads it.
@@ -308,12 +319,13 @@ where
         // reads the payload is written into this one every time, so the subscription allocates
         // it once and never again.
         let mut encode = BytesMut::new();
+        // The loop's slot, one for the whole loop: the stream's poll writes each delivery
+        // straight into it, and the settle takes it out again. A delivery returned by value
+        // through the turn and bound to a local on its way here would be copied twice more.
+        let mut slot = Slot::empty();
         loop {
-            match turn(&shutdown, stream.as_mut(), cancelled.as_mut()).await {
-                Turn::Delivery(Ok(msg)) => {
-                    // The loop's slot: the delivery lands here and leaves at the settle, and
-                    // the dispatch below borrows it.
-                    let mut slot = Slot::new(msg);
+            match turn_into(&shutdown, stream.as_mut(), cancelled.as_mut(), &mut slot).await {
+                Turn::Delivery(Ok(())) => {
                     // Pinned rather than awaited in place: a delivery's future carries the
                     // context, the handler's own state and the settle path, and awaiting the
                     // call expression makes the loop build it on the stack and copy it into
@@ -348,6 +360,66 @@ where
             }
         }
     })
+}
+
+/// [`turn`] for the sequential loop, writing the delivery into the loop's slot where it lands
+/// rather than returning it by value.
+///
+/// # Cancel safety
+///
+/// As [`turn`]: a delivery is written into the slot in the same poll that takes it off the
+/// stream, so dropping this future loses nothing.
+fn turn_into<'s, St, Message, Failure, Wait>(
+    shutdown: &Shutdown,
+    stream: Pin<&'s mut St>,
+    cancelled: Pin<&'s mut Wait>,
+    slot: &'s mut Slot<Message>,
+) -> TurnInto<'s, St, Message, Wait>
+where
+    St: Stream<Item = Result<Message, Failure>>,
+    Wait: Future<Output = ()>,
+{
+    TurnInto {
+        shutdown: shutdown.is_cancelled(),
+        stream,
+        cancelled,
+        slot,
+    }
+}
+
+/// The future [`turn_into`] returns: written out rather than an `async fn` so its poll carries an
+/// inline hint, which a closure inside `poll_fn` cannot.
+struct TurnInto<'s, St, Message, Wait> {
+    shutdown: bool,
+    stream: Pin<&'s mut St>,
+    cancelled: Pin<&'s mut Wait>,
+    slot: &'s mut Slot<Message>,
+}
+
+impl<St, Message, Failure, Wait> Future for TurnInto<'_, St, Message, Wait>
+where
+    St: Stream<Item = Result<Message, Failure>>,
+    Wait: Future<Output = ()>,
+{
+    type Output = Turn<Result<(), Failure>>;
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        // Every field is a reference or a flag, so the future is `Unpin`.
+        let this = self.get_mut();
+        if this.shutdown {
+            return Poll::Ready(Turn::Shutdown);
+        }
+        match this.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(msg))) => {
+                this.slot.fill(msg);
+                Poll::Ready(Turn::Delivery(Ok(())))
+            }
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Turn::Delivery(Err(err))),
+            Poll::Ready(None) => Poll::Ready(Turn::Ended),
+            Poll::Pending => this.cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+        }
+    }
 }
 
 /// What one turn of a dispatch loop found on its subscriber.
@@ -945,6 +1017,10 @@ async fn dispatch<H, M, C, St>(
         if let Some(after) = s.take_after() {
             delivery.tasks.spawn(after);
         }
+    } else {
+        // A fail-fast left the delivery unsettled: it is released here, as it always was at the
+        // end of its dispatch, rather than when the loop's slot is next filled.
+        drop(slot.take());
     }
     // Context-registered hooks run after the message is settled: at-most-once, off the delivery
     // path. They ride the same app-wide tracker as an `and_after` continuation, so one drain
