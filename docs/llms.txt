@@ -37,6 +37,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 - [Brokers](https://powersemmi.github.io/ruststream/latest/brokers/): the broker crates, and moving a service to another broker
 - [In-memory broker](https://powersemmi.github.io/ruststream/latest/brokers/memory/): the broker inside one process, and the reference implementation of the contract
+- [In-memory pattern subscriptions](https://docs.rs/ruststream/latest/ruststream/memory/index.html#pattern-subscriptions): `MemoryPattern` in the NATS subject syntax, and the `Routing` rule that picks every match or the most specific one
 - [NATS](https://docs.rs/ruststream-nats): `ruststream-nats`, Core NATS and JetStream
 - [Redis / Valkey](https://docs.rs/ruststream-fred): `ruststream-fred`, streams, lists and Pub/Sub
 - [RabbitMQ](https://docs.rs/ruststream-lapin): `ruststream-lapin`, AMQP 0.9.1

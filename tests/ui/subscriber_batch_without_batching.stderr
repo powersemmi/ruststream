@@ -35,33 +35,12 @@ help: the trait `RedeliveryAddressed<ConnectedMemoryBroker>` is not implemented 
 25 | struct Trickle {
    | ^^^^^^^^^^^^^^
    = note: a descriptor whose retry copies this process publishes to one destination implements `RedeliveryAddressed` beside `SubscriptionSource`; one that reads many destinations declares `Copies = NamedCopies` and lets the mount site name one
-help: the following other types implement trait `RedeliveryAddressed<C>`
-  --> src/memory/mod.rs
-   |
-   |   impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySource {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `RedeliveryAddressed<ConnectedMemoryBroker<Log>>`
-   |
-  ::: src/subscription.rs
-   |
-   |   impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `RedeliveryAddressed<C>`
-...
-   | / impl<C, S, P> RedeliveryAddressed<C> for StartAt<S, P>
-   | | where
-   | |     Self: SubscriptionSource<C, Copies = AddressedCopies>,
-   | |     C: ConnectedBroker,
-   | |     S: RedeliveryAddressed<C> + Send + Sync,
-   | |____________________________________________^ `StartAt<S, P>` implements `RedeliveryAddressed<C>`
-   |
-  ::: src/buffered.rs
-   |
-   | / impl<C, S> RedeliveryAddressed<C> for Buffered<S>
-   | | where
-   | |     Self: SubscriptionSource<C, Copies = AddressedCopies>,
-   | |     C: ConnectedBroker,
-   | |     S: RedeliveryAddressed<C> + Send + Sync,
-   | |     S::Subscriber: Send,
-   | |________________________^ `ruststream::Buffered<S>` implements `RedeliveryAddressed<C>`
+   = help: the following other types implement trait `RedeliveryAddressed<C>`:
+             `MemoryPattern` implements `RedeliveryAddressed<ConnectedMemoryBroker<Log>>`
+             `MemorySource` implements `RedeliveryAddressed<ConnectedMemoryBroker<Log>>`
+             `Name` implements `RedeliveryAddressed<C>`
+             `StartAt<S, P>` implements `RedeliveryAddressed<C>`
+             `ruststream::Buffered<S>` implements `RedeliveryAddressed<C>`
    = note: required for `AddressedCopies` to implement `ruststream::runtime::CopyPathAddress<ConnectedMemoryBroker, Trickle>`
    = note: required for `runtime::router::routes::BatchRoute<Trickle, runtime::batch::TypedBatch<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(runtime::router::routes::BatchRoute<Trickle, runtime::batch::TypedBatch<MemoryMessage, runtime::input::Decoded<Order>, JsonCodec, runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())` to implement `RouterDef<MemoryBroker>`

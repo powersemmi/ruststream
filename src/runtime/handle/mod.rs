@@ -104,6 +104,8 @@ pub type ValueBuilder<Def, Src> = crate::runtime::settings::SubscriberBuilder<
 use std::borrow::Cow;
 use std::future::Future;
 
+#[cfg(feature = "memory")]
+use crate::memory::{MemoryPattern, MemorySource};
 use crate::{Name, Unnamed};
 
 use super::context::Context;
@@ -192,7 +194,16 @@ impl<S> IntoSource for Unnamed<S> {
 }
 
 #[cfg(feature = "memory")]
-impl IntoSource for crate::memory::MemorySource {
+impl IntoSource for MemorySource {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "memory")]
+impl IntoSource for MemoryPattern {
     type Source = Self;
 
     fn into_source(self) -> Self {

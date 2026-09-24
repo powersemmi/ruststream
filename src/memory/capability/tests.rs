@@ -308,8 +308,11 @@ async fn request_resolves_on_reply() {
 
     // The single-use inbox must be unregistered once the request resolves.
     let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
-        Bus::Live(subscribers) => subscribers.keys().any(|name| name.starts_with("_inbox.")),
-        Bus::ShutDown => false,
+        Bus::Live(registry) => registry
+            .names
+            .keys()
+            .any(|name| name.starts_with("_inbox.")),
+        Bus::ShutDown(_) => false,
     };
     assert!(!inbox_leaked);
 }
@@ -373,8 +376,11 @@ async fn request_times_out_without_responder() {
     assert!(matches!(outcome, Err(RequestError::Timeout { .. })));
 
     let inbox_leaked = match &*broker.state.subscribers.lock().unwrap() {
-        Bus::Live(subscribers) => subscribers.keys().any(|name| name.starts_with("_inbox.")),
-        Bus::ShutDown => false,
+        Bus::Live(registry) => registry
+            .names
+            .keys()
+            .any(|name| name.starts_with("_inbox.")),
+        Bus::ShutDown(_) => false,
     };
     assert!(!inbox_leaked);
 }

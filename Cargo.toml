@@ -380,6 +380,10 @@ name = "testing_harness"
 required-features = ["testing", "macros", "memory", "json"]
 
 [[test]]
+name = "memory_routing"
+required-features = ["testing", "macros", "memory", "json"]
+
+[[test]]
 name = "ui"
 required-features = ["macros", "memory", "json"]
 

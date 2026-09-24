@@ -41,8 +41,9 @@ let broker = MemoryBroker::new();
 ## Прелюдия, которую импортирует точка монтирования { #prelude }
 
 `ruststream::memory::prelude` - glob этого брокера, устроенный как прелюдия любого брокерного
-крейта. Он реэкспортирует прелюдию ядра, затем поверхность самого брокера (`MemoryBroker`,
-`MemorySource`, `MemoryError`, `MemoryPosition`, `Retention` с режимами журнала `Discarding` /
+крейта. Он реэкспортирует прелюдию ядра, затем поверхность самого брокера (`MemoryBroker` с его
+`Routing`, источники подписки `MemorySource` и `MemoryPattern`, `MemoryError`, `MemoryPosition`,
+`Retention` с режимами журнала `Discarding` /
 `Retaining` и ключи контекста `MemoryContext` /
 `MemoryBatchContext` / `Position` / `SeekHandle`), затем политики публикации под едиными именами
 `Publish`, `TransactionalPublish` и `Request`. Все три - псевдонимы `MemoryPublish` и
@@ -68,9 +69,9 @@ use ruststream::memory::prelude::*;
 ## Семантика
 
 - **Имя темы сравнивается целиком.** Подписка на тему `orders` получает сообщения, опубликованные
-  в `orders`.
+  в `orders`. [Подписка по шаблону](#patterns) читает все темы, которые подходят под шаблон.
 - **Доставка всем подписчикам.** Каждый подписчик темы получает каждое сообщение, опубликованное
-  после подписки.
+  после подписки. Какие шаблоны тоже получат его, решает `Routing` брокера.
 - **Ack ничего не делает, а `nack(requeue: true)` доставляет** ту же полезную нагрузку тому же
   подписчику заново.
 - **`retry_after` брокер отрабатывает сам.** Доставка возвращается тому же подписчику, когда
@@ -152,12 +153,65 @@ use ruststream::memory::prelude::*;
     --8<-- "examples/manual/routed_service_orders.rs:descriptor"
     ```
 
+## Подписка по шаблону { #patterns }
+
+<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+```rust
+use ruststream::memory::prelude::*;
+
+#[subscriber("orders.eu")]
+async fn europe(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+#[subscriber(MemoryPattern::new("orders.*"))]
+async fn other_regions(order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+fn app() -> RustStream {
+    let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+        b.include(europe);
+        b.include(other_regions);
+    })
+}
+```
+
+`MemoryPattern` подписывается на шаблон. Синтаксис шаблона тот же, что у тем NATS. Имя темы
+делится на токены по точке. Токен `*` подходит ровно к одному токену, а `>` в конце шаблона - к
+одному токену или больше. Так, `orders.*` читает `orders.eu` и `orders.us`, а `orders.>` читает
+ещё и `orders.eu.created`. Брокер проверяет шаблон, когда открывает подписку. С неверным шаблоном
+сервис не запускается: он получает ошибку `MemoryError::InvalidPattern`, и в ней указан шаблон.
+Подписка по имени читает одну тему, поэтому подстановочный токен в имени тоже останавливает запуск,
+с ошибкой `MemoryError::WildcardName`.
+
+Кто получит сообщение, под которое подходят несколько подписок, решает `Routing`:
+
+- **`Routing::EveryMatch`** действует по умолчанию и доставляет сообщение всем подходящим
+  подпискам, как NATS. Выбирайте его, когда шаблон читает рядом с обработчиками отдельных тем:
+  журнал аудита, сбор метрик.
+- **`Routing::MostSpecific`** доставляет сообщение подписчикам точного имени темы. Если таких
+  нет, сообщение получает самый точный из подходящих шаблонов. Выбирайте его, когда шаблон
+  подбирает темы, у которых нет своего обработчика.
+
+Шаблоны сравниваются по токенам слева направо. На первом токене, где они расходятся, буквальный
+токен точнее `*`, а `*` точнее `>`. Для публикации в `orders.eu.created` шаблон `orders.eu.*`
+точнее `orders.*.created`, тот точнее `orders.>`, а `orders.>` точнее `*.eu.created`.
+
+Брокер без подписок по шаблону сопоставляет только точное имя темы и за шаблоны ничего не платит.
+Подписку по шаблону нельзя перемотать даже на хранящем брокере: журнал ведётся по каждой теме
+отдельно.
+
 ## Для тестов
 
 Приложение на `MemoryBroker` вы проверяете обвязкой [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html): соберите
 приложение, отдайте его в `TestApp::start`, публикуйте сообщения и проверяйте, какие сообщения
 получили и какие опубликовали обработчики. Полностью приём разобран в разделе
 [Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html#examples).
+
+Обвязка читает `Routing` брокера, поэтому публикация ждёт ровно те подписки, которые выбирает
+правило, и под `TestApp::start`, и под `TestApp::start_live`.
 
 На время прогона обвязка записывает всё, что публикует сервис, поэтому проверки `published::<T>(..)`
 читают один и тот же список, на какой бы форме брокера приложение ни было собрано. Вне обвязки чтение

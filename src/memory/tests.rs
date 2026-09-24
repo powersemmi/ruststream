@@ -258,10 +258,11 @@ async fn a_delivery_carries_the_name_the_registry_holds() {
         .name;
 
     let bus = broker.state.subscribers.lock().unwrap();
-    let Bus::Live(subscribers) = &*bus else {
+    let Bus::Live(registry) = &*bus else {
         panic!("the bus is live");
     };
-    let (registered, _) = subscribers
+    let (registered, _) = registry
+        .names
         .get_key_value("orders")
         .expect("the subscription is registered");
     let registered = Arc::clone(registered);
@@ -285,4 +286,92 @@ async fn a_publish_nothing_reads_is_accepted_and_kept_nowhere() {
     let mut subscriber = broker.subscribe("unread");
     let mut stream = std::pin::pin!(subscriber.stream());
     assert!(stream.next().now_or_never().is_none());
+}
+
+/// The infallible constructor does not open a pattern: the stream ends at once instead of waiting
+/// for publishes that never reach a name it did not register.
+#[tokio::test]
+async fn a_wildcard_name_on_the_inherent_subscribe_ends_the_stream() {
+    let broker = MemoryBroker::new();
+    let mut subscriber = broker.subscribe("orders.*");
+    broker
+        .publisher()
+        .publish(OutgoingMessage::new("orders.*", b"body"), None)
+        .await
+        .unwrap();
+    let mut stream = std::pin::pin!(subscriber.stream());
+    assert!(stream.next().await.is_none());
+}
+
+/// Under `MostSpecific` a subscription that has gone takes nothing: an exact name or a more
+/// specific pattern whose subscribers were all dropped leaves the publish to the next match that
+/// still reads.
+#[tokio::test]
+async fn most_specific_skips_subscriptions_that_have_gone() {
+    let connected = MemoryBroker::new()
+        .routing(Routing::MostSpecific)
+        .connect()
+        .await
+        .unwrap();
+    let exact = connected.subscribe("orders.eu.created").await.unwrap();
+    let specific = MemoryPattern::new("orders.eu.*")
+        .subscribe(&connected)
+        .await
+        .unwrap();
+    let mut general = MemoryPattern::new("orders.>")
+        .subscribe(&connected)
+        .await
+        .unwrap();
+    drop(exact);
+    drop(specific);
+
+    connected
+        .publisher()
+        .publish(OutgoingMessage::new("orders.eu.created", b"body"), None)
+        .await
+        .unwrap();
+    let mut stream = std::pin::pin!(general.stream());
+    assert_eq!(
+        stream
+            .next()
+            .now_or_never()
+            .flatten()
+            .unwrap()
+            .unwrap()
+            .name(),
+        "orders.eu.created"
+    );
+}
+
+/// A pattern subscription reads every name it matches, stamped with the name it was published
+/// to, and a shut-down bus keeps the routing rule for its revival.
+#[tokio::test]
+async fn a_pattern_reads_every_match_and_the_rule_survives_shutdown() {
+    let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+    let connected = broker.clone().connect().await.unwrap();
+    let mut pattern = MemoryPattern::new("orders.>")
+        .subscribe(&connected)
+        .await
+        .unwrap();
+    let publisher = connected.publisher();
+    for name in ["orders.eu", "orders.eu.created", "invoices.eu"] {
+        publisher
+            .publish(OutgoingMessage::new(name, b"body"), None)
+            .await
+            .unwrap();
+    }
+    {
+        let mut stream = std::pin::pin!(pattern.stream());
+        assert_eq!(stream.next().await.unwrap().unwrap().name(), "orders.eu");
+        assert_eq!(
+            stream.next().await.unwrap().unwrap().name(),
+            "orders.eu.created"
+        );
+        assert!(stream.next().now_or_never().is_none());
+    }
+
+    let closed = connected.shutdown().await.unwrap();
+    assert_eq!(closed.subscribers_dropped(), 1);
+    let revived = broker.connect().await.unwrap();
+    assert_eq!(revived.state.routing(), Routing::MostSpecific);
 }

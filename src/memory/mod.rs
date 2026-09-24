@@ -31,9 +31,63 @@
 //!
 //! A service mounting on this broker globs [`prelude`], which carries the core prelude plus this
 //! broker's surface and its publish policies under the uniform names a mount site writes.
+//!
+//! # Pattern subscriptions
+//!
+//! ```
+//! # #[cfg(all(feature = "macros", feature = "json"))]
+//! # mod demo {
+//! use ruststream::memory::prelude::*;
+//! # #[derive(serde::Deserialize)]
+//! # struct Order { id: u64 }
+//!
+//! #[subscriber("orders.eu")]
+//! async fn europe(order: &Order) -> HandlerOutcome {
+//!     let _ = order.id;
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! #[subscriber(MemoryPattern::new("orders.*"))]
+//! async fn other_regions(order: &Order) -> HandlerOutcome {
+//!     let _ = order.id;
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! fn app() -> RustStream {
+//!     // `orders.eu` goes to `europe` alone; `orders.us` goes to `other_regions`.
+//!     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+//!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+//!         b.include(europe);
+//!         b.include(other_regions);
+//!     })
+//! }
+//! # }
+//! # fn main() {}
+//! ```
+//!
+//! A [`MemoryPattern`] subscription reads every name its pattern matches. Names split into
+//! tokens at `.`; `*` matches one token, and `>` as the last token matches one or more. This is
+//! the NATS subject syntax. A pattern is checked when the subscription opens, so a bad one stops
+//! the service at startup with [`MemoryError::InvalidPattern`]. A subscription by name
+//! ([`MemorySource`] or `#[subscriber("..")]`) reads one name and refuses a wildcard token.
+//!
+//! The broker's [`Routing`] decides who receives a publish that several subscriptions match:
+//!
+//! - [`Routing::EveryMatch`], the default, hands it to every match, as NATS does. Use it when a
+//!   pattern reads alongside the handlers of single names: an audit trail, a metrics tap.
+//! - [`Routing::MostSpecific`] hands it to the subscriptions of the exact name, or, where there
+//!   are none, to the most specific matching pattern. Use it when a pattern is the fallback for
+//!   names without a handler of their own. Specificity is compared token by token from the left:
+//!   a literal beats `*`, and `*` beats `>`.
+//!
+//! A broker with no pattern subscription routes by the exact name alone and pays nothing for
+//! patterns. A pattern subscription is not [`Seekable`](crate::Seekable), even on a retaining
+//! broker, because the log is kept per name. Under [`TestApp`](crate::testing::TestApp), in
+//! process and live alike, a publish is awaited on exactly the subscriptions the rule picks.
 
 mod capability;
 mod log;
+mod pattern;
 pub mod prelude;
 
 use capability::SeekControl;
@@ -43,6 +97,8 @@ pub use capability::{
 };
 use log::LogState;
 pub use log::{Discarding, LogMode, Retaining, Retention};
+pub use pattern::{MemoryPattern, PatternError, Routing};
+use pattern::{Pattern, PatternGroup, PatternReach, has_wildcard};
 
 use std::{
     borrow::Cow,
@@ -151,17 +207,50 @@ impl MemoryDelivery {
 /// cannot disagree: every bus operation matches on the variant and reports
 /// [`MemoryError::ShutDown`] against a dead bus instead of silently succeeding.
 ///
-/// The key is shared because it is the name every delivery to that subscription carries: the
-/// fanout finds it in the lookup it has to do anyway and stamps the delivery with it, so a
-/// publish to a name someone reads allocates nothing for the name.
+/// The routing rule outlives a shutdown, because it is the broker's setting rather than a
+/// registration: a revived bus routes the way the broker was built to.
 enum Bus {
-    Live(HashMap<Arc<str>, Vec<Sender>>),
-    ShutDown,
+    Live(Registry),
+    ShutDown(Routing),
 }
 
 impl Default for Bus {
     fn default() -> Self {
-        Self::Live(HashMap::new())
+        Self::Live(Registry::new(Routing::default()))
+    }
+}
+
+/// The live bus's registrations: the subscriptions of exact names, the pattern subscriptions,
+/// and the rule that picks between them.
+///
+/// An exact name is a map key because it is the name every delivery to that subscription
+/// carries: the fanout finds it in the lookup it has to do anyway and stamps the delivery with
+/// it, so a publish to a name someone reads allocates nothing for the name. The patterns sit
+/// beside the map rather than in it, so a broker with none of them spends one emptiness check on
+/// them per publish.
+struct Registry {
+    names: HashMap<Arc<str>, Vec<Sender>>,
+    patterns: Vec<PatternGroup>,
+    routing: Routing,
+}
+
+impl Registry {
+    fn new(routing: Routing) -> Self {
+        Self {
+            names: HashMap::new(),
+            patterns: Vec::new(),
+            routing,
+        }
+    }
+
+    /// How many subscriber registrations the bus holds.
+    fn len(&self) -> usize {
+        self.names.values().map(Vec::len).sum::<usize>()
+            + self
+                .patterns
+                .iter()
+                .map(|group| group.senders.len())
+                .sum::<usize>()
     }
 }
 
@@ -220,23 +309,84 @@ impl MemoryState {
             .lock()
             .expect("memory broker mutex poisoned")
         {
-            Bus::Live(subscribers) => {
-                subscribers.entry(Arc::from(name)).or_default().push(tx);
+            Bus::Live(registry) => {
+                registry.names.entry(Arc::from(name)).or_default().push(tx);
                 Ok(())
             }
-            Bus::ShutDown => Err(MemoryError::ShutDown),
+            Bus::ShutDown(_) => Err(MemoryError::ShutDown),
+        }
+    }
+
+    /// Registers a pattern subscription's sender on the live bus, joining the group of the same
+    /// pattern text if one is registered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::ShutDown`] against a shut-down bus.
+    fn register_pattern(
+        &self,
+        text: &str,
+        pattern: Pattern,
+        tx: Sender,
+    ) -> Result<(), MemoryError> {
+        match &mut *self
+            .subscribers
+            .lock()
+            .expect("memory broker mutex poisoned")
+        {
+            Bus::Live(registry) => {
+                match registry
+                    .patterns
+                    .iter_mut()
+                    .find(|group| &*group.text == text)
+                {
+                    Some(group) => group.senders.push(tx),
+                    None => registry.patterns.push(PatternGroup {
+                        text: text.into(),
+                        pattern,
+                        senders: vec![tx],
+                    }),
+                }
+                Ok(())
+            }
+            Bus::ShutDown(_) => Err(MemoryError::ShutDown),
+        }
+    }
+
+    /// Sets the broker's routing rule, on a live bus and on a shut-down one alike.
+    fn set_routing(&self, routing: Routing) {
+        match &mut *self
+            .subscribers
+            .lock()
+            .expect("memory broker mutex poisoned")
+        {
+            Bus::Live(registry) => registry.routing = routing,
+            Bus::ShutDown(kept) => *kept = routing,
+        }
+    }
+
+    /// The broker's routing rule, which a shut-down bus keeps for its revival.
+    #[cfg(any(test, feature = "testing"))]
+    fn routing(&self) -> Routing {
+        match &*self
+            .subscribers
+            .lock()
+            .expect("memory broker mutex poisoned")
+        {
+            Bus::Live(registry) => registry.routing,
+            Bus::ShutDown(routing) => *routing,
         }
     }
 
     // Request inboxes are single-use; dropping the whole entry keeps the subscriber map from
     // accumulating one dead sender per completed request. A shut-down bus has nothing to drop.
     fn unregister(&self, name: &str) {
-        if let Bus::Live(subscribers) = &mut *self
+        if let Bus::Live(registry) = &mut *self
             .subscribers
             .lock()
             .expect("memory broker mutex poisoned")
         {
-            subscribers.remove(name);
+            registry.names.remove(name);
         }
         // What was recorded under the name goes with the registration. A request inbox is used
         // once and never subscribed again, so its reply would otherwise sit in the log, under a
@@ -258,6 +408,9 @@ impl MemoryState {
     /// holds is allocated only where the log will keep it, and on a broker that keeps nothing
     /// there is no delivery to build at all.
     ///
+    /// Pattern subscriptions are consulted only where some are registered, and the broker's
+    /// [`Routing`] picks which of them take the publish.
+    ///
     /// Both locks are held across the log append and the sends (subscribers first, then the
     /// log, the order `apply_pending_seek` uses too): a concurrent seek must never observe a
     /// message queued at a subscriber but absent from the log, or the reverse - either would
@@ -276,7 +429,7 @@ impl MemoryState {
                 .subscribers
                 .lock()
                 .expect("memory broker mutex poisoned");
-            let Bus::Live(subscribers) = &*bus else {
+            let Bus::Live(registry) = &*bus else {
                 return Err(MemoryError::ShutDown);
             };
             // A discarding broker takes neither the log lock nor a position: nothing can ask
@@ -285,31 +438,37 @@ impl MemoryState {
                 .recording
                 .load(Ordering::Acquire)
                 .then(|| self.log.lock().expect("memory broker mutex poisoned"));
-            let registered = subscribers.get_key_value(name);
-            let shared = match registered {
-                Some((registered, _)) => Some(Arc::clone(registered)),
-                // Nobody reads this name. The log still has to name what it keeps, so a
-                // recording broker pays for the name there; a broker that keeps nothing has
-                // nothing to build a delivery for.
-                None => log.is_some().then(|| Arc::from(name)),
-            };
-            if let Some(name) = shared {
-                // The payload and the headers move into the shared block once, and every
-                // per-subscriber copy below is one reference count on that block.
-                let shared = Arc::new(DeliveryInner {
-                    name,
-                    payload,
-                    headers,
-                });
-                let seq = log.as_deref_mut().map_or(0, |log| log.append(&shared));
-                let delivery = MemoryDelivery {
-                    shared,
-                    seq,
-                    deliveries: NonZeroU64::MIN,
+            // A broker with pattern subscriptions takes its own path, so the one without them
+            // pays a single emptiness check for their existence.
+            if registry.patterns.is_empty() {
+                let registered = registry.names.get_key_value(name);
+                let shared = match registered {
+                    Some((registered, _)) => Some(Arc::clone(registered)),
+                    // Nobody reads this name. The log still has to name what it keeps, so a
+                    // recording broker pays for the name there; a broker that keeps nothing has
+                    // nothing to build a delivery for.
+                    None => log.is_some().then(|| Arc::from(name)),
                 };
-                if let Some((_, senders)) = registered {
-                    self.send_to(senders, &delivery);
+                if let Some(name) = shared {
+                    // The payload and the headers move into the shared block once, and every
+                    // per-subscriber copy below is one reference count on that block.
+                    let shared = Arc::new(DeliveryInner {
+                        name,
+                        payload,
+                        headers,
+                    });
+                    let seq = log.as_deref_mut().map_or(0, |log| log.append(&shared));
+                    let delivery = MemoryDelivery {
+                        shared,
+                        seq,
+                        deliveries: NonZeroU64::MIN,
+                    };
+                    if let Some((_, senders)) = registered {
+                        self.send_to(senders, &delivery);
+                    }
                 }
+            } else {
+                self.fanout_with_patterns(registry, log.as_deref_mut(), name, payload, headers);
             }
         }
         self.notify.notify_waiters();
@@ -326,6 +485,81 @@ impl MemoryState {
             #[cfg(feature = "testing")]
             if sent.is_ok()
                 && !delivery.shared.name.starts_with("_inbox.")
+                && let Some(coordinator) = self.coordinator.get()
+            {
+                coordinator.enqueued();
+            }
+            #[cfg(not(feature = "testing"))]
+            let _ = sent;
+        }
+    }
+
+    /// The fanout of a broker with pattern subscriptions: the exact name's subscriptions and
+    /// the patterns the broker's [`Routing`] picks.
+    ///
+    /// A publish that reaches a pattern alone allocates the name it carries, since no
+    /// registration owns it. Out of line, so the fanout of a broker with no pattern subscription
+    /// compiles to what it was before patterns existed.
+    #[cold]
+    #[inline(never)]
+    fn fanout_with_patterns(
+        &self,
+        registry: &Registry,
+        log: Option<&mut LogState>,
+        name: &str,
+        payload: Bytes,
+        headers: HeaderMap,
+    ) {
+        let registered = registry.names.get_key_value(name);
+        // An exact name whose subscriptions have all gone takes nothing, so under
+        // `MostSpecific` it must not shadow a pattern that is still listening.
+        let exact_live =
+            registered.is_some_and(|(_, senders)| senders.iter().any(|sender| !sender.is_closed()));
+        let reach = registry.routing.reach(&registry.patterns, name, exact_live);
+        let shared = match registered {
+            Some((registered, _)) => Arc::clone(registered),
+            None if log.is_some() || !matches!(reach, PatternReach::Nobody) => Arc::from(name),
+            None => return,
+        };
+        let shared = Arc::new(DeliveryInner {
+            name: shared,
+            payload,
+            headers,
+        });
+        let seq = log.map_or(0, |log| log.append(&shared));
+        let delivery = MemoryDelivery {
+            shared,
+            seq,
+            deliveries: NonZeroU64::MIN,
+        };
+        if let Some((_, senders)) = registered {
+            self.send_to(senders, &delivery);
+        }
+        match reach {
+            PatternReach::Nobody => {}
+            PatternReach::EveryFrom(first) => {
+                for group in registry.patterns[first..]
+                    .iter()
+                    .filter(|group| group.pattern.matches(name))
+                {
+                    self.send_to_pattern(&group.senders, &delivery);
+                }
+            }
+            PatternReach::Only(index) => {
+                self.send_to_pattern(&registry.patterns[index].senders, &delivery);
+            }
+        }
+    }
+
+    /// Enqueues `delivery` to the senders of a pattern subscription.
+    ///
+    /// Every one of them is a subscription with a dispatch loop behind it, whatever name the
+    /// delivery carries, so under the harness every enqueue counts.
+    fn send_to_pattern(&self, senders: &[Sender], delivery: &MemoryDelivery) {
+        for tx in senders {
+            let sent = tx.send(delivery.clone());
+            #[cfg(feature = "testing")]
+            if sent.is_ok()
                 && let Some(coordinator) = self.coordinator.get()
             {
                 coordinator.enqueued();
@@ -463,6 +697,50 @@ impl MemoryBroker<Retaining> {
 }
 
 impl<Log: LogMode> MemoryBroker<Log> {
+    /// Sets how a publish is routed where pattern subscriptions match it: to every match
+    /// ([`Routing::EveryMatch`], the default) or to the most specific one
+    /// ([`Routing::MostSpecific`]).
+    ///
+    /// A clone of the broker is the same broker, so it routes by the same rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// # #[derive(serde::Deserialize)]
+    /// # struct Order { id: u64 }
+    ///
+    /// #[subscriber("orders.eu")]
+    /// async fn europe(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// // Every region without a handler of its own.
+    /// #[subscriber(MemoryPattern::new("orders.*"))]
+    /// async fn elsewhere(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+    ///         b.include(europe);
+    ///         b.include(elsewhere);
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub fn routing(self, routing: Routing) -> Self {
+        self.state.set_routing(routing);
+        self
+    }
+
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
     /// published after this call; messages published earlier are not delivered, though a
     /// retaining broker's [`Seekable`](crate::Seekable) capability can replay them from its
@@ -470,12 +748,19 @@ impl<Log: LogMode> MemoryBroker<Log> {
     ///
     /// On a shut-down broker the registration is refused and the subscriber simply never
     /// receives anything, matching this constructor's infallible signature; the
-    /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead.
+    /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead. A name with a wildcard
+    /// token (`*` or `>`) is a pattern, which this constructor does not open: the subscriber's
+    /// stream ends at once, where the [`Subscribe`] path reports [`MemoryError::WildcardName`]
+    /// and [`MemoryPattern`] opens the pattern.
     #[must_use]
     pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber<Log> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let name = name.into();
-        let _ = self.state.register(&name, tx.clone());
+        if has_wildcard(&name) {
+            rx.close();
+        } else {
+            let _ = self.state.register(&name, tx.clone());
+        }
         MemorySubscriber::new(name, rx, tx, &self.state)
     }
 
@@ -520,8 +805,8 @@ impl<Log: LogMode> Broker for MemoryBroker<Log> {
                 .subscribers
                 .lock()
                 .expect("memory broker mutex poisoned");
-            if matches!(*bus, Bus::ShutDown) {
-                *bus = Bus::Live(HashMap::new());
+            if let Bus::ShutDown(routing) = *bus {
+                *bus = Bus::Live(Registry::new(routing));
             }
         }
         ready(Ok(ConnectedMemoryBroker {
@@ -594,9 +879,13 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
                 .subscribers
                 .lock()
                 .expect("memory broker mutex poisoned");
-            match std::mem::replace(&mut *bus, Bus::ShutDown) {
-                Bus::Live(subscribers) => subscribers.values().map(Vec::len).sum(),
-                Bus::ShutDown => 0,
+            let routing = match &*bus {
+                Bus::Live(registry) => registry.routing,
+                Bus::ShutDown(routing) => *routing,
+            };
+            match std::mem::replace(&mut *bus, Bus::ShutDown(routing)) {
+                Bus::Live(registry) => registry.len(),
+                Bus::ShutDown(_) => 0,
             }
         };
         ready(Ok(ClosedMemoryBroker {
@@ -750,6 +1039,12 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
             .map(|log| log.messages(name))
             .unwrap_or_default()
     }
+
+    /// The broker's own rule, read from the [`Routing`] it was built with: a name with a
+    /// wildcard token is a [`MemoryPattern`] subscription, every other one an exact name.
+    fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        self.state.routing().routes(destination, subscriptions)
+    }
 }
 
 // One registration per log mode: the harness finds a broker by the type the app was built on,
@@ -767,7 +1062,14 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     // reaches that subscription, and the name is the address.
     type Copies = AddressedCopies;
 
+    /// A name with a wildcard token is refused with [`MemoryError::WildcardName`]: this form
+    /// reads one name, and [`MemoryPattern`] is the one that reads a pattern.
     fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
+        if has_wildcard(name) {
+            return ready(Err(MemoryError::WildcardName {
+                name: name.to_owned(),
+            }));
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.to_owned();
         if let Err(err) = self.state.register(&name, tx.clone()) {
@@ -785,6 +1087,9 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
 /// configuration, the in-memory broker having none.
 /// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
 /// way a NATS service passes `SubscribeOptions`.
+///
+/// It reads one name, which is also where a retry copy goes. A name with a wildcard token (`*` or
+/// `>`) refuses to open with [`MemoryError::WildcardName`]; [`MemoryPattern`] reads a pattern.
 #[derive(Debug, Clone)]
 pub struct MemorySource {
     name: String,
@@ -995,8 +1300,9 @@ impl fmt::Debug for MemoryPublisher {
 /// succeed, and a publish, subscription, or transaction commit through a handle aliasing a
 /// shut-down bus reports [`ShutDown`](MemoryError::ShutDown). The transaction variants cover
 /// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
-/// to surface as errors rather than silent no-ops.
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+/// to surface as errors rather than silent no-ops. The subscription variants refuse a name or a
+/// pattern when the subscription opens, so a service with a bad one does not start.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MemoryError {
     /// `begin_transaction` was called while a transaction is already open on this handle.
@@ -1019,6 +1325,51 @@ pub enum MemoryError {
         requested: usize,
         /// The oldest position the name still retains.
         oldest: usize,
+    },
+    /// A [`MemoryPattern`] subscription named a pattern that does not parse.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ruststream::memory::{MemoryBroker, MemoryError, MemoryPattern, MemorySource};
+    /// use ruststream::{Broker, SubscriptionSource};
+    ///
+    /// let connected = MemoryBroker::new().connect().await?;
+    /// let refused = MemoryPattern::new("orders..eu").subscribe(&connected).await;
+    /// assert!(matches!(refused, Err(MemoryError::InvalidPattern { .. })));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[error("subscription pattern {pattern:?} is invalid: {reason}")]
+    InvalidPattern {
+        /// The pattern as the subscription wrote it.
+        pattern: String,
+        /// What is wrong with it.
+        reason: PatternError,
+    },
+    /// A subscription by name ([`MemorySource`] or a bare `#[subscriber("..")]`) named a pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ruststream::memory::{MemoryBroker, MemoryError, MemoryPattern, MemorySource};
+    /// use ruststream::{Broker, SubscriptionSource};
+    ///
+    /// let connected = MemoryBroker::new().connect().await?;
+    /// let refused = MemorySource::new("orders.*").subscribe(&connected).await;
+    /// assert!(matches!(refused, Err(MemoryError::WildcardName { .. })));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[error(
+        "subscription {name:?} has a wildcard token and reads one name only; subscribe to a \
+         pattern with `MemoryPattern::new({name:?})`"
+    )]
+    WildcardName {
+        /// The name as the subscription wrote it.
+        name: String,
     },
 }
 
