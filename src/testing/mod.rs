@@ -118,9 +118,11 @@
 //! `fail_fast` shuts the service down, [`run_result`](TestApp::run_result) returns what `run`
 //! would, and [`assert_running`](TestApp::assert_running) states the opposite. A handler
 //! answering `retry_after` records the immediate outcome, and [`advance`](TestApp::advance)
-//! moves the paused clock to drive the redelivery. [`settle`](TestApp::settle) drives to
-//! completion a reaction the test started through a bare publisher, which is how a batch gets
-//! more than one element on a broker that assembles its batches on the client.
+//! moves the paused clock to drive the redelivery. A copy the runtime publishes for a zero delay
+//! goes out at once, so it arrives in the same reaction, without `advance`.
+//! [`settle`](TestApp::settle) drives to completion a reaction the test started through a bare
+//! publisher, which is how a batch gets more than one element on a broker that assembles its
+//! batches on the client.
 
 #[cfg(feature = "testing")]
 mod assertions;
