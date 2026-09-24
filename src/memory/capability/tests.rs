@@ -58,6 +58,27 @@ async fn the_batch_size_caps_each_batch() {
     }
 }
 
+/// A batch is allocated at the size the stream was opened at, so a short one holds the room of a
+/// full one and a full one never grows on the way.
+#[tokio::test]
+async fn a_batch_is_allocated_at_the_requested_size() {
+    let broker = MemoryBroker::new();
+    let mut sub = broker.subscribe("batch.sized");
+    let publisher = broker.publisher();
+    publisher
+        .publish(OutgoingMessage::new("batch.sized", b"a"), None)
+        .await
+        .unwrap();
+
+    let mut stream = std::pin::pin!(sub.batches(nonzero!(8)));
+    let batch = stream.next().await.unwrap().unwrap();
+    assert_eq!(batch.len(), 1);
+    assert!(batch.capacity() >= 8, "capacity {}", batch.capacity());
+    for msg in batch {
+        msg.ack().await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn transaction_buffers_until_commit() {
     let broker = MemoryBroker::new();

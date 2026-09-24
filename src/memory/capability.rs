@@ -202,7 +202,8 @@ impl RequestReply for MemoryRequester {
 
 /// Greedy batching: a batch is the first awaited delivery plus everything already buffered, up to
 /// the size the registration asked for. Partial batches ship immediately, so no deadline timer is
-/// needed - the in-memory transport has nothing to wait for.
+/// needed - the in-memory transport has nothing to wait for. Each batch is allocated at the
+/// requested size up front, so a partial batch holds the room of a full one.
 impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
     type Batch = Vec<MemoryMessage<Log>>;
 
@@ -239,13 +240,16 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
                     None => return Poll::Ready(None),
                 }
             };
-            let mut batch = vec![MemoryMessage {
+            // Sized for the batch the registration asked for: a batch grown one push at a time
+            // reallocates six times on its way to 64.
+            let mut batch = Vec::with_capacity(limit);
+            batch.push(MemoryMessage {
                 delivery: Some(first),
                 subscription: Some(Arc::clone(&self.subscription)),
                 #[cfg(feature = "testing")]
                 coordinator: coordinator.clone(),
                 mode: PhantomData,
-            }];
+            });
             while batch.len() < limit {
                 match self.rx.poll_recv(cx) {
                     // The same stale-copy filter as above, off the batch.

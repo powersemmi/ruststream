@@ -832,7 +832,8 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
 /// Also consumable in batches through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
-/// which caps each batch at the size it is asked for. A subscription of a [`Retaining`] broker is
+/// which caps each batch at the size it is asked for and allocates it at that size up front. A
+/// subscription of a [`Retaining`] broker is
 /// repositionable over its publish log through the [`Seekable`](crate::Seekable) capability: mint
 /// a [`MemorySeeker`] with [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber<Log = Discarding> {
