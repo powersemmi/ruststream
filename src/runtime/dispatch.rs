@@ -847,86 +847,93 @@ async fn dispatch<H, M, C, St>(
     // Build the broker's typed per-delivery context from the message, then attach the fail-fast
     // handle. The delivery is borrowed out of the slot for the whole handler phase and moves
     // only at the settle below.
-    let msg = slot.get();
-    let cx = C::build(msg);
-    // The delivery itself, not its header map: a handler that reads no headers never reaches the
-    // broker's accessor, which is a parse and a buffer on most transports.
-    let source = FromDelivery(msg);
-    let mut ctx = Context::new(name, &source, state, cx, delivery)
-        .with_failfast(&failure.shutdown)
-        .with_encode_buffer(encode)
-        .with_decode_policy(failure.policies.decode);
-    // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop the
-    // subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required because
-    // the future borrows `&mut ctx`; that state is discarded with the failed delivery.
-    // Under the harness, the invocation runs in a task-local slot scope so publishes made
-    // through injected `Out` publishers are attributed to their slot.
-    #[cfg(feature = "testing")]
-    let result = in_harness_scope(
-        harness_scope(delivery),
-        AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind(),
-    )
-    .await;
-    #[cfg(not(feature = "testing"))]
-    let result = AssertUnwindSafe(handler.handle(msg, &mut ctx))
-        .catch_unwind()
+    // The context lives in a block of its own and is dropped where it stands when the block ends:
+    // a `drop(ctx)` call would move the whole context out of this future's state into the call's
+    // argument first, a `memcpy` of the context per delivery.
+    let (settle, continuations) = {
+        let msg = slot.get();
+        let cx = C::build(msg);
+        // The delivery itself, not its header map: a handler that reads no headers never reaches
+        // the broker's accessor, which is a parse and a buffer on most transports.
+        let source = FromDelivery(msg);
+        let mut ctx = Context::new(name, &source, state, cx, delivery)
+            .with_failfast(&failure.shutdown)
+            .with_encode_buffer(encode)
+            .with_decode_policy(failure.policies.decode);
+        // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop
+        // the subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required
+        // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
+        // Under the harness, the invocation runs in a task-local slot scope so publishes made
+        // through injected `Out` publishers are attributed to their slot.
+        #[cfg(feature = "testing")]
+        let result = in_harness_scope(
+            harness_scope(delivery),
+            AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind(),
+        )
         .await;
-    #[cfg(feature = "testing")]
-    let panicked = result.is_err();
-    // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None` means a fail-fast
-    // panic tore the service down and left the message unsettled (a broker with redelivery hands it
-    // back after the restart).
-    let settle = match result {
-        Ok(s) => Some(s),
-        Err(payload) => {
-            let reason = panic_reason(payload.as_ref());
-            error!(
-                target: "ruststream::dispatch",
-                subscription = %name,
-                panic = %reason,
-                "handler panicked",
-            );
-            match failure.policies.panic {
-                FailurePolicy::FailFast => {
-                    failure
-                        .shutdown
-                        .signal(name, &format!("handler panicked: {reason}"));
-                    None
+        #[cfg(not(feature = "testing"))]
+        let result = AssertUnwindSafe(handler.handle(msg, &mut ctx))
+            .catch_unwind()
+            .await;
+        #[cfg(feature = "testing")]
+        let panicked = result.is_err();
+        // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None`
+        // means a fail-fast panic tore the service down and left the message unsettled (a broker
+        // with redelivery hands it back after the restart).
+        let settle = match result {
+            Ok(s) => Some(s),
+            Err(payload) => {
+                let reason = panic_reason(payload.as_ref());
+                error!(
+                    target: "ruststream::dispatch",
+                    subscription = %name,
+                    panic = %reason,
+                    "handler panicked",
+                );
+                match failure.policies.panic {
+                    FailurePolicy::FailFast => {
+                        failure
+                            .shutdown
+                            .signal(name, &format!("handler panicked: {reason}"));
+                        None
+                    }
+                    other => Some(
+                        other
+                            .settlement()
+                            .map_or_else(super::handler::HandlerOutcome::drop, Into::into),
+                    ),
                 }
-                other => Some(
-                    other
-                        .settlement()
-                        .map_or_else(super::handler::HandlerOutcome::drop, Into::into),
-                ),
             }
+        };
+        // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
+        // settling consumes `msg`. The drained futures own their captures. A fail-fast (no
+        // settlement) runs no hooks. Most deliveries register none, and those pay the branch alone:
+        // the list, its scan and the drop glue of both belong to the deliveries that did register
+        // one.
+        let continuations = match settle.as_ref() {
+            Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
+            _ => None,
+        };
+        // The harness records what the handler saw and how it settled, BEFORE settling the
+        // message: the matching decrement runs in the broker message's `Drop` (during
+        // `settle_outcome`, or at the end of this function on the fail-fast path), so the record
+        // is in place by the time `drive` wakes. Captured here because `settle_outcome` consumes
+        // `msg` and dropping `ctx` clears the decode flag.
+        #[cfg(feature = "testing")]
+        if let Some(coordinator) = delivery.hooks.coordinator() {
+            coordinator.record(Record {
+                scope_id: delivery.scope_id,
+                name: name.to_owned(),
+                deliveries: vec![Delivered {
+                    raw: Bytes::copy_from_slice(msg.payload()),
+                    settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
+                }],
+                panicked,
+                decode_failed: ctx.took_decode_failed(),
+            });
         }
+        (settle, continuations)
     };
-    // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
-    // settling consumes `msg`. The drained futures own their captures. A fail-fast (no settlement)
-    // runs no hooks. Most deliveries register none, and those pay the branch alone: the list, its
-    // scan and the drop glue of both belong to the deliveries that did register one.
-    let continuations = match settle.as_ref() {
-        Some(s) if ctx.has_hooks() => Some(ctx.take_hooks_for(s.outcome())),
-        _ => None,
-    };
-    // The harness records what the handler saw and how it settled, BEFORE settling the message: the
-    // matching decrement runs in the broker message's `Drop` (during `settle_outcome`, or at the end
-    // of this function on the fail-fast path), so the record is in place by the time `drive` wakes.
-    // Captured here because `settle_outcome` consumes `msg` and `drop(ctx)` clears the decode flag.
-    #[cfg(feature = "testing")]
-    if let Some(coordinator) = delivery.hooks.coordinator() {
-        coordinator.record(Record {
-            scope_id: delivery.scope_id,
-            name: name.to_owned(),
-            deliveries: vec![Delivered {
-                raw: Bytes::copy_from_slice(msg.payload()),
-                settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
-            }],
-            panicked,
-            decode_failed: ctx.took_decode_failed(),
-        });
-    }
-    drop(ctx);
     if let Some(mut s) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
