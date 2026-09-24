@@ -487,6 +487,12 @@ tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "sync", "ti
 # 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
 # landed there, so nothing below it ever compiled here.
 tokio-util = { version = "0.7.10", features = ["rt"] }
+# Research (#417): the bounded queues in front of pinned workers. `ArrayQueue` is a preallocated
+# lock-free MPMC ring (one CAS per push and per pop), `rtrb` a preallocated SPSC ring (a plain
+# store per push and per pop, the other side's index read only when the cached one runs out).
+crossbeam-queue = "0.3.12"
+crossbeam-utils = "0.8.21"
+rtrb = "0.3"
 # 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
 # where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
 tracing = "0.1.29"

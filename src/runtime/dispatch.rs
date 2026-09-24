@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
+use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
@@ -149,6 +150,13 @@ pub(crate) struct Delivery<C = ()> {
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
+    /// The runtime the subscription was opened on, where the tasks a delivery leaves behind run.
+    ///
+    /// A pinned worker dispatches on a thread and a runtime of its own, which stop with the
+    /// subscription's pool; a continuation or a deferred retry copy spawned there would stop
+    /// with them instead of being drained by the app's shutdown. `None` only outside a runtime,
+    /// in the tests that build a context directly.
+    home: Option<Handle>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -170,10 +178,34 @@ impl<C> Delivery<C> {
             retry,
             declaration,
             tasks: scope.tasks().clone(),
+            home: Handle::try_current().ok(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
             scope_id: scope.scope_id(),
+        }
+    }
+
+    /// Spawns `task` onto the continuation tracker, on the subscription's own runtime, so a
+    /// graceful shutdown drains it wherever the delivery was dispatched.
+    pub(crate) fn spawn_tracked<Task>(&self, task: Task)
+    where
+        Task: Future<Output = ()> + Send + 'static,
+    {
+        match &self.home {
+            Some(home) => drop(self.tasks.spawn_on(task, home)),
+            None => drop(self.tasks.spawn(task)),
+        }
+    }
+
+    /// Spawns `task` detached, on the subscription's own runtime.
+    fn spawn_detached<Task>(&self, task: Task)
+    where
+        Task: Future<Output = ()> + Send + 'static,
+    {
+        match &self.home {
+            Some(home) => drop(home.spawn(task)),
+            None => drop(tokio::spawn(task)),
         }
     }
 
@@ -185,6 +217,7 @@ impl<C> Delivery<C> {
             retry,
             declaration: RetryDeclaration::new(),
             tasks,
+            home: Handle::try_current().ok(),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -781,7 +814,7 @@ async fn dispatch<H, M, C, St>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.tasks.spawn(after);
+            delivery.spawn_tracked(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -793,7 +826,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.tasks.spawn(fut);
+            delivery.spawn_tracked(fut);
         }
     }
     #[cfg(feature = "testing")]
@@ -1324,7 +1357,7 @@ where
     #[cfg(not(feature = "testing"))]
     let _ = delivery;
 
-    tokio::spawn(async move {
+    delivery.spawn_detached(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });
