@@ -219,7 +219,7 @@ where
                 let mut own = BytesMut::new();
                 let encode = ctx.take_encode_buffer().unwrap_or(&mut own);
                 let slot = <R::Payload as PayloadForm>::encode_slot(encode);
-                let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
+                let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
                 match self
                     .publisher
                     .publish_batch(name, &replies, &self.pipeline, &pubcx, slot)

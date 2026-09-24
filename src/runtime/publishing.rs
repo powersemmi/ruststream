@@ -414,7 +414,7 @@ where
         let slot = <<Wiring as ReplySink<Def::Reply, Def::Context, Pipeline>>::Payload as PayloadForm>::encode_slot(
             encode,
         );
-        let pubcx = PublishContext::new(ctx.name(), ctx.headers(), ctx.cx_ref());
+        let pubcx = PublishContext::new(ctx.name(), ctx.delivery_headers(), ctx.cx_ref());
         let publish = self
             .publisher
             .deliver(name, &reply, &self.pipeline, &pubcx, slot);
