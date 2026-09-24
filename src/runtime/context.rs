@@ -41,6 +41,35 @@ impl HeaderSource for HeaderMap {
     }
 }
 
+/// A delivery's headers as a publish reads them: a map already in hand, or the source that
+/// answers it, asked only when a transform reads it.
+///
+/// The broker's accessor is a parse and a buffer on most transports, so a reply whose transforms
+/// read no header never reaches it.
+#[derive(Clone, Copy)]
+pub(crate) enum DeliveryHeaders<'a> {
+    /// The map is already resolved: the handler read or modified it, or there is no delivery.
+    Ready(&'a HeaderMap),
+    /// Nothing has asked yet; the broker answers on the first read.
+    Source(&'a (dyn HeaderSource + Sync)),
+}
+
+impl<'a> DeliveryHeaders<'a> {
+    /// The map, asking the source where nothing has yet.
+    pub(crate) fn get(self) -> &'a HeaderMap {
+        match self {
+            Self::Ready(headers) => headers,
+            Self::Source(source) => source.headers(),
+        }
+    }
+}
+
+impl<'a> From<&'a HeaderMap> for DeliveryHeaders<'a> {
+    fn from(headers: &'a HeaderMap) -> Self {
+        Self::Ready(headers)
+    }
+}
+
 /// The delivery itself, which is what the dispatch path hands the context.
 pub(crate) struct FromDelivery<'m, M>(pub(crate) &'m M);
 
@@ -268,6 +297,19 @@ impl<'a, C, S> Context<'a, C, S> {
         self.modified
             .as_ref()
             .map_or_else(|| self.original(), |modified| modified)
+    }
+
+    /// The headers a publish made from inside this delivery reads, without asking the broker
+    /// for them until a transform does.
+    pub(crate) fn delivery_headers(&self) -> DeliveryHeaders<'_> {
+        if let Some(modified) = &self.modified {
+            return DeliveryHeaders::Ready(modified);
+        }
+        self.original
+            .get()
+            .map_or(DeliveryHeaders::Source(self.source), |original| {
+                DeliveryHeaders::Ready(original)
+            })
     }
 
     /// The working copy of the message headers, mutably. The first call clones the message

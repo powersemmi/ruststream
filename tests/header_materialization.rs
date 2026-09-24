@@ -13,19 +13,24 @@
 
 mod common;
 
-use common::Order;
+use common::{Order, Receipt};
 use std::convert::Infallible;
+use std::future::{Future, ready};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::{Stream, StreamExt};
 use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySubscriber};
+use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, HandlerMetadata, HandlerOutcome, RustStream, Typed, typed,
+    AppInfo, Context, ForReply, Handle, HandlerMetadata, HandlerOutcome, IntoSource, Outgoing,
+    PublishContext, PublishTransform, Reads, RustStream, Typed, subscriber, typed,
 };
 use ruststream::testing::TestApp;
-use ruststream::{AckError, HeaderMap, IncomingMessage, Subscriber};
+use ruststream::{
+    AckError, AddressedCopies, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed,
+    Subscribe, Subscriber, SubscriptionSource,
+};
 
 /// A delivery that counts what the runtime asks of it. Everything else is the in-memory broker's
 /// own message, so the dispatch, the settle and the harness assertions are the real ones.
@@ -168,5 +173,151 @@ async fn a_handler_that_enriches_the_headers_asks_the_delivery_once() {
     assert_eq!(
         reads, 1,
         "the working copy is cloned from the delivery's map, which is resolved once"
+    );
+}
+
+/// The counting subscription as a descriptor, so a mount site that names a reply can take it.
+#[derive(Clone)]
+struct Counted {
+    name: &'static str,
+    reads: Arc<AtomicUsize>,
+}
+
+impl<Connected> SubscriptionSource<Connected> for Counted
+where
+    Connected: Subscribe<Subscriber = MemorySubscriber>,
+{
+    type Subscriber = CountingSubscriber;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(
+        self,
+        connected: &Connected,
+    ) -> Result<CountingSubscriber, Connected::Error> {
+        Ok(CountingSubscriber {
+            inner: connected.subscribe(self.name).await?,
+            reads: self.reads,
+        })
+    }
+}
+
+impl<Connected> RedeliveryAddressed<Connected> for Counted
+where
+    Connected: Subscribe<Subscriber = MemorySubscriber>,
+{
+    fn redelivery_address(
+        &self,
+        _connected: &Connected,
+    ) -> impl Future<Output = Result<RedeliveryAddress, Connected::Error>> + Send {
+        // One subject is both ends of the in-memory bus.
+        ready(Ok(RedeliveryAddress::new(self.name)))
+    }
+}
+
+impl IntoSource for Counted {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+/// Answers every order with its receipt and reads nothing else.
+struct Confirm;
+
+impl Handle<Order, Receipt> for Confirm {
+    fn handle(
+        &self,
+        order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+        ready(Ok(Receipt { id: order.id }))
+    }
+}
+
+/// Copies the delivery's tenant onto the reply: a transform that reads the delivery's headers.
+struct CarryTenant;
+
+impl<C, Options> PublishTransform<ForReply<C>, Options> for CarryTenant {
+    type Destination = Reads;
+
+    fn apply(
+        &self,
+        out: &mut Outgoing<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
+        if let Some(tenant) = cx.headers().get_shared("x-tenant") {
+            out.headers_mut().insert("x-tenant", tenant);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_no_transform_reads_never_asks_the_delivery_for_its_headers() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = Counted {
+        name: "orders",
+        reads: Arc::clone(&reads),
+    };
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(subscriber(counted, Confirm).reply().to("receipts").build())
+            .out_reply(MemoryPublish);
+    });
+
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.message(&Order { id: 7 })
+        .to("orders")
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with(&Receipt { id: 7 });
+
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        0,
+        "a reply whose transforms read no header leaves the delivery's map unasked"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_transform_that_reads_the_headers_asks_the_delivery_once() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = Counted {
+        name: "orders",
+        reads: Arc::clone(&reads),
+    };
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(subscriber(counted, Confirm).reply().to("receipts").build())
+            .out_reply(MemoryPublish)
+            .transform(CarryTenant);
+    });
+
+    let tb = TestApp::start(app).await.expect("startup failed");
+    let mut tenant = HeaderMap::new();
+    tenant.insert("x-tenant", "acme");
+    tb.message(&Order { id: 7 })
+        .to("orders")
+        .with_headers(tenant)
+        .publish()
+        .await
+        .expect("publish");
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("receipts")
+        .assert_called_once()
+        .with_header("x-tenant", "acme");
+
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        1,
+        "the transform reads the delivery's map, which is asked for once"
     );
 }
