@@ -26,7 +26,7 @@ use tracing::warn;
 
 use super::{
     Bus, Discarding, LogMode, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound,
-    MemoryPublisher, MemoryState, MemorySubscriber, Retaining, log,
+    MemoryPublisher, MemoryState, MemorySubscriber, Retaining, SubscriptionShared, log,
 };
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
@@ -183,8 +183,7 @@ impl RequestReply for MemoryRequester {
         match outcome {
             Ok(Some(reply)) => Ok(MemoryMessage {
                 delivery: Some(reply),
-                requeue: tx,
-                seek: None,
+                subscription: None,
                 // The inbox reply is consumed here, not by a dispatch loop, and its enqueue was not
                 // counted (see `fanout`), so it carries no coordinator.
                 #[cfg(feature = "testing")]
@@ -212,17 +211,15 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
         size: NonZeroUsize,
     ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
         let limit = size.get();
-        let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
-        let seeker = self.shared_seeker();
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         futures::stream::poll_fn(move |cx| {
             // Same ordering as `MemorySubscriber::stream`: register, then apply a pending seek.
             // Only a seeker wakes this waker, and a discarding subscription mints none.
             if log::retains::<Log>() {
-                self.seek.waker.register(cx.waker());
+                self.subscription.seek.waker.register(cx.waker());
             }
             self.apply_pending_seek();
             let first = loop {
@@ -230,7 +227,8 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
                     // A stale pre-seek copy (a requeue that raced the seek): drop it, the
                     // replay already covers everything from the watermark on.
                     Some(delivery)
-                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() =>
+                        if log::retains::<Log>()
+                            && delivery.seq < self.subscription.seek.watermark() =>
                     {
                         #[cfg(feature = "testing")]
                         if let Some(coordinator) = &coordinator {
@@ -243,8 +241,7 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
             };
             let mut batch = vec![MemoryMessage {
                 delivery: Some(first),
-                requeue: requeue.clone(),
-                seek: seeker.clone(),
+                subscription: Some(Arc::clone(&self.subscription)),
                 #[cfg(feature = "testing")]
                 coordinator: coordinator.clone(),
                 mode: PhantomData,
@@ -253,7 +250,8 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
                 match self.rx.poll_recv(cx) {
                     // The same stale-copy filter as above, off the batch.
                     Poll::Ready(Some(delivery))
-                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() =>
+                        if log::retains::<Log>()
+                            && delivery.seq < self.subscription.seek.watermark() =>
                     {
                         #[cfg(feature = "testing")]
                         if let Some(coordinator) = &coordinator {
@@ -262,8 +260,7 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
                     }
                     Poll::Ready(Some(delivery)) => batch.push(MemoryMessage {
                         delivery: Some(delivery),
-                        requeue: requeue.clone(),
-                        seek: seeker.clone(),
+                        subscription: Some(Arc::clone(&self.subscription)),
                         #[cfg(feature = "testing")]
                         coordinator: coordinator.clone(),
                         mode: PhantomData,
@@ -570,30 +567,35 @@ impl MemoryPosition {
 /// ```
 #[derive(Clone)]
 pub struct MemorySeeker {
-    state: Arc<MemoryState>,
-    // Arc rather than String: the per-delivery context clones the handle, and the clone must
-    // stay allocation-free on the dispatch path.
-    name: Arc<str>,
-    control: Arc<SeekControl>,
+    // The subscription's shared block, which every delivery already holds: minting a seeker off
+    // a delivery, as the per-delivery context does, is one reference count.
+    subscription: Arc<SubscriptionShared>,
+}
+
+impl MemorySeeker {
+    /// The seeker of the subscription `msg` came from: the reference count the delivery holds,
+    /// taken once more, so a per-delivery context allocates nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a request-reply inbox message, which has no subscription behind it; no dispatch
+    /// loop, and therefore no context, ever builds off one.
+    fn of(msg: &MemoryMessage<Retaining>) -> Self {
+        Self {
+            subscription: Arc::clone(
+                msg.subscription
+                    .as_ref()
+                    .expect("a seek context builds only off subscription deliveries"),
+            ),
+        }
+    }
 }
 
 impl fmt::Debug for MemorySeeker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySeeker")
-            .field("name", &self.name)
+            .field("name", &self.subscription.name)
             .finish_non_exhaustive()
-    }
-}
-
-impl<Log: LogMode> MemorySubscriber<Log> {
-    /// Mints a handle on this subscription's seek control. Public only through [`Seekable`],
-    /// which a discarding broker's subscription does not implement.
-    pub(super) fn new_seeker(&self) -> MemorySeeker {
-        MemorySeeker {
-            state: Arc::clone(&self.state),
-            name: Arc::from(self.name.as_str()),
-            control: Arc::clone(&self.seek),
-        }
     }
 }
 
@@ -604,7 +606,9 @@ impl Seekable for MemorySubscriber<Retaining> {
     type Seeker = MemorySeeker;
 
     fn seeker(&self) -> MemorySeeker {
-        self.new_seeker()
+        MemorySeeker {
+            subscription: Arc::clone(&self.subscription),
+        }
     }
 }
 
@@ -628,6 +632,7 @@ impl Seeker for MemorySeeker {
         // fanout's order): a seek that returns Ok happened strictly before any shutdown, and
         // the resolved position is consistent with the log at that instant.
         let bus = self
+            .subscription
             .state
             .subscribers
             .lock()
@@ -635,9 +640,14 @@ impl Seeker for MemorySeeker {
         if !matches!(&*bus, Bus::Live(_)) {
             return ready(Err(MemoryError::ShutDown));
         }
-        let log = self.state.log.lock().expect("memory broker mutex poisoned");
+        let log = self
+            .subscription
+            .state
+            .log
+            .lock()
+            .expect("memory broker mutex poisoned");
         let (oldest, tip) = log
-            .name(&self.name)
+            .name(&self.subscription.name)
             .map_or((0, 0), |name| (name.first_seq(), name.next_seq()));
         drop(log);
         let target = match to {
@@ -655,9 +665,13 @@ impl Seeker for MemorySeeker {
         };
         // Watermark first (Release, paired with the Acquire load in the delivery filter), then
         // the pending target: a poll that takes the target must see its watermark.
-        self.control.watermark.store(target, Ordering::Release);
+        self.subscription
+            .seek
+            .watermark
+            .store(target, Ordering::Release);
         let replaced = self
-            .control
+            .subscription
+            .seek
             .pending
             .lock()
             .expect("memory broker mutex poisoned")
@@ -670,13 +684,13 @@ impl Seeker for MemorySeeker {
         // seek before the first is applied replaces the target and owes nothing more.
         #[cfg(feature = "testing")]
         if replaced.is_none()
-            && let Some(coordinator) = self.state.coordinator()
+            && let Some(coordinator) = self.subscription.state.coordinator()
         {
             coordinator.enqueued();
         }
         #[cfg(not(feature = "testing"))]
         let _ = replaced;
-        self.control.waker.wake();
+        self.subscription.seek.waker.wake();
         ready(Ok(()))
     }
 }
@@ -698,6 +712,7 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         // Take the target in its own statement so the pending guard is released before the
         // bus lock is acquired; `Seeker::seek` nests the locks in the other direction.
         let pending = self
+            .subscription
             .seek
             .pending
             .lock()
@@ -713,6 +728,7 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         let seek_token = SeekToken(coordinator.clone());
 
         let bus = self
+            .subscription
             .state
             .subscribers
             .lock()
@@ -721,8 +737,13 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         if !matches!(&*bus, Bus::Live(_)) {
             return;
         }
-        let log = self.state.log.lock().expect("memory broker mutex poisoned");
-        let retained = log.name(self.name.as_str());
+        let log = self
+            .subscription
+            .state
+            .log
+            .lock()
+            .expect("memory broker mutex poisoned");
+        let retained = log.name(self.subscription.name.as_str());
 
         // The replay is counted in flight BEFORE the drain releases the queued deliveries:
         // decrementing first would let the in-flight count touch zero mid-swap, and a
@@ -755,7 +776,7 @@ impl<Log: LogMode> MemorySubscriber<Log> {
                     deliveries: NonZeroU64::MIN,
                 };
                 // The send cannot fail: this subscriber holds both ends of its own channel.
-                let _ = self.requeue.send(delivery);
+                let _ = self.subscription.requeue.send(delivery);
             }
         }
         drop(log);
@@ -842,13 +863,7 @@ impl crate::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
     fn build(msg: &MemoryMessage<Retaining>) -> Self {
         Self {
             position: Positioned::position(msg),
-            // A clone of the subscription's pre-minted handle: three reference-count bumps,
-            // nothing allocated per delivery.
-            seeker: msg
-                .seek
-                .as_deref()
-                .expect("a delivery context builds only off subscription deliveries")
-                .clone(),
+            seeker: MemorySeeker::of(msg),
         }
     }
 }
@@ -912,13 +927,7 @@ impl crate::BuildBatchContext<MemoryMessage<Retaining>> for MemoryBatchContext {
     /// dispatch loop (and therefore no batch context) ever builds off one.
     fn build(first: &MemoryMessage<Retaining>) -> Self {
         Self {
-            // A clone of the subscription's pre-minted handle: reference-count bumps only,
-            // nothing allocated per batch.
-            seeker: first
-                .seek
-                .as_deref()
-                .expect("a batch context builds only off subscription deliveries")
-                .clone(),
+            seeker: MemorySeeker::of(first),
         }
     }
 }
