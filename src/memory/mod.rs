@@ -476,14 +476,7 @@ impl<Log: LogMode> MemoryBroker<Log> {
         let (tx, rx) = mpsc::unbounded_channel();
         let name = name.into();
         let _ = self.state.register(&name, tx.clone());
-        MemorySubscriber {
-            name,
-            rx,
-            requeue: tx,
-            state: Arc::clone(&self.state),
-            seek: Arc::new(SeekControl::default()),
-            mode: PhantomData,
-        }
+        MemorySubscriber::new(name, rx, tx, &self.state)
     }
 
     /// Returns a publisher bound to this broker.
@@ -769,14 +762,7 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
         if let Err(err) = self.state.register(&name, tx.clone()) {
             return ready(Err(err));
         }
-        ready(Ok(MemorySubscriber {
-            name,
-            rx,
-            requeue: tx,
-            state: Arc::clone(&self.state),
-            seek: Arc::new(SeekControl::default()),
-            mode: PhantomData,
-        }))
+        ready(Ok(MemorySubscriber::new(name, rx, tx, &self.state)))
     }
 }
 
@@ -850,28 +836,51 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
 /// repositionable over its publish log through the [`Seekable`](crate::Seekable) capability: mint
 /// a [`MemorySeeker`] with [`seeker`](crate::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber<Log = Discarding> {
-    name: String,
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
-    requeue: Sender,
-    /// Bus state, kept so a seek can read the publish log and check liveness.
-    state: Arc<MemoryState>,
-    /// Shared with every [`MemorySeeker`] minted off this subscriber: the pending reposition,
-    /// the stale-delivery watermark, and the waker that rouses a parked stream.
-    seek: Arc<SeekControl>,
+    /// What this subscription shares with every delivery it yields and every seeker minted off
+    /// it.
+    subscription: Arc<SubscriptionShared>,
     mode: PhantomData<Log>,
 }
 
-impl<Log: LogMode> MemorySubscriber<Log> {
-    /// This subscription's seek handle, shared by every delivery it yields.
-    ///
-    /// `None` on a discarding broker, where nothing can be replayed; the branch is a constant
-    /// per log mode, so the discarding stream carries no seek machinery at all.
-    pub(super) fn shared_seeker(&self) -> Option<Arc<MemorySeeker>> {
-        log::retains::<Log>().then(|| Arc::new(self.new_seeker()))
-    }
+/// One subscription's state that outlives a poll: its name, the bus, the channel a requeue goes
+/// back through, and the seek handoff.
+///
+/// A subscription allocates it once, and every delivery and every [`MemorySeeker`] holds it
+/// behind one reference count: a delivery takes one increment where a requeue sender and a
+/// seeker would take one each, and a seeker minted off a delivery is that same increment.
+struct SubscriptionShared {
+    /// The name the subscription reads, which a seek resolves against the publish log.
+    name: String,
+    /// Bus state, kept so a seek can read the publish log and check liveness.
+    state: Arc<MemoryState>,
+    /// The subscription's own channel: a requeue and a replay go back through it.
+    requeue: Sender,
+    /// The pending reposition, the stale-delivery watermark, and the waker that rouses a parked
+    /// stream.
+    seek: SeekControl,
 }
 
 impl<Log> MemorySubscriber<Log> {
+    /// The subscriber reading `rx`, whose registration on the bus is `requeue`'s twin.
+    fn new(
+        name: String,
+        rx: mpsc::UnboundedReceiver<MemoryDelivery>,
+        requeue: Sender,
+        state: &Arc<MemoryState>,
+    ) -> Self {
+        Self {
+            rx,
+            subscription: Arc::new(SubscriptionShared {
+                name,
+                state: Arc::clone(state),
+                requeue,
+                seek: SeekControl::default(),
+            }),
+            mode: PhantomData,
+        }
+    }
+
     /// A clone of the broker's harness coordinator, threaded into each yielded message so a
     /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
     ///
@@ -880,14 +889,14 @@ impl<Log> MemorySubscriber<Log> {
     /// decrement what the bus counted in, hanging the quiescence wait.
     #[cfg(feature = "testing")]
     pub(crate) fn coordinator(&self) -> Option<Coordinator> {
-        self.state.coordinator()
+        self.subscription.state.coordinator()
     }
 }
 
 impl<Log> fmt::Debug for MemorySubscriber<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySubscriber")
-            .field("name", &self.name)
+            .field("name", &self.subscription.name)
             .finish_non_exhaustive()
     }
 }
@@ -897,10 +906,8 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
     type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        let requeue = self.requeue.clone();
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
-        let seeker = self.shared_seeker();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         futures::stream::poll_fn(move |cx| {
@@ -908,7 +915,7 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
             // park then still finds a waker to rouse.
             // Only a seeker wakes this waker, and a discarding subscription mints none.
             if log::retains::<Log>() {
-                self.seek.waker.register(cx.waker());
+                self.subscription.seek.waker.register(cx.waker());
             }
             self.apply_pending_seek();
             loop {
@@ -916,7 +923,9 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
                     Poll::Ready(Some(delivery)) => {
                         // A stale pre-seek copy (a requeue that raced the seek): drop it, the
                         // replay already covers everything from the watermark on.
-                        if log::retains::<Log>() && delivery.seq < self.seek.watermark() {
+                        if log::retains::<Log>()
+                            && delivery.seq < self.subscription.seek.watermark()
+                        {
                             #[cfg(feature = "testing")]
                             if let Some(coordinator) = &coordinator {
                                 coordinator.consumed();
@@ -925,8 +934,7 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
                         }
                         return Poll::Ready(Some(Ok(MemoryMessage {
                             delivery: Some(delivery),
-                            requeue: requeue.clone(),
-                            seek: seeker.clone(),
+                            subscription: Some(Arc::clone(&self.subscription)),
                             #[cfg(feature = "testing")]
                             coordinator: coordinator.clone(),
                             mode: PhantomData,
@@ -1039,11 +1047,10 @@ impl Publisher for MemoryPublisher {
 /// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
 pub struct MemoryMessage<Log = Discarding> {
     delivery: Option<MemoryDelivery>,
-    requeue: Sender,
-    /// The subscription's pre-minted seeker, shared per delivery so the seek context can build
-    /// off the message. `None` on a discarding broker, and for a request-reply inbox message,
-    /// which no dispatch loop and no seek context ever sees.
-    seek: Option<Arc<MemorySeeker>>,
+    /// The subscription this delivery came from, which a requeue goes back to and the seek
+    /// context builds off. `None` for a request-reply inbox message, which has no subscription
+    /// behind it: nothing reads the inbox once the request returns, so a requeue drops it.
+    subscription: Option<Arc<SubscriptionShared>>,
     /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
     /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
     /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).
@@ -1132,8 +1139,8 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
 
     fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
         let delivery = self.delivery.take().expect("delivery already consumed");
-        if requeue {
-            let sent = self.requeue.send(delivery.redelivered());
+        if requeue && let Some(subscription) = &self.subscription {
+            let sent = subscription.requeue.send(delivery.redelivered());
             // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
             // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
             #[cfg(feature = "testing")]
@@ -1160,7 +1167,16 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
             .take()
             .expect("delivery already consumed")
             .redelivered();
-        let requeue = self.requeue.clone();
+        // Taken rather than cloned: the message is consumed here, so its count moves to the
+        // redelivery. An inbox reply has no subscription to come back to; see `subscription`.
+        let Some(subscription) = self.subscription.take() else {
+            return ready(Ok(()));
+        };
+        // The timer holds the requeue sender, not the subscription: the subscription holds the
+        // bus and its publish log, which a redelivery an hour away must not keep alive once the
+        // broker and the subscriber are gone.
+        let back = subscription.requeue.clone();
+        drop(subscription);
         // Under the harness, register the redelivery with the coordinator so the in-flight count is
         // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
         // settlement (`NackAfter`) was already recorded; the redelivery is off the synchronous
@@ -1169,7 +1185,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
         if let Some(coordinator) = self.coordinator.clone() {
             let counter = coordinator.clone();
             coordinator.schedule_redelivery(delay, move || {
-                if requeue.send(delivery).is_ok() {
+                if back.send(delivery).is_ok() {
                     counter.enqueued();
                 }
             });
@@ -1178,7 +1194,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
         tokio::spawn(async move {
             sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
-            let _ = requeue.send(delivery);
+            let _ = back.send(delivery);
         });
         ready(Ok(()))
     }

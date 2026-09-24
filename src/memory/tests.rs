@@ -112,6 +112,35 @@ async fn nack_after_redelivers_after_the_delay() {
     redelivered.ack().await.unwrap();
 }
 
+/// A pending redelivery keeps the way back to its subscription, not the bus: once the broker and
+/// the subscriber are gone, the bus and its publish log are freed while the timer still waits.
+#[tokio::test(start_paused = true)]
+async fn a_pending_redelivery_does_not_keep_the_bus_alive() {
+    let broker = MemoryBroker::retaining(Retention::Messages(crate::nonzero!(8)));
+    let bus = Arc::downgrade(&broker.state);
+    let mut sub = broker.subscribe("delayed");
+    let publisher = broker.publisher();
+    publisher
+        .publish(OutgoingMessage::new("delayed", b"later"), None)
+        .await
+        .unwrap();
+    {
+        let mut stream = std::pin::pin!(sub.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        msg.nack_after(Duration::from_secs(3600)).await.unwrap();
+    }
+
+    drop((publisher, sub, broker));
+    assert!(
+        bus.upgrade().is_none(),
+        "a redelivery an hour away holds the bus and its publish log",
+    );
+
+    // The timer still fires, into a subscription that is gone.
+    tokio::time::advance(Duration::from_secs(3600)).await;
+    tokio::task::yield_now().await;
+}
+
 /// What the default broker keeps: nothing. A service publishing forever on it grows only by
 /// what its subscribers have yet to read.
 #[tokio::test]
