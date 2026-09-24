@@ -101,6 +101,44 @@ async fn retry_after_delay_is_honored_by_the_dispatcher() {
     );
 }
 
+/// Defers the first attempt by no time at all, then acks.
+#[subscriber("undelayed")]
+async fn undeferred(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) -> HandlerOutcome {
+    if ctx.state().first(order.id) {
+        HandlerOutcome::retry_after(Duration::ZERO)
+    } else {
+        HandlerOutcome::ack()
+    }
+}
+
+/// A zero delay is no delay: the in-memory broker puts the delivery back at once, so the
+/// redelivery lands in the reaction of the publish itself and no `advance` is needed. The runtime
+/// has worker threads, so a redelivery left to a timer task would still be on its way when the
+/// publish returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_zero_retry_after_delay_redelivers_without_advancing_the_clock() {
+    let app = RustStream::new(AppInfo::new("undelayed", "0.1.0"))
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
+        })
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(undeferred);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("undelayed")
+        .publish()
+        .await
+        .expect("publish");
+    assert_eq!(
+        tb.broker::<MemoryBroker>()
+            .subscriber("undelayed")
+            .outcomes(),
+        [Outcome::Nack, Outcome::Ack],
+    );
+}
+
 /// First sight of each id asks for an immediate retry; the redelivery is acked.
 #[subscriber("pool-retry", workers(3))]
 async fn pool_retry(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) -> HandlerOutcome {
