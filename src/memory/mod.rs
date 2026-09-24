@@ -906,7 +906,10 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
         futures::stream::poll_fn(move |cx| {
             // Register before reading the pending seek: a seek landing between the read and the
             // park then still finds a waker to rouse.
-            self.seek.waker.register(cx.waker());
+            // Only a seeker wakes this waker, and a discarding subscription mints none.
+            if log::retains::<Log>() {
+                self.seek.waker.register(cx.waker());
+            }
             self.apply_pending_seek();
             loop {
                 match self.rx.poll_recv(cx) {

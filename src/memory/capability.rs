@@ -220,7 +220,10 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         futures::stream::poll_fn(move |cx| {
             // Same ordering as `MemorySubscriber::stream`: register, then apply a pending seek.
-            self.seek.waker.register(cx.waker());
+            // Only a seeker wakes this waker, and a discarding subscription mints none.
+            if log::retains::<Log>() {
+                self.seek.waker.register(cx.waker());
+            }
             self.apply_pending_seek();
             let first = loop {
                 match ready!(self.rx.poll_recv(cx)) {
