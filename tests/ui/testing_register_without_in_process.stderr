@@ -1,0 +1,50 @@
+error[E0277]: `Networked` has no in-process mode, so the test harness cannot run it
+  --> tests/ui/testing_register_without_in_process.rs:30:39
+   |
+30 | ruststream::register_testable_broker!(Networked);
+   |                                       ^^^^^^^^^ not an in-process broker
+   |
+help: the trait `InProcess` is not implemented for `Networked`
+  --> tests/ui/testing_register_without_in_process.rs:8:1
+   |
+ 8 | struct Networked;
+   | ^^^^^^^^^^^^^^^^
+   = note: a broker crate implements `InProcess` under its `testing` feature: a service enables that feature in `[dev-dependencies]`, a broker author implements the trait there
+help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
+  --> src/memory/mod.rs
+   |
+   | impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `TestableRegistration::of`
+  --> src/testing/broker.rs
+   |
+   |     pub const fn of<B>() -> Self
+   |                  -- required by a bound in this associated function
+   |     where
+   |         B: InProcess + 'static,
+   |            ^^^^^^^^^ required by this bound in `TestableRegistration::of`
+
+error[E0277]: the trait bound `ConnectedNetworked: DefaultPublish` is not satisfied
+  --> tests/ui/testing_register_without_in_process.rs:30:39
+   |
+30 | ruststream::register_testable_broker!(Networked);
+   |                                       ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `DefaultPublish` is not implemented for `ConnectedNetworked`
+  --> tests/ui/testing_register_without_in_process.rs:10:1
+   |
+10 | struct ConnectedNetworked;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
+  --> src/memory/mod.rs
+   |
+   | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `TestableRegistration::of`
+  --> src/testing/broker.rs
+   |
+   |     pub const fn of<B>() -> Self
+   |                  -- required by a bound in this associated function
+...
+   |         B::Connected: DefaultPublish,
+   |                       ^^^^^^^^^^^^^^ required by this bound in `TestableRegistration::of`

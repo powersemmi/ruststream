@@ -16,8 +16,8 @@ API `async-nats`, а он меняется от релиза к релизу. В
 ```toml title="Cargo.toml"
 [features]
 default = []
-# The in-process test broker users get. The conformance harness is a broker-author tool and stays
-# a dev-dependency, not a feature users can turn on.
+# The in-process mode users test the production app with. The conformance harness is a
+# broker-author tool and stays a dev-dependency, not a feature users can turn on.
 testing = ["ruststream/testing"]
 
 [dependencies]
@@ -649,9 +649,10 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## Как это доказать
 
-Поставьте под фичей `testing` внутрипроцессный транспорт с одной только базовой маршрутизацией:
-сопоставление субъектов, при котором опубликованное сообщение доставляется всем подписчикам разом.
-Он реализует `TestableBroker` на своей подключённой форме, а её тип регистрируется через
-`register_testable_broker!`. Прогоните на нём набор conformance. Курсоры JetStream, таймеры
-повторной доставки и срок хранения такому транспорту эмулировать нельзя: их проверяет сквозной набор
-тестов на настоящем `nats-server`. См. [Conformance](conformance.md).
+Поставьте под фичей `testing` режим работы внутри процесса: `InProcess` на `NatsBroker`, где
+`connect_in_process` даёт подключённой форме вместо клиента сопоставление субъектов, при котором
+опубликованное сообщение доставляется всем подписчикам субъекта разом. Подключённая форма реализует
+`TestableBroker`, а `register_testable_broker!(NatsBroker)` регистрирует рабочий тип. Прогоните на
+нём наборы conformance - и внутри процесса, и против сервера. Курсоры JetStream, таймеры повторной
+доставки и срок хранения принадлежат серверу, и те же тесты идут против настоящего `nats-server`
+через `TestApp::start_live`. См. [Conformance](conformance.md).

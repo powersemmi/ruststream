@@ -127,18 +127,24 @@ alwaysApply: false
   one wrapper method per option. Auth (TLS, SASL) rides that passthrough; surface only the cargo
   features that build hermetically everywhere, and let users enable exotic client features by
   depending on the client crate directly (cargo features are additive).
-- Testing: implement `TestableBroker` on the in-process transport's **connected** form and register
-  it with `register_testable_broker!` (under a `testing` feature), so `TestApp` and `run_suite` can
-  drive it. Run the contract suites against the stand-in as well as against a real server; run
-  `lifecycle` first, because it asks what a stand-in is never otherwise asked - does a publisher
-  made before the shutdown error afterwards. The stand-in answers acks the way the real transport
-  answers them, including `AckError::Unsupported`: one that claims a settlement its transport never
-  performs is how a handler's retry passes in a test and loses the message in production. Reproduce
-  what the client does (competing consumers, group distribution, correlation, buffering until
-  commit); do not fake what the broker does (fencing, cluster atomicity, broker-held timeouts,
-  durable cursors, offsets, DLX), and give every gap a comment naming the assertion it makes
-  unsound plus a test pinning it. Mount it with the production wiring: your own sources and
-  policies have to work against it unchanged.
+- Testing: the in-process mode is part of the broker contract. Under a `testing` feature implement
+  `InProcess` on the production broker (`connect_in_process(self)`: the consuming transition to the
+  broker's own connected form over an in-process transport, no I/O), `TestableBroker` on that
+  connected form, and register the production type with `register_testable_broker!(YourBroker)`,
+  so `TestApp::start` runs a service's production app in process and a test addresses the broker
+  as `tb.broker::<YourBroker>()`. The connected form, subscriber, publishers and delivery type each
+  gain an in-process variant that exists only under the feature (without it: one variant, no
+  branch); the transport has no configuration of its own and reads every setting from the
+  production broker. It never succeeds where the real broker fails: a publish, ack, requeue or
+  subscription the server rejects or strands is rejected in process the same way. Run the contract
+  suites in process as well as against a real server (`run_suite` connects in process; wrap the
+  broker in `harness::InProcessBroker` for `lifecycle` and the capability suites), and run
+  `lifecycle` because it asks whether a publisher made before the shutdown errors afterwards. Acks
+  are answered the way the real transport answers them, including `AckError::Unsupported`.
+  Reproduce what the client does (competing consumers, group distribution, correlation, buffering
+  until commit); broker-side semantics (fencing, cluster atomicity, broker-held timeouts) are
+  tested live with `TestApp::start_live`, and every gap gets a comment naming the assertion it
+  makes unsound plus a test pinning it.
 
 ## The lifecycle ladder
 
@@ -465,20 +471,21 @@ impl at all - `()` is the default.
 
 ## Conformance
 
-The suites are written against the traits, so they run unchanged against the in-process transport
-(its **connected** form is the `TestableBroker`) and against a real server behind an env gate. Run
-both: the stand-in is what a service's whole test suite rides on, and the server is what the
-release runs against. `run_suite` covers the routing contract - ordering, ack and nack, headers,
+The suites are written against the traits, so they run unchanged in process (the broker's
+`InProcess` transition, whose connected form is the `TestableBroker`) and against a real server
+behind an env gate. Run both: the in-process mode is what a service's whole test suite rides on,
+and the server is what the release runs against. `run_suite` covers the routing contract - ordering, ack and nack, headers,
 the publish log; the `capabilities::*` suites are yours to call, one per capability you implement,
 and they are not part of `run_suite`.
 
 ```rust
 use ruststream::conformance::harness;
 
-// sync Fn() -> B, where B: Broker and B::Connected: TestableBroker + Subscribe
+// sync Fn() -> B, where B: InProcess and B::Connected: Subscribe; the production broker, connected
+// through connect_in_process
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routing_conformance() {
-    harness::run_suite(MyTestBroker::new).await;
+    harness::run_suite(|| MyBroker::new("my://localhost")).await;
 }
 
 // the ladder: sync new -> connect(self) -> subscribe via SubscriptionSource -> publish ->

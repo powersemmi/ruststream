@@ -16,6 +16,8 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::codec::Codec;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::{Origin, PipelinePublish, publishing_to};
 use crate::{IncomingMessage, OutgoingMessage, PayloadForm, Publisher};
 
 use super::context::Context;
@@ -186,9 +188,15 @@ where
         // them; a reply that already holds them leaves it untouched. Which of the two a
         // publisher is handed follows its own declaration, as on every other publish position.
         let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
-        self.publish(OutgoingMessage::with_payload(name, payload), None)
-            .await
-            .map_err(Into::into)
+        let msg = OutgoingMessage::with_payload(name, payload);
+        #[cfg(feature = "testing")]
+        let recorded = PipelinePublish::capture(&msg);
+        let sent = self.publish(msg, None).await;
+        #[cfg(feature = "testing")]
+        if sent.is_ok() {
+            recorded.sent();
+        }
+        sent.map_err(Into::into)
     }
 }
 
@@ -342,6 +350,9 @@ pub(crate) struct PublishingHandler<
     pub(crate) pipeline: Pipeline,
     pub(crate) injections: Def::Injections,
     pub(crate) decode: FailurePolicy,
+    /// The broker the reply publisher was paired against, which its replies go to.
+    #[cfg(feature = "testing")]
+    pub(crate) origin: Origin,
 }
 
 impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline> std::fmt::Debug
@@ -418,6 +429,8 @@ where
         let publish = self
             .publisher
             .deliver(name, &reply, &self.pipeline, &pubcx, slot);
+        #[cfg(feature = "testing")]
+        let publish = publishing_to(self.origin, publish);
         if let Err(err) = publish.await {
             warn!(
                 target: "ruststream::dispatch",
@@ -522,6 +535,8 @@ mod tests {
         use crate::runtime::handler::Handler;
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
+        #[cfg(feature = "testing")]
+        use crate::testing::coordinator::Origin;
         use crate::testkit::log_capture::{find, start};
         use crate::{HeaderMap, Lend, OutgoingMessage, Publisher, Subscriber};
 
@@ -572,6 +587,8 @@ mod tests {
                 pipeline: PublishIdentity,
                 injections: (),
                 decode: FailurePolicy::FailFast,
+                #[cfg(feature = "testing")]
+                origin: Origin::default(),
             };
 
             let state = ();
@@ -606,6 +623,8 @@ mod tests {
                 pipeline: PublishIdentity,
                 injections: (),
                 decode: FailurePolicy::Drop,
+                #[cfg(feature = "testing")]
+                origin: Origin::default(),
             };
 
             let state = ();
@@ -641,6 +660,8 @@ mod tests {
         use crate::runtime::failure::FailurePolicy;
         use crate::runtime::publish::{PublishIdentity, TypedPublisher};
         use crate::runtime::publishing::PublishingHandler;
+        #[cfg(feature = "testing")]
+        use crate::testing::coordinator::Origin;
 
         let handler = PublishingHandler {
             def: ManualPub,
@@ -649,6 +670,8 @@ mod tests {
             pipeline: PublishIdentity,
             injections: (),
             decode: FailurePolicy::Drop,
+            #[cfg(feature = "testing")]
+            origin: Origin::default(),
         };
 
         assert_eq!(format!("{handler:?}"), "PublishingHandler { .. }");

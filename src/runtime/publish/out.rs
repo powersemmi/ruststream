@@ -29,6 +29,8 @@ use super::{
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
 use crate::runtime::lifecycle::BoxError;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::PipelinePublish;
 use crate::{
     ConnectedBroker, HeaderMap, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher,
 };
@@ -270,7 +272,14 @@ impl<W> OutPipeline<W> for PublishIdentity {
         W: Publisher,
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
-        leaf.publish(msg, options).await
+        #[cfg(feature = "testing")]
+        let recorded = PipelinePublish::capture(&msg);
+        let sent = leaf.publish(msg, options).await;
+        #[cfg(feature = "testing")]
+        if sent.is_ok() {
+            recorded.sent();
+        }
+        sent
     }
 }
 

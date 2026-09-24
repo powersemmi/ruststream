@@ -1,14 +1,16 @@
-//! Conformance test suite that any [`TestableBroker`] implementation must pass.
+//! Conformance test suite that any broker's in-process mode must pass, and the ladder checks
+//! every broker must pass.
 //!
-//! Broker authors prove their in-process transport honours Core routing by running the suite
-//! against the [`TestableBroker`] their crate ships under the `testing` feature. Each test starts
-//! from a fresh broker produced by the caller-supplied factory and drives it through the broker's
-//! own [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
+//! Broker authors prove their in-process transport honours Core routing by running
+//! [`run_suite`] against their production broker: each scenario starts from a fresh broker
+//! produced by the caller-supplied factory, connects it through its
+//! [`InProcess`] transition and drives the connected form through the broker's own
+//! [`Subscribe`] / [`TestableBroker::inject`] surface - no server.
 //!
 //! # Examples
 //!
-//! The example uses [`crate::memory::MemoryBroker`] as a stand-in broker, so it needs the
-//! `memory` feature; a broker crate substitutes its own in-process transport here.
+//! The example uses [`crate::memory::MemoryBroker`], so it needs the `memory` feature; a broker
+//! crate passes its own production broker here.
 //!
 //! ```no_run
 //! # #[cfg(all(feature = "testing", feature = "memory"))]
@@ -19,7 +21,7 @@
 //! # }
 //! ```
 
-use std::{fmt, time::Duration};
+use std::{fmt, future::Future, time::Duration};
 
 use super::helpers::unique_subject;
 #[cfg(feature = "asyncapi")]
@@ -31,7 +33,7 @@ use crate::runtime::{AppInfo, RustStream};
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
-    testing::TestableBroker,
+    testing::{InProcess, TestableBroker},
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -43,9 +45,9 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// Runs every scenario in the suite, panicking with a descriptive message on the first failure.
 ///
 /// `factory` is invoked once per scenario to obtain a fresh broker, so tests cannot leak state
-/// between each other. Each scenario connects the broker (the consuming ladder transition) and
-/// drives the connected form through the broker's own [`Subscribe`] /
-/// [`TestableBroker::inject`] surface.
+/// between each other. It builds the production broker, the one a service builds its app on;
+/// each scenario connects it through its [`InProcess`] transition and drives the connected form
+/// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](crate::BatchSubscriber),
@@ -79,15 +81,15 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// Panics if any scenario fails an assertion. The panic message identifies the scenario.
 pub async fn run_suite<B, F>(factory: F)
 where
-    B: Broker,
-    B::Connected: TestableBroker + Subscribe,
+    B: InProcess,
+    B::Connected: Subscribe,
     F: Fn() -> B,
 {
     let connect = async move |broker: B| {
         broker
-            .connect()
+            .connect_in_process()
             .await
-            .expect("broker must connect before a suite scenario")
+            .expect("broker must connect in process before a suite scenario")
     };
     ordering(connect(factory()).await).await;
     publish_after_subscribe(connect(factory()).await).await;
@@ -96,6 +98,67 @@ where
     nack_without_requeue_drops(connect(factory()).await).await;
     headers_propagate(connect(factory()).await).await;
     published_log_observes_publishes(connect(factory()).await).await;
+}
+
+/// A broker whose `connect` is its [`InProcess`] transition, so the suites that take any
+/// [`Broker`] run against the in-process transport.
+///
+/// [`lifecycle`], [`redelivery_address`] and the [`capabilities`](super::capabilities) suites
+/// connect the broker they are handed with [`Broker::connect`], which is what their live pass
+/// needs. Wrapping the production broker in this runs the same suite a second time without a
+/// server: the connected form, and so every descriptor and publish policy, is the production one,
+/// only the transport underneath is the in-process one.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
+/// use ruststream::conformance::harness::{self, InProcessBroker};
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+///
+/// harness::lifecycle(
+///     || InProcessBroker::new(MemoryBroker::new()),
+///     |name| MemorySource::new(name),
+///     |connected| connected.publisher(),
+/// )
+/// .await;
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+pub struct InProcessBroker<B>(B);
+
+impl<B> InProcessBroker<B> {
+    /// Wraps `broker`, the production broker a service builds its app on.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ruststream::Broker;
+    /// use ruststream::conformance::harness::InProcessBroker;
+    /// use ruststream::memory::MemoryBroker;
+    ///
+    /// // `connect` runs the broker's in-process transition: no server behind it.
+    /// let connected = InProcessBroker::new(MemoryBroker::new()).connect().await?;
+    /// # let _ = connected;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn new(broker: B) -> Self {
+        Self(broker)
+    }
+}
+
+impl<B: InProcess> Broker for InProcessBroker<B> {
+    type Error = B::Error;
+    type Connected = B::Connected;
+
+    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
+        self.0.connect_in_process()
+    }
 }
 
 /// Verifies a broker honours the lifecycle ladder end to end.
@@ -123,9 +186,9 @@ where
 ///   registration, so a definition can be mounted on more than one broker.
 /// * `make_publisher` produces a publisher from the connected form.
 ///
-/// Run it from the broker crate, against a real server where one is needed (NATS, Kafka, ...) or
-/// in-process for the in-memory broker. The subject it publishes under is unique per run (see
-/// [`unique_subject`]), so a server that keeps what an earlier run left - a retained log, a
+/// Run it from the broker crate against a real server, and a second time in process by wrapping
+/// the production broker in [`InProcessBroker`]. The subject it publishes under is unique per run
+/// (see [`unique_subject`]), so a server that keeps what an earlier run left - a retained log, a
 /// durable queue - does not fail the next one.
 ///
 /// # Examples

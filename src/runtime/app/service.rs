@@ -122,8 +122,14 @@ pub(crate) struct RegisteredBroker {
 /// The internals the [`TestApp`](crate::testing::TestApp) harness needs to drive an app without
 /// connecting: the brokers (to recover and instrument), the deferred starters, the lifecycle hooks,
 /// and the shared test hooks slot. Produced by [`RustStream::into_test_parts`].
+///
+/// Public in name only, and never nameable outside the crate: the sealed supertrait of
+/// [`App`](crate::runtime::App) hands it to the harness for an app a builder returned as
+/// `impl App`, and a method of that trait cannot return a crate-private type.
 #[cfg(feature = "testing")]
-pub(crate) struct TestParts<State> {
+#[doc(hidden)]
+#[allow(unreachable_pub, missing_debug_implementations)]
+pub struct TestParts<State> {
     pub(crate) brokers: Vec<RegisteredBroker>,
     pub(crate) starters: Vec<Starter<State>>,
     pub(crate) state_init: StateInit<State>,
@@ -667,6 +673,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
                     .expect("brokers connect before subscriptions open");
                 bound(connected, state, scope_delivery, shutdown)
             }));
+            // A live harness waits only for what reaches a subscription the app mounts.
+            #[cfg(feature = "testing")]
+            self.test_hooks.subscribed(self.brokers.len(), &meta.name);
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.
             self.handlers.push(HandlerMetadata {

@@ -35,6 +35,8 @@ use crate::runtime::publish::{
 use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler};
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
 use crate::runtime::retry::RetryOpen;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::paired;
 
 use super::SourceMessage;
 use super::routes::{
@@ -276,10 +278,12 @@ where
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
-                    let publisher = publisher
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let pairing = publisher.pair(connected.as_ref());
+                    #[cfg(feature = "testing")]
+                    let (publisher, origin) = paired(connected.as_ref(), pairing).await;
+                    #[cfg(not(feature = "testing"))]
+                    let publisher = pairing.await;
+                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -300,6 +304,8 @@ where
                             pipeline,
                             injections,
                             decode: policies.decode,
+                            #[cfg(feature = "testing")]
+                            origin,
                         },
                     );
                     let failure = DispatchFailure::new(policies, shutdown.clone());
@@ -382,10 +388,12 @@ where
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
-                    let publisher = publisher
-                        .pair(connected.as_ref())
-                        .await
-                        .map_err(|e| Box::new(e) as BoxError)?;
+                    let pairing = publisher.pair(connected.as_ref());
+                    #[cfg(feature = "testing")]
+                    let (publisher, origin) = paired(connected.as_ref(), pairing).await;
+                    #[cfg(not(feature = "testing"))]
+                    let publisher = pairing.await;
+                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -406,6 +414,8 @@ where
                             pipeline,
                             injections,
                             decode: policies.decode,
+                            #[cfg(feature = "testing")]
+                            origin,
                         },
                     );
                     let failure = DispatchFailure::new(policies, shutdown.clone());
@@ -493,10 +503,12 @@ where
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
-                let publisher = publisher
-                    .pair(connected.as_ref())
-                    .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
+                let pairing = publisher.pair(connected.as_ref());
+                #[cfg(feature = "testing")]
+                let (publisher, origin) = paired(connected.as_ref(), pairing).await;
+                #[cfg(not(feature = "testing"))]
+                let publisher = pairing.await;
+                let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
@@ -507,6 +519,8 @@ where
                     pipeline,
                     injections,
                     decode: policies.decode,
+                    #[cfg(feature = "testing")]
+                    origin,
                 };
                 Ok((subscriber, handler))
             },

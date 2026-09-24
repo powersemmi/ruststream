@@ -13,8 +13,8 @@
 ```toml title="Cargo.toml"
 [features]
 default = []
-# The in-process test broker users get. The conformance harness is a broker-author tool and stays
-# a dev-dependency, not a feature users can turn on.
+# The in-process mode users test the production app with. The conformance harness is a
+# broker-author tool and stays a dev-dependency, not a feature users can turn on.
 testing = ["ruststream/testing"]
 
 [dependencies]
@@ -623,8 +623,8 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
 
 ## 验证它
 
-在 `testing` feature 下提供一个进程内传输，它只做基础路由：一个 subject 匹配器，把发布的消息一次
-投递给该 subject 的所有订阅者。它在自己的已连接形态上实现 `TestableBroker`，该类型用
-`register_testable_broker!` 注册。在它上面跑一遍 conformance 套件。这种传输切勿模拟
-JetStream 的游标、重新投递计时器和保留期：那些要对着真实的 `nats-server` 端到端地验证。
-参见 [Conformance](conformance.md)。
+在 `testing` feature 下提供进程内模式：`NatsBroker` 上的 `InProcess`，它的 `connect_in_process`
+让已连接形态用一个 subject 匹配器代替客户端，把发布的消息一次投递给该 subject 的所有订阅者。
+已连接形态实现 `TestableBroker`，`register_testable_broker!(NatsBroker)` 登记生产类型。在进程内和
+对着服务器各跑一遍 conformance 套件。JetStream 的游标、重新投递计时器和保留期属于服务器，同样的
+测试通过 `TestApp::start_live` 对着真实的 `nats-server` 运行。参见 [Conformance](conformance.md)。

@@ -1,8 +1,7 @@
 //! The edges of the [`TestApp`](ruststream::testing::TestApp) harness that the happy-path suite in
-//! `tests/testing_harness.rs` never reaches: addressing a broker that is not there (or is there
-//! twice), a broker registered for its lifecycle only and therefore carrying no in-process
-//! transport, the unscoped injection entry points, the post-settle drain, and the teardown under a
-//! configured shutdown timeout.
+//! `tests/testing_harness.rs` never reaches: an app carrying a broker with no in-process mode,
+//! addressing a broker that is not there (or is there twice), the unscoped injection entry points,
+//! the post-settle drain, and the teardown under a configured shutdown timeout.
 //!
 //! The mistakes a test author makes while addressing brokers are panics, not errors, so the cases
 //! that name them are `should_panic` and assert on the message the author reads.
@@ -17,8 +16,8 @@ use std::future::{Future, ready};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
-use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
+use ruststream::memory::{MemoryBroker, Retaining};
+use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, RustStream};
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{Broker, ConnectedBroker, Deserialized, Outgoing, Serialized, subscriber};
 use serde::{Deserialize, Serialize};
@@ -58,18 +57,16 @@ async fn ingest(frame: &Frame<'_>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// --- A broker with no in-process test transport. ---
+// --- A broker with no in-process mode. ---
 
-/// A broker registered for its lifecycle only. Nothing declares it with
-/// `register_testable_broker!`, so the harness finds no [`TestableBroker`] view behind its
-/// connected form - the shape every real broker has in a build where its own feature is off.
-///
-/// [`TestableBroker`]: ruststream::testing::TestableBroker
+/// A broker registered for its lifecycle only. Nothing registers it with
+/// `register_testable_broker!`, so the harness has no in-process transition to connect it
+/// through - the shape every real broker has in a build where its crate's `testing` feature is
+/// off.
 #[derive(Debug)]
 struct Opaque;
 
-/// The connected form of [`Opaque`]. It reaches the harness erased, exactly like a registered
-/// broker's, and is what the registration lookup fails to resolve.
+/// The connected form of [`Opaque`], which the harness never reaches.
 #[derive(Debug)]
 struct ConnectedOpaque;
 
@@ -95,29 +92,46 @@ impl ConnectedBroker for ConnectedOpaque {
     }
 }
 
-/// A broker the harness cannot reach into says so by name, instead of reporting an empty run: an
-/// injection through it fails with [`TestError::NoTransport`], and its publish log reads as empty
-/// because nothing recorded it, not because nothing was published.
+/// An app with a broker the harness cannot run in process does not start, and the error names the
+/// broker type, instead of the harness connecting it for real or starting a run that could never
+/// reach it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_broker_without_an_in_process_transport_is_reported_by_name() {
+async fn an_app_with_a_broker_that_has_no_in_process_mode_does_not_start() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .register_broker(Opaque)
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_orders);
         });
+
+    match TestApp::start(app).await {
+        Err(TestError::NoTransport(broker)) => {
+            assert!(broker.ends_with("Opaque"), "{broker}");
+        }
+        other => panic!(
+            "expected a missing in-process mode, got {:?}",
+            other.map(|_| ())
+        ),
+    }
+}
+
+/// Two brokers are registered, so the unscoped convenience has no single target to pick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_unscoped_injection_refuses_an_app_with_two_brokers() {
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker_labeled("a", MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        })
+        .with_broker_labeled("b", MemoryBroker::new(), |b| {
+            b.include(ingest);
+        });
     let tb = TestApp::start(app).await.expect("start");
 
-    let opaque = tb.broker::<Opaque>();
     assert!(matches!(
-        opaque.publish("orders", &Order { id: 1 }).await,
-        Err(TestError::NoTransport(_)),
-    ));
-    opaque.published::<Order>("orders").assert_not_called();
-
-    // Two brokers are registered, so the unscoped convenience has no single target to pick.
-    assert!(matches!(
-        tb.publish("orders", &Order { id: 1 }).await,
-        Err(TestError::Ambiguous),
+        tb.message(&Wire(b"frame".to_vec()))
+            .to("frames")
+            .publish()
+            .await,
+        Err(PublishError::Publish(TestError::Ambiguous)),
     ));
 
     tb.shutdown().await.expect("shutdown");
@@ -128,10 +142,12 @@ async fn a_broker_without_an_in_process_transport_is_reported_by_name() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "no registered broker of type")]
 async fn addressing_an_unregistered_broker_type_names_it() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(Opaque);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
     let tb = TestApp::start(app).await.expect("start");
 
-    let _ = tb.broker::<MemoryBroker>();
+    let _ = tb.broker::<MemoryBroker<Retaining>>();
 }
 
 /// The same mistake while building a mirror state: the builder's broker view reports it the same
@@ -139,10 +155,12 @@ async fn addressing_an_unregistered_broker_type_names_it() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "no registered broker of type")]
 async fn a_mirror_state_addressing_an_unregistered_broker_type_names_it() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(Opaque);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(handle_orders);
+    });
 
     let _ = TestApp::with_state(app, |brokers| {
-        let _ = brokers.broker::<MemoryBroker>();
+        let _ = brokers.broker::<MemoryBroker<Retaining>>();
     })
     .await;
 }

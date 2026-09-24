@@ -12,6 +12,7 @@
 //!   completed dispatch decrements it.
 
 use std::any::{Any, type_name};
+use std::cell::Cell;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -33,6 +34,62 @@ tokio::task_local! {
     /// Installed by `dispatch` and `run_batch` around each handler invocation when a harness is
     /// attached.
     static HARNESS: HarnessScope;
+
+    /// Set around one pairing the runtime makes: the connected broker the policy pairs against.
+    /// The scope's broker unless a `Bound` token, which pairs against its own broker, says
+    /// otherwise.
+    static PAIRING: Cell<Origin>;
+
+    /// Set around one publish through a publisher the runtime paired: the broker it was paired
+    /// against, which is the broker the message goes to.
+    static PUBLISHING: Origin;
+}
+
+/// The broker a publisher the runtime paired publishes to: the connected broker it was paired
+/// against, whatever scope holds it. A handler on one broker holding a `Bound` token for another
+/// publishes to the other, and its publishes are that broker's.
+///
+/// Known by the connected form's address, which the harness maps to the broker's registration.
+/// A publisher the runtime did not pair (one the service builds or keeps itself) carries none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Origin(Option<usize>);
+
+impl Origin {
+    /// The connected broker at `connected`.
+    fn of<C: ?Sized>(connected: &C) -> Self {
+        Self(Some(std::ptr::from_ref(connected).cast::<()>() as usize))
+    }
+}
+
+/// Runs the pairing `pairing` against `connected`, and reports the broker the paired publisher
+/// publishes to.
+pub(crate) fn paired<C: ?Sized, F: Future>(
+    connected: &C,
+    pairing: F,
+) -> impl Future<Output = (F::Output, Origin)> {
+    PAIRING.scope(Cell::new(Origin::of(connected)), async move {
+        let live = pairing.await;
+        (live, PAIRING.with(Cell::get))
+    })
+}
+
+/// Notes, inside a pairing, that the policy pairs against `connected` instead of the broker it
+/// was handed: what a `Bound` token does.
+pub(crate) fn pairs_against<C: ?Sized>(connected: &C) {
+    let _ = PAIRING.try_with(|origin| origin.set(Origin::of(connected)));
+}
+
+/// Runs `publish` as a publish to the broker `origin` names.
+pub(crate) fn publishing_to<F: Future>(
+    origin: Origin,
+    publish: F,
+) -> impl Future<Output = F::Output> {
+    PUBLISHING.scope(origin, publish)
+}
+
+/// The broker the publish running in this task goes to, where the runtime paired its publisher.
+fn publishing() -> Origin {
+    PUBLISHING.try_with(|origin| *origin).unwrap_or_default()
 }
 
 /// The harness a dispatch task runs under: which coordinator records it, and which broker's
@@ -44,7 +101,7 @@ pub(crate) struct HarnessScope {
 }
 
 impl HarnessScope {
-    pub(crate) fn new(coordinator: Coordinator, scope_id: usize) -> Self {
+    pub(crate) const fn new(coordinator: Coordinator, scope_id: usize) -> Self {
         Self {
             coordinator,
             scope_id,
@@ -86,6 +143,41 @@ where
             .coordinator
             .record_reply(name, RecordedOptions::capture(options));
     });
+}
+
+/// One message the app is handing a broker from a harness-driven task, captured where its publish
+/// pipeline hands it over, so the record holds what the broker is handed with every publish layer
+/// and transform applied. It enters the harness's record once the broker took it: a publish the
+/// broker refused was not published.
+///
+/// Outside a harness-driven task nothing is captured, and the calls cost a task-local lookup.
+/// The record is what a live test's `published` assertions read, and what a live settle waits for
+/// the subscriptions to handle.
+#[must_use]
+pub(crate) struct PipelinePublish(Option<(Coordinator, Origin, RawMessage)>);
+
+impl PipelinePublish {
+    /// Captures `msg` for the harness driving the current task, if any.
+    pub(crate) fn capture<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> Self {
+        Self(
+            HARNESS
+                .try_with(|scope| (scope.coordinator.clone(), publishing(), raw_of(msg)))
+                .ok(),
+        )
+    }
+
+    /// Records the captured message: the broker took it.
+    pub(crate) fn sent(self) {
+        if let Some((coordinator, origin, message)) = self.0 {
+            coordinator.record_sent(origin, message);
+        }
+    }
+}
+
+/// The owned copy of `msg` the harness keeps.
+fn raw_of<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> RawMessage {
+    RawMessage::new(msg.name().to_owned(), msg.payload().as_ref().to_vec())
+        .with_headers(msg.headers().clone())
 }
 
 /// The broker's per-message options one slot publish carried, copied and type-erased so the
@@ -274,6 +366,10 @@ fn settled_as(settle: Option<HandlerResult>) -> Outcome {
 /// dispatch task starts, so the read path never races the write.
 pub(crate) struct TestHooks {
     coordinator: OnceLock<Coordinator>,
+    /// Every subscription the app mounts, as `(broker scope, subscription name)`, noted while the
+    /// app is built. A live settle waits only for what reaches one of these: a publish to a name
+    /// nothing in the app consumes has nothing to be handled by.
+    subscriptions: Mutex<Vec<(usize, String)>>,
 }
 
 impl TestHooks {
@@ -281,7 +377,24 @@ impl TestHooks {
     pub(crate) fn detached() -> Self {
         Self {
             coordinator: OnceLock::new(),
+            subscriptions: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Notes that the broker registered at `scope_id` carries a subscription named `name`.
+    pub(crate) fn subscribed(&self, scope_id: usize, name: &str) {
+        self.subscriptions
+            .lock()
+            .expect("test hooks subscriptions mutex poisoned")
+            .push((scope_id, name.to_owned()));
+    }
+
+    /// Every subscription the app mounts, as `(broker scope, subscription name)`.
+    pub(crate) fn subscriptions(&self) -> Vec<(usize, String)> {
+        self.subscriptions
+            .lock()
+            .expect("test hooks subscriptions mutex poisoned")
+            .clone()
     }
 
     /// Installs the coordinator for a harness run. Idempotent; a second install is ignored.
@@ -329,7 +442,51 @@ struct Inner {
     slot_records: Mutex<Vec<SlotRecord>>,
     /// One entry per reply the runtime published, keyed by the channel it went to.
     reply_records: Mutex<Vec<(String, RecordedOptions)>>,
+    /// Every publish the harness saw, in publish order: the test's own, and every message the
+    /// app's publish pipeline handed a broker from a handler's dispatch.
+    published: Mutex<Vec<Published>>,
+    /// Each connected broker's address, with the registration it belongs to: what a paired
+    /// publisher's [`Origin`] resolves against.
+    brokers: Mutex<Vec<(usize, usize)>>,
+    /// The redeliveries a broker took on to make later (a native `nack_after`), for a live settle
+    /// to wait for once they fall due.
+    redeliveries: Mutex<Vec<DueRedelivery>>,
     timers: Mutex<Vec<Timer>>,
+}
+
+/// One publish the harness saw, and the broker it went to: the one the test named, or the one
+/// the publisher was paired against.
+struct Published {
+    scope_id: usize,
+    message: RawMessage,
+}
+
+/// A subscription a live settle waits on: the broker it belongs to, and its name.
+#[derive(Clone, Debug)]
+pub(crate) struct LiveSubscription {
+    pub(crate) scope_id: usize,
+    pub(crate) name: String,
+}
+
+/// How each broker of the app routes a destination to its subscriptions: the broker's
+/// registration, the destination, and the names subscribed on that broker, answered with the
+/// positions of those the broker delivers to
+/// ([`TestableBroker::routes`](super::TestableBroker::routes)).
+pub(crate) type Routing<'a> = &'a (dyn Fn(usize, &str, &[&str]) -> Vec<usize> + Sync);
+
+/// A subscription a live settle is still waiting on.
+struct Unsettled {
+    subscription: String,
+    handled: usize,
+    expected: usize,
+}
+
+/// A redelivery a broker accepted to make at `due`, to the subscription `name` of the broker
+/// registered at `scope_id`.
+struct DueRedelivery {
+    scope_id: usize,
+    name: String,
+    due: tokio::time::Instant,
 }
 
 /// A scheduled delayed redelivery (`nack_after` / `retry_after`): its deadline and the task that
@@ -365,6 +522,9 @@ impl Coordinator {
                 records: Mutex::new(Vec::new()),
                 slot_records: Mutex::new(Vec::new()),
                 reply_records: Mutex::new(Vec::new()),
+                published: Mutex::new(Vec::new()),
+                brokers: Mutex::new(Vec::new()),
+                redeliveries: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
             }),
         }
@@ -524,6 +684,200 @@ impl Coordinator {
         }
     }
 
+    /// Notes where each broker of the app is connected, `connected` giving each registration's
+    /// connected form: what a paired publisher's [`Origin`] resolves to.
+    pub(crate) fn locate<'a>(
+        &self,
+        connected: impl IntoIterator<Item = &'a (dyn Any + Send + Sync)>,
+    ) {
+        *self
+            .inner
+            .brokers
+            .lock()
+            .expect("coordinator brokers mutex poisoned") = connected
+            .into_iter()
+            .enumerate()
+            .filter_map(|(scope_id, connected)| {
+                Origin::of::<dyn Any + Send + Sync>(connected)
+                    .0
+                    .map(|address| (address, scope_id))
+            })
+            .collect();
+    }
+
+    /// Records one publish the test made onto the broker registered at `scope_id`.
+    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage) {
+        self.inner
+            .published
+            .lock()
+            .expect("coordinator published mutex poisoned")
+            .push(Published { scope_id, message });
+        self.inner.notify.notify_waiters();
+    }
+
+    /// Records one publish the app handed a broker, on the broker its publisher was paired
+    /// against. A publisher the runtime did not pair names no broker, and its publish is left out:
+    /// the harness neither waits for it nor lists it.
+    fn record_sent(&self, origin: Origin, message: RawMessage) {
+        let scope_id = origin.0.and_then(|address| {
+            self.inner
+                .brokers
+                .lock()
+                .expect("coordinator brokers mutex poisoned")
+                .iter()
+                .find(|(known, _)| *known == address)
+                .map(|(_, scope_id)| *scope_id)
+        });
+        if let Some(scope_id) = scope_id {
+            self.record_published(scope_id, message);
+        }
+    }
+
+    /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
+    /// publish order.
+    pub(crate) fn published(&self, scope_id: usize, name: &str) -> Vec<RawMessage> {
+        self.inner
+            .published
+            .lock()
+            .expect("coordinator published mutex poisoned")
+            .iter()
+            .filter(|published| published.scope_id == scope_id && published.message.name() == name)
+            .map(|published| published.message.clone())
+            .collect()
+    }
+
+    /// Notes that the broker registered at `scope_id` accepted to redeliver a delivery of the
+    /// subscription `name` after `delay` on its own timer.
+    pub(crate) fn expect_redelivery(&self, scope_id: usize, name: &str, delay: Duration) {
+        self.inner
+            .redeliveries
+            .lock()
+            .expect("coordinator redeliveries mutex poisoned")
+            .push(DueRedelivery {
+                scope_id,
+                name: name.to_owned(),
+                due: tokio::time::Instant::now() + delay,
+            });
+        self.inner.notify.notify_waiters();
+    }
+
+    /// The first subscription still owed a delivery, with what it has handled and what it is owed:
+    /// every publish its broker delivers to it, as that broker's routing says, and every
+    /// redelivery due to it by now.
+    fn owed(&self, subscriptions: &[LiveSubscription], routing: Routing<'_>) -> Option<Unsettled> {
+        let now = tokio::time::Instant::now();
+        let mut expected = vec![0; subscriptions.len()];
+        {
+            let published = self
+                .inner
+                .published
+                .lock()
+                .expect("coordinator published mutex poisoned");
+            for publish in published.iter() {
+                // A publish is its own broker's: only that broker's subscriptions, and among them
+                // only those its routing delivers to, owe it.
+                let on: Vec<usize> = (0..subscriptions.len())
+                    .filter(|&index| subscriptions[index].scope_id == publish.scope_id)
+                    .collect();
+                if on.is_empty() {
+                    continue;
+                }
+                let names: Vec<&str> = on
+                    .iter()
+                    .map(|&index| subscriptions[index].name.as_str())
+                    .collect();
+                for position in routing(publish.scope_id, publish.message.name(), &names) {
+                    if let Some(&index) = on.get(position) {
+                        expected[index] += 1;
+                    }
+                }
+            }
+        }
+        {
+            let redeliveries = self
+                .inner
+                .redeliveries
+                .lock()
+                .expect("coordinator redeliveries mutex poisoned");
+            for (index, subscription) in subscriptions.iter().enumerate() {
+                expected[index] += redeliveries
+                    .iter()
+                    .filter(|due| {
+                        due.scope_id == subscription.scope_id
+                            && due.name == subscription.name
+                            && due.due <= now
+                    })
+                    .count();
+            }
+        }
+        let records = self
+            .inner
+            .records
+            .lock()
+            .expect("coordinator records mutex poisoned");
+        let owed = subscriptions
+            .iter()
+            .zip(expected)
+            .find_map(|(subscription, expected)| {
+                let handled = records
+                    .iter()
+                    .filter(|record| {
+                        record.scope_id == subscription.scope_id && record.name == subscription.name
+                    })
+                    .map(|record| record.deliveries.len())
+                    .sum::<usize>();
+                (handled < expected).then(|| Unsettled {
+                    subscription: subscription.name.clone(),
+                    handled,
+                    expected,
+                })
+            });
+        drop(records);
+        owed
+    }
+
+    /// Waits until every subscription in `subscriptions` has handled what it is owed and no
+    /// handler is running, or fails once `deadline` has passed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TestError::NotSettled`] naming the subscription still owed a delivery, or the
+    /// running handler, when the deadline passes first.
+    pub(crate) async fn settle_live(
+        &self,
+        subscriptions: &[LiveSubscription],
+        routing: Routing<'_>,
+        deadline: Duration,
+    ) -> Result<(), TestError> {
+        // Why a deadline: a live broker holds the messages in flight, and nothing in this process
+        // can read its queues to tell a message still on its way from one that will never arrive.
+        let until = tokio::time::Instant::now() + deadline;
+        loop {
+            // Interest is registered before the state is read, so a record or a settlement landing
+            // in between still wakes the wait below.
+            let notified = self.inner.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            let owed = self.owed(subscriptions, routing);
+            let running = self.inner.in_flight.load(Ordering::SeqCst) > 0;
+            if owed.is_none() && !running {
+                return Ok(());
+            }
+            if tokio::time::timeout_at(until, notified).await.is_err() {
+                let (subscription, handled, expected) = owed.map_or((None, 0, 0), |owed| {
+                    (Some(owed.subscription), owed.handled, owed.expected)
+                });
+                return Err(TestError::NotSettled {
+                    subscription,
+                    handled,
+                    expected,
+                    deadline,
+                });
+            }
+        }
+    }
+
     /// Records one publish made through the `Out` slot named `slot`.
     pub(crate) fn record_slot<Payload: AsRef<[u8]>>(
         &self,
@@ -602,6 +956,261 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Subject matching where `*` stands for one dot-separated token.
+    fn matches(pattern: &str, destination: &str) -> bool {
+        let mut pattern = pattern.split('.');
+        let mut subject = destination.split('.');
+        loop {
+            match (pattern.next(), subject.next()) {
+                (None, None) => return true,
+                (Some(token), Some(part)) if token == "*" || token == part => {}
+                _ => return false,
+            }
+        }
+    }
+
+    /// A broker that delivers to every subscription whose pattern matches, as NATS does.
+    fn fan_out(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        (0..subscriptions.len())
+            .filter(|&position| matches(subscriptions[position], destination))
+            .collect()
+    }
+
+    /// A broker that delivers to the subscription of the destination's own name, and to a
+    /// pattern only where there is none.
+    fn most_specific(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        let exact: Vec<usize> = (0..subscriptions.len())
+            .filter(|&position| subscriptions[position] == destination)
+            .collect();
+        if exact.is_empty() {
+            fan_out(destination, subscriptions)
+        } else {
+            exact
+        }
+    }
+
+    fn exact(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+        (0..subscriptions.len())
+            .filter(|&position| subscriptions[position] == destination)
+            .collect()
+    }
+
+    /// One acknowledged delivery to the subscription `name` of the broker at `scope_id`.
+    fn handled(scope_id: usize, name: &str) -> Record {
+        Record {
+            scope_id,
+            name: name.to_owned(),
+            deliveries: vec![Delivered {
+                raw: Bytes::from_static(b"{}"),
+                settle: Some(HandlerResult::Ack),
+            }],
+            panicked: false,
+            decode_failed: false,
+        }
+    }
+
+    /// East routes with `east`, west with `west`.
+    fn brokers_routing(
+        east: fn(&str, &[&str]) -> Vec<usize>,
+        west: fn(&str, &[&str]) -> Vec<usize>,
+    ) -> impl Fn(usize, &str, &[&str]) -> Vec<usize> + Sync {
+        move |scope_id, destination, subscriptions| {
+            if scope_id == 0 {
+                east(destination, subscriptions)
+            } else {
+                west(destination, subscriptions)
+            }
+        }
+    }
+
+    fn subscription(scope_id: usize, name: &str) -> LiveSubscription {
+        LiveSubscription {
+            scope_id,
+            name: name.to_owned(),
+        }
+    }
+
+    /// Two connected brokers, standing for two registrations of one app: what a paired
+    /// publisher's origin names.
+    struct Brokers {
+        east: Box<u8>,
+        west: Box<u8>,
+    }
+
+    impl Brokers {
+        fn new() -> Self {
+            Self {
+                east: Box::new(0),
+                west: Box::new(1),
+            }
+        }
+
+        /// A coordinator that knows `east` as the registration at 0 and `west` as the one at 1.
+        fn coordinator(&self) -> Coordinator {
+            let coordinator = Coordinator::new(16);
+            coordinator.locate([
+                &*self.east as &(dyn Any + Send + Sync),
+                &*self.west as &(dyn Any + Send + Sync),
+            ]);
+            coordinator
+        }
+    }
+
+    /// Publishes to `name` through a publisher paired against `broker`, from a dispatch of the
+    /// registration at `consuming`, and reports the broker took it: the path a reply or an `Out`
+    /// slot takes.
+    async fn send(coordinator: &Coordinator, consuming: usize, broker: &u8, name: &str) {
+        let ((), origin) = paired(broker, async {}).await;
+        in_harness_scope(
+            Some(HarnessScope::new(coordinator.clone(), consuming)),
+            publishing_to(origin, async {
+                let msg: OutgoingMessage<'_> = OutgoingMessage::new(name, b"{}".as_slice());
+                PipelinePublish::capture(&msg).sent();
+            }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_pattern_subscription_is_owed_what_its_pattern_reaches() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(fan_out, exact);
+        let subscriptions = [subscription(0, "orders.*")];
+        send(&coordinator, 0, &brokers.east, "orders.eu").await;
+        send(&coordinator, 0, &brokers.east, "audit").await;
+
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("the publish to orders.eu is owed to orders.*");
+        assert_eq!(
+            (owed.subscription.as_str(), owed.handled, owed.expected),
+            ("orders.*", 0, 1),
+        );
+
+        coordinator.record(handled(0, "orders.*"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_publish_is_owed_on_the_broker_it_was_paired_against() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(exact, exact);
+        let subscriptions = [subscription(0, "orders"), subscription(1, "orders")];
+        // A handler on east holding a publisher paired against west publishes to west.
+        send(&coordinator, 0, &brokers.west, "orders").await;
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("west's subscription is owed the publish");
+        assert_eq!((owed.handled, owed.expected), (0, 1));
+
+        // A delivery on east, the broker that holds the publisher, is not the one it owes.
+        coordinator.record(handled(0, "orders"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_some());
+
+        coordinator.record(handled(1, "orders"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+        assert_eq!(coordinator.published(1, "orders").len(), 1);
+        assert!(coordinator.published(0, "orders").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_and_exact_names_on_two_brokers_are_owed_apart() {
+        const EACH: usize = 200;
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(fan_out, exact);
+        let subscriptions = [
+            subscription(0, "orders.*"),
+            subscription(1, "orders.eu"),
+            subscription(1, "orders.us"),
+        ];
+        for _ in 0..EACH {
+            send(&coordinator, 0, &brokers.west, "orders.eu").await;
+            send(&coordinator, 1, &brokers.east, "orders.us").await;
+        }
+        for _ in 0..EACH - 1 {
+            coordinator.record(handled(1, "orders.eu"));
+            coordinator.record(handled(0, "orders.*"));
+        }
+        coordinator.record(handled(1, "orders.eu"));
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("the last us is still on its way to the wildcard");
+        assert_eq!(
+            (owed.subscription.as_str(), owed.handled, owed.expected),
+            ("orders.*", EACH - 1, EACH),
+        );
+
+        coordinator.record(handled(0, "orders.*"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+    }
+
+    #[tokio::test]
+    async fn overlapping_subscriptions_owe_what_their_broker_delivers_to_each() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(fan_out, exact);
+        let subscriptions = [
+            subscription(0, "orders.*"),
+            subscription(0, "orders.eu"),
+            subscription(1, "orders.eu"),
+            subscription(1, "orders.us"),
+        ];
+        // Both go to east, which delivers eu to both of its subscriptions and us to the wildcard.
+        send(&coordinator, 0, &brokers.east, "orders.eu").await;
+        send(&coordinator, 0, &brokers.east, "orders.us").await;
+        coordinator.record(handled(0, "orders.*"));
+        coordinator.record(handled(0, "orders.eu"));
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("the wildcard is owed both publishes");
+        assert_eq!(
+            (owed.subscription.as_str(), owed.handled, owed.expected),
+            ("orders.*", 1, 2),
+        );
+
+        coordinator.record(handled(0, "orders.*"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_broker_that_picks_one_subscription_owes_only_that_one() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(most_specific, exact);
+        let subscriptions = [subscription(0, "orders.*"), subscription(0, "orders.eu")];
+        send(&coordinator, 0, &brokers.east, "orders.eu").await;
+        send(&coordinator, 0, &brokers.east, "orders.us").await;
+        coordinator.record(handled(0, "orders.eu"));
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("us is the wildcard's");
+        assert_eq!(
+            (owed.subscription.as_str(), owed.handled, owed.expected),
+            ("orders.*", 0, 1),
+        );
+
+        coordinator.record(handled(0, "orders.*"));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_publisher_the_runtime_did_not_pair_is_not_awaited() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(exact, exact);
+        let subscriptions = [subscription(0, "orders")];
+        in_harness_scope(Some(HarnessScope::new(coordinator.clone(), 0)), async {
+            let msg: OutgoingMessage<'_> = OutgoingMessage::new("orders", b"{}".as_slice());
+            PipelinePublish::capture(&msg).sent();
+        })
+        .await;
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+        assert!(coordinator.published(0, "orders").is_empty());
+    }
 
     #[test]
     fn the_debug_form_reports_the_quiescence_counters() {

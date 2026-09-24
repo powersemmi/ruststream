@@ -3,8 +3,8 @@
 conformance 校验会证明 Broker 遵守核心契约。它有两个入口。两者都在第一次违反契约时 panic，
 并说清楚问题出在哪里：
 
-- `harness::run_suite` 针对你随 crate 一起提供的进程内传输（也就是
-  [`TestableBroker`](index.md#test-support)）检查**路由接口**。
+- `harness::run_suite` 检查 Broker [进程内模式](index.md#test-support)的**路由接口**：它构造你的
+  生产 Broker，并通过 `InProcess::connect_in_process` 连接它。
 - `harness::lifecycle` 在真实的 Broker 上端到端地检查**生命周期阶梯**。
 
 两个都要跑。`run_suite` 检查分发方面的保证。`lifecycle` 证明 `new` -> `connect(self)` -> 订阅 ->
@@ -15,15 +15,15 @@ conformance 校验会证明 Broker 遵守核心契约。它有两个入口。两
 ruststream = { version = "0.7", features = ["conformance"] }
 ```
 
-`conformance` feature 会连带引入 `testing`。因此你的 crate 只提供一个 `TestableBroker`，它既用于
-这里的 `run_suite`，也用于用户编写的 [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) 测试。
+`conformance` feature 会连带引入 `testing`。因此你的 crate 只提供一个进程内模式，它既用于这里的
+`run_suite`，也用于用户编写的 [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/index.html) 测试。
 
 ## 路由套件
 
-`harness::run_suite` 接收一个同步工厂（`Fn() -> B`）。工厂为每个场景构造全新的进程内传输，因此
-场景之间看不到彼此的状态。每个场景连接 Broker，驱动它的已连接形态，也就是同时实现了 `Subscribe`
-的那个 `TestableBroker`。下面是内存参考 Broker 自己的套件运行，一字未改。把工厂里的构造函数换成
-你自己传输的构造函数即可：
+`harness::run_suite` 接收一个同步工厂（`Fn() -> B`）。工厂为每个场景构造全新的生产 Broker，因此
+场景之间看不到彼此的状态。每个场景通过 `connect_in_process` 连接它，再驱动已连接形态；这个形态
+实现了 `TestableBroker` 和 `Subscribe`。下面是内存参考 Broker 自己的套件运行，一字未改。把工厂里的
+构造函数换成你自己 Broker 的构造函数，配置与服务里的一致：
 
 ```rust
 use ruststream::conformance::harness;
@@ -99,7 +99,19 @@ async fn passes_lifecycle() {
 
 没有 ack 语义的 Broker（Core NATS）从 `ack` 返回 `AckError::Unsupported` 就算通过：这项检查既
 接受这个结果，也接受一次成功的 ack。`lifecycle` 会执行一次真实的 `connect`，所以要针对正在运行
-的服务器跑它，并且只在设置了 `NATS_TEST_URL` 这类环境变量时才运行。内存 Broker 在进程内就能通过。
+的服务器跑它，并且只在设置了 `NATS_TEST_URL` 这类环境变量时才运行。
+
+## 在进程内跑同样的套件
+
+`lifecycle`、`redelivery_address` 和各个能力套件都用 `Broker::connect` 连接交给它们的 Broker。把
+生产 Broker 包进 `harness::InProcessBroker`，它们就改用 `connect_in_process` 连接，于是每个套件
+在没有服务器的情况下再跑一遍，用的仍是你自己的描述符和发布策略。两遍都要跑：进程内这一遍让进程内
+模式保持诚实，针对服务器那一遍证明真实传输。下面这个 Broker 的 `connect` 会去连服务器，它在进程内
+通过了路由套件和生命周期检查：
+
+```rust
+--8<-- "tests/in_process.rs:suites"
+```
 
 ## 能力套件 { #capability-suites }
 
@@ -154,9 +166,11 @@ async fn passes_request_reply() {
 - [ ] crate 自己拥有它的 `Config`；没有合理默认值的字段不实现 `Default`。
 - [ ] 只有 Broker 确实支持的能力才实现对应的能力 trait，并且每一项已实现的能力都通过了
       `conformance::capabilities` 里对应的套件。
-- [ ] 在 `testing` feature 之下提供一个在已连接形态上实现 `TestableBroker` 的进程内传输（只做
-      核心路由），并用 `register_testable_broker!` 注册。
-- [ ] `harness::run_suite` 通过（路由接口）。
+- [ ] 在 `testing` feature 之下提供进程内模式：Broker 上的 `InProcess`、已连接形态上的
+      `TestableBroker`，以及 `register_testable_broker!(YourBroker)`。进程内传输的每项设置都取自
+      生产 Broker，并且真实 Broker 会失败的地方，它绝不成功。
+- [ ] `harness::run_suite` 通过（路由接口），其余套件既通过 `harness::InProcessBroker` 在进程内
+      通过，也针对真实服务器通过。
 - [ ] `harness::lifecycle` 针对真实服务器通过，并由一个环境变量控制是否运行（就是那条阶梯：
       同步的 `new`、消费 `self` 的 `connect`、订阅、ack、消费 `self` 的 `shutdown`，以及在此
       之后别名句柄返回的错误）。

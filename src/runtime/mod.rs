@@ -86,10 +86,10 @@ pub use inject::Out;
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[doc(hidden)]
 pub use input::Provided;
-#[cfg(feature = "testing")]
-pub(crate) use lifecycle::ConnectedLifecycle;
 #[doc(hidden)]
 pub use lifecycle::ConnectedSlot;
+#[cfg(feature = "testing")]
+pub(crate) use lifecycle::{BoxError, BoxFuture, ConnectedLifecycle, InProcessConnect};
 pub use metadata::{HandlerMetadata, OutgoingKind, OutgoingMessageMetadata};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 // The reply wiring a mount site's chain builds, the live sinks it pairs into, and the step traits
