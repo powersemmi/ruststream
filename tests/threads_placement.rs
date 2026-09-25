@@ -11,6 +11,7 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::future::{Future, ready};
 use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,9 +20,12 @@ use std::time::Duration;
 
 use common::Order;
 use futures::{Stream, StreamExt};
-use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::{HeaderMap, IncomingMessage, Outgoing, Subscriber};
+use ruststream::memory::{MemoryMessage, MemoryPublisher};
+use ruststream::{
+    AckError, AddressedCopies, HeaderMap, IncomingMessage, Outgoing, RedeliveryAddress,
+    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Builder, Runtime};
 use tokio::time::timeout;
@@ -214,4 +218,196 @@ fn a_key_stays_on_one_thread_and_in_order() {
             "key {band} out of order: {ids:?}"
         );
     }
+}
+
+/// What the continuation tests share with their handler: where a continuation reports the thread
+/// it ran on.
+struct Report {
+    publisher: MemoryPublisher,
+}
+
+/// Registers an `and_after` continuation and an `after` hook, each reporting its thread.
+#[subscriber("continued", threads(1))]
+async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> HandlerOutcome {
+    let id = job.id;
+    let publisher = ctx.state().publisher.clone();
+    ctx.after(HandlerOutcome::ack()).then(async move {
+        let reply = Placed { id, thread: here() };
+        let _ = publisher
+            .message(&reply)
+            .to("continued.done")
+            .publish()
+            .await;
+    });
+    let publisher = ctx.state().publisher.clone();
+    HandlerOutcome::ack().and_after(async move {
+        let reply = Placed {
+            id: id + 1000,
+            thread: here(),
+        };
+        let _ = publisher
+            .message(&reply)
+            .to("continued.done")
+            .publish()
+            .await;
+    })
+}
+
+/// Work that outlives the delivery runs on the app's runtime: a continuation must not wait
+/// behind the thread's computation, nor die with the thread's runtime.
+#[test]
+fn continuations_run_on_the_app_runtime() {
+    let broker = MemoryBroker::new();
+    let seen: Vec<Placed> = app_runtime().block_on(async {
+        let mut replies = broker.subscribe("continued.done");
+        let mut replies = pin!(replies.stream());
+        let report = Arc::new(Report {
+            publisher: broker.publisher(),
+        });
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(report))
+            .with_broker(broker.clone(), |b| {
+                b.include(continued);
+            });
+        let running = app.start().await.expect("startup");
+        broker
+            .publisher()
+            .message(&Order { id: 1 })
+            .to("continued")
+            .publish()
+            .await
+            .expect("publish");
+        let seen = read(&mut replies, 2).await;
+        running.shutdown().await.expect("shutdown");
+        seen
+    });
+    for reply in &seen {
+        assert!(
+            reply.thread.starts_with(APP_THREADS),
+            "a continuation ran off the app's runtime: {reply:?}"
+        );
+    }
+}
+
+/// A subscription whose deliveries report no native delayed redelivery, so a `retry_after` takes
+/// the runtime's own copy path; the copy goes to `copies`, where the test reads it.
+#[derive(Debug, Clone)]
+struct CopiedSubscription;
+
+impl CopiedSubscription {
+    const fn new() -> Self {
+        Self
+    }
+}
+
+impl<C: Subscribe> SubscriptionSource<C> for CopiedSubscription {
+    type Subscriber = UnsettledSubscriber<C::Subscriber>;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &str {
+        "retried"
+    }
+
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+        Ok(UnsettledSubscriber(connected.subscribe("retried").await?))
+    }
+}
+
+impl<C: Subscribe> RedeliveryAddressed<C> for CopiedSubscription {
+    fn redelivery_address(
+        &self,
+        _connected: &C,
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ready(Ok(RedeliveryAddress::new("copies")))
+    }
+}
+
+/// The broker's subscriber with its native delayed redelivery taken away.
+struct UnsettledSubscriber<S>(S);
+
+impl<S: Subscriber> Subscriber for UnsettledSubscriber<S> {
+    type Message = UnsettledMessage<S::Message>;
+    type Error = S::Error;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        self.0.stream().map(|item| item.map(UnsettledMessage))
+    }
+}
+
+/// A delivery that settles like the broker's own but keeps the trait default for
+/// [`IncomingMessage::supports_nack_after`].
+struct UnsettledMessage<M>(M);
+
+impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
+    fn payload(&self) -> &[u8] {
+        self.0.payload()
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        self.0.headers()
+    }
+
+    async fn ack(self) -> Result<(), AckError> {
+        self.0.ack().await
+    }
+
+    async fn nack(self, requeue: bool) -> Result<(), AckError> {
+        self.0.nack(requeue).await
+    }
+}
+
+/// How long the computing delivery holds its thread at most.
+const COMPUTATION: Duration = Duration::from_secs(5);
+
+/// Defers order 1; computes on order 2 until the test says the copy of order 1 arrived, or for
+/// [`COMPUTATION`] at most.
+#[subscriber(CopiedSubscription::new(), threads(1))]
+async fn retried(order: &Order, ctx: &mut Context<'_, (), Arc<AtomicBool>>) -> HandlerOutcome {
+    if order.id == 1 {
+        return HandlerOutcome::retry_after(Duration::from_millis(50));
+    }
+    let copied = ctx.state();
+    let started = std::time::Instant::now();
+    // Holds the thread the way a computation does: its runtime turns no timer meanwhile.
+    while !copied.load(Ordering::SeqCst) && started.elapsed() < COMPUTATION {
+        thread::sleep(Duration::from_millis(1));
+    }
+    HandlerOutcome::ack()
+}
+
+/// The delayed copy of a `retry_after` leaves on time while the delivery's thread computes: its
+/// timer runs on the app's runtime, not behind the computation.
+#[test]
+fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
+    let broker = MemoryBroker::new();
+    let copied = Arc::new(AtomicBool::new(false));
+    let arrived = app_runtime().block_on(async {
+        let mut copies = broker.subscribe("copies");
+        let mut copies = pin!(copies.stream());
+        let state = Arc::clone(&copied);
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(state))
+            .with_broker(broker.clone(), |b| {
+                b.include(retried).out_retry(Publish);
+            });
+        let running = app.start().await.expect("startup");
+        let publisher = broker.publisher();
+        for id in [1, 2] {
+            publisher
+                .message(&Order { id })
+                .to("retried")
+                .publish()
+                .await
+                .expect("publish");
+        }
+        // Well under the computation: a copy that waited for the thread arrives after it.
+        let arrived = timeout(COMPUTATION / 2, copies.next()).await.is_ok();
+        copied.store(true, Ordering::SeqCst);
+        running.shutdown().await.expect("shutdown");
+        arrived
+    });
+    assert!(
+        arrived,
+        "the retry copy waited for the thread's computation to end"
+    );
 }

@@ -784,8 +784,9 @@ mod tests {
     /// A subscriber mounted without a source describes no subscription, so nothing reports where
     /// a copy of one of its deliveries would go: the mount carries no retry path at all, and the
     /// chain offers no way to bind one.
-    #[test]
-    fn a_sourceless_mount_carries_no_retry_path() {
+    // A subscription opens inside the app's startup, on its runtime: the test stands on one too.
+    #[tokio::test]
+    async fn a_sourceless_mount_carries_no_retry_path() {
         let delivery = open_mounted_subscriber::<()>(&scope());
         assert!(delivery.retry.is_none());
         assert!(delivery.declaration.declares_nothing());

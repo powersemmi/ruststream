@@ -962,7 +962,7 @@ async fn dispatch<H, M, C, St>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.tasks.spawn(after);
+            delivery.tasks.spawn_on(after, &delivery.runtime);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -974,7 +974,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.tasks.spawn(fut);
+            delivery.tasks.spawn_on(fut, &delivery.runtime);
         }
     }
     #[cfg(feature = "testing")]
@@ -1052,7 +1052,7 @@ async fn run_batch<H, M, C, St>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.tasks.spawn(fut);
+                    delivery.tasks.spawn_on(fut, &delivery.runtime);
                 }
             }
         }
@@ -1523,10 +1523,9 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
-    // Tracked like a continuation: the original is already dropped, so the copy is the message
-    // now, and a graceful shutdown waits for it (within the shutdown timeout) before the brokers
-    // close. Untracked, a shutdown inside the delay lost it.
-    delivery.tasks.spawn(async move {
+    // The timer runs on the app's runtime, wherever the handler ran: on a dedicated thread it
+    // would wait behind the thread's computation and die with the thread's runtime.
+    delivery.runtime.spawn(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });
