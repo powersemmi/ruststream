@@ -37,6 +37,10 @@ required-features = ["macros", "memory", "json", "metrics", "asyncapi", "logging
 name = "quickstart"
 required-features = ["macros", "memory", "json"]
 
+[[example]]
+name = "threads"
+required-features = ["macros", "memory", "json"]
+
 # No codec feature in the list, and none missing: the message serializes itself, so the whole
 # service builds with the codec layer switched off.
 [[example]]

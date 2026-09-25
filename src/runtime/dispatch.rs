@@ -199,6 +199,7 @@ impl Workers {
     /// The same concurrency as tasks of the runtime the loop runs on: what a `threads(n)`
     /// subscription becomes under the test harness, which runs every subscription on the test's
     /// own runtime.
+    #[cfg(feature = "testing")]
     pub(crate) const fn on_runtime(self) -> Self {
         Self {
             placement: Placement::Runtime,
