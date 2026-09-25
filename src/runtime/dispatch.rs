@@ -1352,10 +1352,10 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
-    #[cfg(not(feature = "testing"))]
-    let _ = delivery;
-
-    tokio::spawn(async move {
+    // Tracked like a continuation: the original is already dropped, so the copy is the message
+    // now, and a graceful shutdown waits for it (within the shutdown timeout) before the brokers
+    // close. Untracked, a shutdown inside the delay lost it.
+    delivery.tasks.spawn(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });
