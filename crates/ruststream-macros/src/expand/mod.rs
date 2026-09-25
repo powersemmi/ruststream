@@ -498,10 +498,15 @@ fn failure_policy_tokens(policy: &FailurePolicyArg) -> TokenStream2 {
 /// Renders the `workers(..)` clause as the builder step it expands into, or nothing when the
 /// clause is absent.
 fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Result<TokenStream2> {
-    let Some(WorkersArg { count, by_key }) = &args.workers else {
+    let Some(clause) = &args.workers else {
         return Ok(quote!());
     };
-    let count = workers_count(count, handler)?;
+    let WorkersArg {
+        keyword,
+        count,
+        by_key,
+    } = clause;
+    let count = workers_count(keyword, count, handler)?;
     if let Some(marker) = by_key {
         if shape == Shape::Batch {
             return Err(Error::new(
@@ -510,7 +515,13 @@ fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Re
                  handler",
             ));
         }
+        if clause.dedicated() {
+            return Ok(quote!(.threads_by_key(#count)));
+        }
         return Ok(quote!(.workers_by_key(#count)));
+    }
+    if clause.dedicated() {
+        return Ok(quote!(.threads(#count)));
     }
     Ok(quote!(.workers(#count)))
 }
@@ -520,7 +531,7 @@ fn workers_step(args: &SubscriberArgs, handler: &Ident, shape: Shape) -> syn::Re
 /// a constant, a static, a function call - is not knowable here, so zero surfaces as a
 /// registration-time panic naming the clause (the startup rung: the value is external input to
 /// the macro).
-fn workers_count(count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
+fn workers_count(keyword: &Ident, count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
     if let Expr::Lit(syn::ExprLit {
         lit: syn::Lit::Int(literal),
         ..
@@ -529,7 +540,7 @@ fn workers_count(count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
         if literal.base10_parse::<usize>()? == 0 {
             return Err(Error::new(
                 literal.span(),
-                "workers(0) is not a policy; the minimum is 1",
+                format!("{keyword}(0) is not a policy; the minimum is 1"),
             ));
         }
         // The literal is checked above, so the None arm is unreachable; MIN keeps the
@@ -542,7 +553,7 @@ fn workers_count(count: &Expr, handler: &Ident) -> syn::Result<TokenStream2> {
         });
     }
     let misconfigured = format!(
-        "workers(..) on subscriber `{handler}` needs a non-zero count; the configured value is 0",
+        "{keyword}(..) on subscriber `{handler}` needs a non-zero count; the configured value is 0",
     );
     Ok(quote! {
         ::core::num::NonZeroUsize::new(#count).expect(#misconfigured)

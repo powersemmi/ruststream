@@ -347,12 +347,13 @@ impl<Def, S: FromName, State, DC> NameStep for SubscriberBuilder<Def, Unnamed<S>
     }
 }
 
-/// Setting the dispatch concurrency. See [`SubscriberSettings::workers`].
+/// Setting the dispatch concurrency. See [`SubscriberSettings::workers`] and
+/// [`SubscriberSettings::threads`], which fill this one position.
 #[diagnostic::on_unimplemented(
     message = "this subscriber's worker policy is already fixed",
-    label = "`workers(..)` is named in the `#[subscriber(..)]` attribute",
-    note = "a setting is named once: keep `workers(..)` in the attribute, or drop it there and \
-            name the policy here"
+    label = "`workers(..)` or `threads(..)` is named in the `#[subscriber(..)]` attribute",
+    note = "a subscription has one concurrency policy, named once: keep the clause in the \
+            attribute, or drop it there and name the policy here"
 )]
 pub trait WorkersStep: Sized {
     /// The builder with the worker policy fixed.
@@ -575,6 +576,25 @@ pub trait SubscriberSettings: Declared {
         Self::Settings: WorkersStep,
     {
         self.declare().apply_workers(Workers::keyed(count))
+    }
+
+    /// Handles the deliveries (or batches) of this subscriber on `count` dedicated threads of its
+    /// own, for a handler that computes. The mount-site spelling of `threads(n)`; it fills the
+    /// same position as [`workers`](Self::workers), so a subscription names one of the two.
+    fn threads(self, count: NonZeroUsize) -> <Self::Settings as WorkersStep>::Out
+    where
+        Self::Settings: WorkersStep,
+    {
+        self.declare().apply_workers(Workers::threads(count))
+    }
+
+    /// Runs `count` dedicated threads as sequential lanes keyed by the message's partition key,
+    /// preserving per-key ordering. The mount-site spelling of `threads(n, by_key)`.
+    fn threads_by_key(self, count: NonZeroUsize) -> <Self::Settings as WorkersStep>::Out
+    where
+        Self::Settings: WorkersStep,
+    {
+        self.declare().apply_workers(Workers::threads_keyed(count))
     }
 
     /// Sets the policies applied to a handler panic and to a delivery that fails to

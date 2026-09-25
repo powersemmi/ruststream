@@ -1,8 +1,8 @@
 error[E0277]: this subscriber's worker policy is already fixed
-  --> tests/ui/subscriber_workers_already_fixed.rs:19:27
+  --> tests/ui/subscriber_threads_already_fixed.rs:19:26
    |
-19 |     let _widened = handle.workers(nonzero!(4));
-   |                           ^^^^^^^ `workers(..)` or `threads(..)` is named in the `#[subscriber(..)]` attribute
+19 |     let _pooled = handle.workers(nonzero!(4));
+   |                          ^^^^^^^ `workers(..)` or `threads(..)` is named in the `#[subscriber(..)]` attribute
    |
    = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Fixed, Open, Open, Open)>`
    = note: a subscription has one concurrency policy, named once: keep the clause in the attribute, or drop it there and name the policy here

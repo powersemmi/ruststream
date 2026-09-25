@@ -1,0 +1,5 @@
+error: workers(..) and threads(..) fill the same concurrency position: name one of them
+  --> tests/ui/subscriber_threads_after_workers.rs:10:36
+   |
+10 | #[subscriber("orders", workers(2), threads(2))]
+   |                                    ^^^^^^^

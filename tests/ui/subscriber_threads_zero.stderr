@@ -1,0 +1,5 @@
+error: threads(0) is not a policy; the minimum is 1
+ --> tests/ui/subscriber_threads_zero.rs:4:32
+  |
+4 | #[subscriber("orders", threads(0))]
+  |                                ^

@@ -72,8 +72,8 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
         .unwrap_or(0)
 }
 
-/// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` macro
-/// argument (or [`Workers::sequential`] by default).
+/// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` or
+/// `threads(..)` macro argument (or [`Workers::sequential`] by default).
 ///
 /// - `workers(n)`: `n` long-lived workers, tasks of the runtime the app runs on, process up to
 ///   `n` deliveries of the subscriber concurrently; a free worker takes the next one.
@@ -82,15 +82,31 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// - `workers(n, by_key)`: the same `n` workers as sequential lanes; a delivery goes to the lane
 ///   picked by hashing its [`partition_key`](crate::IncomingMessage::partition_key), so per-key
 ///   ordering is preserved. Messages without a key rotate over the lanes.
+/// - `threads(n)`: `n` dedicated threads of the subscription's own, each with a current-thread
+///   runtime, for a handler that computes. The subscription's loop stays on the app's runtime and
+///   spreads deliveries over the threads round-robin; decoding, the handler and settling run on
+///   the thread a delivery was handed to, and only there. The app's runtime stays free for I/O,
+///   timers and the other subscriptions.
+/// - `threads(n, by_key)`: the same threads as sequential lanes by partition key.
 ///
-/// The workers and the channels that feed them are made when the subscription starts: handing a
-/// delivery to one allocates nothing.
+/// The workers or threads and the queues that feed them are made when the subscription starts:
+/// handing a delivery to one allocates nothing.
 ///
 /// The default is sequential dispatch (`workers(1)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workers {
     count: usize,
     by_key: bool,
+    placement: Placement,
+}
+
+/// Where a subscription's concurrent deliveries run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placement {
+    /// As tasks of the runtime the app runs on.
+    Runtime,
+    /// On dedicated threads of the subscription's own.
+    Threads,
 }
 
 impl Workers {
@@ -100,6 +116,7 @@ impl Workers {
         Self {
             count: 1,
             by_key: false,
+            placement: Placement::Runtime,
         }
     }
 
@@ -109,6 +126,7 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: false,
+            placement: Placement::Runtime,
         }
     }
 
@@ -120,12 +138,70 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: true,
+            placement: Placement::Runtime,
         }
     }
 
-    /// One worker is indistinguishable from the sequential loop.
+    /// `count` dedicated threads for a CPU-bound handler: the subscription's deliveries are
+    /// handled on threads of its own, each running a current-thread runtime, so the handler's
+    /// computation holds up none of the app runtime's threads. The router-chain spelling of
+    /// `threads(n)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::nonzero;
+    /// use ruststream::runtime::Workers;
+    ///
+    /// let workers = Workers::threads(nonzero!(8));
+    /// assert_ne!(workers, Workers::pool(nonzero!(8)));
+    /// ```
+    #[must_use]
+    pub const fn threads(count: NonZeroUsize) -> Self {
+        Self {
+            count: count.get(),
+            by_key: false,
+            placement: Placement::Threads,
+        }
+    }
+
+    /// `count` dedicated threads as sequential lanes keyed by the message
+    /// [`partition_key`](crate::IncomingMessage::partition_key): a key always lands on the same
+    /// thread, so per-key ordering is preserved. The router-chain spelling of
+    /// `threads(n, by_key)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::nonzero;
+    /// use ruststream::runtime::Workers;
+    ///
+    /// let workers = Workers::threads_keyed(nonzero!(4));
+    /// assert_ne!(workers, Workers::threads(nonzero!(4)));
+    /// ```
+    #[must_use]
+    pub const fn threads_keyed(count: NonZeroUsize) -> Self {
+        Self {
+            count: count.get(),
+            by_key: true,
+            placement: Placement::Threads,
+        }
+    }
+
+    /// One worker on the app's runtime is indistinguishable from the sequential loop; one
+    /// dedicated thread is still a thread of its own.
     pub(crate) const fn is_sequential(&self) -> bool {
-        self.count <= 1
+        self.count <= 1 && matches!(self.placement, Placement::Runtime)
+    }
+
+    /// The same concurrency as tasks of the runtime the loop runs on: what a `threads(n)`
+    /// subscription becomes under the test harness, which runs every subscription on the test's
+    /// own runtime.
+    pub(crate) const fn on_runtime(self) -> Self {
+        Self {
+            placement: Placement::Runtime,
+            ..self
+        }
     }
 }
 
