@@ -14,7 +14,7 @@ mod harness;
 #[cfg(feature = "testing")]
 pub use assertions::{PublishedAssertions, SubscriberAssertions};
 #[cfg(feature = "testing")]
-pub use broker::{InProcess, TestableBroker, TestableRegistration, expect_published};
+pub use broker::{Backlog, InProcess, TestableBroker, TestableRegistration, expect_published};
 #[cfg(feature = "testing")]
 pub use coordinator::{Coordinator, Outcome};
 #[cfg(feature = "testing")]

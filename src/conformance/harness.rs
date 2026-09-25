@@ -33,7 +33,7 @@ use crate::runtime::{AppInfo, RustStream};
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
     Publisher, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
-    testing::{InProcess, TestableBroker},
+    testing::{Backlog, InProcess, TestableBroker},
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -58,6 +58,14 @@ const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
 /// broker that declines the capability or demand the in-process transport implement it. So a
 /// broker running `run_suite` alone has not checked its batches - `capabilities::batches` is the
 /// call that does, against the broker's own subscription source.
+///
+/// # A message published before the subscription opened
+///
+/// A publish/subscribe transport delivers a subscription only what is published after it opens,
+/// while a queue or a log keeps what reached it earlier and delivers that first. The broker
+/// declares which through [`TestableBroker::backlog`], and the suite checks the declared behaviour
+/// both ways: the earlier message arrives first under [`Backlog::Delivered`] and never under
+/// [`Backlog::Missed`], the default.
 ///
 /// # Transports with no acknowledgement
 ///
@@ -92,7 +100,7 @@ where
             .expect("broker must connect in process before a suite scenario")
     };
     ordering(connect(factory()).await).await;
-    publish_after_subscribe(connect(factory()).await).await;
+    publish_before_subscribe(connect(factory()).await).await;
     ack_consumes_delivery(connect(factory()).await).await;
     nack_with_requeue_redelivers(connect(factory()).await).await;
     nack_without_requeue_drops(connect(factory()).await).await;
@@ -446,7 +454,11 @@ async fn ordering<C: TestableBroker + Subscribe>(broker: C) {
     broker.shutdown().await.expect("shutdown failed");
 }
 
-async fn publish_after_subscribe<C: TestableBroker + Subscribe>(broker: C) {
+/// A message published before the subscription opened reaches it, or does not, exactly as the
+/// broker declares through [`TestableBroker::backlog`]; the one published after reaches it either
+/// way.
+async fn publish_before_subscribe<C: TestableBroker + Subscribe>(broker: C) {
+    let backlog = broker.backlog();
     broker.inject(OutgoingMessage::new(
         "conformance.late",
         b"before-subscribe".as_slice(),
@@ -462,17 +474,37 @@ async fn publish_after_subscribe<C: TestableBroker + Subscribe>(broker: C) {
     ));
 
     let mut stream = std::pin::pin!(subscriber.stream());
-    let msg = expect_next(&mut stream, "publish_after_subscribe").await;
+    if backlog == Backlog::Delivered {
+        let early = expect_next(&mut stream, "publish_before_subscribe").await;
+        assert_eq!(
+            early.payload(),
+            b"before-subscribe",
+            "the broker declares `Backlog::Delivered`: a subscription must first receive what was \
+             published to its name before it opened",
+        );
+        settle_ack(early).await;
+    }
+    let msg = expect_next(&mut stream, "publish_before_subscribe").await;
     assert_eq!(
         msg.payload(),
         b"after-subscribe",
-        "subscriber must receive only messages published after subscription opened",
+        "the broker declares `Backlog::{backlog:?}`: {}",
+        match backlog {
+            Backlog::Missed =>
+                "a subscription must receive only messages published after it opened",
+            Backlog::Delivered => "the message published after the subscription opened comes next",
+        },
     );
+    settle_ack(msg).await;
+    broker.shutdown().await.expect("shutdown failed");
+}
+
+/// Acknowledges `msg`, accepting a transport that cannot acknowledge.
+async fn settle_ack<M: IncomingMessage>(msg: M) {
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
     }
-    broker.shutdown().await.expect("shutdown failed");
 }
 
 async fn ack_consumes_delivery<C: TestableBroker + Subscribe>(broker: C) {

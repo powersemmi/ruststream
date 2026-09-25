@@ -36,7 +36,7 @@ use ruststream::conformance::harness;
 | 场景 | 断言内容 |
 |---|---|
 | 投递顺序 | 消息按发布顺序投递 |
-| 订阅之后再发布 | 订阅者只收到订阅之后发布的消息，更早的发布不进入缓冲 |
+| 订阅之前先发布 | 订阅打开之前发布的消息：Broker 声明 `Backlog::Delivered` 时它最先到达，声明 `Backlog::Missed`（默认）时它不会到达；订阅之后发布的消息两种情况下都会到达 |
 | ack 消费掉投递 | 已 ack 的消息不会重新投递 |
 | 带重新入队的 nack 会重新投递 | `nack(requeue = true)` 会再投递一次这条消息 |
 | 不重新入队的 nack 丢弃消息 | `nack(requeue = false)` 之后没有重新投递 |

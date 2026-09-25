@@ -136,7 +136,10 @@ alwaysApply: false
   gain an in-process variant that exists only under the feature (without it: one variant, no
   branch); the transport has no configuration of its own and reads every setting from the
   production broker. It never succeeds where the real broker fails: a publish, ack, requeue or
-  subscription the server rejects or strands is rejected in process the same way. Run the contract
+  subscription the server rejects or strands is rejected in process the same way, and it keeps
+  what the server keeps: a queue or a log returns `Backlog::Delivered` from
+  `TestableBroker::backlog` and delivers what was published before a subscription opened
+  (publish/subscribe keeps the default `Backlog::Missed`). Run the contract
   suites in process as well as against a real server (`run_suite` connects in process; wrap the
   broker in `harness::InProcessBroker` for `lifecycle` and the capability suites), and run
   `lifecycle` because it asks whether a publisher made before the shutdown errors afterwards. Acks

@@ -15,7 +15,9 @@ is part of each broker's contract. A broker crate provides it under its `testing
 service enables that feature in its `[dev-dependencies]`, and a broker without it makes
 [`TestApp::start`] fail with [`TestError::NoTransport`] naming the broker. The transport reads
 its settings from the production broker and has none of its own, and it never succeeds where
-the real broker fails. [`MemoryBroker`](crate::memory::MemoryBroker) has no server, so its
+the real broker fails. It keeps what the real broker keeps, too: a queue or a log holds what was
+published before a subscription opened, and the broker declares it through
+[`TestableBroker::backlog`]. [`MemoryBroker`](crate::memory::MemoryBroker) has no server, so its
 in-process mode is simply its `connect`. A broker author implements [`InProcess`] and
 [`TestableBroker`] and registers the broker with
 [`register_testable_broker!`](crate::register_testable_broker); the
