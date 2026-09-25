@@ -1033,13 +1033,18 @@ async fn dispatch<H, M, C, St>(
         #[cfg(feature = "testing")]
         let result = in_harness_scope(
             harness_scope(delivery),
-            AssertUnwindSafe(observed!(delivery, handler.handle(msg, &mut ctx))).catch_unwind(),
+            observed!(
+                delivery,
+                AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+            ),
         )
         .await;
         #[cfg(not(feature = "testing"))]
-        let result = AssertUnwindSafe(observed!(delivery, handler.handle(msg, &mut ctx)))
-            .catch_unwind()
-            .await;
+        let result = observed!(
+            delivery,
+            AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+        )
+        .await;
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None`
@@ -1187,19 +1192,17 @@ async fn run_batch<H, M, C, St>(
     #[cfg(feature = "testing")]
     let result = in_harness_scope(
         harness_scope(delivery),
-        AssertUnwindSafe(observed!(
+        observed!(
             delivery,
-            handler.handle_batch(batch, scratch, &mut ctx)
-        ))
-        .catch_unwind(),
+            AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+        ),
     )
     .await;
     #[cfg(not(feature = "testing"))]
-    let result = AssertUnwindSafe(observed!(
+    let result = observed!(
         delivery,
-        handler.handle_batch(batch, scratch, &mut ctx)
-    ))
-    .catch_unwind()
+        AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+    )
     .await;
     match result {
         Ok(()) => {

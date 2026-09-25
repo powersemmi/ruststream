@@ -390,6 +390,21 @@ impl PollStats {
         }
     }
 
+    /// The counter at the start of a timed poll.
+    #[cold]
+    #[inline(never)]
+    fn start(&self) -> u64 {
+        self.clock.raw()
+    }
+
+    /// Ends a timed poll that started at `start`.
+    #[cold]
+    #[inline(never)]
+    fn finish(&self, start: u64) {
+        let end = self.clock.raw();
+        self.record(self.clock.delta_as_nanos(start, end));
+    }
+
     /// Adds one timed poll.
     fn record(&self, ns: u64) {
         let taken = self.samples.fetch_add(1, Ordering::Relaxed) + 1;
@@ -507,14 +522,19 @@ impl<F: Future> Future for Sampled<'_, F> {
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        if !this.sampler.tick() {
-            return this.future.poll(cx);
-        }
         let stats = &*this.sampler.stats;
-        let start = stats.clock.raw();
+        // One call site for the inner poll, and the timed path out of line: a second call site
+        // or the timing code inline makes this poll too big for the compiler to inline the
+        // handler's body into it, which costs every poll a call.
+        let start = if this.sampler.tick() {
+            Some(stats.start())
+        } else {
+            None
+        };
         let polled = this.future.poll(cx);
-        let end = stats.clock.raw();
-        stats.record(stats.clock.delta_as_nanos(start, end));
+        if let Some(start) = start {
+            stats.finish(start);
+        }
         polled
     }
 }
