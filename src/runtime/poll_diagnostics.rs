@@ -190,6 +190,12 @@ impl PollDiagnostics {
         self.lock().iter().map(|stats| stats.report()).collect()
     }
 
+    /// The statistics of every subscription, for an exporter that reads the histogram itself.
+    #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+    pub(crate) fn stats(&self) -> Vec<Arc<PollStats>> {
+        self.lock().clone()
+    }
+
     /// The sampler one subscription dispatches with. A second subscription of the same name
     /// shares the first one's statistics, as it shares its label on every exported metric.
     pub(crate) fn register(&self, subscription: &str) -> PollSampler {
@@ -346,6 +352,12 @@ impl PollStats {
             buckets: std::array::from_fn(|_| AtomicU64::new(0)),
             over: AtomicBool::new(false),
         }
+    }
+
+    /// The subscription measured.
+    #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 
     /// The samples taken, their sum in nanoseconds, and the count in each bucket of

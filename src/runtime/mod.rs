@@ -19,7 +19,7 @@ mod main_runtime;
 mod metadata;
 mod middleware;
 #[cfg(feature = "poll-diagnostics")]
-mod poll_diagnostics;
+pub(crate) mod poll_diagnostics;
 mod publish;
 mod publish_source;
 mod publishing;

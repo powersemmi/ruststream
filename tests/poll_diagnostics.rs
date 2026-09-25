@@ -308,3 +308,127 @@ async fn every_subscription_is_reported_on_its_own() {
     assert_eq!(diagnostics.report("waits").map(|r| r.samples()), Some(0));
     assert_eq!(diagnostics.report("nowhere"), None);
 }
+
+/// The reports through the Prometheus registry of the `metrics` feature.
+#[cfg(feature = "metrics")]
+mod prometheus_export {
+    use prometheus::Registry;
+    use ruststream::memory::MemoryBroker;
+    use ruststream::metrics::Metrics;
+    use ruststream::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{every_poll, fast, publish};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_histogram_and_the_average_are_exported_per_subscription() {
+        let diagnostics = every_poll();
+        let metrics = Metrics::with_registry(Registry::new()).expect("metrics");
+        metrics
+            .observe_poll_diagnostics(&diagnostics)
+            .expect("the collector registers");
+        let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+            .poll_diagnostics(diagnostics.clone())
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(fast);
+            });
+        let tb = TestApp::start(app).await.expect("startup");
+        publish(&tb, "fast", 3).await;
+
+        let text = metrics.export().expect("export");
+        assert!(
+            text.contains(r#"ruststream_handler_poll_duration_seconds_count{name="fast"} 3"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                r#"ruststream_handler_poll_duration_seconds_bucket{name="fast",le="+Inf"} 3"#
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"ruststream_handler_poll_average_seconds{name="fast"}"#),
+            "{text}"
+        );
+        // A second registration of the same collector is refused, as any duplicate metric is.
+        assert!(metrics.observe_poll_diagnostics(&diagnostics).is_err());
+    }
+}
+
+/// The reports through the meter of the `otel` feature.
+#[cfg(feature = "otel")]
+mod otel_export {
+    use opentelemetry_sdk::metrics::data::{
+        AggregatedMetrics, MetricData, ResourceMetrics, ScopeMetrics,
+    };
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use ruststream::memory::MemoryBroker;
+    use ruststream::otel::Otel;
+    use ruststream::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{every_poll, fast, publish};
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_average_p99_and_samples_are_observed_per_subscription() {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        let otel = Otel::builder().attach(SdkTracerProvider::builder().build(), provider.clone());
+        let diagnostics = every_poll();
+        otel.observe_poll_diagnostics(&diagnostics);
+        let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+            .poll_diagnostics(diagnostics.clone())
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(fast);
+            });
+        let tb = TestApp::start(app).await.expect("startup");
+        publish(&tb, "fast", 3).await;
+        provider.force_flush().expect("flush");
+
+        let metrics = exporter.get_finished_metrics().expect("drained");
+        let observed = |name: &str| -> Vec<(String, f64)> {
+            metrics
+                .iter()
+                .flat_map(ResourceMetrics::scope_metrics)
+                .flat_map(ScopeMetrics::metrics)
+                .filter(|metric| metric.name() == name)
+                .flat_map(|metric| match metric.data() {
+                    AggregatedMetrics::F64(MetricData::Gauge(gauge)) => gauge
+                        .data_points()
+                        .map(|point| (subscription_of(point.attributes()), point.value()))
+                        .collect::<Vec<_>>(),
+                    AggregatedMetrics::U64(MetricData::Sum(sum)) => sum
+                        .data_points()
+                        .map(|point| {
+                            let count = u32::try_from(point.value()).expect("a small count");
+                            (subscription_of(point.attributes()), f64::from(count))
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        assert_eq!(
+            observed("ruststream.handler.poll.samples"),
+            [("fast".to_owned(), 3.0)]
+        );
+        let average = observed("ruststream.handler.poll.average");
+        assert_eq!(average.len(), 1, "{average:?}");
+        assert!(average[0].1 > 0.0, "{average:?}");
+        let p99 = observed("ruststream.handler.poll.p99");
+        assert_eq!(p99.len(), 1, "{p99:?}");
+        assert!(p99[0].1 > 0.0, "{p99:?}");
+    }
+
+    fn subscription_of<'a>(
+        attributes: impl Iterator<Item = &'a opentelemetry::KeyValue>,
+    ) -> String {
+        attributes
+            .filter(|kv| kv.key.as_str() == "messaging.destination.name")
+            .map(|kv| kv.value.to_string())
+            .collect()
+    }
+}

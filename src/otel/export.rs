@@ -72,6 +72,8 @@ use thiserror::Error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+#[cfg(feature = "poll-diagnostics")]
+use crate::runtime::PollDiagnostics;
 use crate::runtime::{
     BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, HealthProbe, HealthState, Layer,
     Outgoing, PublishLayer, PublishNext, PublishPipeline,
@@ -383,6 +385,76 @@ impl Otel {
                 ];
                 for (name, active) in flags {
                     observer.observe(u64::from(active), &[KeyValue::new("state", name)]);
+                }
+            })
+            .build();
+    }
+
+    /// Registers the poll-time diagnostics of `diagnostics` as observable instruments, labelled
+    /// per subscription (`messaging.destination.name`) and read from the reports at every
+    /// collection: `ruststream.handler.poll.average` and `ruststream.handler.poll.p99` (gauges,
+    /// seconds) and `ruststream.handler.poll.samples` (a counter of the polls timed).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ruststream::otel::Otel;
+    /// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+    ///
+    /// # fn build() -> Result<(), Box<dyn std::error::Error>> {
+    /// let otel = Otel::builder().init()?;
+    /// let diagnostics = PollDiagnostics::new();
+    /// otel.observe_poll_diagnostics(&diagnostics);
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .layer(otel.consume_layer())
+    ///     .poll_diagnostics(diagnostics);
+    /// # let _ = app;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "poll-diagnostics")]
+    pub fn observe_poll_diagnostics(&self, diagnostics: &PollDiagnostics) {
+        let attrs = |subscription: &str| {
+            [KeyValue::new(
+                "messaging.destination.name",
+                subscription.to_owned(),
+            )]
+        };
+        let reports = diagnostics.clone();
+        let _average = self
+            .meter
+            .f64_observable_gauge("ruststream.handler.poll.average")
+            .with_unit("s")
+            .with_description("Moving average of the time a handler spent in one poll.")
+            .with_callback(move |observer| {
+                for report in reports.reports() {
+                    observer.observe(
+                        report.average().as_secs_f64(),
+                        &attrs(report.subscription()),
+                    );
+                }
+            })
+            .build();
+        let reports = diagnostics.clone();
+        let _p99 = self
+            .meter
+            .f64_observable_gauge("ruststream.handler.poll.p99")
+            .with_unit("s")
+            .with_description("99th percentile of the time a handler spent in one sampled poll.")
+            .with_callback(move |observer| {
+                for report in reports.reports() {
+                    observer.observe(report.p99().as_secs_f64(), &attrs(report.subscription()));
+                }
+            })
+            .build();
+        let reports = diagnostics.clone();
+        let _samples = self
+            .meter
+            .u64_observable_counter("ruststream.handler.poll.samples")
+            .with_description("Handler polls timed by the poll-time diagnostics.")
+            .with_callback(move |observer| {
+                for report in reports.reports() {
+                    observer.observe(report.samples(), &attrs(report.subscription()));
                 }
             })
             .build();
