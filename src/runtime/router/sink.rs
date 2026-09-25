@@ -83,7 +83,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                 Box::pin(async move {
                     // No descriptor to ask where a copy of a delivery would go, and no mount chain
                     // that can bind one here, so this mount carries no retry path at all.
-                    let delivery = open_mounted_subscriber(&scope);
+                    let delivery = open_mounted_subscriber(&scope, &name);
                     let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch(
                         subscriber, handler, shutdown, name, state, delivery, failure,
