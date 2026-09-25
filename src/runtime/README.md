@@ -186,6 +186,75 @@ allocation. Batch forms take a plain pool of batches, each batch in a task of it
 manual handler's `handle` call, say) ends its worker, and the subscription stops dispatching,
 as the sequential loop does.
 
+## Dedicated threads for handlers that compute
+
+A handler that computes holds up the thread it runs on, and on the app's runtime that is the
+thread the broker clients' I/O, the timers and every other subscription need. `threads(n)` gives
+the subscription `n` threads of its own:
+
+```rust
+# #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+# mod demo {
+use ruststream::memory::prelude::*;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Resize {
+    id: u64,
+}
+
+fn render(_job: &Resize) {}
+
+async fn notify(_id: u64) {}
+
+#[subscriber("images.resize", threads(8))]
+async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
+    // Runs on one of the subscription's eight threads, from the first poll to the end.
+    render(job);
+    // The one explicit way back to the app's runtime; what it sends must be `Send`.
+    main.spawn(notify(job.id));
+    HandlerOutcome::ack()
+}
+
+#[ruststream::app(flavor = "current_thread")]
+fn app() -> impl App {
+    RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(resize);
+    })
+}
+# }
+# fn main() {}
+```
+
+- Each thread runs a current-thread runtime. The subscription's loop stays on the app's runtime
+  and spreads deliveries over the threads round-robin, through a bounded ring per thread, and
+  stops reading only when every ring is full. `threads(n, by_key)` sends a key to a fixed
+  thread, so a key keeps its order. A delivery allocates nothing on its way, and under load it
+  wakes no thread.
+- Decoding, the handler, encoding a reply and settling run on the thread the delivery was handed
+  to, and only there: a timer, a publish or a plain `tokio::spawn` in the handler stays on it.
+  The ways out are explicit: the app runtime's handle ([`Ctx<MainRuntime>`](MainRuntime), or
+  [`Context::main_runtime`]) and `spawn_blocking`. `block_in_place` panics there, as on any
+  current-thread runtime. Continuations (`and_after`, `after(..)`) and a delayed retry copy run on
+  the app's runtime.
+- `threads(..)` fills the position `workers(..)` fills, so a subscription names one of them. The
+  mount site takes it as `.threads(n)` and `.threads_by_key(n)`, a router chain as
+  [`Workers::threads`] and [`Workers::threads_keyed`]; a batch body takes whole batches per
+  thread.
+- On shutdown the loop stops reading and the threads drain their rings within the
+  [`shutdown_timeout`](RustStream::shutdown_timeout). The read-ahead is at most `n` times nine
+  deliveries (one in hand and a ring of eight per thread).
+- Under [`TestApp`](crate::testing::TestApp) the threads run as `n` workers on the test's own
+  runtime, like every other subscription.
+
+It pays from about ten microseconds of computation per delivery; on handlers of a few
+microseconds it costs more CPU than it saves. The dedicated threads and the app runtime's
+threads share the machine's cores, and Tokio starts one worker per core by default, so a
+service with `threads(n)` sizes the app's runtime for its I/O: `#[ruststream::app]` takes the
+arguments of `#[tokio::main]`, `flavor = "current_thread"` or `worker_threads = n` (see
+[`cli::AppRuntime`]). A current-thread app runtime beside dedicated threads gives the rest of the
+service the lowest latency.
+
 ## Delayed redelivery and its cap
 
 [`HandlerOutcome::retry_after`] asks for the delivery back no sooner than a delay. A broker

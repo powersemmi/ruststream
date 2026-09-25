@@ -225,10 +225,18 @@ b.include(
 b.include(audit.name("orders").start_at(MemoryPosition::start()));
 ```
 
-`workers(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute clauses
-(`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("orders", on_failure(decode = retry))]`,
-`#[subscriber("audit", start_at(MemoryPosition::start()))]`); those four (`publish` is the fourth)
-are the only clauses, and `batch(n)` is mount-site only. `start_at` forces the position on
+`workers(n)`, `threads(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute
+clauses (`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("images", threads(8))]`,
+`#[subscriber("orders", on_failure(decode = retry))]`,
+`#[subscriber("audit", start_at(MemoryPosition::start()))]`); those five (`publish` is the fifth)
+are the only clauses, and `batch(n)` is mount-site only. `workers(n)` is concurrency for I/O on
+the app's runtime; a handler that computes takes `threads(n)` (or `threads(n, by_key)`): `n`
+dedicated threads of the subscription's own, each a current-thread runtime, where the handler
+runs from the first poll to the end. The two fill one position, so a subscription names one.
+From a `threads(n)` handler the app's runtime is reached only through `Ctx(main): Ctx<MainRuntime>`
+(or `ctx.main_runtime()`); a plain `tokio::spawn` stays on the handler's thread. A service with
+`threads(n)` sizes the app's runtime for its I/O: `#[ruststream::app(flavor = "current_thread")]`
+or `#[ruststream::app(worker_threads = 2)]`. `start_at` forces the position on
 every startup and takes a value of the broker's own position type; without it the subscription
 opens at the broker's default. A conditional default (apply only when no stored cursor exists for
 the group) belongs on the broker's own subscription descriptor.

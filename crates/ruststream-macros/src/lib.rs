@@ -140,7 +140,22 @@ use parse::{SubscriberArgs, doc_description};
 /// sequential lanes keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
 ///
-/// Clause values need not be literals: `workers(..)` takes any `usize` expression (a constant,
+/// A `threads(n)` clause is the same position for a handler that computes: the subscription's
+/// deliveries (or batches) are handled on `n` dedicated threads of its own, each running a
+/// current-thread runtime, so the computation holds up none of the app runtime's threads.
+/// `threads(n, by_key)` keeps a key on one thread. A subscription names `workers(..)` or
+/// `threads(..)`, not both; the handler reaches the app's runtime through a
+/// `Ctx(main): Ctx<MainRuntime>` parameter.
+///
+/// ```ignore
+/// #[subscriber("images.resize", threads(8))]
+/// async fn resize(job: &Resize) -> HandlerOutcome {
+///     render(job);
+///     HandlerOutcome::ack()
+/// }
+/// ```
+///
+/// Clause values need not be literals: `workers(..)` and `threads(..)` take any `usize` expression (a constant,
 /// a static, a function call - an integer literal keeps the compile-time zero rejection, a
 /// runtime value of zero panics at registration), `publish(..)` takes a `&'static str`
 /// expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next to the keyword
@@ -328,16 +343,16 @@ impl AppRuntimeArgs {
         {
             return quote!(#runtime::CurrentThread);
         }
-        match &self.worker_threads {
-            // The literal was checked to be non-zero, so the `None` arm is unreachable; MIN
-            // keeps the lowering panic-free.
-            Some(count) => quote! {
-                #runtime::MultiThreadWorkers(match ::core::num::NonZeroUsize::new(#count) {
-                    ::core::option::Option::Some(count) => count,
-                    ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
-                })
-            },
-            None => quote!(#runtime::MultiThread),
+        let Some(count) = &self.worker_threads else {
+            return quote!(#runtime::MultiThread);
+        };
+        // The literal was checked to be non-zero, so the `None` arm is unreachable; MIN keeps
+        // the lowering panic-free.
+        quote! {
+            #runtime::MultiThreadWorkers(match ::core::num::NonZeroUsize::new(#count) {
+                ::core::option::Option::Some(count) => count,
+                ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
+            })
         }
     }
 }

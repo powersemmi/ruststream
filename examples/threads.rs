@@ -5,6 +5,8 @@
 //! cargo run --example threads --features macros,memory,json -- run
 //! ```
 
+use std::time::Duration;
+
 use ruststream::memory::prelude::*;
 use serde::Deserialize;
 
@@ -24,7 +26,9 @@ fn render(job: &Resize) -> u64 {
     (0..u64::from(job.width)).fold(job.id, |acc, x| acc.wrapping_mul(31).wrapping_add(x))
 }
 
+/// Stands in for a call to another service: I/O, which belongs on the app's runtime.
 async fn notify(id: u64) {
+    tokio::time::sleep(Duration::from_millis(1)).await;
     println!("resized {id}");
 }
 

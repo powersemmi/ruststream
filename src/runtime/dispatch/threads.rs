@@ -208,6 +208,9 @@ impl Drop for Leaving<'_> {
 
 /// One thread's work: drains its ring through `handle`, parks when it is empty, and ends once the
 /// loop has let go of the ring and it is empty.
+// The future is built on its thread and polled there alone, so it need not be `Send`: the
+// handler behind it only is.
+#[allow(clippy::future_not_send)]
 async fn work<Item, Handle>(
     signals: Arc<Signals>,
     index: usize,
@@ -498,10 +501,9 @@ impl<Item: Send + 'static> Threads<Item> {
         poll_fn(move |cx| match signals.poll_room(rings, which, cx) {
             Poll::Ready(Ok(index)) => Poll::Ready(Ok(index)),
             Poll::Ready(Err(index)) => Poll::Ready(Err(Stuck::Gone(index))),
-            Poll::Pending => match cancelled.as_mut() {
-                Some(cancelled) => cancelled.as_mut().poll(cx).map(|()| Err(Stuck::Shutdown)),
-                None => Poll::Pending,
-            },
+            Poll::Pending => cancelled.as_mut().map_or(Poll::Pending, |cancelled| {
+                cancelled.as_mut().poll(cx).map(|()| Err(Stuck::Shutdown))
+            }),
         })
         .await
     }

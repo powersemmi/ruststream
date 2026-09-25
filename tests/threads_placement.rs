@@ -101,8 +101,8 @@ fn a_delivery_is_handled_on_a_dedicated_thread_alone() {
     const JOBS: u32 = 6;
     let broker = MemoryBroker::new();
     let traces = app_runtime().block_on(async {
-        let mut replies = broker.subscribe("traces");
-        let mut replies = pin!(replies.stream());
+        let mut subscriber = broker.subscribe("traces");
+        let mut replies = pin!(subscriber.stream());
         let app =
             RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
                 b.include(traced).out_reply(Publish);
@@ -170,8 +170,8 @@ fn a_key_stays_on_one_thread_and_in_order() {
     let keys = ["alpha", "beta", "gamma", "delta"];
     let broker = MemoryBroker::new();
     let seen: Vec<Placed> = app_runtime().block_on(async {
-        let mut replies = broker.subscribe("placed");
-        let mut replies = pin!(replies.stream());
+        let mut subscriber = broker.subscribe("placed");
+        let mut replies = pin!(subscriber.stream());
         let app =
             RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
                 b.include(placed).out_reply(Publish);
@@ -259,8 +259,8 @@ async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> Handl
 fn continuations_run_on_the_app_runtime() {
     let broker = MemoryBroker::new();
     let seen: Vec<Placed> = app_runtime().block_on(async {
-        let mut replies = broker.subscribe("continued.done");
-        let mut replies = pin!(replies.stream());
+        let mut subscriber = broker.subscribe("continued.done");
+        let mut replies = pin!(subscriber.stream());
         let report = Arc::new(Report {
             publisher: broker.publisher(),
         });
@@ -304,6 +304,8 @@ impl<C: Subscribe> SubscriptionSource<C> for CopiedSubscription {
     type Subscriber = UnsettledSubscriber<C::Subscriber>;
     type Copies = AddressedCopies;
 
+    // The returned lifetime is fixed by the trait, so it cannot be narrowed to `&'static str`.
+    #[allow(clippy::unnecessary_literal_bound)]
     fn name(&self) -> &str {
         "retried"
     }
@@ -382,8 +384,8 @@ fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
     let broker = MemoryBroker::new();
     let copied = Arc::new(AtomicBool::new(false));
     let arrived = app_runtime().block_on(async {
-        let mut copies = broker.subscribe("copies");
-        let mut copies = pin!(copies.stream());
+        let mut copy_subscriber = broker.subscribe("copies");
+        let mut arrivals = pin!(copy_subscriber.stream());
         let state = Arc::clone(&copied);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
@@ -401,7 +403,7 @@ fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
                 .expect("publish");
         }
         // Well under the computation: a copy that waited for the thread arrives after it.
-        let arrived = timeout(COMPUTATION / 2, copies.next()).await.is_ok();
+        let arrived = timeout(COMPUTATION / 2, arrivals.next()).await.is_ok();
         copied.store(true, Ordering::SeqCst);
         running.shutdown().await.expect("shutdown");
         arrived
@@ -433,8 +435,8 @@ async fn batched(orders: &[Order], ctx: &mut Context<'_, (), Arc<Report>>) -> Ha
 fn a_batch_is_handled_on_a_dedicated_thread() {
     let broker = MemoryBroker::new();
     let seen: Vec<Placed> = app_runtime().block_on(async {
-        let mut replies = broker.subscribe("batched.done");
-        let mut replies = pin!(replies.stream());
+        let mut subscriber = broker.subscribe("batched.done");
+        let mut replies = pin!(subscriber.stream());
         let report = Arc::new(Report {
             publisher: broker.publisher(),
         });

@@ -184,7 +184,7 @@ pub trait IncomingMessage: Send + Sync {
     async fn nack_after(self, delay: Duration) -> Result<(), AckError>;
 
     // Defaulted: None. Override (with the Partitioned capability) to feed the
-    // runtime's keyed worker lanes, workers(n, by_key).
+    // runtime's keyed lanes, workers(n, by_key) and threads(n, by_key).
     fn partition_key(&self) -> Option<&[u8]>;
 
     // Defaulted: None. Override where the transport counts its own deliveries
