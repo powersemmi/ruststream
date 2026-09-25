@@ -411,3 +411,54 @@ fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
         "the retry copy waited for the thread's computation to end"
     );
 }
+
+/// Reports the thread each batch ran on.
+#[subscriber("batched", threads(2))]
+async fn batched(orders: &[Order], ctx: &mut Context<'_, (), Arc<Report>>) -> HandlerOutcome {
+    let reply = Placed {
+        id: orders.first().map_or(0, |order| order.id),
+        thread: here(),
+    };
+    let _ = ctx
+        .state()
+        .publisher
+        .message(&reply)
+        .to("batched.done")
+        .publish()
+        .await;
+    HandlerOutcome::ack()
+}
+
+#[test]
+fn a_batch_is_handled_on_a_dedicated_thread() {
+    let broker = MemoryBroker::new();
+    let seen: Vec<Placed> = app_runtime().block_on(async {
+        let mut replies = broker.subscribe("batched.done");
+        let mut replies = pin!(replies.stream());
+        let report = Arc::new(Report {
+            publisher: broker.publisher(),
+        });
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(report))
+            .with_broker(broker.clone(), |b| {
+                b.include(batched.batch(nonzero!(4)));
+            });
+        let running = app.start().await.expect("startup");
+        broker
+            .publisher()
+            .message(&Order { id: 1 })
+            .to("batched")
+            .publish()
+            .await
+            .expect("publish");
+        let seen = read(&mut replies, 1).await;
+        running.shutdown().await.expect("shutdown");
+        seen
+    });
+    for reply in &seen {
+        assert!(
+            reply.thread.starts_with("batched/"),
+            "the batch ran off the subscription's threads: {reply:?}"
+        );
+    }
+}

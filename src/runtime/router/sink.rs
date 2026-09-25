@@ -136,7 +136,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     Ok(spawn_batch_dispatch::<_, _, Cx, _>(
                         subscriber, handler, shutdown, name, state, delivery, failure, workers,
                         batch_size,
-                    ))
+                    )?)
                 })
             },
         ));
@@ -242,7 +242,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                         failure,
                         workers,
                         batch_size,
-                    ))
+                    )?)
                 })
             },
         ));

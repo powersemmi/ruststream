@@ -443,6 +443,7 @@ where
             workers,
             crate::nonzero!(1usize),
         )
+        .expect("the dispatch starts")
     }
 }
 

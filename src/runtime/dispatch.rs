@@ -13,7 +13,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use futures::{FutureExt, Stream};
+use futures::{FutureExt, Stream, StreamExt};
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
@@ -729,7 +729,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     failure: DispatchFailure,
     workers: Workers,
     batch_size: NonZeroUsize,
-) -> JoinHandle<()>
+) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
@@ -737,7 +737,19 @@ where
     C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    tokio::spawn(async move {
+    // See `spawn_dispatch_workers`: the harness runs every subscription on the test's runtime.
+    #[cfg(feature = "testing")]
+    let workers = if delivery.hooks.coordinator().is_some() {
+        workers.on_runtime()
+    } else {
+        workers
+    };
+    if matches!(workers.placement, Placement::Threads) {
+        return spawn_batch_threads(
+            subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
+        );
+    }
+    Ok(tokio::spawn(async move {
         // The registration's own batch size, straight to the broker: whatever comes back is the
         // batch the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(batch_size));
@@ -834,7 +846,64 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
-    })
+    }))
+}
+
+/// The batch counterpart of [`spawn_dispatch_threads`]: each thread takes whole batches off its
+/// ring, with a decode and an encode buffer of its own. Keyed lanes do not apply to batches, so a
+/// keyed policy spreads batches as the plain one does.
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
+fn spawn_batch_threads<S, H, C, St>(
+    mut subscriber: S,
+    handler: Arc<H>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
+    workers: Workers,
+    batch_size: NonZeroUsize,
+) -> Result<JoinHandle<()>, StartThreadError>
+where
+    S: BatchSubscriber + Send + 'static,
+    S::Message: Send + 'static,
+    H: BatchHandler<S::Message, C, St> + 'static,
+    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    let shared = Arc::new(pool::Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    });
+    let threads = Threads::start(&shared.name, workers.count, false, || {
+        let shared = Arc::clone(&shared);
+        let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
+        let mut encode = BytesMut::new();
+        async move |batch: Vec<S::Message>| {
+            run_batch::<_, _, C, _>(
+                &*shared.handler,
+                batch,
+                &mut scratch,
+                &mut encode,
+                &shared.name,
+                &shared.state,
+                &shared.delivery,
+                &shared.failure,
+            )
+            .await;
+        }
+    })?;
+    Ok(tokio::spawn(async move {
+        let batches = subscriber
+            .batches(batch_size)
+            .map(|batch| batch.map(|batch| batch.into_iter().collect::<Vec<_>>()));
+        threads
+            .feed(batches, &shared.name, &shutdown, |_| None)
+            .await;
+    }))
 }
 
 async fn dispatch<H, M, C, St>(
