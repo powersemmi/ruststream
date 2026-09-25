@@ -568,3 +568,53 @@ fn a_retry_copy_pending_at_shutdown_is_published_by_workers() {
         "the copy pending at shutdown was lost"
     );
 }
+
+/// Replies at once, in the one poll it takes.
+#[cfg(feature = "poll-diagnostics")]
+#[subscriber("sampled", threads(2), publish("sampled.done"))]
+async fn sampled(job: &Order) -> Placed {
+    Placed {
+        id: job.id,
+        thread: here(),
+    }
+}
+
+/// Every dedicated thread samples into the subscription's one report: the report counts the polls
+/// of both threads.
+#[cfg(feature = "poll-diagnostics")]
+#[test]
+fn every_thread_samples_into_the_subscription_report() {
+    use ruststream::runtime::PollDiagnostics;
+
+    const JOBS: u32 = 8;
+    let broker = MemoryBroker::new();
+    let diagnostics = PollDiagnostics::new().sample_every(ruststream::nonzero!(1u32));
+    let replies = app_runtime().block_on(async {
+        let mut subscriber = broker.subscribe("sampled.done");
+        let mut replies = pin!(subscriber.stream());
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .poll_diagnostics(diagnostics.clone())
+            .with_broker(broker.clone(), |b| {
+                b.include(sampled).out_reply(Publish);
+            });
+        let running = app.start().await.expect("startup");
+        let publisher = broker.publisher();
+        for id in 0..JOBS {
+            publisher
+                .message(&Order { id })
+                .to("sampled")
+                .publish()
+                .await
+                .expect("publish");
+        }
+        let answers: Vec<Placed> = read(&mut replies, JOBS as usize).await;
+        // The shutdown drains the threads, so every sample is in before the report is read.
+        running.shutdown().await.expect("shutdown");
+        answers
+    });
+    assert!(replies.iter().all(|p| !p.thread.starts_with(APP_THREADS)));
+    let report = diagnostics
+        .report("sampled")
+        .expect("the subscription is sampled");
+    assert_eq!(report.samples(), u64::from(JOBS));
+}
