@@ -554,6 +554,11 @@ harness = false
 required-features = ["memory", "json", "macros"]
 
 [[bench]]
+name = "consume_threads"
+harness = false
+required-features = ["memory", "json", "macros"]
+
+[[bench]]
 name = "middleware"
 harness = false
 required-features = ["memory", "json", "macros"]

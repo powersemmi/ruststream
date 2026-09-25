@@ -108,6 +108,11 @@ SCENARIOS = [
         "consume_pool/service",
     ),
     Scenario(
+        "consume on four dedicated threads",
+        "threads4",
+        "consume_threads/service",
+    ),
+    Scenario(
         "consume through a middleware stack of one",
         "mw1",
         "middleware/service_one",

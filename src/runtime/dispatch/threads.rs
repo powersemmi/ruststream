@@ -214,14 +214,16 @@ impl Drop for Leaving<'_> {
 async fn work<Item, Handle>(
     signals: Arc<Signals>,
     index: usize,
-    mut ring: Consumer<Item>,
+    ring: Consumer<Item>,
     mut handle: Handle,
 ) where
     Handle: AsyncFnMut(Item),
 {
-    // Dropped after the ring, so the loop sees it abandoned when it is woken.
     let signals = &*signals;
     let _leaving = Leaving(signals);
+    // Declared after the guard, so it drops first: the loop the guard wakes finds the ring
+    // abandoned already.
+    let mut ring = ring;
     loop {
         if let Ok(item) = ring.pop() {
             // Freed before the handler runs, so the loop refills the ring meanwhile.
@@ -586,5 +588,30 @@ mod tests {
             pulled,
             "a delivery read was not handled"
         );
+    }
+
+    /// A thread whose work ends early (a panic outside the handler's own catch) stops the loop
+    /// rather than leaving it waiting on a ring nobody drains, the lane's strict wait included.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_thread_that_dies_stops_the_loop() {
+        for keyed in [false, true] {
+            let threads = Threads::start("dying", 1, keyed, || {
+                async move |item: u32| {
+                    assert!(item > 0, "the first delivery takes the thread down");
+                }
+            })
+            .expect("the threads start");
+            let items = stream::iter(0..1000u32).map(Ok::<_, Infallible>);
+            let shutdown = Shutdown::new();
+            let fed = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                threads.feed(items, "dying", &shutdown, |_| Some(b"key".as_slice())),
+            )
+            .await;
+            assert!(
+                fed.is_ok(),
+                "the loop waited on a dead thread (keyed: {keyed})"
+            );
+        }
     }
 }
