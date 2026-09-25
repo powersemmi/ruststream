@@ -330,8 +330,8 @@ fn app() -> impl App {
   the p99 and the sample count, each labelled per subscription.
 - The cost is a countdown per poll and, on a timed poll, two counter reads and a few atomic
   updates of the subscription's statistics. The counter is `rdtsc` on `x86_64` with an invariant
-  TSC and the system counter on `aarch64`; elsewhere it is the monotonic clock. The first
-  subscription calibrates it once, at startup.
+  TSC and the system counter on `aarch64`; elsewhere it is the monotonic clock. It is
+  calibrated once per process, when the first app is built.
 
 ## Delayed redelivery and its cap
 

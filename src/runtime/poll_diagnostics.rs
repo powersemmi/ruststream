@@ -93,9 +93,14 @@ pub struct PollDiagnostics {
     registry: Arc<Registry>,
 }
 
-/// The subscriptions one set of diagnostics samples, in the order they opened.
-#[derive(Default)]
+/// The subscriptions one set of diagnostics samples, in the order they opened, and the counter
+/// they read.
 struct Registry {
+    /// The first clock of the process calibrates the counter against the monotonic clock (under
+    /// a millisecond on an invariant TSC, never more than 200 ms); later ones copy that
+    /// calibration. It is made with the diagnostics, so the app is built with it, before any
+    /// subscription opens.
+    clock: Clock,
     subscriptions: Mutex<Vec<Arc<PollStats>>>,
 }
 
@@ -116,7 +121,10 @@ impl PollDiagnostics {
         Self {
             threshold: DEFAULT_THRESHOLD,
             sample_every: DEFAULT_SAMPLE_EVERY,
-            registry: Arc::default(),
+            registry: Arc::new(Registry {
+                clock: Clock::new(),
+                subscriptions: Mutex::default(),
+            }),
         }
     }
 
@@ -205,7 +213,11 @@ impl PollDiagnostics {
             .find(|stats| &*stats.name == subscription)
             .map(Arc::clone);
         let stats = known.unwrap_or_else(|| {
-            let stats = Arc::new(PollStats::new(subscription, self.threshold));
+            let stats = Arc::new(PollStats::new(
+                subscription,
+                self.threshold,
+                self.registry.clock.clone(),
+            ));
             subscriptions.push(Arc::clone(&stats));
             stats
         });
@@ -338,14 +350,11 @@ pub(crate) struct PollStats {
 }
 
 impl PollStats {
-    fn new(name: &str, threshold: Duration) -> Self {
+    fn new(name: &str, threshold: Duration, clock: Clock) -> Self {
         Self {
             name: Arc::from(name),
             threshold_ns: saturating_nanos(threshold),
-            // The first clock of the process calibrates the counter against the monotonic clock
-            // (under a millisecond on an invariant TSC, never more than 200 ms); the others copy
-            // that calibration. This runs when the subscription opens.
-            clock: Clock::new(),
+            clock,
             samples: AtomicU64::new(0),
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
@@ -587,7 +596,7 @@ mod tests {
 
     #[test]
     fn the_average_moves_over_the_window() {
-        let stats = PollStats::new("s", Duration::from_secs(1));
+        let stats = PollStats::new("s", Duration::from_secs(1), Clock::new());
         stats.record(1_000);
         assert_eq!(stats.report().average(), Duration::from_nanos(1_000));
         stats.record(3_000);
