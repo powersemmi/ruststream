@@ -385,6 +385,29 @@ impl<Item: Send + 'static> Threads<Item> {
         Items: Stream<Item = Result<Item, Failure>>,
         Failure: Display,
     {
+        self.read(stream, name, shutdown, key).await;
+        self.let_go();
+        self.crew.join().await;
+    }
+
+    /// Letting go of the rings tells each thread to drain what its ring holds and end: what was
+    /// read off the stream is handled and settled unless the shutdown timeout aborts the loop.
+    fn let_go(&mut self) {
+        self.rings.clear();
+        self.signals.close();
+    }
+
+    /// Reads `stream` into the rings until it ends, `shutdown` fires, or a thread is gone.
+    async fn read<Items, Failure>(
+        &mut self,
+        stream: Items,
+        name: &str,
+        shutdown: &Shutdown,
+        key: fn(&Item) -> Option<&[u8]>,
+    ) where
+        Items: Stream<Item = Result<Item, Failure>>,
+        Failure: Display,
+    {
         let count = self.rings.len();
         let mut stream = pin!(stream);
         let mut cancelled = pin!(shutdown.cancelled());
@@ -460,11 +483,6 @@ impl<Item: Send + 'static> Threads<Item> {
                 Turn::Shutdown => break,
             }
         }
-        // Letting go of the rings tells each thread to drain what its ring holds and end: what was
-        // read off the stream is handled and settled unless the shutdown timeout aborts the loop.
-        self.rings.clear();
-        self.signals.close();
-        self.crew.join().await;
     }
 
     /// Waits for room by `which`, or for shutdown where `cancelled` is given.
@@ -499,6 +517,72 @@ fn report(name: &str, stuck: &Stuck) {
             subscription = %name,
             thread,
             "dedicated thread terminated; stopping dispatch",
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use std::sync::atomic::AtomicUsize;
+
+    use futures::StreamExt;
+    use futures::stream;
+    use tokio::sync::{Notify, Semaphore};
+
+    use super::*;
+
+    /// The deliveries the loop may hold ahead of the handlers: one in hand per thread and a full
+    /// ring each.
+    const READ_AHEAD: usize = 2 * (1 + RING);
+
+    /// With every handler held, the loop reads no more than the rings and the threads can hold;
+    /// on shutdown the threads handle every delivery it read, none is dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_read_ahead_is_bounded_and_drained_on_shutdown() {
+        let gate = Arc::new(Semaphore::new(0));
+        let handled = Arc::new(AtomicUsize::new(0));
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let full = Arc::new(Notify::new());
+        let threads = Threads::start("bounded", 2, false, || {
+            let (gate, handled) = (Arc::clone(&gate), Arc::clone(&handled));
+            async move |_item: u32| {
+                gate.acquire().await.expect("the gate stays open").forget();
+                handled.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .expect("the threads start");
+        let items = {
+            let (pulled, full) = (Arc::clone(&pulled), Arc::clone(&full));
+            stream::iter(0..100u32).map(move |item| {
+                // Both rings full: the loop cannot have read less before it waits for room.
+                if pulled.fetch_add(1, Ordering::SeqCst) + 1 == 2 * RING {
+                    full.notify_one();
+                }
+                Ok::<_, Infallible>(item)
+            })
+        };
+        let shutdown = Shutdown::new();
+        let stopping = shutdown.clone();
+        let reading = tokio::spawn(async move {
+            let mut threads = threads;
+            threads.read(items, "bounded", &stopping, |_| None).await;
+            threads
+        });
+        full.notified().await;
+        shutdown.cancel();
+        let mut threads = reading.await.expect("the loop stops reading");
+        // The rings go while every thread still holds its first delivery: what they hold must
+        // be handled all the same.
+        threads.let_go();
+        gate.add_permits(100);
+        threads.crew.join().await;
+        let pulled = pulled.load(Ordering::SeqCst);
+        assert!(pulled <= READ_AHEAD, "read {pulled} ahead of held handlers");
+        assert_eq!(
+            handled.load(Ordering::SeqCst),
+            pulled,
+            "a delivery read was not handled"
         );
     }
 }
