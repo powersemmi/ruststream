@@ -92,19 +92,25 @@ fn publishing() -> Origin {
     PUBLISHING.try_with(|origin| *origin).unwrap_or_default()
 }
 
-/// The harness a dispatch task runs under: which coordinator records it, and which broker's
-/// registration the delivery belongs to.
+/// The harness a dispatch task runs under: which coordinator records it, which broker's
+/// registration the delivery belongs to, and which subscription of the app it came through.
 #[derive(Clone)]
 pub(crate) struct HarnessScope {
     coordinator: Coordinator,
     scope_id: usize,
+    subscription: usize,
 }
 
 impl HarnessScope {
-    pub(crate) const fn new(coordinator: Coordinator, scope_id: usize) -> Self {
+    pub(crate) const fn new(
+        coordinator: Coordinator,
+        scope_id: usize,
+        subscription: usize,
+    ) -> Self {
         Self {
             coordinator,
             scope_id,
+            subscription,
         }
     }
 }
@@ -236,6 +242,7 @@ pub(crate) fn record_batch(name: &str, deliveries: Vec<Delivered>) {
     let _ = HARNESS.try_with(|scope| {
         scope.coordinator.record(Record {
             scope_id: scope.scope_id,
+            subscription: scope.subscription,
             name: name.to_owned(),
             deliveries,
             panicked: false,
@@ -318,6 +325,9 @@ pub(crate) struct Delivered {
 pub(crate) struct Record {
     /// The broker's registration index in the app, used to scope assertions per broker.
     pub(crate) scope_id: usize,
+    /// The subscription of the app the call came through, as [`TestHooks::subscribed`] numbered
+    /// it: what tells apart two subscriptions that report one name.
+    pub(crate) subscription: usize,
     /// The subscription (channel) name the message arrived on.
     pub(crate) name: String,
     /// What this call carried: exactly one delivery for a single-message handler, one per
@@ -366,9 +376,10 @@ fn settled_as(settle: Option<HandlerResult>) -> Outcome {
 /// dispatch task starts, so the read path never races the write.
 pub(crate) struct TestHooks {
     coordinator: OnceLock<Coordinator>,
-    /// Every subscription the app mounts, as `(broker scope, subscription name)`, noted while the
-    /// app is built. A live settle waits only for what reaches one of these: a publish to a name
-    /// nothing in the app consumes has nothing to be handled by.
+    /// Every subscription the app mounts, as `(broker scope, subscription name)` in mount order,
+    /// noted while the app is built; a subscription's position here is its identity. A live settle
+    /// waits only for what reaches one of these: a publish to a name nothing in the app consumes
+    /// has nothing to be handled by.
     subscriptions: Mutex<Vec<(usize, String)>>,
 }
 
@@ -381,20 +392,32 @@ impl TestHooks {
         }
     }
 
-    /// Notes that the broker registered at `scope_id` carries a subscription named `name`.
-    pub(crate) fn subscribed(&self, scope_id: usize, name: &str) {
-        self.subscriptions
+    /// Notes that the broker registered at `scope_id` carries a subscription named `name`, and
+    /// returns the subscription's identity. Two subscriptions may report one name (two
+    /// subscriptions on one Pulsar topic both report the topic), so the name does not identify
+    /// one.
+    pub(crate) fn subscribed(&self, scope_id: usize, name: &str) -> usize {
+        let mut subscriptions = self
+            .subscriptions
             .lock()
-            .expect("test hooks subscriptions mutex poisoned")
-            .push((scope_id, name.to_owned()));
+            .expect("test hooks subscriptions mutex poisoned");
+        subscriptions.push((scope_id, name.to_owned()));
+        subscriptions.len() - 1
     }
 
-    /// Every subscription the app mounts, as `(broker scope, subscription name)`.
-    pub(crate) fn subscriptions(&self) -> Vec<(usize, String)> {
+    /// Every subscription the app mounts, in mount order.
+    pub(crate) fn subscriptions(&self) -> Vec<LiveSubscription> {
         self.subscriptions
             .lock()
             .expect("test hooks subscriptions mutex poisoned")
-            .clone()
+            .iter()
+            .enumerate()
+            .map(|(id, (scope_id, name))| LiveSubscription {
+                id,
+                scope_id: *scope_id,
+                name: name.clone(),
+            })
+            .collect()
     }
 
     /// Installs the coordinator for a harness run. Idempotent; a second install is ignored.
@@ -461,9 +484,10 @@ struct Published {
     message: RawMessage,
 }
 
-/// A subscription a live settle waits on: the broker it belongs to, and its name.
+/// A subscription a live settle waits on: its identity, the broker it belongs to, and its name.
 #[derive(Clone, Debug)]
 pub(crate) struct LiveSubscription {
+    pub(crate) id: usize,
     pub(crate) scope_id: usize,
     pub(crate) name: String,
 }
@@ -481,11 +505,10 @@ struct Unsettled {
     expected: usize,
 }
 
-/// A redelivery a broker accepted to make at `due`, to the subscription `name` of the broker
-/// registered at `scope_id`.
+/// A redelivery a broker accepted to make at `due`, to the subscription of the app numbered
+/// `subscription`.
 struct DueRedelivery {
-    scope_id: usize,
-    name: String,
+    subscription: usize,
     due: tokio::time::Instant,
 }
 
@@ -746,16 +769,15 @@ impl Coordinator {
             .collect()
     }
 
-    /// Notes that the broker registered at `scope_id` accepted to redeliver a delivery of the
-    /// subscription `name` after `delay` on its own timer.
-    pub(crate) fn expect_redelivery(&self, scope_id: usize, name: &str, delay: Duration) {
+    /// Notes that a broker accepted to redeliver a delivery of the subscription numbered
+    /// `subscription` after `delay` on its own timer.
+    pub(crate) fn expect_redelivery(&self, subscription: usize, delay: Duration) {
         self.inner
             .redeliveries
             .lock()
             .expect("coordinator redeliveries mutex poisoned")
             .push(DueRedelivery {
-                scope_id,
-                name: name.to_owned(),
+                subscription,
                 due: tokio::time::Instant::now() + delay,
             });
         self.inner.notify.notify_waiters();
@@ -802,11 +824,7 @@ impl Coordinator {
             for (index, subscription) in subscriptions.iter().enumerate() {
                 expected[index] += redeliveries
                     .iter()
-                    .filter(|due| {
-                        due.scope_id == subscription.scope_id
-                            && due.name == subscription.name
-                            && due.due <= now
-                    })
+                    .filter(|due| due.subscription == subscription.id && due.due <= now)
                     .count();
             }
         }
@@ -819,11 +837,11 @@ impl Coordinator {
             .iter()
             .zip(expected)
             .find_map(|(subscription, expected)| {
+                // Counted by identity, not by name: two subscriptions reporting one name each owe
+                // the publish, and one handling it settles nothing for the other.
                 let handled = records
                     .iter()
-                    .filter(|record| {
-                        record.scope_id == subscription.scope_id && record.name == subscription.name
-                    })
+                    .filter(|record| record.subscription == subscription.id)
                     .map(|record| record.deliveries.len())
                     .sum::<usize>();
                 (handled < expected).then(|| Unsettled {
@@ -996,11 +1014,12 @@ mod tests {
             .collect()
     }
 
-    /// One acknowledged delivery to the subscription `name` of the broker at `scope_id`.
-    fn handled(scope_id: usize, name: &str) -> Record {
+    /// One acknowledged delivery through `subscription`.
+    fn handled(subscription: &LiveSubscription) -> Record {
         Record {
-            scope_id,
-            name: name.to_owned(),
+            scope_id: subscription.scope_id,
+            subscription: subscription.id,
+            name: subscription.name.clone(),
             deliveries: vec![Delivered {
                 raw: Bytes::from_static(b"{}"),
                 settle: Some(HandlerResult::Ack),
@@ -1024,11 +1043,18 @@ mod tests {
         }
     }
 
-    fn subscription(scope_id: usize, name: &str) -> LiveSubscription {
-        LiveSubscription {
-            scope_id,
-            name: name.to_owned(),
-        }
+    /// The subscriptions of an app, as `(broker scope, name)` in mount order, each with the
+    /// identity its position gives it.
+    fn mounted(subscriptions: &[(usize, &str)]) -> Vec<LiveSubscription> {
+        subscriptions
+            .iter()
+            .enumerate()
+            .map(|(id, (scope_id, name))| LiveSubscription {
+                id,
+                scope_id: *scope_id,
+                name: (*name).to_owned(),
+            })
+            .collect()
     }
 
     /// Two connected brokers, standing for two registrations of one app: what a paired
@@ -1063,7 +1089,7 @@ mod tests {
     async fn send(coordinator: &Coordinator, consuming: usize, broker: &u8, name: &str) {
         let ((), origin) = paired(broker, async {}).await;
         in_harness_scope(
-            Some(HarnessScope::new(coordinator.clone(), consuming)),
+            Some(HarnessScope::new(coordinator.clone(), consuming, 0)),
             publishing_to(origin, async {
                 let msg: OutgoingMessage<'_> = OutgoingMessage::new(name, b"{}".as_slice());
                 PipelinePublish::capture(&msg).sent();
@@ -1077,7 +1103,7 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(fan_out, exact);
-        let subscriptions = [subscription(0, "orders.*")];
+        let subscriptions = mounted(&[(0, "orders.*")]);
         send(&coordinator, 0, &brokers.east, "orders.eu").await;
         send(&coordinator, 0, &brokers.east, "audit").await;
 
@@ -1089,7 +1115,7 @@ mod tests {
             ("orders.*", 0, 1),
         );
 
-        coordinator.record(handled(0, "orders.*"));
+        coordinator.record(handled(&subscriptions[0]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
@@ -1098,7 +1124,7 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(exact, exact);
-        let subscriptions = [subscription(0, "orders"), subscription(1, "orders")];
+        let subscriptions = mounted(&[(0, "orders"), (1, "orders")]);
         // A handler on east holding a publisher paired against west publishes to west.
         send(&coordinator, 0, &brokers.west, "orders").await;
         let owed = coordinator
@@ -1107,10 +1133,10 @@ mod tests {
         assert_eq!((owed.handled, owed.expected), (0, 1));
 
         // A delivery on east, the broker that holds the publisher, is not the one it owes.
-        coordinator.record(handled(0, "orders"));
+        coordinator.record(handled(&subscriptions[0]));
         assert!(coordinator.owed(&subscriptions, &routing).is_some());
 
-        coordinator.record(handled(1, "orders"));
+        coordinator.record(handled(&subscriptions[1]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
         assert_eq!(coordinator.published(1, "orders").len(), 1);
         assert!(coordinator.published(0, "orders").is_empty());
@@ -1122,20 +1148,16 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(fan_out, exact);
-        let subscriptions = [
-            subscription(0, "orders.*"),
-            subscription(1, "orders.eu"),
-            subscription(1, "orders.us"),
-        ];
+        let subscriptions = mounted(&[(0, "orders.*"), (1, "orders.eu"), (1, "orders.us")]);
         for _ in 0..EACH {
             send(&coordinator, 0, &brokers.west, "orders.eu").await;
             send(&coordinator, 1, &brokers.east, "orders.us").await;
         }
         for _ in 0..EACH - 1 {
-            coordinator.record(handled(1, "orders.eu"));
-            coordinator.record(handled(0, "orders.*"));
+            coordinator.record(handled(&subscriptions[1]));
+            coordinator.record(handled(&subscriptions[0]));
         }
-        coordinator.record(handled(1, "orders.eu"));
+        coordinator.record(handled(&subscriptions[1]));
         let owed = coordinator
             .owed(&subscriptions, &routing)
             .expect("the last us is still on its way to the wildcard");
@@ -1144,7 +1166,7 @@ mod tests {
             ("orders.*", EACH - 1, EACH),
         );
 
-        coordinator.record(handled(0, "orders.*"));
+        coordinator.record(handled(&subscriptions[0]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
@@ -1153,17 +1175,17 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(fan_out, exact);
-        let subscriptions = [
-            subscription(0, "orders.*"),
-            subscription(0, "orders.eu"),
-            subscription(1, "orders.eu"),
-            subscription(1, "orders.us"),
-        ];
+        let subscriptions = mounted(&[
+            (0, "orders.*"),
+            (0, "orders.eu"),
+            (1, "orders.eu"),
+            (1, "orders.us"),
+        ]);
         // Both go to east, which delivers eu to both of its subscriptions and us to the wildcard.
         send(&coordinator, 0, &brokers.east, "orders.eu").await;
         send(&coordinator, 0, &brokers.east, "orders.us").await;
-        coordinator.record(handled(0, "orders.*"));
-        coordinator.record(handled(0, "orders.eu"));
+        coordinator.record(handled(&subscriptions[0]));
+        coordinator.record(handled(&subscriptions[1]));
         let owed = coordinator
             .owed(&subscriptions, &routing)
             .expect("the wildcard is owed both publishes");
@@ -1172,7 +1194,7 @@ mod tests {
             ("orders.*", 1, 2),
         );
 
-        coordinator.record(handled(0, "orders.*"));
+        coordinator.record(handled(&subscriptions[0]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
@@ -1181,10 +1203,10 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(most_specific, exact);
-        let subscriptions = [subscription(0, "orders.*"), subscription(0, "orders.eu")];
+        let subscriptions = mounted(&[(0, "orders.*"), (0, "orders.eu")]);
         send(&coordinator, 0, &brokers.east, "orders.eu").await;
         send(&coordinator, 0, &brokers.east, "orders.us").await;
-        coordinator.record(handled(0, "orders.eu"));
+        coordinator.record(handled(&subscriptions[1]));
         let owed = coordinator
             .owed(&subscriptions, &routing)
             .expect("us is the wildcard's");
@@ -1193,7 +1215,25 @@ mod tests {
             ("orders.*", 0, 1),
         );
 
-        coordinator.record(handled(0, "orders.*"));
+        coordinator.record(handled(&subscriptions[0]));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+    }
+
+    #[tokio::test]
+    async fn two_subscriptions_reporting_one_name_each_owe_the_publish() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(exact, exact);
+        // Two subscriptions on one topic, both reporting the topic's name.
+        let subscriptions = mounted(&[(0, "orders"), (0, "orders")]);
+        send(&coordinator, 0, &brokers.east, "orders").await;
+        coordinator.record(handled(&subscriptions[0]));
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("the second subscription has not handled the publish");
+        assert_eq!((owed.handled, owed.expected), (0, 1));
+
+        coordinator.record(handled(&subscriptions[1]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
@@ -1202,8 +1242,8 @@ mod tests {
         let brokers = Brokers::new();
         let coordinator = brokers.coordinator();
         let routing = brokers_routing(exact, exact);
-        let subscriptions = [subscription(0, "orders")];
-        in_harness_scope(Some(HarnessScope::new(coordinator.clone(), 0)), async {
+        let subscriptions = mounted(&[(0, "orders")]);
+        in_harness_scope(Some(HarnessScope::new(coordinator.clone(), 0, 0)), async {
             let msg: OutgoingMessage<'_> = OutgoingMessage::new("orders", b"{}".as_slice());
             PipelinePublish::capture(&msg).sent();
         })

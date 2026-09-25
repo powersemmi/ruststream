@@ -158,6 +158,9 @@ pub(crate) struct Delivery<C = ()> {
     /// This broker's registration index, used to scope recorded deliveries per broker.
     #[cfg(feature = "testing")]
     pub(crate) scope_id: usize,
+    /// The subscription of the app this delivery comes through, identifying its records.
+    #[cfg(feature = "testing")]
+    pub(crate) subscription: usize,
 }
 
 impl<C> Delivery<C> {
@@ -176,6 +179,8 @@ impl<C> Delivery<C> {
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
             scope_id: scope.scope_id(),
+            #[cfg(feature = "testing")]
+            subscription: scope.subscription(),
         }
     }
 
@@ -191,6 +196,8 @@ impl<C> Delivery<C> {
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
             scope_id: 0,
+            #[cfg(feature = "testing")]
+            subscription: 0,
         }
     }
 
@@ -763,6 +770,7 @@ async fn dispatch<H, M, C, St>(
         if let Some(coordinator) = delivery.hooks.coordinator() {
             coordinator.record(Record {
                 scope_id: delivery.scope_id,
+                subscription: delivery.subscription,
                 name: name.to_owned(),
                 deliveries: vec![Delivered {
                     raw: Bytes::copy_from_slice(msg.payload()),
@@ -889,6 +897,7 @@ async fn run_batch<H, M, C, St>(
             if let Some(coordinator) = delivery.hooks.coordinator() {
                 coordinator.record(Record {
                     scope_id: delivery.scope_id,
+                    subscription: delivery.subscription,
                     name: name.to_owned(),
                     deliveries: payloads
                         .into_iter()
@@ -919,7 +928,7 @@ fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
         .hooks
         .coordinator()
         .cloned()
-        .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id))
+        .map(|coordinator| HarnessScope::new(coordinator, delivery.scope_id, delivery.subscription))
 }
 
 /// Settles one delivery by `outcome`, logging an ack / nack failure without propagating it.
@@ -1170,7 +1179,7 @@ where
         if accepted.is_ok()
             && let Some(coordinator) = delivery.hooks.coordinator()
         {
-            coordinator.expect_redelivery(delivery.scope_id, name, delay);
+            coordinator.expect_redelivery(delivery.subscription, delay);
         }
         return accepted;
     }
