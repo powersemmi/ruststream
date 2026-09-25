@@ -652,19 +652,24 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             ..
         } = scope;
         self.after_startup.extend(startup_hooks);
-        // The scope id is the index this broker will occupy once pushed below; the harness uses it
-        // to scope recorded deliveries per broker.
-        let scope_delivery = Arc::new(ScopeDelivery::new(
-            self.continuations.clone(),
-            #[cfg(feature = "testing")]
-            self.test_hooks.clone(),
-            #[cfg(feature = "testing")]
-            self.brokers.len(),
-        ));
         let (starters, handlers) = sink.into_parts();
         for (bound, meta) in starters.into_iter().zip(handlers) {
             let slot = Arc::clone(&slot);
-            let scope_delivery = scope_delivery.clone();
+            // A live harness waits only for what reaches a subscription the app mounts, and tells
+            // two subscriptions reporting one name apart by the identity noted here.
+            #[cfg(feature = "testing")]
+            let subscription = self.test_hooks.subscribed(self.brokers.len(), &meta.name);
+            // The scope id is the index this broker will occupy once pushed below; the harness
+            // uses it to scope recorded deliveries per broker.
+            let scope_delivery = Arc::new(ScopeDelivery::new(
+                self.continuations.clone(),
+                #[cfg(feature = "testing")]
+                self.test_hooks.clone(),
+                #[cfg(feature = "testing")]
+                self.brokers.len(),
+                #[cfg(feature = "testing")]
+                subscription,
+            ));
             self.starters.push(Box::new(move |state, shutdown| {
                 let connected = slot
                     .lock()
@@ -673,9 +678,6 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
                     .expect("brokers connect before subscriptions open");
                 bound(connected, state, scope_delivery, shutdown)
             }));
-            // A live harness waits only for what reaches a subscription the app mounts.
-            #[cfg(feature = "testing")]
-            self.test_hooks.subscribed(self.brokers.len(), &meta.name);
             // The scope's label is the name of this broker's AsyncAPI server, so every channel
             // the scope mounts can say which server it lives on.
             self.handlers.push(HandlerMetadata {
