@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream, StreamExt};
+#[cfg(test)]
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
@@ -28,6 +29,7 @@ use super::batch::BatchHandler;
 use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
+use super::main_runtime::MainRuntime;
 use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
@@ -235,7 +237,11 @@ pub(crate) struct Delivery<C = ()> {
     /// that must outlive the delivery (a continuation, a delayed retry copy) runs here, wherever
     /// the handler itself runs, and a handler reaches it through
     /// [`Context::main_runtime`](super::context::Context::main_runtime).
-    pub(crate) runtime: Handle,
+    pub(crate) runtime: MainRuntime,
+    /// On a dedicated thread (`threads(n)`), the thread's own tracker: the thread waits for what
+    /// its deliveries left behind before it ends, so a shutdown does not drop it with the
+    /// thread's runtime. `None` everywhere else.
+    pub(crate) thread_tasks: Option<TaskTracker>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -261,7 +267,8 @@ impl<C> Delivery<C> {
             declaration,
             tasks: scope.tasks().clone(),
             // A subscription opens inside the app's startup, on the runtime it connected on.
-            runtime: Handle::current(),
+            runtime: MainRuntime::current(),
+            thread_tasks: None,
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -279,7 +286,8 @@ impl<C> Delivery<C> {
             retry,
             declaration: RetryDeclaration::new(),
             tasks,
-            runtime: test_runtime(),
+            runtime: MainRuntime::new(test_runtime()),
+            thread_tasks: None,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -325,6 +333,39 @@ impl<C> Delivery<C> {
     #[cfg(test)]
     pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self::detached(None, tasks)
+    }
+}
+
+impl<C> Delivery<C> {
+    /// Spawns work the delivery leaves behind (a continuation, a post-settle hook, the timer of a
+    /// deferred copy) on the runtime the delivery runs on, tracked so a graceful shutdown waits
+    /// for it.
+    pub(crate) fn spawn_after<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        match &self.thread_tasks {
+            None => drop(self.tasks.spawn(work)),
+            Some(own) => drop(self.tasks.spawn(own.track_future(work))),
+        }
+    }
+
+    /// The same context for one dedicated thread, whose leftovers `own` tracks as well.
+    fn on_thread(&self, own: TaskTracker) -> Self {
+        Self {
+            retry: self.retry.as_ref().map(|retry| DeferredRetry {
+                publisher: Arc::clone(&retry.publisher),
+                destination: retry.destination.clone(),
+            }),
+            declaration: self.declaration.clone(),
+            tasks: self.tasks.clone(),
+            runtime: self.runtime.clone(),
+            thread_tasks: Some(own),
+            #[cfg(feature = "testing")]
+            hooks: Arc::clone(&self.hooks),
+            #[cfg(feature = "testing")]
+            scope_id: self.scope_id,
+        }
     }
 }
 
@@ -661,8 +702,9 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count, workers.by_key, || {
+    let threads = Threads::start(&shared.name, workers.count, workers.by_key, |own| {
         let shared = Arc::clone(&shared);
+        let delivery = shared.delivery.on_thread(own);
         // One encode buffer per thread, for the reason the sequential loop has one.
         let mut encode = BytesMut::new();
         async move |msg: S::Message| {
@@ -673,7 +715,7 @@ where
                 &mut encode,
                 &shared.name,
                 &shared.state,
-                &shared.delivery,
+                &delivery,
                 &shared.failure,
             )
             .await;
@@ -879,8 +921,9 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count, false, || {
+    let threads = Threads::start(&shared.name, workers.count, false, |own| {
         let shared = Arc::clone(&shared);
+        let delivery = shared.delivery.on_thread(own);
         let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
         async move |batch: Vec<S::Message>| {
@@ -891,7 +934,7 @@ where
                 &mut encode,
                 &shared.name,
                 &shared.state,
-                &shared.delivery,
+                &delivery,
                 &shared.failure,
             )
             .await;
@@ -1032,7 +1075,7 @@ async fn dispatch<H, M, C, St>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.tasks.spawn_on(after, &delivery.runtime);
+            delivery.spawn_after(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -1044,7 +1087,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.tasks.spawn_on(fut, &delivery.runtime);
+            delivery.spawn_after(fut);
         }
     }
     #[cfg(feature = "testing")]
@@ -1122,7 +1165,7 @@ async fn run_batch<H, M, C, St>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.tasks.spawn_on(fut, &delivery.runtime);
+                    delivery.spawn_after(fut);
                 }
             }
         }
@@ -1593,9 +1636,9 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
-    // The timer runs on the app's runtime, wherever the handler ran: on a dedicated thread it
-    // would wait behind the thread's computation and die with the thread's runtime.
-    delivery.runtime.spawn(async move {
+    // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
+    // graceful shutdown waits for it and the copy leaves before the broker closes.
+    delivery.spawn_after(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });

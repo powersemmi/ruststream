@@ -181,7 +181,8 @@ async fn handle_batch(orders: &[Order]) -> Vec<HandlerOutcome> {
 It chains off any outcome, `drop().and_after(..)` included. The continuation is **at-most-once**:
 the message is already settled when it runs, so a panic or a crash never redelivers it. Work whose
 loss must redeliver the message does not go here - settle by outcome and let the broker retry.
-Graceful shutdown drains continuations still in flight.
+Graceful shutdown drains continuations still in flight. A continuation runs where the delivery ran:
+on a `threads(n)` subscription, on the delivery's thread.
 
 ## Settings the mount site fills in
 
@@ -233,8 +234,10 @@ are the only clauses, and `batch(n)` is mount-site only. `workers(n)` is concurr
 the app's runtime; a handler that computes takes `threads(n)` (or `threads(n, by_key)`): `n`
 dedicated threads of the subscription's own, each a current-thread runtime, where the handler
 runs from the first poll to the end. The two fill one position, so a subscription names one.
-From a `threads(n)` handler the app's runtime is reached only through `Ctx(main): Ctx<MainRuntime>`
-(or `ctx.main_runtime()`); a plain `tokio::spawn` stays on the handler's thread. A service with
+What a `threads(n)` delivery leaves behind (a `tokio::spawn`, an `and_after` continuation, an
+`after(..)` hook, a `retry_after` timer) stays on its thread; work goes to the app's runtime only
+through `main.spawn(fut)` or `main.run(fut).await` on `Ctx(main): Ctx<MainRuntime>` (or
+`ctx.main_runtime()`). A service with
 `threads(n)` sizes the app's runtime for its I/O: `#[ruststream::app(flavor = "current_thread")]`
 or `#[ruststream::app(worker_threads = 2)]`. `start_at` forces the position on
 every startup and takes a value of the broker's own position type; without it the subscription

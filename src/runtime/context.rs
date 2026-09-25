@@ -15,13 +15,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use bytes::BytesMut;
-use tokio::runtime::Handle;
 
 use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
 use super::handler::{HandlerOutcome, HandlerResult};
+use super::main_runtime::MainRuntime;
 use super::shutdown::Shutdown;
 
 /// Where one delivery's header map comes from.
@@ -286,10 +286,9 @@ impl<'a, C, S> Context<'a, C, S> {
         self.name
     }
 
-    /// The handle of the runtime the app runs on: the one explicit way from a handler on
-    /// dedicated threads (`threads(n)`) back to the app's runtime. A task spawned through it runs
-    /// there and must be `Send`; a plain `tokio::spawn` stays on the runtime the handler runs on.
-    /// On any other placement the handler already runs on this runtime.
+    /// The runtime the app runs on: the one explicit way from a handler on dedicated threads
+    /// (`threads(n)`) to send work to the app's runtime (see [`MainRuntime`]). On any other
+    /// placement the handler already runs there.
     ///
     /// # Examples
     ///
@@ -306,7 +305,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// }
     /// ```
     #[must_use]
-    pub fn main_runtime(&self) -> &Handle {
+    pub fn main_runtime(&self) -> &MainRuntime {
         &self.delivery.runtime
     }
 

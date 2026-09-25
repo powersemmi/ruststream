@@ -207,13 +207,20 @@ fn render(_job: &Resize) {}
 
 async fn notify(_id: u64) {}
 
+async fn lookup(id: u64) -> u64 {
+    id
+}
+
 #[subscriber("images.resize", threads(8))]
 async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
     // Runs on one of the subscription's eight threads, from the first poll to the end.
     render(job);
-    // The one explicit way back to the app's runtime; what it sends must be `Send`.
+    // The explicit ways to the app's runtime; what they send must be `Send`.
     main.spawn(notify(job.id));
-    HandlerOutcome::ack()
+    match main.run(lookup(job.id)).await {
+        Ok(_) => HandlerOutcome::ack(),
+        Err(_) => HandlerOutcome::retry(),
+    }
 }
 
 #[ruststream::app(flavor = "current_thread")]
@@ -232,18 +239,24 @@ fn app() -> impl App {
   thread, so a key keeps its order. A delivery allocates nothing on its way, and under load it
   wakes no thread.
 - Decoding, the handler, encoding a reply and settling run on the thread the delivery was handed
-  to, and only there: a timer, a publish or a plain `tokio::spawn` in the handler stays on it.
-  The ways out are explicit: the app runtime's handle ([`Ctx<MainRuntime>`](MainRuntime), or
+  to, and only there, and so does everything the delivery leaves behind: a timer, a publish or a
+  plain `tokio::spawn` in the handler, an `and_after` continuation, an `after(..)` hook and the
+  timer of a `retry_after` copy. Work that belongs with the delivery (committing a transaction
+  the handler opened on the thread) stays with it. The ways out are explicit:
+  [`MainRuntime::spawn`] and [`MainRuntime::run`] (through `Ctx<MainRuntime>` or
   [`Context::main_runtime`]) and `spawn_blocking`. `block_in_place` panics there, as on any
-  current-thread runtime. Continuations (`and_after`, `after(..)`) and a delayed retry copy run on
-  the app's runtime.
+  current-thread runtime.
+- A broker's own tasks are another matter: the broker runs them on the runtime it connected on,
+  whichever thread publishes or settles (see [`Broker`](crate::Broker)).
 - `threads(..)` fills the position `workers(..)` fills, so a subscription names one of them. The
   mount site takes it as `.threads(n)` and `.threads_by_key(n)`, a router chain as
   [`Workers::threads`] and [`Workers::threads_keyed`]; a batch body takes whole batches per
   thread.
-- On shutdown the loop stops reading and the threads drain their rings within the
-  [`shutdown_timeout`](RustStream::shutdown_timeout). The read-ahead is at most `n` times nine
-  deliveries (one in hand and a ring of eight per thread).
+- On shutdown the loop stops reading and the threads drain their rings. A thread then waits for
+  what its deliveries left behind (continuations, hooks, pending retry timers) before it and its
+  runtime end, so a copy pending at shutdown is published before the broker closes; all of it
+  within the [`shutdown_timeout`](RustStream::shutdown_timeout). The read-ahead is at most `n`
+  times nine deliveries (one in hand and a ring of eight per thread).
 - Under [`TestApp`](crate::testing::TestApp) the threads run as `n` workers on the test's own
   runtime, like every other subscription.
 
@@ -260,11 +273,12 @@ service the lowest latency.
 [`HandlerOutcome::retry_after`] asks for the delivery back no sooner than a delay. A broker
 with native delayed redelivery gets the delay. On any other the runtime publishes a copy back
 to the subscription after the delay and drops the original, with the framework's
-[`RETRY_COUNT_HEADER`] incremented; that copy is at most once over the delay window. A graceful
-shutdown waits for a pending copy within the [`shutdown_timeout`](RustStream::shutdown_timeout),
-so it is published before the broker closes. The timeout is unset by default, so a shutdown
-waits out the longest pending delay; set one when delays run long. A zero delay publishes the
-copy at once, on the dispatch path, as `retry()` does. The
+[`RETRY_COUNT_HEADER`] incremented; that copy is at most once over the delay window. The delay's
+timer runs where the delivery ran, and a graceful shutdown waits for it within the
+[`shutdown_timeout`](RustStream::shutdown_timeout), so a copy pending at shutdown is published
+before the broker closes. The timeout is unset by default, so a shutdown waits out the longest
+pending delay; set one when delays run long. A zero delay publishes the copy at once, on the
+dispatch path, as `retry()` does. The
 publisher it leaves through is on every registration already, from the broker's default
 policy. `.out_retry(policy)` replaces it, and the steps after it are the slot steps,
 `.codec(..)` and `.transform(..)`. The copy lends its bytes rather than handing them over, so

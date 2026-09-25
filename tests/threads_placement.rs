@@ -14,9 +14,8 @@ use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::pin::pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::Order;
 use futures::{Stream, StreamExt};
@@ -28,6 +27,7 @@ use ruststream::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::Notify;
 use tokio::time::timeout;
 
 /// What the app runtime's threads are named: no other thread in the process carries it.
@@ -58,6 +58,7 @@ struct Trace {
     after_timer: String,
     spawned: String,
     on_main: String,
+    spawned_on_main: String,
 }
 
 #[subscriber("jobs", threads(2), publish("traces"))]
@@ -67,13 +68,15 @@ async fn traced(job: &Order, Ctx(main): Ctx<MainRuntime>) -> Trace {
     let after_timer = here();
     // A plain spawn stays where the handler runs; the explicit route goes to the app's runtime.
     let spawned = tokio::spawn(async { here() }).await.unwrap_or_default();
-    let on_main = main.spawn(async { here() }).await.unwrap_or_default();
+    let on_main = main.run(async { here() }).await.unwrap_or_default();
+    let spawned_on_main = main.spawn(async { here() }).await.unwrap_or_default();
     Trace {
         id: job.id,
         start,
         after_timer,
         spawned,
         on_main,
+        spawned_on_main,
     }
 }
 
@@ -137,7 +140,11 @@ fn a_delivery_is_handled_on_a_dedicated_thread_alone() {
         );
         assert!(
             trace.on_main.starts_with(APP_THREADS),
-            "the main-runtime task ran elsewhere: {trace:?}"
+            "the work run on the main runtime ran elsewhere: {trace:?}"
+        );
+        assert!(
+            trace.spawned_on_main.starts_with(APP_THREADS),
+            "the task spawned on the main runtime ran elsewhere: {trace:?}"
         );
         threads.insert(trace.start.clone());
     }
@@ -221,17 +228,33 @@ fn a_key_stays_on_one_thread_and_in_order() {
 }
 
 /// What the continuation tests share with their handler: where a continuation reports the thread
-/// it ran on.
+/// it ran on, and the signal that the handler has returned.
 struct Report {
     publisher: MemoryPublisher,
+    handled: Notify,
 }
 
-/// Registers an `and_after` continuation and an `after` hook, each reporting its thread.
+impl Report {
+    fn new(broker: &MemoryBroker) -> Arc<Self> {
+        Arc::new(Self {
+            publisher: broker.publisher(),
+            handled: Notify::new(),
+        })
+    }
+}
+
+/// How long a continuation waits before it reports: long enough to still be pending when the
+/// test shuts the app down right after the handler returned.
+const LATER: Duration = Duration::from_millis(200);
+
+/// Registers an `and_after` continuation and an `after` hook, each reporting its thread once
+/// [`LATER`] has passed.
 #[subscriber("continued", threads(1))]
 async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> HandlerOutcome {
     let id = job.id;
     let publisher = ctx.state().publisher.clone();
     ctx.after(HandlerOutcome::ack()).then(async move {
+        tokio::time::sleep(LATER).await;
         let reply = Placed { id, thread: here() };
         let _ = publisher
             .message(&reply)
@@ -240,7 +263,9 @@ async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> Handl
             .await;
     });
     let publisher = ctx.state().publisher.clone();
+    ctx.state().handled.notify_one();
     HandlerOutcome::ack().and_after(async move {
+        tokio::time::sleep(LATER).await;
         let reply = Placed {
             id: id + 1000,
             thread: here(),
@@ -253,19 +278,17 @@ async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> Handl
     })
 }
 
-/// Work that outlives the delivery runs on the app's runtime: a continuation must not wait
-/// behind the thread's computation, nor die with the thread's runtime.
-#[test]
-fn continuations_run_on_the_app_runtime() {
+/// Runs one delivery through [`continued`], shutting the app down as soon as the handler has
+/// returned when `early`, and returns the continuations' reports.
+fn continuations(early: bool) -> Vec<Placed> {
     let broker = MemoryBroker::new();
-    let seen: Vec<Placed> = app_runtime().block_on(async {
+    app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("continued.done");
         let mut replies = pin!(subscriber.stream());
-        let report = Arc::new(Report {
-            publisher: broker.publisher(),
-        });
+        let report = Report::new(&broker);
+        let state = Arc::clone(&report);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
-            .on_startup(async move |()| Ok::<_, Infallible>(report))
+            .on_startup(async move |()| Ok::<_, Infallible>(state))
             .with_broker(broker.clone(), |b| {
                 b.include(continued);
             });
@@ -277,16 +300,38 @@ fn continuations_run_on_the_app_runtime() {
             .publish()
             .await
             .expect("publish");
-        let seen = read(&mut replies, 2).await;
-        running.shutdown().await.expect("shutdown");
-        seen
-    });
-    for reply in &seen {
+        if early {
+            timeout(DEADLINE, report.handled.notified())
+                .await
+                .expect("the handler returns");
+            running.shutdown().await.expect("shutdown");
+            read(&mut replies, 2).await
+        } else {
+            let seen = read(&mut replies, 2).await;
+            running.shutdown().await.expect("shutdown");
+            seen
+        }
+    })
+}
+
+/// A continuation is the delivery's own work: it runs on the delivery's thread, beside whatever
+/// the handler left there (a transaction it opened, say).
+#[test]
+fn continuations_run_on_the_delivery_thread() {
+    for reply in continuations(false) {
         assert!(
-            reply.thread.starts_with(APP_THREADS),
-            "a continuation ran off the app's runtime: {reply:?}"
+            reply.thread.starts_with("continued/"),
+            "a continuation left the delivery's thread: {reply:?}"
         );
     }
+}
+
+/// A thread does not end while a continuation it owns is pending: shutdown waits for it, as it
+/// waits for the continuations of `workers(n)`.
+#[test]
+fn a_continuation_pending_at_shutdown_completes() {
+    let seen = continuations(true);
+    assert_eq!(seen.len(), 2, "both continuations report: {seen:?}");
 }
 
 /// A subscription whose deliveries report no native delayed redelivery, so a `retry_after` takes
@@ -358,43 +403,64 @@ impl<M: IncomingMessage> IncomingMessage for UnsettledMessage<M> {
     }
 }
 
-/// How long the computing delivery holds its thread at most.
-const COMPUTATION: Duration = Duration::from_secs(5);
+/// How long the computing delivery holds its thread.
+const COMPUTATION: Duration = Duration::from_secs(1);
 
-/// Defers order 1; computes on order 2 until the test says the copy of order 1 arrived, or for
-/// [`COMPUTATION`] at most.
+/// What the retry tests share with their handler: the signal that order 1 was deferred.
+#[derive(Default)]
+struct Deferred {
+    handled: Notify,
+}
+
+/// Defers order 1 by `50 ms`; computes on order 2 for [`COMPUTATION`], holding the thread the way
+/// a computation does: its runtime turns no timer meanwhile.
 #[subscriber(CopiedSubscription::new(), threads(1))]
-async fn retried(order: &Order, ctx: &mut Context<'_, (), Arc<AtomicBool>>) -> HandlerOutcome {
+async fn retried(order: &Order, ctx: &mut Context<'_, (), Arc<Deferred>>) -> HandlerOutcome {
     if order.id == 1 {
+        ctx.state().handled.notify_one();
         return HandlerOutcome::retry_after(Duration::from_millis(50));
     }
-    let copied = ctx.state();
-    let started = std::time::Instant::now();
-    // Holds the thread the way a computation does: its runtime turns no timer meanwhile.
-    while !copied.load(Ordering::SeqCst) && started.elapsed() < COMPUTATION {
-        thread::sleep(Duration::from_millis(1));
+    thread::sleep(COMPUTATION);
+    HandlerOutcome::ack()
+}
+
+/// The same deferral with no concurrency clause, for the `workers(n)` counterpart.
+#[subscriber(CopiedSubscription::new())]
+async fn retried_open(order: &Order, ctx: &mut Context<'_, (), Arc<Deferred>>) -> HandlerOutcome {
+    if order.id == 1 {
+        ctx.state().handled.notify_one();
+        return HandlerOutcome::retry_after(Duration::from_millis(50));
     }
     HandlerOutcome::ack()
 }
 
-/// The delayed copy of a `retry_after` leaves on time while the delivery's thread computes: its
-/// timer runs on the app's runtime, not behind the computation.
-#[test]
-fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
+/// Publishes `orders` to [`retried`] and returns when the copy of order 1 arrived, measured from
+/// the moment the handler deferred it; `shut` shuts the app down right after the deferral.
+fn copy_arrival(orders: &[u32], shut: bool) -> Option<Duration> {
+    copy_arrival_through(orders, shut, true)
+}
+
+/// [`copy_arrival`] on dedicated threads or, without `threads`, on `workers(2)`.
+fn copy_arrival_through(orders: &[u32], shut: bool, threads: bool) -> Option<Duration> {
     let broker = MemoryBroker::new();
-    let copied = Arc::new(AtomicBool::new(false));
-    let arrived = app_runtime().block_on(async {
+    app_runtime().block_on(async {
         let mut copy_subscriber = broker.subscribe("copies");
         let mut arrivals = pin!(copy_subscriber.stream());
-        let state = Arc::clone(&copied);
+        let deferred = Arc::new(Deferred::default());
+        let state = Arc::clone(&deferred);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
             .with_broker(broker.clone(), |b| {
-                b.include(retried).out_retry(Publish);
+                if threads {
+                    b.include(retried).out_retry(Publish);
+                } else {
+                    b.include(retried_open.workers(nonzero!(2)))
+                        .out_retry(Publish);
+                }
             });
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
-        for id in [1, 2] {
+        for &id in orders {
             publisher
                 .message(&Order { id })
                 .to("retried")
@@ -402,15 +468,45 @@ fn a_delayed_retry_copy_does_not_wait_for_the_thread() {
                 .await
                 .expect("publish");
         }
-        // Well under the computation: a copy that waited for the thread arrives after it.
-        let arrived = timeout(COMPUTATION / 2, arrivals.next()).await.is_ok();
-        copied.store(true, Ordering::SeqCst);
-        running.shutdown().await.expect("shutdown");
+        timeout(DEADLINE, deferred.handled.notified())
+            .await
+            .expect("the handler defers order 1");
+        let since = Instant::now();
+        let running = if shut {
+            running.shutdown().await.expect("shutdown");
+            None
+        } else {
+            Some(running)
+        };
+        let arrived = timeout(DEADLINE, arrivals.next())
+            .await
+            .ok()
+            .map(|_| since.elapsed());
+        if let Some(running) = running {
+            running.shutdown().await.expect("shutdown");
+        }
         arrived
-    });
+    })
+}
+
+/// The deferred copy's timer is the delivery's own work: it runs on the delivery's thread, so a
+/// computation holding the thread holds the copy back too.
+#[test]
+fn a_delayed_retry_copy_waits_for_the_thread() {
+    let arrived = copy_arrival(&[1, 2], false).expect("the copy arrives");
     assert!(
-        arrived,
-        "the retry copy waited for the thread's computation to end"
+        arrived >= COMPUTATION / 2,
+        "the copy left before the thread's computation ended: {arrived:?}"
+    );
+}
+
+/// A thread does not end while a retry timer it owns is pending: shutdown waits for the timer,
+/// and the copy is published before the broker closes.
+#[test]
+fn a_retry_copy_pending_at_shutdown_is_published() {
+    assert!(
+        copy_arrival(&[1], true).is_some(),
+        "the copy pending at shutdown was lost"
     );
 }
 
@@ -437,9 +533,7 @@ fn a_batch_is_handled_on_a_dedicated_thread() {
     let seen: Vec<Placed> = app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("batched.done");
         let mut replies = pin!(subscriber.stream());
-        let report = Arc::new(Report {
-            publisher: broker.publisher(),
-        });
+        let report = Report::new(&broker);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(report))
             .with_broker(broker.clone(), |b| {
@@ -463,4 +557,14 @@ fn a_batch_is_handled_on_a_dedicated_thread() {
             "the batch ran off the subscription's threads: {reply:?}"
         );
     }
+}
+
+/// The same shutdown contract on `workers(n)`: a retry timer pending at shutdown is waited for,
+/// within the shutdown timeout, before the broker closes.
+#[test]
+fn a_retry_copy_pending_at_shutdown_is_published_by_workers() {
+    assert!(
+        copy_arrival_through(&[1], true, false).is_some(),
+        "the copy pending at shutdown was lost"
+    );
 }

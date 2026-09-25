@@ -144,8 +144,9 @@ use parse::{SubscriberArgs, doc_description};
 /// deliveries (or batches) are handled on `n` dedicated threads of its own, each running a
 /// current-thread runtime, so the computation holds up none of the app runtime's threads.
 /// `threads(n, by_key)` keeps a key on one thread. A subscription names `workers(..)` or
-/// `threads(..)`, not both; the handler reaches the app's runtime through a
-/// `Ctx(main): Ctx<MainRuntime>` parameter.
+/// `threads(..)`, not both. What the delivery leaves behind (continuations, hooks, a retry timer)
+/// stays on its thread; the handler sends work to the app's runtime through the `spawn` and `run`
+/// methods of a `Ctx(main): Ctx<MainRuntime>` parameter.
 ///
 /// ```ignore
 /// #[subscriber("images.resize", threads(8))]

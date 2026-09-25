@@ -36,6 +36,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error};
 
 use super::{Shutdown, Turn, lane_of};
@@ -337,7 +338,8 @@ pub(super) struct Threads<Item> {
 
 impl<Item: Send + 'static> Threads<Item> {
     /// Starts `count` threads for `subscription`, each draining its ring through the handler
-    /// `each` builds for it on the thread. Everything that can fail happens here, before the
+    /// `each` builds for it, handed the thread's own tracker: what the handler spawns through it
+    /// the thread waits for before it ends. Everything that can fail happens here, before the
     /// subscription's loop runs: a runtime or a thread that cannot start refuses the subscription.
     pub(super) fn start<Each, Handle>(
         subscription: &str,
@@ -346,7 +348,7 @@ impl<Item: Send + 'static> Threads<Item> {
         mut each: Each,
     ) -> Result<Self, StartThreadError>
     where
-        Each: FnMut() -> Handle,
+        Each: FnMut(TaskTracker) -> Handle,
         Handle: AsyncFnMut(Item) + Send + 'static,
     {
         let signals = Arc::new(Signals::new(count));
@@ -363,11 +365,20 @@ impl<Item: Send + 'static> Threads<Item> {
                 })?;
             let (producer, consumer) = RingBuffer::new(RING);
             let signals = Arc::clone(&signals);
-            let handle = each();
-            crew.0
-                .push(start_thread(subscription, index, runtime, move || {
-                    work(signals, index, consumer, handle)
-                })?);
+            let own = TaskTracker::new();
+            let handle = each(own.clone());
+            crew.0.push(start_thread(
+                subscription,
+                index,
+                runtime,
+                move || async move {
+                    work(signals, index, consumer, handle).await;
+                    // The ring is drained; what its deliveries left behind (a continuation, a
+                    // hook, a retry timer) finishes here before the thread and its runtime go.
+                    own.close();
+                    own.wait().await;
+                },
+            )?);
             rings.push(producer);
         }
         Ok(Self {
@@ -548,7 +559,7 @@ mod tests {
         let handled = Arc::new(AtomicUsize::new(0));
         let pulled = Arc::new(AtomicUsize::new(0));
         let full = Arc::new(Notify::new());
-        let threads = Threads::start("bounded", 2, false, || {
+        let threads = Threads::start("bounded", 2, false, |_own| {
             let (gate, handled) = (Arc::clone(&gate), Arc::clone(&handled));
             async move |_item: u32| {
                 gate.acquire().await.expect("the gate stays open").forget();
@@ -595,7 +606,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_thread_that_dies_stops_the_loop() {
         for keyed in [false, true] {
-            let threads = Threads::start("dying", 1, keyed, || {
+            let threads = Threads::start("dying", 1, keyed, |_own| {
                 async move |item: u32| {
                     assert!(item > 0, "the first delivery takes the thread down");
                 }

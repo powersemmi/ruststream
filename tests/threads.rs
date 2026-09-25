@@ -34,7 +34,7 @@ const CONCURRENCY_DEADLINE: Duration = Duration::from_secs(5);
 /// harness that is the test's own.
 #[subscriber("where")]
 async fn on_main(_order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
-    if ctx.main_runtime().id() == Handle::current().id() {
+    if ctx.main_runtime().as_handle().id() == Handle::current().id() {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::drop()
@@ -59,10 +59,12 @@ async fn the_context_hands_out_the_app_runtime() {
         .settled(HandlerOutcome::ack());
 }
 
-/// The same through the extractor, with no context parameter.
+/// The same through the extractor, with no context parameter: work run on the main runtime
+/// hands its output back to the handler.
 #[subscriber("extracted")]
 async fn extracted(_order: &Order, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
-    if main.id() == Handle::current().id() {
+    let answer = main.run(async { 40 + 2 }).await;
+    if main.as_handle().id() == Handle::current().id() && answer.ok() == Some(42) {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::drop()
@@ -101,7 +103,7 @@ async fn mixed(
     Ctx(main): Ctx<MainRuntime>,
     Ctx(len): Ctx<PayloadLen>,
 ) -> HandlerOutcome {
-    if main.id() == Handle::current().id() && len > 0 {
+    if main.as_handle().id() == Handle::current().id() && len > 0 {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::drop()
@@ -134,7 +136,7 @@ async fn the_extractor_hands_out_the_app_runtime_beside_broker_keys() {
 #[subscriber("crunch", threads(4))]
 async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
     ctx.state().wait().await;
-    if ctx.main_runtime().id() == Handle::current().id() {
+    if ctx.main_runtime().as_handle().id() == Handle::current().id() {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::drop()
@@ -145,7 +147,7 @@ async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> Handle
 #[subscriber("crunch")]
 async fn crunch_open(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
     ctx.state().wait().await;
-    if ctx.main_runtime().id() == Handle::current().id() {
+    if ctx.main_runtime().as_handle().id() == Handle::current().id() {
         HandlerOutcome::ack()
     } else {
         HandlerOutcome::drop()
