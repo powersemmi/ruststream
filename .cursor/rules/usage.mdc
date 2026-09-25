@@ -239,7 +239,11 @@ What a `threads(n)` delivery leaves behind (a `tokio::spawn`, an `and_after` con
 through `main.spawn(fut)` or `main.run(fut).await` on `Ctx(main): Ctx<MainRuntime>` (or
 `ctx.main_runtime()`). A service with
 `threads(n)` sizes the app's runtime for its I/O: `#[ruststream::app(flavor = "current_thread")]`
-or `#[ruststream::app(worker_threads = 2)]`. `start_at` forces the position on
+or `#[ruststream::app(worker_threads = 2)]`. The `poll-diagnostics` feature finds the handlers
+that belong on `threads(n)`: every subscription samples its handler's time in `poll` and warns
+when the average crosses the threshold; `.poll_diagnostics(PollDiagnostics::new().threshold(..))`
+on `RustStream`, before `with_broker`, tunes it, and `metrics.observe_poll_diagnostics(&d)` or
+`otel.observe_poll_diagnostics(&d)` exports it. `start_at` forces the position on
 every startup and takes a value of the broker's own position type; without it the subscription
 opens at the broker's default. A conditional default (apply only when no stored cursor exists for
 the group) belongs on the broker's own subscription descriptor.

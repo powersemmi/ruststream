@@ -79,6 +79,11 @@
 //! | `ruststream.message.payload.size` | histogram | published payload sizes |
 //! | `ruststream.batch.size` | histogram | decoded batch sizes handed to batch handlers |
 //! | `ruststream.app.state` | observable gauge | the lifecycle state, from [`Otel::observe_health`] |
+//! | `ruststream.handler.poll.average` | observable gauge | moving average of a handler's time in one poll, from [`Otel::observe_poll_diagnostics`] |
+//! | `ruststream.handler.poll.p99` | observable gauge | its 99th percentile |
+//! | `ruststream.handler.poll.samples` | observable counter | polls timed |
+//!
+//! The three `ruststream.handler.poll.*` instruments exist with the `poll-diagnostics` feature.
 //!
 //! The duration histograms carry the bucket boundaries the messaging semantic conventions advise
 //! (5 ms to 10 s); [`OtelBuilder::view`] overrides them per instrument, or makes a histogram
