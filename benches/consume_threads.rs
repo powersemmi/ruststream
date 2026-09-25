@@ -9,9 +9,10 @@
     clippy::needless_pass_by_value
 )]
 //! Consuming a small JSON body on four dedicated threads: the loop on the app's runtime hands
-//! each delivery to a thread's ring, and the thread decodes it, runs the handler and acks. The
-//! count covers every thread of the process, the dedicated ones included; what the handoff costs
-//! in time is the wall-clock bench's to show.
+//! each delivery to a thread's ring, and the thread decodes it, runs the handler and acks. Both
+//! tools count the measured frame's thread alone, so the numbers are what a delivery costs the
+//! app's runtime: the read and the handoff. What the dedicated threads spend is theirs, and
+//! what the handoff costs in time is the wall-clock bench's to show.
 
 mod common;
 
@@ -34,7 +35,7 @@ fn app(messages: usize) -> Pending {
     })
 }
 
-#[library_benchmark(config = common::config_ungated())]
+#[library_benchmark(config = common::config(0, 130))]
 #[bench::first(app(1))]
 #[bench::base(app(MESSAGES))]
 #[bench::twice(app(2 * MESSAGES))]
