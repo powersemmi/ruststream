@@ -201,8 +201,8 @@ pub trait TestableBroker: Send + Sync {
 ///
 /// # Examples
 ///
-/// A queue broker's in-process transport keeps what reaches a queue with no consumer yet, as the
-/// server does, and says so:
+/// A queue broker's in-process transport keeps what reaches an existing queue with no consumer yet,
+/// as the server does, and says so:
 ///
 /// ```
 /// use ruststream::testing::Backlog;
@@ -221,9 +221,11 @@ pub enum Backlog {
     /// Publish/subscribe: a subscription receives only what is published after it opens (Core
     /// NATS, Redis pub/sub, `ZeroMQ` PUB/SUB, the memory broker).
     Missed,
-    /// A queue or a log: what was published before the subscription opened is kept, and the
-    /// subscription receives it first, in publish order (SQS, `RabbitMQ` queues, `JetStream`
-    /// streams, Redis streams and lists, Kafka read from the earliest offset).
+    /// A queue or a log that exists before the publish: what was published before the subscription
+    /// opened is kept, and the subscription receives it first, in publish order (SQS, `RabbitMQ`
+    /// queues declared ahead of their consumer, `JetStream` streams, Redis streams and lists, Kafka
+    /// read from the earliest offset). A queue the subscription itself declares does not exist when
+    /// the earlier message is published, so the server drops it and the answer is `Missed`.
     Delivered,
 }
 

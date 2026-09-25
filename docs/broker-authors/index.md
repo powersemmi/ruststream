@@ -1088,8 +1088,10 @@ every message of a queue to every subscriber of that queue is a fan-out, not a q
 sharing one queue then each run the whole stream, and a test that counts what was processed sees
 the work done and reports no error.
 
-**Keep what the real broker keeps.** A queue or a log holds what was published to it before anyone
-subscribed, and a subscription that opens later receives it first. Dropping it in process makes a
+**Keep what the real broker keeps.** A queue or a log that already exists holds what was published
+to it before anyone subscribed, and a subscription that opens later receives it first. A queue the
+subscription declares for itself does not exist at that publish, so the server drops the message,
+and the answer is `Backlog::Missed`. Dropping it in process makes a
 test of a service that starts after its producers pass while production handles a backlog the test
 never saw. Declare the behaviour by returning `Backlog::Delivered` from `TestableBroker::backlog`,
 and `run_suite` checks that your transport delivers that message. The default is
