@@ -498,10 +498,11 @@ impl<B: Broker + 'static, Cx: Send + Sync + 'static> RetryPairing<B, Cx> {
     }
 }
 
-/// What a broker scope hands every subscription it starts.
+/// What a broker scope hands each subscription it starts.
 ///
 /// The deferred retry is a registration's own, so it is not here: this is what the whole scope
-/// shares with each of its subscriptions.
+/// shares with each of its subscriptions, plus, under the `testing` feature, which subscription
+/// of the app it is.
 pub(crate) struct ScopeDelivery {
     /// App-wide tracker for post-settle continuations, so a graceful shutdown drains them.
     tasks: TaskTracker,
@@ -511,6 +512,10 @@ pub(crate) struct ScopeDelivery {
     /// This broker's registration index, scoping recorded deliveries per broker.
     #[cfg(feature = "testing")]
     scope_id: usize,
+    /// The subscription of the app this context was built for, identifying its records apart
+    /// from those of a subscription that reports the same name.
+    #[cfg(feature = "testing")]
+    subscription: usize,
 }
 
 impl ScopeDelivery {
@@ -519,6 +524,7 @@ impl ScopeDelivery {
         tasks: TaskTracker,
         #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
         #[cfg(feature = "testing")] scope_id: usize,
+        #[cfg(feature = "testing")] subscription: usize,
     ) -> Self {
         Self {
             tasks,
@@ -526,6 +532,8 @@ impl ScopeDelivery {
             hooks,
             #[cfg(feature = "testing")]
             scope_id,
+            #[cfg(feature = "testing")]
+            subscription,
         }
     }
 
@@ -544,6 +552,12 @@ impl ScopeDelivery {
     #[cfg(feature = "testing")]
     pub(crate) fn scope_id(&self) -> usize {
         self.scope_id
+    }
+
+    /// The subscription of the app this context was built for.
+    #[cfg(feature = "testing")]
+    pub(crate) fn subscription(&self) -> usize {
+        self.subscription
     }
 }
 
@@ -760,6 +774,8 @@ mod tests {
             TaskTracker::new(),
             #[cfg(feature = "testing")]
             Arc::new(TestHooks::detached()),
+            #[cfg(feature = "testing")]
+            0,
             #[cfg(feature = "testing")]
             0,
         )

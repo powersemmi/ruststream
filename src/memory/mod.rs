@@ -117,6 +117,8 @@ use std::{
 };
 
 #[cfg(feature = "testing")]
+use crate::testing::Backlog;
+#[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
@@ -1044,6 +1046,12 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
     /// wildcard token is a [`MemoryPattern`] subscription, every other one an exact name.
     fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
         self.state.routing().routes(destination, subscriptions)
+    }
+
+    /// A subscription receives what is published after it opens, on either log mode: a retaining
+    /// broker keeps its log for a seek to replay, not for a subscription to start from.
+    fn backlog(&self) -> Backlog {
+        Backlog::Missed
     }
 }
 

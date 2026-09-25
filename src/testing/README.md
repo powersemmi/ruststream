@@ -5,7 +5,8 @@ harness unchanged. [`TestApp::start`] connects every broker of the app in proces
 server; [`TestApp::start_live`] connects them to a running stand. The harness records what each
 handler received (raw and decoded), how it settled, and what it published, and a test addresses
 each broker by its production type: `tb.broker::<KafkaBroker>()`. The same test body runs in
-both modes; only the start call differs.
+both modes; only the start call differs. Both start the app in the service's own order:
+`on_startup` first, then the brokers, the subscriptions and `after_startup`.
 
 In process, every broker connects through its [`InProcess`] transition instead of `connect`.
 The transition yields the broker's own connected form over an in-process transport, so the
@@ -14,7 +15,9 @@ is part of each broker's contract. A broker crate provides it under its `testing
 service enables that feature in its `[dev-dependencies]`, and a broker without it makes
 [`TestApp::start`] fail with [`TestError::NoTransport`] naming the broker. The transport reads
 its settings from the production broker and has none of its own, and it never succeeds where
-the real broker fails. [`MemoryBroker`](crate::memory::MemoryBroker) has no server, so its
+the real broker fails. It keeps what the real broker keeps, too: a queue or a log holds what was
+published before a subscription opened, and the broker declares it through
+[`TestableBroker::backlog`]. [`MemoryBroker`](crate::memory::MemoryBroker) has no server, so its
 in-process mode is simply its `connect`. A broker author implements [`InProcess`] and
 [`TestableBroker`] and registers the broker with
 [`register_testable_broker!`](crate::register_testable_broker); the
@@ -201,7 +204,9 @@ publish its broker delivers to it, and every redelivery that fell due, and no ha
 running. Which subscriptions a publish reaches is the broker's own routing, which the broker
 answers through [`TestableBroker::routes`]: an equal name for [`MemoryBroker`](crate::memory::MemoryBroker),
 every matching subscription for a broker that fans out, the one it picks for a broker that picks
-one. A subscription of another broker never owes it. The wait is bounded: ten seconds by
+one. A subscription of another broker never owes it. Each subscription counts what it handled
+itself, so two subscriptions reporting one name (two subscriptions on one topic) each owe the
+publish. The wait is bounded: ten seconds by
 default, [`start_live_within`](TestApp::start_live_within) sets another, and past it the call
 fails with [`TestError::NotSettled`] naming the subscription it was waiting on. A live
 [`advance`](TestApp::advance) lets the time pass for real, because the delay is the broker's own

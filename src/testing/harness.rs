@@ -348,10 +348,10 @@ fn clock_is_paused() -> bool {
 }
 
 impl<State: Send + Sync + 'static> TestApp<State> {
-    /// Starts the harness by running the app's real `on_startup` (the existing state and its
-    /// publishers bind to the in-process transports). Each broker connects through its
-    /// [`InProcess`](super::InProcess) transition, which performs no I/O; the rest of startup is
-    /// the production one.
+    /// Starts the harness in the service's own startup order: the app's real `on_startup`, then
+    /// each broker's connect, then the subscriptions, then `after_startup`. Each broker connects
+    /// through its [`InProcess`](super::InProcess) transition, which performs no I/O; the rest of
+    /// startup is the production one, so an `on_startup` that fails leaves no broker connected.
     ///
     /// # Errors
     ///
@@ -365,13 +365,37 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     where
         A: App<State = State>,
     {
-        let (coordinator, entries, parts) = Self::setup(app).await?;
-        Self::run_startup(coordinator, entries, Mode::InProcess, parts).await
+        let (coordinator, parts) = Self::prepare(app);
+        let TestParts {
+            brokers,
+            starters,
+            state_init,
+            after_startup,
+            shutdown_timeout,
+            continuations,
+            ..
+        } = parts;
+        let registered = registrations(brokers)?;
+        // The service produces its state before any broker connects, so a failing `on_startup`
+        // leaves nothing connected, and the producer never sees a connected broker.
+        let state = state_init().await.map_err(TestError::Startup)?;
+        let entries = connect_in_process(registered, &coordinator).await?;
+        Self::spawn(SpawnArgs {
+            coordinator,
+            entries,
+            mode: Mode::InProcess,
+            starters,
+            after_startup,
+            continuations,
+            shutdown_timeout,
+            state: Arc::new(state),
+        })
+        .await
     }
 
     /// Starts the harness against running brokers: each broker of the app connects through its
-    /// ordinary `connect`, and the rest of startup is the production one, the app's real
-    /// `on_startup` included.
+    /// ordinary `connect`, and the rest of startup is the production one, in its order: the app's
+    /// real `on_startup` runs before any broker connects.
     ///
     /// The test body is the one an in-process test runs; only this call differs. What differs
     /// underneath is how long things take. A publish, [`settle`](Self::settle) and
@@ -461,63 +485,23 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         if clock_is_paused() {
             return Err(TestError::PausedClock);
         }
-        let mut parts = app.into_test_parts();
-        let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
-        parts.test_hooks.install(coordinator.clone());
-        let mut entries = Vec::with_capacity(parts.brokers.len());
-        for RegisteredBroker { lifecycle, label } in std::mem::take(&mut parts.brokers) {
-            let broker = label
-                .clone()
-                .unwrap_or_else(|| lifecycle.broker_name().to_owned());
-            // The registration is not needed to run live; an untyped handle publishes through it.
-            let registration = registration_of(lifecycle.broker_type());
-            let lifecycle = match lifecycle.connect().await {
-                Ok(lifecycle) => lifecycle,
-                Err(source) => {
-                    shut_down(entries).await;
-                    return Err(TestError::Connect { broker, source });
-                }
-            };
-            entries.push(BrokerEntry {
-                label,
-                lifecycle,
-                registration,
-            });
-        }
-        let subscriptions = parts
-            .test_hooks
-            .subscriptions()
-            .into_iter()
-            .map(|(scope_id, name)| LiveSubscription { scope_id, name })
-            .collect();
-        let mode = Mode::Live {
-            deadline,
-            subscriptions,
-        };
-        Self::run_startup(coordinator, entries, mode, parts).await
-    }
-
-    /// Runs the app's `on_startup` and completes the start.
-    async fn run_startup(
-        coordinator: Coordinator,
-        entries: Vec<BrokerEntry>,
-        mode: Mode,
-        parts: TestParts<State>,
-    ) -> Result<Self, TestError> {
+        let (coordinator, parts) = Self::prepare(app);
         let TestParts {
+            brokers,
             starters,
             state_init,
             after_startup,
             shutdown_timeout,
             continuations,
-            ..
+            test_hooks,
         } = parts;
-        let state = match state_init().await {
-            Ok(state) => state,
-            Err(err) => {
-                shut_down(entries).await;
-                return Err(TestError::Startup(err));
-            }
+        // As in process: the state first, the brokers after it.
+        let state = state_init().await.map_err(TestError::Startup)?;
+        let entries = connect_live(brokers).await?;
+        let subscriptions = test_hooks.subscriptions();
+        let mode = Mode::Live {
+            deadline,
+            subscriptions,
         };
         Self::spawn(SpawnArgs {
             coordinator,
@@ -548,14 +532,17 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         A: App<State = State>,
         F: FnOnce(&TestBrokers<'_>) -> State,
     {
-        let (coordinator, entries, parts) = Self::setup(app).await?;
+        let (coordinator, parts) = Self::prepare(app);
         let TestParts {
+            brokers,
             starters,
             after_startup,
             shutdown_timeout,
             continuations,
             ..
         } = parts;
+        let registered = registrations(brokers)?;
+        let entries = connect_in_process(registered, &coordinator).await?;
         let state = build(&TestBrokers { entries: &entries });
         Self::spawn(SpawnArgs {
             coordinator,
@@ -570,57 +557,16 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         .await
     }
 
-    /// Installs a fresh coordinator into the app's hooks slot, connects each broker through its
-    /// registered in-process transition, and installs the coordinator into each transport.
-    /// Returns the coordinator, the broker entries, and the remaining parts (the brokers field is
-    /// now consumed and empty).
-    async fn setup<A>(
-        app: A,
-    ) -> Result<(Coordinator, Vec<BrokerEntry>, TestParts<State>), TestError>
+    /// Takes the app apart and installs a fresh coordinator into its hooks slot, before anything
+    /// of it runs.
+    fn prepare<A>(app: A) -> (Coordinator, TestParts<State>)
     where
         A: App<State = State>,
     {
-        let mut parts = app.into_test_parts();
+        let parts = app.into_test_parts();
         let coordinator = Coordinator::new(DEFAULT_MAX_STEPS);
         parts.test_hooks.install(coordinator.clone());
-        // Every broker is looked up before any connects, so an app with one unregistered broker
-        // fails without having half-started the others.
-        let mut registered = Vec::with_capacity(parts.brokers.len());
-        for broker in std::mem::take(&mut parts.brokers) {
-            // Why this is a startup error rather than a compile error: `RustStream` erases the
-            // types of its brokers when they are registered, so `TestApp::start` receives an app
-            // whose broker types it cannot name in a bound.
-            let registration = registration_of(broker.lifecycle.broker_type())
-                .ok_or_else(|| TestError::NoTransport(broker.lifecycle.broker_name().to_owned()))?;
-            registered.push((broker, registration));
-        }
-        let mut entries = Vec::with_capacity(registered.len());
-        for (RegisteredBroker { lifecycle, label }, registration) in registered {
-            let broker = label
-                .clone()
-                .unwrap_or_else(|| lifecycle.broker_name().to_owned());
-            let lifecycle = match lifecycle
-                .connect_in_process(registration.transition())
-                .await
-            {
-                Ok(lifecycle) => lifecycle,
-                Err(source) => {
-                    shut_down(entries).await;
-                    return Err(TestError::Connect { broker, source });
-                }
-            };
-            let entry = BrokerEntry {
-                label,
-                lifecycle,
-                registration: Some(registration),
-            };
-            entry
-                .testable()
-                .expect("a registration resolves the connected form its own transition produced")
-                .install_coordinator(coordinator.clone());
-            entries.push(entry);
-        }
-        Ok((coordinator, entries, parts))
+        (coordinator, parts)
     }
 
     /// Spawns the dispatch loops against the connected brokers and runs `after_startup`,
@@ -1068,6 +1014,86 @@ async fn shut_down(entries: Vec<BrokerEntry>) {
             );
         }
     }
+}
+
+/// Looks up the registration of every broker of the app, before any of them connects: an app with
+/// one unregistered broker fails without having half-started the others.
+fn registrations(
+    brokers: Vec<RegisteredBroker>,
+) -> Result<Vec<(RegisteredBroker, &'static TestableRegistration)>, TestError> {
+    brokers
+        .into_iter()
+        .map(|broker| {
+            // Why this is a startup error rather than a compile error: `RustStream` erases the
+            // types of its brokers when they are registered, so `TestApp::start` receives an app
+            // whose broker types it cannot name in a bound.
+            let registration = registration_of(broker.lifecycle.broker_type())
+                .ok_or_else(|| TestError::NoTransport(broker.lifecycle.broker_name().to_owned()))?;
+            Ok((broker, registration))
+        })
+        .collect()
+}
+
+/// Connects each broker through its registered in-process transition, in registration order, and
+/// installs the coordinator into each transport. A broker that fails to connect shuts down the
+/// ones connected before it.
+async fn connect_in_process(
+    registered: Vec<(RegisteredBroker, &'static TestableRegistration)>,
+    coordinator: &Coordinator,
+) -> Result<Vec<BrokerEntry>, TestError> {
+    let mut entries = Vec::with_capacity(registered.len());
+    for (RegisteredBroker { lifecycle, label }, registration) in registered {
+        let broker = label
+            .clone()
+            .unwrap_or_else(|| lifecycle.broker_name().to_owned());
+        let lifecycle = match lifecycle
+            .connect_in_process(registration.transition())
+            .await
+        {
+            Ok(lifecycle) => lifecycle,
+            Err(source) => {
+                shut_down(entries).await;
+                return Err(TestError::Connect { broker, source });
+            }
+        };
+        let entry = BrokerEntry {
+            label,
+            lifecycle,
+            registration: Some(registration),
+        };
+        entry
+            .testable()
+            .expect("a registration resolves the connected form its own transition produced")
+            .install_coordinator(coordinator.clone());
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+/// Connects each broker through its ordinary `connect`, in registration order. A broker that
+/// fails to connect shuts down the ones connected before it.
+async fn connect_live(brokers: Vec<RegisteredBroker>) -> Result<Vec<BrokerEntry>, TestError> {
+    let mut entries = Vec::with_capacity(brokers.len());
+    for RegisteredBroker { lifecycle, label } in brokers {
+        let broker = label
+            .clone()
+            .unwrap_or_else(|| lifecycle.broker_name().to_owned());
+        // The registration is not needed to run live; an untyped handle publishes through it.
+        let registration = registration_of(lifecycle.broker_type());
+        let lifecycle = match lifecycle.connect().await {
+            Ok(lifecycle) => lifecycle,
+            Err(source) => {
+                shut_down(entries).await;
+                return Err(TestError::Connect { broker, source });
+            }
+        };
+        entries.push(BrokerEntry {
+            label,
+            lifecycle,
+            registration,
+        });
+    }
+    Ok(entries)
 }
 
 /// The pieces [`TestApp::spawn`] needs to start the dispatch loops.
