@@ -365,6 +365,8 @@ impl<C> Delivery<C> {
             hooks: Arc::clone(&self.hooks),
             #[cfg(feature = "testing")]
             scope_id: self.scope_id,
+            #[cfg(feature = "testing")]
+            subscription: self.subscription,
         }
     }
 }
