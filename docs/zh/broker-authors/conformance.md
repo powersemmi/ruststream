@@ -68,6 +68,10 @@ use ruststream::conformance::harness;
 `SubscriptionSource` 建立一个订阅，发布一条消息，由该订阅收到并 ack。最后是消费 `self` 的
 `shutdown`，它产出终态见证值。
 
+发布、ack，以及投递支持时的 `nack_after`，都在另一个线程上的单线程运行时里执行，这个运行时在检查继续
+之前就停止。延迟的消息必须在延迟结束后回来：检查以此要求 Broker 的内部任务运行在它连接时所在的运行时上
+（见[编写一个 Broker](index.md)）。发布者和投递会移到那个线程，所以二者都是 `'static`。
+
 已连接形态的持有者在关闭之后再用它，代码在编译期就通不过。留在运行时的规则是**别名句柄契约**，
 这项检查验证的正是它：关闭之前创建的发布者，在关闭之后必须返回错误，不得对着一条已经关闭的
 连接悄悄成功。
@@ -121,7 +125,7 @@ async fn passes_lifecycle() {
 
 | 套件 | 要求 | 断言内容 |
 |---|---|---|
-| `capabilities::request_reply` | `RequestReply` | 请求带着一个可用的 `reply-to` 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误 |
+| `capabilities::request_reply` | `RequestReply` | 请求带着一个可用的 `reply-to` 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误；在前一个请求来自一个已经停止的运行时之后，新的请求仍然得到回复 |
 | `capabilities::batches` | `BatchSubscriber` | 每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里 |
 | `capabilities::transactions` | `TransactionalPublisher` | 事务里的任何内容在 `commit` 之前都不可见，`commit` 按顺序发布整个缓冲区，`abort` 把它丢弃；误用会返回错误：没有打开事务就 `commit` / `abort`，或者已有事务打开时再次 `begin_transaction`（这必须让原事务保持不变） |
 | `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布 |

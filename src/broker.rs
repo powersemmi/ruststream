@@ -35,6 +35,42 @@ use std::{error::Error as StdError, future::Future};
 /// ladder: synchronous construction, `connect`, subscribe through the source, deliver, ack,
 /// `shutdown`, and the post-shutdown behaviour of aliased handles below.
 ///
+/// # Internal tasks run on the runtime the broker connected on
+///
+/// A task the broker starts on its own behalf (a delayed-redelivery timer, a reply dispatcher,
+/// a commit window) runs on the runtime [`connect`] ran on. The connected form keeps
+/// `tokio::runtime::Handle::current()` from `connect` and spawns every such task through it,
+/// whichever thread publishes, settles or requests. A handler on a dedicated thread publishes and
+/// settles from that thread's own runtime: a task spawned there waits behind the handler's
+/// computation and stops with that runtime, while the connection it serves lives on.
+/// [`conformance::harness::lifecycle`](crate::conformance::harness::lifecycle) publishes and
+/// settles with a delay from a runtime that stops at once, and
+/// [`conformance::capabilities::request_reply`](crate::conformance::capabilities::request_reply)
+/// requests from one; both then expect the work to complete.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// use tokio::runtime::Handle;
+/// use tokio::sync::mpsc::UnboundedSender;
+/// use tokio::time::sleep;
+///
+/// struct ConnectedExample {
+///     // Captured in `connect`.
+///     runtime: Handle,
+/// }
+///
+/// impl ConnectedExample {
+///     fn requeue_after(&self, back: UnboundedSender<Vec<u8>>, delivery: Vec<u8>, delay: Duration) {
+///         self.runtime.spawn(async move {
+///             sleep(delay).await;
+///             let _ = back.send(delivery);
+///         });
+///     }
+/// }
+/// # let _ = ConnectedExample::requeue_after;
+/// ```
+///
 /// # Shutdown is a type, not a flag
 ///
 /// [`ConnectedBroker::shutdown`] consumes the connected broker, so misuse by the owner of the

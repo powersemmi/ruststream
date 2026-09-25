@@ -21,7 +21,7 @@
 //! # }
 //! ```
 
-use std::{fmt, future::Future, time::Duration};
+use std::{fmt, future::Future, thread, time::Duration};
 
 use super::helpers::unique_subject;
 #[cfg(feature = "asyncapi")]
@@ -37,10 +37,18 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::StreamExt;
-use tokio::time::timeout;
+use tokio::{runtime, sync::oneshot, time::timeout};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
+/// The delay [`lifecycle`] settles with. Short, and still a real timer on every broker.
+const REDELIVERY_DELAY: Duration = Duration::from_millis(200);
+/// How long past the delay [`lifecycle`] waits for the redelivery: brokers whose delays have
+/// second granularity round the short delay up.
+const REDELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The message type a subscriber yields.
+type SubscriberMessage<S> = <S as Subscriber>::Message;
 
 /// Runs every scenario in the suite, panicking with a descriptive message on the first failure.
 ///
@@ -180,6 +188,14 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// created before the shutdown must error afterwards, never silently succeed against a dead
 /// connection.
 ///
+/// The publish and the settlements come from a current-thread runtime on a thread of its own,
+/// which stops before the suite goes on, the way a handler on a dedicated thread publishes and
+/// settles. Where the delivery offers
+/// [`nack_after`](IncomingMessage::nack_after), it is settled that way first and must come back
+/// once the delay runs out: a broker that ran the delay on the settling caller's runtime has lost
+/// it with that runtime. That is the rule that a broker's internal tasks run on the runtime it
+/// connected on (see [`Broker`]).
+///
 /// A descriptor that addresses its own retry copies is held to that address by
 /// [`redelivery_address`], a suite of its own:
 /// a publish there must reach the subscription that reported it, because that is what the runtime
@@ -192,7 +208,8 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// * `make_source` builds the broker's subscription descriptor for a subject (the macro-subscriber
 ///   path). The descriptor is `Clone`: it is configuration, and the mount rebuilds it per
 ///   registration, so a definition can be mounted on more than one broker.
-/// * `make_publisher` produces a publisher from the connected form.
+/// * `make_publisher` produces a publisher from the connected form. The publisher and the
+///   delivery move to the other runtime's thread, so both are `'static`.
 ///
 /// Run it from the broker crate against a real server, and a second time in process by wrapping
 /// the production broker in [`InProcessBroker`]. The subject it publishes under is unique per run
@@ -218,7 +235,8 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// # Panics
 ///
 /// Panics with a descriptive message if construction, connection, subscription, delivery, ack,
-/// shutdown, or the aliased-handle behaviour does not follow the contract.
+/// the delayed redelivery, shutdown, or the aliased-handle behaviour does not follow the
+/// contract.
 pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_broker: MkBroker,
     make_source: MkSrc,
@@ -229,7 +247,8 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Src: SubscriptionSource<Connected<B>> + Clone + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
-    Pub: Publisher,
+    SubscriberMessage<Src::Subscriber>: 'static,
+    Pub: Publisher + 'static,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
     let subject = unique_subject("conformance.lifecycle");
@@ -247,13 +266,20 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         .expect("subscription source must open against the connected form");
     let publisher = make_publisher(&connected);
 
-    publisher
-        .publish(
-            OutgoingMessage::new(&subject, b"lifecycle".as_slice()),
-            None,
-        )
-        .await
-        .expect("publish after connect failed");
+    // Published from a runtime that stops before the delivery is read, the way a handler on a
+    // dedicated thread publishes: what the publish left to finish runs on the broker's runtime.
+    let destination = subject.clone();
+    let publisher = on_foreign_runtime(async move || {
+        publisher
+            .publish(
+                OutgoingMessage::new(&destination, b"lifecycle".as_slice()),
+                None,
+            )
+            .await
+            .expect("publish after connect failed");
+        publisher
+    })
+    .await;
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "lifecycle").await;
@@ -262,12 +288,41 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         b"lifecycle",
         "subscription opened through SubscriptionSource must receive the publish",
     );
+    let msg = if msg.supports_nack_after() {
+        // Settled from a runtime that stops at once: the delay has to run out on the runtime the
+        // broker connected on, or the message never comes back.
+        on_foreign_runtime(async move || {
+            msg.nack_after(REDELIVERY_DELAY)
+                .await
+                .expect("a delayed nack the delivery offers must be accepted");
+        })
+        .await;
+        let again = timeout(REDELIVERY_DELAY + REDELIVERY_TIMEOUT, stream.next())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "lifecycle: a delayed nack settled from another runtime never came back; the \
+                     broker must run its internal tasks on the runtime it connected on",
+                )
+            })
+            .expect("lifecycle: stream ended before the delayed redelivery")
+            .unwrap_or_else(|err| panic!("lifecycle: stream yielded error: {err:?}"));
+        assert_eq!(
+            again.payload(),
+            b"lifecycle",
+            "a delayed nack must redeliver the same message",
+        );
+        again
+    } else {
+        msg
+    };
     // Ack must either succeed or be explicitly unsupported (a broker with no ack semantics, e.g.
-    // Core NATS). Any other ack error is a real failure.
-    match msg.ack().await {
+    // Core NATS). Any other ack error is a real failure. Settled from another runtime as well.
+    on_foreign_runtime(async move || match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-    }
+    })
+    .await;
 
     let _closed = connected
         .shutdown()
@@ -628,6 +683,43 @@ async fn published_log_observes_publishes<C: TestableBroker + Subscribe>(broker:
     assert_eq!(observed[0].payload(), b"first");
     assert_eq!(observed[1].payload(), b"second");
     broker.shutdown().await.expect("shutdown failed");
+}
+
+/// Runs `work` on a current-thread runtime of its own, on a thread of its own, and returns once
+/// that runtime has stopped.
+///
+/// This is where a handler on a dedicated thread publishes and settles from, so a broker that
+/// spawns an internal task onto the caller's runtime loses it here: by the time this returns, the
+/// runtime such a task would have landed on is gone. The caller's runtime keeps running while the
+/// work does, so a broker whose I/O is driven there is not starved by the wait.
+///
+/// # Panics
+///
+/// Panics when the runtime cannot be built or when `work` panics.
+pub(crate) async fn on_foreign_runtime<Output>(
+    work: impl AsyncFnOnce() -> Output + Send + 'static,
+) -> Output
+where
+    Output: Send + 'static,
+{
+    let (done, finished) = oneshot::channel();
+    thread::Builder::new()
+        .name("conformance-foreign-runtime".to_owned())
+        .spawn(move || {
+            let runtime = runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a current-thread runtime for the foreign caller must build");
+            let output = runtime.block_on(work());
+            // Stopped before the caller resumes, so whatever the broker left on this runtime is
+            // cancelled by the time the suite checks the work completed.
+            drop(runtime);
+            let _ = done.send(output);
+        })
+        .expect("the foreign caller's thread must start");
+    finished
+        .await
+        .expect("the work on the foreign runtime panicked; its message is above")
 }
 
 pub(crate) async fn expect_next<S, M, E>(stream: &mut S, label: &str) -> M

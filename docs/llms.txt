@@ -53,7 +53,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Broker authors
 
-- [Writing a broker](https://powersemmi.github.io/ruststream/latest/broker-authors/): the traits a broker crate implements, the lazy-startup contract and the in-process mode
+- [Writing a broker](https://powersemmi.github.io/ruststream/latest/broker-authors/): the traits a broker crate implements, the lazy-startup contract, the runtime a broker's own tasks run on and the in-process mode
 - [A worked example: NATS](https://powersemmi.github.io/ruststream/latest/broker-authors/example-nats/): a broker crate built step by step
 - [Conformance](https://powersemmi.github.io/ruststream/latest/broker-authors/conformance/): the harness that checks a broker against the contract
 - [Template contract](https://powersemmi.github.io/ruststream/latest/broker-authors/templates/): the `cargo generate` template a broker crate ships
