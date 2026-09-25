@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
+use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
@@ -151,6 +152,11 @@ pub(crate) struct Delivery<C = ()> {
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
+    /// The runtime the app connected its brokers on, captured when the subscription opens. Work
+    /// that must outlive the delivery (a continuation, a delayed retry copy) runs here, wherever
+    /// the handler itself runs, and a handler reaches it through
+    /// [`Context::main_runtime`](super::context::Context::main_runtime).
+    pub(crate) runtime: Handle,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -175,6 +181,8 @@ impl<C> Delivery<C> {
             retry,
             declaration,
             tasks: scope.tasks().clone(),
+            // A subscription opens inside the app's startup, on the runtime it connected on.
+            runtime: Handle::current(),
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -192,6 +200,7 @@ impl<C> Delivery<C> {
             retry,
             declaration: RetryDeclaration::new(),
             tasks,
+            runtime: test_runtime(),
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -238,6 +247,19 @@ impl<C> Delivery<C> {
     pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self::detached(None, tasks)
     }
+}
+
+/// The runtime a delivery context built by a unit test answers `main_runtime` with: the test's
+/// own where it runs inside one, and a shared idle one where a synchronous test builds a context.
+#[cfg(test)]
+fn test_runtime() -> Handle {
+    static IDLE: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime builds")
+    });
+    Handle::try_current().unwrap_or_else(|_| IDLE.handle().clone())
 }
 
 impl<C> fmt::Debug for Delivery<C> {

@@ -15,6 +15,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use bytes::BytesMut;
+use tokio::runtime::Handle;
 
 use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
@@ -283,6 +284,30 @@ impl<'a, C, S> Context<'a, C, S> {
     #[must_use]
     pub fn name(&self) -> &str {
         self.name
+    }
+
+    /// The handle of the runtime the app runs on: the one explicit way from a handler on
+    /// dedicated threads (`threads(n)`) back to the app's runtime. A task spawned through it runs
+    /// there and must be `Send`; a plain `tokio::spawn` stays on the runtime the handler runs on.
+    /// On any other placement the handler already runs on this runtime.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::IncomingMessage;
+    /// use ruststream::runtime::{Context, HandlerOutcome};
+    ///
+    /// async fn notify(_id: u64) {}
+    ///
+    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     // The notification leaves the handler's thread; the handler does not wait for it.
+    ///     ctx.main_runtime().spawn(notify(7));
+    ///     HandlerOutcome::ack()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn main_runtime(&self) -> &Handle {
+        &self.delivery.runtime
     }
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest

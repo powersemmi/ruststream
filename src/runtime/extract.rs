@@ -14,6 +14,7 @@ use std::fmt;
 use std::future::Future;
 
 use serde::de::DeserializeOwned;
+use tokio::runtime::Handle;
 use tracing::warn;
 
 use crate::ContextField;
@@ -190,9 +191,79 @@ where
 /// let extracted = Ctx::<Offset>(42);
 /// assert_eq!(extracted.0, 42);
 /// ```
-pub struct Ctx<K: ContextField>(pub K::Value);
+pub struct Ctx<K: CtxKey>(pub K::Value);
 
-impl<K: ContextField> fmt::Debug for Ctx<K>
+/// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
+/// per-delivery context, and [`MainRuntime`], which reads the handle of the app's runtime.
+///
+/// Sealed: a new key implements [`ContextField`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{CtxKey, MainRuntime};
+/// use tokio::runtime::Handle;
+///
+/// fn yields<K: CtxKey<Value = Handle>>() {}
+/// yields::<MainRuntime>();
+/// ```
+pub trait CtxKey: sealed::Sealed {
+    /// The owned value the extractor binds.
+    type Value: Send + 'static;
+}
+
+impl<K: ContextField> CtxKey for K {
+    type Value = K::Value;
+}
+
+impl CtxKey for MainRuntime {
+    type Value = Handle;
+}
+
+mod sealed {
+    use super::{ContextField, MainRuntime};
+
+    pub trait Sealed {}
+
+    impl<K: ContextField> Sealed for K {}
+
+    impl Sealed for MainRuntime {}
+}
+
+/// The [`Ctx`] key of the app runtime's handle: `Ctx(main): Ctx<MainRuntime>` binds the handle
+/// [`Context::main_runtime`] returns, on any broker and beside any broker key.
+///
+/// It is the one explicit way from a handler on dedicated threads (`threads(n)`) back to the
+/// app's runtime: a task spawned through the handle runs there and must be `Send`, while a plain
+/// `tokio::spawn` stays on the handler's thread. The `#[subscriber]` macro recognizes the key by
+/// its name when it projects the subscription's context type from the `Ctx` keys, so an alias of
+/// it is read as a broker key.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
+///
+/// #[derive(serde::Deserialize)]
+/// struct Job {
+///     id: u64,
+/// }
+///
+/// async fn notify(_id: u64) {}
+///
+/// #[subscriber("jobs")]
+/// async fn index(job: &Job, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
+///     main.spawn(notify(job.id));
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct MainRuntime;
+
+impl<K: CtxKey> fmt::Debug for Ctx<K>
 where
     K::Value: fmt::Debug,
 {
@@ -212,6 +283,20 @@ where
         ctx: &mut Context<'_, K::Context, S>,
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
         let value = K::default().read(ctx.cx_ref());
+        async move { Ok(Self(value)) }
+    }
+}
+
+impl<C, S> FromContext<C, S> for Ctx<MainRuntime>
+where
+    C: Send,
+    S: Sync,
+{
+    type Rejection = Infallible;
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+        let value = ctx.main_runtime().clone();
         async move { Ok(Self(value)) }
     }
 }

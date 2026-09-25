@@ -53,7 +53,7 @@ pub use batch::{batch_verdict, uniform_batch};
 pub use context::{After, Context};
 pub use dispatch::{RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
-pub use extract::{Ctx, FromContext, FromRef, Headers, State};
+pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, MainRuntime, State};
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{

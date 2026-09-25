@@ -81,11 +81,13 @@ fn context_type(func: &ItemFn) -> TokenStream2 {
 /// without a `&mut Context` parameter. Emitted as `<K as ContextField>::Context`, so the
 /// compiler resolves the type; further `Ctx` keys are checked against it by the extractor
 /// bounds. Purely syntactic (the last path segment `Ctx` with exactly one type argument): a
-/// type alias hides the shape and falls back to `()`.
+/// type alias hides the shape and falls back to `()`. `Ctx<MainRuntime>` reads no broker
+/// context and extracts under any, so it names none.
 fn inferred_context_type(func: &ItemFn) -> TokenStream2 {
     for arg in func.sig.inputs.iter().skip(1) {
         if let FnArg::Typed(PatType { ty, .. }) = arg
             && let Some(key) = ctx_extractor_key(ty)
+            && !is_main_runtime_key(key)
         {
             return quote!(<#key as ::ruststream::ContextField>::Context);
         }
@@ -195,6 +197,11 @@ fn message_pair_args(ty: &Type) -> Option<(&Type, &Type)> {
         return None;
     }
     Some((headers, payload))
+}
+
+/// Whether a `Ctx` key is the app runtime's handle, by the last segment of its path.
+fn is_main_runtime_key(key: &Type) -> bool {
+    matches!(key, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "MainRuntime"))
 }
 
 /// The key type `K` of a `Ctx<K>`-shaped parameter type, when the type has that shape.

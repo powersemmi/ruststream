@@ -39,10 +39,11 @@
 pub use crate::runtime::{
     App, AppInfo, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
     FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome, Headers, Input,
-    MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages, OutgoingMessageMetadata,
-    Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply, ReplyShape, Retry, Router,
-    RouterDef, RunningApp, RustStream, Serialized, SerializedReply, SerializedWire, Slot,
-    SoloDeserialized, State, SubscriberSettings, WireBytes, Workers, subscriber,
+    MainRuntime, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages,
+    OutgoingMessageMetadata, Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply,
+    ReplyShape, Retry, Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply,
+    SerializedWire, Slot, SoloDeserialized, State, SubscriberSettings, WireBytes, Workers,
+    subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
 // assembles the message itself. What still needs one - a publish transform, a middleware, or a
