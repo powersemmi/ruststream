@@ -167,6 +167,64 @@ pub trait TestableBroker: Send + Sync {
             .map(|(position, _)| position)
             .collect()
     }
+
+    /// What a subscription opened by name receives of the messages published to that name before
+    /// it opened, as the real broker answers it: [`Backlog::Missed`] for publish/subscribe,
+    /// [`Backlog::Delivered`] for a queue or a log that keeps them.
+    ///
+    /// The in-process transport behaves as declared, and
+    /// [`run_suite`](crate::conformance::harness::run_suite) checks that it does. A setting the
+    /// broker was configured with is read here, off the connected form, where it decides the
+    /// answer (a log read from its earliest offset, a stream consumer delivering all). The
+    /// default is [`Backlog::Missed`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "memory")]
+    /// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::testing::{Backlog, InProcess, TestableBroker};
+    ///
+    /// let connected = MemoryBroker::new().connect_in_process().await?;
+    /// assert_eq!(connected.backlog(), Backlog::Missed);
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn backlog(&self) -> Backlog {
+        Backlog::Missed
+    }
+}
+
+/// What a subscription opened by name receives of the messages published to that name before it
+/// opened: the answer a broker gives through [`TestableBroker::backlog`].
+///
+/// # Examples
+///
+/// A queue broker's in-process transport keeps what reaches a queue with no consumer yet, as the
+/// server does, and says so:
+///
+/// ```
+/// use ruststream::testing::Backlog;
+///
+/// # struct QueueBus;
+/// # impl QueueBus {
+/// fn backlog(&self) -> Backlog {
+///     Backlog::Delivered
+/// }
+/// # }
+/// # assert_eq!(QueueBus.backlog(), Backlog::Delivered);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Backlog {
+    /// Publish/subscribe: a subscription receives only what is published after it opens (Core
+    /// NATS, Redis pub/sub, `ZeroMQ` PUB/SUB, the memory broker).
+    Missed,
+    /// A queue or a log: what was published before the subscription opened is kept, and the
+    /// subscription receives it first, in publish order (SQS, `RabbitMQ` queues, `JetStream`
+    /// streams, Redis streams and lists, Kafka read from the earliest offset).
+    Delivered,
 }
 
 /// The harness's record of one [`InProcess`] broker type: how to recognise it in a built app, how

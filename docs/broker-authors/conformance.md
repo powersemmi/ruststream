@@ -39,7 +39,7 @@ use ruststream::conformance::harness;
 | Scenario | Asserts |
 |---|---|
 | ordering | messages are delivered in publish order |
-| publish after subscribe | a subscriber receives only messages published after it subscribed; earlier publishes are not buffered |
+| publish before subscribe | a message published before the subscription opened arrives first where the broker declares `Backlog::Delivered`, and never where it declares `Backlog::Missed` (the default); the message published after it arrives either way |
 | ack consumes delivery | an acked message is not redelivered |
 | nack with requeue redelivers | `nack(requeue = true)` delivers the message again |
 | nack without requeue drops | after `nack(requeue = false)` there is no redelivery |
