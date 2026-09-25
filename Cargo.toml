@@ -481,6 +481,9 @@ bytes = "1"
 # there.
 bytes-utils = "0.1.3"
 futures = "0.3"
+# The ring that feeds each dedicated thread of a `threads(n)` subscription: a preallocated SPSC
+# ring whose push and pop are a store each. 0.3.5 is the release whose costs were read.
+rtrb = "0.3.5"
 # 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
 # forwards the 128-bit methods, both of which arrived there.
 serde = { version = "1.0.69", features = ["derive"] }

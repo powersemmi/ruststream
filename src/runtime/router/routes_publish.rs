@@ -318,7 +318,7 @@ where
                         delivery,
                         failure,
                         workers,
-                    ))
+                    )?)
                 })
             }),
             meta,
@@ -428,7 +428,7 @@ where
                         delivery,
                         failure,
                         workers,
-                    ))
+                    )?)
                 })
             }),
             meta,

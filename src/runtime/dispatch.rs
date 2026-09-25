@@ -37,6 +37,8 @@ use super::shutdown::Shutdown;
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, TestHooks, in_harness_scope,
 };
+pub(crate) use threads::StartThreadError;
+use threads::Threads;
 
 /// Header carrying the framework's own retry count.
 ///
@@ -599,7 +601,7 @@ pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
-) -> JoinHandle<()>
+) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
@@ -607,14 +609,85 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
+    // The harness drives every subscription on the test's own runtime, so a timer the handler
+    // arms is one `advance` reaches; it does not reproduce the thread topology.
+    #[cfg(feature = "testing")]
+    let workers = if delivery.hooks.coordinator().is_some() {
+        workers.on_runtime()
+    } else {
+        workers
+    };
     if workers.is_sequential() {
-        return spawn_dispatch(
+        return Ok(spawn_dispatch(
             subscriber, handler, shutdown, name, state, delivery, failure,
+        ));
+    }
+    if matches!(workers.placement, Placement::Threads) {
+        return spawn_dispatch_threads(
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         );
     }
-    pool::spawn_dispatch_pool(
+    Ok(pool::spawn_dispatch_pool(
         subscriber, handler, shutdown, name, state, delivery, failure, workers,
-    )
+    ))
+}
+
+/// Starts the dedicated threads of a `threads(n)` subscription and spawns its loop on the app's
+/// runtime (see [`threads`]).
+// See `spawn_dispatch_workers`: each part is the registration's own.
+#[allow(clippy::too_many_arguments)]
+fn spawn_dispatch_threads<S, H, C, St>(
+    mut subscriber: S,
+    handler: Arc<H>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
+    workers: Workers,
+) -> Result<JoinHandle<()>, StartThreadError>
+where
+    S: Subscriber + Send + 'static,
+    S::Message: Send + Sync + 'static,
+    H: Handler<S::Message, C, St> + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    let shared = Arc::new(pool::Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    });
+    let threads = Threads::start(&shared.name, workers.count, workers.by_key, || {
+        let shared = Arc::clone(&shared);
+        // One encode buffer per thread, for the reason the sequential loop has one.
+        let mut encode = BytesMut::new();
+        async move |msg: S::Message| {
+            let mut slot = Slot::new(msg);
+            dispatch(
+                &*shared.handler,
+                &mut slot,
+                &mut encode,
+                &shared.name,
+                &shared.state,
+                &shared.delivery,
+                &shared.failure,
+            )
+            .await;
+        }
+    })?;
+    Ok(tokio::spawn(async move {
+        threads
+            .feed(
+                subscriber.stream(),
+                &shared.name,
+                &shutdown,
+                <S::Message as IncomingMessage>::partition_key,
+            )
+            .await;
+    }))
 }
 
 fn lane_of(key: &[u8], lanes: usize) -> usize {
@@ -1463,3 +1536,4 @@ where
 mod pool;
 #[cfg(all(test, feature = "memory"))]
 mod tests;
+mod threads;

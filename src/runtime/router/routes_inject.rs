@@ -220,7 +220,7 @@ where
                         delivery,
                         failure,
                         workers,
-                    ))
+                    )?)
                 })
             }),
             meta,

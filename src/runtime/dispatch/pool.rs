@@ -26,12 +26,12 @@ use crate::{BuildContext, IncomingMessage, Subscriber};
 
 /// What the loop shares with every worker it starts, behind one reference count taken once per
 /// worker.
-struct Shared<Body, State, Cx> {
-    handler: Arc<Body>,
-    name: Arc<str>,
-    state: Arc<State>,
-    delivery: Arc<Delivery<Cx>>,
-    failure: DispatchFailure,
+pub(super) struct Shared<Body, State, Cx> {
+    pub(super) handler: Arc<Body>,
+    pub(super) name: Arc<str>,
+    pub(super) state: Arc<State>,
+    pub(super) delivery: Arc<Delivery<Cx>>,
+    pub(super) failure: DispatchFailure,
 }
 
 /// How a worker says it is free for the next delivery: its index, sent back to the loop.

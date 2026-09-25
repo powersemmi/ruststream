@@ -177,7 +177,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
                     let failure = DispatchFailure::new(policies, shutdown.clone());
                     Ok(spawn_dispatch_workers(
                         subscriber, handler, shutdown, name, state, delivery, failure, workers,
-                    ))
+                    )?)
                 })
             },
         ));
