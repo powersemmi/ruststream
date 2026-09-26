@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use serde::Deserialize;
+use tracing::info;
 
 #[derive(Debug, Deserialize)]
 struct Resize {
@@ -29,7 +30,7 @@ fn render(job: &Resize) -> u64 {
 /// Stands in for a call to another service: I/O, which belongs on the app's runtime.
 async fn notify(id: u64) {
     tokio::time::sleep(Duration::from_millis(1)).await;
-    println!("resized {id}");
+    info!(id, "resized");
 }
 
 // --8<-- [start:threads]
@@ -47,7 +48,7 @@ async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
 /// I/O-bound, so it stays on the app's runtime.
 #[subscriber("audit")]
 async fn audit(entry: &Audit) -> HandlerOutcome {
-    println!("audit {}", entry.id);
+    info!(entry.id, "audited");
     HandlerOutcome::ack()
 }
 

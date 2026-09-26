@@ -255,7 +255,10 @@ fn app() -> impl App {
 - On shutdown the loop stops reading and the threads drain their rings. A thread then waits for
   what its deliveries left behind (continuations, hooks, pending retry timers) before it and its
   runtime end, so a copy pending at shutdown is published before the broker closes; all of it
-  within the [`shutdown_timeout`](RustStream::shutdown_timeout). The read-ahead is at most `n`
+  within the [`shutdown_timeout`](RustStream::shutdown_timeout). A plain `tokio::spawn` is not
+  waited for: it lives as long as its thread, and a task still pending when the thread ends is
+  dropped with its runtime. Work that must outlive the subscription goes through
+  [`MainRuntime::spawn`]. The read-ahead is at most `n`
   times nine deliveries (one in hand and a ring of eight per thread).
 - Under [`TestApp`](crate::testing::TestApp) the threads run as `n` workers on the test's own
   runtime, like every other subscription.

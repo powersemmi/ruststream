@@ -14,6 +14,8 @@ use tokio::task::{JoinError, JoinHandle};
 /// hook and the timer of a `retry_after` copy. `MainRuntime` is the one explicit way to send work
 /// to the app's runtime instead: [`spawn`](Self::spawn) starts it there and moves on,
 /// [`run`](Self::run) runs it there and hands its output back. What is sent must be `Send`.
+/// A plain `tokio::spawn` on a dedicated thread lives as long as that thread: a task still
+/// pending when the subscription ends is dropped with the thread's runtime.
 /// On any other placement the handler already runs on this runtime.
 ///
 /// # Examples

@@ -438,6 +438,11 @@ allowed_external_types = [
     "futures_core::stream::Stream",
     # `tokio::spawn` handles surface their join failure through the app lifecycle.
     "tokio::runtime::task::error::JoinError",
+    # `MainRuntime` is the app's runtime as a handler reaches it: its `spawn` hands back tokio's
+    # join handle, and `as_handle` is the runtime handle itself, the escape hatch for whatever
+    # the two methods do not cover.
+    "tokio::runtime::task::join::JoinHandle",
+    "tokio::runtime::handle::Handle",
     # Optional-feature surfaces: each is the integration point the feature exists for, so the
     # foreign type is the API rather than an implementation detail leaking through it.
     "inventory::Collect",
@@ -615,7 +620,9 @@ serde_json = "1"
 # derive `JsonSchema` whether or not the example itself turns the `asyncapi` feature on (the
 # crate re-exports `schemars` only under that feature).
 schemars = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
+# 1.49 for the tests alone: they tell the app's runtime from a dedicated thread's by
+# `Handle::id`, which is stable from there on.
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 axum = "0.8"
 trybuild = "1"
 # The one real generator behind `#[wire(prost)]`. It is a dev-dependency and nothing else: the
