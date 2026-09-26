@@ -150,6 +150,37 @@ use ruststream::testing::Backlog;
 --8<-- "tests/in_process.rs:suites"
 ```
 
+## 结算套件
+
+`settlement::suite` 在 Broker 所连接的传输上检查每一种结算是否兑现它的含义，包括真实的服务器：
+
+| 检查 | 断言内容 |
+|---|---|
+| ack 消费投递 | 已 ack 的消息不会回来，在重投超时之内不会，在同一订阅的新连接上也不会 |
+| 不重新入队的 nack 丢弃投递 | `nack(requeue = false)` 之后同样如此 |
+| 重新入队的 nack 退回投递 | `nack(requeue = true)` 返回 `Ok(())`，消息就会回来 |
+| 乱序结算 | 三条消息同时在处理中，ack 第三条、前两条不结算就放掉，前两条会回来：回到原订阅、重新打开的同一订阅，或者同一订阅的新连接上 |
+| 未结算就放掉 | 在一个随即停止的运行时里不结算就放掉的消息会回来 |
+
+回答 `AckError::Unsupported` 的结算只在它自己的订阅上检查：传输并不知道这次结算，新连接读到什么取决于它从哪里开始读。最后两项检查在 `nack(requeue = true)` 返回 `AckError::Unsupported` 时结束：什么都不收回的传输没有
+可供观察的重投。只提交连续前缀的日志可能把已 ack 的第三条和前两条一起再投递一次；重复可以通过，
+丢失不行。
+
+```rust
+--8<-- "src/conformance/settlement/tests.rs:matches_in_process"
+```
+
+- **`make_broker`** 每建一个连接就调用一次，而检查会连接两次，所以它返回的每个 Broker 都要到达
+  同一个服务器：真实运行时是同一个地址，进程内是同一个 Broker 的克隆。
+- **`make_source`** 在两个连接上打开同一个订阅：Broker 有持久消费者、队列或消费者组时，就用它们。
+  它必须允许三条投递同时在处理中。
+- **重投超时**是 Broker 退回无人结算的投递所需的时间，即描述符配置的 ack wait、visibility
+  timeout 或 ack deadline。只在连接关闭时才退回这种投递的 Broker 传 `Duration::ZERO`。
+
+`settlement::suite` 返回每一种结算的回答。`settlement::matches_in_process` 分别针对服务器和通过
+`harness::InProcessBroker` 运行它，两边回答不同就失败：声称做到了服务器拒绝的结算的进程内传输，
+会让处理器的重试在测试里通过，却在生产环境丢掉消息。
+
 ## 能力套件 { #capability-suites }
 
 如果你的 Broker 实现了某个能力 trait，就从 `conformance::capabilities` 跑对应的套件，它证明这份
@@ -213,6 +244,8 @@ async fn passes_request_reply() {
       之后别名句柄返回的错误）。
 - [ ] `lifecycle::shutdown_flushes` 以 Broker 的 `Backlog` 答案通过；已连接形态实现了 `Clone`
       时，`lifecycle::shared_handle_closes` 也通过。
+- [ ] `settlement::matches_in_process` 针对真实服务器通过，同样由该环境变量控制（ack、nack、乱序
+      结算和未结算就放掉，在服务器上和进程内含义相同）。
 - [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量控制。
 - [ ] `Cargo.toml` 元数据完整（`description`、`license`、`repository`、`keywords`、
       `categories`），并且 CI 检查 `--no-default-features` 和 `--all-features`。

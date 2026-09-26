@@ -633,6 +633,8 @@ async fn deferred_copies(
             msg.payload().to_vec(),
             msg.headers().get_str(RETRY_COUNT_HEADER).map(str::to_owned),
         ));
+        // Settled, because a delivery dropped unsettled comes back.
+        msg.ack().await.expect("the memory broker acknowledges");
     }
     assert!(futures::poll!(stream.next()).is_pending());
     copies.sort();
