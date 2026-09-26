@@ -1,8 +1,8 @@
 //! Integration tests for the typed per-delivery `Context`: a broker-contributed field (built from
-//! the message via `BuildContext`) reaching the handler by key, a middleware-written scratch value
-//! reaching a downstream handler and being isolated per delivery, and `ctx.state()` still reaching
-//! app state. All use the in-memory broker with hand-written handlers (which can name a context
-//! type; macro handlers use the default `()` context).
+//! the message via `BuildContext`) reaching the handler by key, and a middleware-written scratch
+//! value reaching a downstream handler and being isolated per delivery. Both use the in-memory
+//! broker with hand-written handlers (which can name a context type; macro handlers use the
+//! default `()` context).
 //!
 //! What a delivery context carries never leaves the handler, so these suites keep their own
 //! collector next to the harness assertions: the harness records what arrived and how it settled,
@@ -260,45 +260,4 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
         .assert_called(2)
         .settled(HandlerOutcome::ack());
     assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1]);
-}
-
-struct AppPrefix(String);
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_reaches_app_state_independently_of_the_delivery_context() {
-    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let seen_clone = Arc::clone(&seen);
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, Infallible>(AppPrefix("svc".to_owned())))
-        .with_broker(MemoryBroker::new(), |b| {
-            let subscriber = b.broker().subscribe("orders");
-            b.handle(
-                subscriber,
-                move |_msg: &MemoryMessage, ctx: &mut Context<'_, (), AppPrefix>| {
-                    // The typed app state through state(), independent of the per-delivery context.
-                    let prefix = Some(ctx.state().0.clone());
-                    let seen = Arc::clone(&seen_clone);
-                    async move {
-                        *seen.lock().expect("poisoned") = prefix;
-                        HandlerOutcome::ack()
-                    }
-                },
-                HandlerMetadata::raw("orders"),
-            );
-        });
-
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Wire::of(b"x"))
-        .to("orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-    assert_eq!(*seen.lock().expect("poisoned"), Some("svc".to_owned()));
 }

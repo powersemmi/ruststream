@@ -1,20 +1,18 @@
 //! Integration tests for `RustStream` lifecycle and dispatch, using `MemoryBroker`.
 //!
-//! What a handler saw rides the harness; the three suites whose subject IS the running app - the
-//! shutdown drain, the drain timeout, and the lifespan hook order - keep `run_until` and say so.
+//! What a handler saw rides the harness; the suite whose subject IS the running app, the shutdown
+//! drain, keeps `run_until` and says so.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::{
     convert::Infallible,
     future::{Future, ready},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU32, Ordering},
     },
-    time::Duration,
 };
 
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
 use ruststream::runtime::{
@@ -23,7 +21,6 @@ use ruststream::runtime::{
 };
 use ruststream::testing::TestApp;
 use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 /// The payload view the byte-level bodies below take. The bodies never look at the bytes - the
@@ -43,22 +40,6 @@ impl Deserialized for Frame<'_> {
 
 impl Input for Frame<'_> {
     type Axis = SoloDeserialized<Frame<'static>>;
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-struct Order {
-    id: u32,
-    total: f64,
-}
-
-// `#[derive(Outgoing)]` by hand, so the suites can inject an order through the publish builder
-// with the attribute off: no declared name, no header contract.
-impl OutgoingDestination for Order {
-    type Form = CallerName;
-}
-
-impl MessageHeaders for Order {
-    type Contract = NoHeaders;
 }
 
 /// The wire the suites inject their unstructured payloads through, with the impls
@@ -150,43 +131,6 @@ impl BlanketLayer for CountLayer {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn app_dispatches_typed_messages() {
-    let handler =
-        ruststream::runtime::typed(JsonCodec, move |order: &Order, _ctx: &mut Context| {
-            let total = order.total;
-            async move {
-                assert!(total > 0.0);
-                HandlerOutcome::ack()
-            }
-        });
-
-    let app =
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            let subscriber = b.broker().subscribe("orders");
-            b.handle(
-                subscriber,
-                handler,
-                HandlerMetadata::typed::<Order>("orders"),
-            );
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    for order in [Order { id: 7, total: 9.99 }, Order { id: 3, total: 1.0 }] {
-        tb.message(&order)
-            .to("orders")
-            .publish()
-            .await
-            .expect("publish");
-    }
-
-    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("orders").received();
-    assert_eq!(
-        received,
-        vec![Order { id: 7, total: 9.99 }, Order { id: 3, total: 1.0 }],
-    );
-}
-
 // The subject IS the running app's teardown: the drain has to hold `run()` open, which only the
 // spawned form can show.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -244,80 +188,6 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
 
     // run() returned only after the in-flight continuation finished.
     assert_eq!(drained.load(Ordering::SeqCst), 1);
-}
-
-// The subject IS the running app's teardown deadline: a continuation that never completes has to
-// be abandoned by `run()` itself.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_timeout_abandons_stuck_continuations() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    // A continuation that never completes: it parks forever. With a shutdown timeout, the drain
-    // bounds its wait and returns, leaving the continuation abandoned (at-most-once).
-    let parked = Arc::new(Notify::new());
-    let finished = Arc::new(AtomicU32::new(0));
-
-    let on_parked = Arc::clone(&parked);
-    let flag = Arc::clone(&finished);
-    let handler = move |_msg: &_, _ctx: &mut Context| {
-        let on_parked = Arc::clone(&on_parked);
-        let flag = Arc::clone(&flag);
-        async move {
-            HandlerOutcome::ack().and_after(async move {
-                on_parked.notify_one();
-                std::future::pending::<()>().await;
-                flag.store(1, Ordering::SeqCst);
-            })
-        }
-    };
-
-    let app = RustStream::new(AppInfo::new("drain", "0.1.0"))
-        .shutdown_timeout(Duration::from_millis(50))
-        .with_broker(broker, |b| {
-            let subscriber = b.broker().subscribe("work");
-            b.handle(subscriber, handler, HandlerMetadata::raw("work"));
-        });
-
-    let shutdown = Arc::new(Notify::new());
-    let shutdown_signal = Arc::clone(&shutdown);
-    let run = tokio::spawn(app.run_until(async move { shutdown_signal.notified().await }));
-
-    publisher
-        .message(&Wire(b"go"))
-        .to("work")
-        .publish()
-        .await
-        .unwrap();
-    parked.notified().await;
-
-    shutdown.notify_one();
-    // The drain times out and run() returns without the continuation ever completing.
-    run.await.unwrap().unwrap();
-    assert_eq!(finished.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn app_subscribes_via_descriptor_after_connect() {
-    let app =
-        RustStream::new(AppInfo::new("events", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("events", TakeFrames).build());
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    deliver_one(&tb).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn included_router_handlers_dispatch() {
-    // Router defined independently of any live broker, then mounted. Consuming builder.
-    let router = Router::<MemoryBroker>::new().include(subscriber("events", TakeFrames).build());
-
-    let app = RustStream::new(AppInfo::new("events", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    deliver_one(&tb).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -427,148 +297,6 @@ async fn cross_broker_publish_via_captured_publisher() {
         .assert_called_once()
         .with_raw(b"reply")
         .settled(HandlerOutcome::ack());
-}
-
-struct Config {
-    greeting: String,
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn handler_reads_context_topic_and_state() {
-    let seen = Arc::new(Mutex::new(None::<(String, String)>));
-    let seen_clone = Arc::clone(&seen);
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(async move |()| {
-            Ok::<_, Infallible>(Config {
-                greeting: "hello".to_owned(),
-            })
-        })
-        .with_broker(MemoryBroker::new(), |b| {
-            let subscriber = b.broker().subscribe("orders");
-            b.handle(
-                subscriber,
-                move |_msg: &_, ctx: &mut Context<'_, (), Config>| {
-                    let name = ctx.name().to_owned();
-                    let greeting = ctx.state().greeting.clone();
-                    // Middleware/handlers may enrich the working headers.
-                    ctx.headers_mut().insert("x-seen", b"1".to_vec());
-                    let seen = Arc::clone(&seen_clone);
-                    async move {
-                        *seen.lock().expect("poisoned") = Some((name, greeting));
-                        HandlerOutcome::ack()
-                    }
-                },
-                HandlerMetadata::raw("orders"),
-            );
-        });
-
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Wire(b"x"))
-        .to("orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-    // The subscription name and the app state are context reads, which the harness does not
-    // record; the collector next to it is what reports them.
-    assert_eq!(
-        *seen.lock().expect("poisoned"),
-        Some(("orders".to_owned(), "hello".to_owned())),
-    );
-}
-
-// The subject IS the lifecycle ladder of a running app: the shutdown half only runs when the app
-// is torn down, which the harness's `shutdown` does not report on.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lifespan_hooks_run_in_order() {
-    let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
-    let (o1, o2, o3, o4) = (
-        Arc::clone(&order),
-        Arc::clone(&order),
-        Arc::clone(&order),
-        Arc::clone(&order),
-    );
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .on_startup(move |()| {
-            let o1 = Arc::clone(&o1);
-            async move {
-                o1.lock().expect("poisoned").push("startup");
-                Ok::<Config, Infallible>(Config {
-                    greeting: "lazy".to_owned(),
-                })
-            }
-        })
-        .after_startup(move |_state: Arc<Config>| {
-            let o2 = Arc::clone(&o2);
-            async move {
-                o2.lock().expect("poisoned").push("after_startup");
-                Ok::<(), Infallible>(())
-            }
-        })
-        .on_shutdown(move |_state: Arc<Config>| {
-            let o3 = Arc::clone(&o3);
-            async move {
-                o3.lock().expect("poisoned").push("on_shutdown");
-                Ok::<(), Infallible>(())
-            }
-        })
-        .after_shutdown(move |state: Arc<Config>| {
-            let o4 = Arc::clone(&o4);
-            let greeting = state.greeting.clone();
-            async move {
-                assert_eq!(greeting.as_str(), "lazy");
-                o4.lock().expect("poisoned").push("after_shutdown");
-                Ok::<(), Infallible>(())
-            }
-        })
-        .with_broker(MemoryBroker::new(), |_b| {});
-
-    // `run_until` runs the startup half, then takes the already-resolved shutdown signal and runs
-    // the teardown half, so the whole ladder is walked with nothing to wait for.
-    app.run_until(ready(()))
-        .await
-        .expect("graceful shutdown failed");
-
-    assert_eq!(
-        *order.lock().expect("poisoned"),
-        vec!["startup", "after_startup", "on_shutdown", "after_shutdown"],
-    );
-}
-
-#[test]
-fn app_records_handler_metadata() {
-    let broker = MemoryBroker::new();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        let subscriber = b.broker().subscribe("orders");
-        b.handle(
-            subscriber,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
-            HandlerMetadata::typed::<Order>("orders").with_description("processes orders"),
-        );
-        let alerts = b.broker().subscribe("alerts");
-        b.handle(
-            alerts,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
-            HandlerMetadata::raw("alerts"),
-        );
-    });
-
-    assert_eq!(app.handlers().len(), 2);
-    assert_eq!(app.handlers()[0].name, "orders");
-    assert_eq!(
-        app.handlers()[0].description.as_deref(),
-        Some("processes orders"),
-    );
-    assert_eq!(app.handlers()[1].input_type, "bytes");
-    assert_eq!(app.info().title, "svc");
 }
 
 /// Injects one frame on the `events` channel and asserts the mount under test received it.

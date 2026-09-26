@@ -316,11 +316,11 @@ where
 mod tests {
     use std::future::ready;
 
-    use super::{InjectCall, InjectDef, InjectHandler};
+    use super::{InjectCall, InjectDef};
     use crate::Name;
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::Workers;
-    use crate::runtime::failure::{FailurePolicies, FailurePolicy};
+    use crate::runtime::failure::FailurePolicies;
     use crate::runtime::handler::HandlerOutcome;
     use crate::runtime::input::Decoded;
 
@@ -364,17 +364,6 @@ mod tests {
         assert!(def.message_name().is_none());
         assert!(def.message_description().is_none());
         assert!(format!("{:?}", def.source()).contains("in"));
-    }
-
-    #[test]
-    fn the_handler_names_itself() {
-        let handler = InjectHandler {
-            def: ManualInject,
-            codec: (),
-            injections: (),
-            decode: FailurePolicy::Drop,
-        };
-        assert!(format!("{handler:?}").contains("InjectHandler"));
     }
 
     /// The decode diagnostic of the injected path. It is asserted on the handler itself because

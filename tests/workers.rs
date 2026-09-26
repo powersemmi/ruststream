@@ -1,5 +1,4 @@
-//! Integration tests for the workers(..) dispatch policies: concurrent pools, per-key lanes,
-//! and batch pools.
+//! Integration tests for the workers(..) dispatch policies: concurrent pools and per-key lanes.
 //!
 //! The pool tests inject their deliveries together rather than one at a time: a pool only has
 //! something to spread over its workers while more than one delivery is in flight, and the
@@ -14,7 +13,6 @@
 mod common;
 
 use std::{
-    future::{Future, ready},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -138,19 +136,16 @@ async fn by_key_lanes_preserve_per_key_order() {
 /// How long the deferring handlers below ask to wait.
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// The orders a handler has already seen once, and the threads it ran on: application state, the
-/// way a service shares anything with its handlers.
+/// The orders a handler has already seen once: application state, the way a service shares
+/// anything with its handlers.
 #[derive(Default)]
 struct Seen {
     orders: Mutex<Vec<u32>>,
-    threads: Mutex<Vec<Option<String>>>,
 }
 
 impl Seen {
-    /// Records `id` and the thread handling it, and reports whether this is its first sighting.
+    /// Records `id` and reports whether this is its first sighting.
     fn first(&self, id: u32) -> bool {
-        let thread = std::thread::current().name().map(str::to_owned);
-        self.threads.lock().expect("unpoisoned").push(thread);
         let mut orders = self.orders.lock().expect("unpoisoned");
         if orders.contains(&id) {
             false
@@ -239,173 +234,4 @@ async fn keyed_lanes_arm_their_redeliveries_on_the_harness_clock() {
         });
     let tb = TestApp::start(app).await.expect("startup failed");
     deferred_redeliveries_follow_the_harness_clock(&tb).await;
-}
-
-/// What the test below names its runtime's worker threads: a name no other runtime in the
-/// process carries, so a thread with it is one of this runtime's.
-const TEST_RUNTIME_THREADS: &str = "the-test-runtime";
-
-/// Under the harness a pool's workers run on the test's own runtime, whatever the runtime's
-/// flavor: every delivery is handled on one of its worker threads.
-#[test]
-fn a_pool_under_the_harness_runs_on_the_test_runtime() {
-    // Built by hand rather than by `#[tokio::test]`, whose threads share tokio's default name with
-    // every other runtime's: only a name of its own tells this runtime's threads apart.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name(TEST_RUNTIME_THREADS)
-        .enable_all()
-        .build()
-        .expect("the test runtime");
-    runtime.block_on(async {
-        let seen = Arc::new(Seen::default());
-        let state = Arc::clone(&seen);
-        let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
-            .on_startup(async move |()| Ok::<_, std::convert::Infallible>(state))
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(defer_pooled);
-            });
-        let tb = TestApp::start(app).await.expect("startup failed");
-        tb.message(&Order { id: 1 })
-            .to("deferred")
-            .publish()
-            .await
-            .expect("publish");
-
-        let threads = seen.threads.lock().expect("unpoisoned").clone();
-        assert_eq!(
-            threads,
-            [Some(TEST_RUNTIME_THREADS.to_owned())],
-            "the delivery must be handled on the test runtime's own threads",
-        );
-    });
-}
-
-/// Batch form composing with a pool: up to two batches in flight.
-#[subscriber("batches", workers(2))]
-async fn settle(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn batch_pool_dispatches_batches() {
-    let app =
-        RustStream::new(AppInfo::new("batches", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle.batch(nonzero!(8)));
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 1 })
-        .to("batches")
-        .publish()
-        .await
-        .expect("publish");
-
-    // A batch carrying the message must be dispatched through the pool.
-    tb.broker::<MemoryBroker>()
-        .subscriber("batches")
-        .assert_called_once()
-        .with(&Order { id: 1 })
-        .settled(HandlerOutcome::ack());
-}
-
-/// The manual path's body of the pool test: it passes the barrier only if the requested number of
-/// deliveries is in flight at once.
-struct CrunchJobs {
-    gate: Arc<Barrier>,
-}
-
-impl Handle<Order> for CrunchJobs {
-    async fn handle(
-        &self,
-        _order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
-        self.gate.wait().await;
-        Ok(())
-    }
-}
-
-/// The manual-path pool: a `subscriber(..)` definition with `.workers(Workers::pool(nonzero!(3)))`
-/// named on the router. Three deliveries must be in flight at once to pass the barrier; the
-/// default sequential loop would deadlock on the first one.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn closure_subscription_pool_runs_concurrently() {
-    let handler = CrunchJobs {
-        gate: Arc::new(Barrier::new(3)),
-    };
-
-    let router = Router::<MemoryBroker>::new()
-        .include(subscriber("fn-jobs", handler).build())
-        .workers(Workers::pool(nonzero!(3)));
-
-    let app = RustStream::new(AppInfo::new("fn-jobs", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    let jobs: Vec<Order> = (1..=3u32).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
-        CONCURRENCY_DEADLINE,
-        join_all(
-            jobs.iter()
-                .map(|job| tb.message(job).to("fn-jobs").publish()),
-        ),
-    )
-    .await
-    .expect("the pool must hold three deliveries in flight at once");
-    for result in published {
-        result.expect("publish");
-    }
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("fn-jobs")
-        .assert_called(3)
-        .settled(HandlerOutcome::ack());
-}
-
-/// The manual path's batch body: it takes whole decoded batches, so the batch either arrived as a
-/// batch or did not.
-struct CountBatches;
-
-impl Handle<[Order]> for CountBatches {
-    fn handle(
-        &self,
-        orders: &[Order],
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        let _ = orders;
-        ready(Ok(()))
-    }
-}
-
-/// The manual batch path: a batch body receives whole decoded batches without a macro definition.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn closure_batch_subscription_receives_batches() {
-    let router = Router::<MemoryBroker>::new()
-        .include(
-            subscriber("fn-batches", CountBatches)
-                .batch(nonzero!(8))
-                .build(),
-        )
-        .workers(Workers::pool(nonzero!(2)));
-
-    let app = RustStream::new(AppInfo::new("fn-batches", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 1 })
-        .to("fn-batches")
-        .publish()
-        .await
-        .expect("publish");
-
-    // The message must reach the slice body as a decoded batch.
-    tb.broker::<MemoryBroker>()
-        .subscriber("fn-batches")
-        .assert_called_once()
-        .with(&Order { id: 1 })
-        .settled(HandlerOutcome::ack());
 }

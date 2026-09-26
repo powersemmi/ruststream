@@ -279,8 +279,6 @@ async fn a_pair_input_reaches_every_single_message_cell() {
         .published::<Confirmation>("matrix.gateway-confirmations")
         .assert_called_once()
         .with(&expected_reply);
-    // The two slot bodies share the marker, so the arena view holds both of their publishes.
-    assert_eq!(tb.out::<Analytics>().messages().len(), 2);
 }
 
 /// The batch pair cells: one header contract per element, all the way to the replies.

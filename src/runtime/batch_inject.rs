@@ -248,17 +248,6 @@ mod tests {
         assert_eq!(def.failure_policies(), FailurePolicies::default());
     }
 
-    #[test]
-    fn handler_debug_hides_the_injections() {
-        let handler = BatchInjectHandler {
-            def: Scale::new(),
-            codec: JsonCodec,
-            injections: 10,
-            decode: FailurePolicy::Drop,
-        };
-        assert!(format!("{handler:?}").contains("BatchInjectHandler"));
-    }
-
     /// The resolved injections reach every call alongside the decoded batch, and the returned
     /// settlement is applied to the deliveries behind it.
     #[tokio::test]

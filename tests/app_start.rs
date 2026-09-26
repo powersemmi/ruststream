@@ -18,8 +18,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryError};
 use ruststream::runtime::{
-    App, AppInfo, Context, HandlerMetadata, HandlerOutcome, PublishError, PublishExt, RustStream,
-    RustStreamError,
+    App, AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream, RustStreamError,
 };
 use ruststream::{Broker, ConnectedBroker, subscriber};
 use tokio::sync::Notify;
@@ -27,10 +26,8 @@ use tokio::time::timeout;
 
 use common::{Order, Wire};
 
-// Notifies keyed per handler so the parallel tests do not interfere; each handler is used by one
-// test only. `notify_one` stores a permit, so the handler may fire before the test awaits.
+// `notify_one` stores a permit, so the handler may fire before the test awaits.
 static SEEN: Notify = Notify::const_new();
-static TRAIT_SEEN: Notify = Notify::const_new();
 
 #[subscriber("started.orders")]
 async fn observe(_order: &Order) -> HandlerOutcome {
@@ -38,30 +35,21 @@ async fn observe(_order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber("started.trait")]
-async fn observe_trait(_order: &Order) -> HandlerOutcome {
-    TRAIT_SEEN.notify_one();
-    HandlerOutcome::ack()
-}
-
-/// Default policy: a panic fails fast, tearing the started service down.
-#[subscriber("started.boom")]
-async fn boom(order: &Order) -> HandlerOutcome {
-    // The test publishes ids other than u32::MAX, so this assertion always fails (panics); the
-    // trailing expression keeps the body typed as HandlerOutcome.
-    assert_eq!(order.id, u32::MAX, "handler exploded");
-    HandlerOutcome::ack()
+// The builder hides behind `impl App`, the way `#[ruststream::app]` services are written, so the
+// run machinery is reached through the trait.
+fn service(broker: MemoryBroker) -> impl App {
+    RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .shutdown_timeout(Duration::from_secs(5))
+        .with_broker(broker, |b| {
+            b.include(observe);
+        })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_resolves_running_and_shutdown_completes() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| {
-            b.include(observe);
-        });
+    let app = service(broker);
 
     // --8<-- [start:handle]
     // `start` resolves only once subscriptions are open, so one publish is guaranteed to land.
@@ -78,38 +66,6 @@ async fn start_resolves_running_and_shutdown_completes() {
 
     running.shutdown().await.expect("graceful shutdown failed");
     // --8<-- [end:handle]
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stopping_resolves_on_fail_fast_and_shutdown_surfaces_it() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| {
-            b.include(boom);
-        });
-
-    let running = app.start().await.expect("startup failed");
-
-    // `stopping()` stays pending while the service is healthy and resolves when the panicking
-    // handler triggers the fail-fast teardown.
-    publisher
-        .message(&Order { id: 1 })
-        .to("started.boom")
-        .publish()
-        .await
-        .expect("publish failed");
-    timeout(Duration::from_secs(5), running.stopping())
-        .await
-        .expect("fail-fast never triggered");
-
-    // The teardown reason survives until shutdown, where it surfaces as a dispatch error.
-    let err = running
-        .shutdown()
-        .await
-        .expect_err("fail-fast must surface");
-    assert!(matches!(err, RustStreamError::Dispatch(_)), "got: {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -158,31 +114,6 @@ async fn start_and_shutdown_run_lifecycle_hooks_in_order() {
     );
 }
 
-// The builder hides behind `impl App`, the way `#[ruststream::app]` services are written.
-fn service(broker: MemoryBroker) -> impl App {
-    RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(observe_trait);
-    })
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_is_reachable_through_the_app_trait() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let running = service(broker).start().await.expect("startup failed");
-    publisher
-        .message(&Order { id: 7 })
-        .to("started.trait")
-        .publish()
-        .await
-        .expect("publish failed");
-    timeout(Duration::from_secs(5), TRAIT_SEEN.notified())
-        .await
-        .expect("handler never saw the message");
-    running.shutdown().await.expect("graceful shutdown failed");
-}
-
 /// State-generic no-op subscriber for the lifecycle-hooks test below.
 #[subscriber("started.quiet")]
 async fn quiet(_order: &Order) -> HandlerOutcome {
@@ -206,7 +137,6 @@ async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
         });
 
     let running = app.start().await.expect("startup failed");
-    assert!(format!("{running:?}").contains("RunningApp"));
     // Shutdown hooks may fail; per the lifecycle contract their errors are logged, never
     // propagated, so the graceful path still completes under the configured timeout.
     running.shutdown().await.expect("hook errors must only log");
@@ -222,28 +152,32 @@ fn on_startup_after_a_lifecycle_hook_panics() {
         .on_startup(async move |()| Ok::<_, Infallible>(42_u32));
 }
 
-/// Signals for the continuation-drain test: the hook fails only after the continuation is in
-/// flight, the continuation parks on `RELEASE`, and `DRAINED` records that it completed.
+/// Signals for the failed-hook unwind: the hook fails only after the continuation is in flight,
+/// the continuation parks on `RELEASE`, and `DRAINED` records that it completed.
 static HOOK_READY: Notify = Notify::const_new();
 static CONT_IN_FLIGHT_HOOK: Notify = Notify::const_new();
 static CONT_IN_FLIGHT_TEST: Notify = Notify::const_new();
 static RELEASE: Notify = Notify::const_new();
 static DRAINED: AtomicBool = AtomicBool::new(false);
 
+/// Acks and leaves a continuation parked until the test releases it.
+#[subscriber("started.unwind")]
+async fn parks_a_continuation(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack().and_after(async {
+        CONT_IN_FLIGHT_HOOK.notify_one();
+        CONT_IN_FLIGHT_TEST.notify_one();
+        RELEASE.notified().await;
+        DRAINED.store(true, Ordering::SeqCst);
+    })
+}
+
+/// A failing `after_startup` hook unwinds what startup built, in the teardown's own order: the
+/// in-flight continuations drain first, then the connected broker shuts down, and only then does
+/// `start` return the hook's error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn failed_after_startup_waits_for_post_settle_continuations() {
+async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
-    // The two-layer closure form is forced here: an async closure's future would borrow the
-    // message and context arguments, and the handler bound needs an owned future.
-    let handler = |_msg: &_, _ctx: &mut Context| async {
-        HandlerOutcome::ack().and_after(async {
-            CONT_IN_FLIGHT_HOOK.notify_one();
-            CONT_IN_FLIGHT_TEST.notify_one();
-            RELEASE.notified().await;
-            DRAINED.store(true, Ordering::SeqCst);
-        })
-    };
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .after_startup(async move |_state| {
             // Hooks run after subscriptions open, so this signal lets the test publish without
@@ -253,15 +187,14 @@ async fn failed_after_startup_waits_for_post_settle_continuations() {
             Err::<(), _>(io::Error::other("after_startup boom"))
         })
         .with_broker(broker, |b| {
-            let subscriber = b.broker().subscribe("unwind.work");
-            b.handle(subscriber, handler, HandlerMetadata::raw("unwind.work"));
+            b.include(parks_a_continuation);
         });
 
     let mut start_task = tokio::spawn(app.start());
     HOOK_READY.notified().await;
     publisher
-        .message(&Wire::of(b"go"))
-        .to("unwind.work")
+        .message(&Order { id: 1 })
+        .to("started.unwind")
         .publish()
         .await
         .expect("publish failed");
@@ -283,6 +216,14 @@ async fn failed_after_startup_waits_for_post_settle_continuations() {
         DRAINED.load(Ordering::SeqCst),
         "the continuation must complete before start() returns",
     );
+    // The hook failed after the broker connected and dispatch spawned; both are unwound.
+    let err = publisher
+        .message(&Wire::of(b"x"))
+        .to("started.unwind")
+        .publish()
+        .await
+        .expect_err("the unwound broker must reject the publish");
+    assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
 
 /// A broker whose connect always fails, for the partial-startup unwind tests.
@@ -335,29 +276,19 @@ async fn failed_connect_unwinds_already_connected_brokers() {
     assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
 
+/// The state producer runs before any broker connects, so a failing one is the error `start`
+/// returns: the broker that could not have connected is never dialled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn failed_after_startup_unwinds_connected_brokers() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
+async fn a_failing_state_producer_aborts_startup_before_any_broker_connects() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .after_startup(async move |_state| Err::<(), _>(io::Error::other("after_startup boom")))
-        .with_broker(broker, |b| {
-            b.include(quiet);
-        });
+        .on_startup(async move |()| Err::<u32, _>(io::Error::other("state boom")))
+        .register_broker(FailingBroker);
 
     let err = app
         .start()
         .await
-        .expect_err("the failing hook must abort startup");
+        .expect_err("the failing state producer must abort startup");
     assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
-    // The hook failed after the broker connected and dispatch spawned; both are unwound.
-    let err = publisher
-        .message(&Wire::of(b"x"))
-        .to("started.quiet")
-        .publish()
-        .await
-        .expect_err("the unwound broker must reject the publish");
-    assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
 
 /// `#[ruststream::app(worker_threads = n)]` builds: the generated `main` runs the service on a

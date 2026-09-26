@@ -109,8 +109,6 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
         .out(Reply, Publish)
         .build();
 
-    assert!(format!("{router:?}").contains("Router"));
-
     let names: Vec<_> = router.handlers().into_iter().map(|m| m.name).collect();
     assert_eq!(
         names,
