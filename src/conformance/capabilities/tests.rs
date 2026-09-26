@@ -220,6 +220,19 @@ struct FaultyMessage<Log> {
     settle: Option<SettleFault>,
 }
 
+/// Consumes the delivery it holds when it is dropped: the stand-in for a settlement lost with the
+/// runtime it was left on, now that an unsettled memory delivery goes back to its subscription.
+struct LostWithRuntime<Log: LogMode>(Option<MemoryMessage<Log>>);
+
+impl<Log: LogMode> Drop for LostWithRuntime<Log> {
+    fn drop(&mut self) {
+        if let Some(unsettled) = self.0.take() {
+            // The in-memory settlement happens in the call; the future only carries its answer.
+            let _consumed = unsettled.nack(false);
+        }
+    }
+}
+
 impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
     fn payload(&self) -> &[u8] {
         self.inner.payload()
@@ -237,10 +250,13 @@ impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
         match self.settle {
             Some(SettleFault::NackDrops) if requeue => self.inner.ack().await,
             Some(SettleFault::NackOnCallerRuntime) if on_current_thread_runtime() => {
-                let inner = self.inner;
+                let guard = LostWithRuntime(Some(self.inner));
                 tokio::spawn(async move {
+                    let mut guard = guard;
                     sleep(LOST_AFTER).await;
-                    let _ = inner.nack(requeue).await;
+                    if let Some(inner) = guard.0.take() {
+                        let _ = inner.nack(requeue).await;
+                    }
                 });
                 Ok(())
             }

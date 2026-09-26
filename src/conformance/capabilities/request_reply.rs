@@ -122,6 +122,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
                 b"pong",
                 "the correlated reply must carry the responder payload"
             );
+            settle_reply(reply).await;
             requester
         })
         .await;
@@ -140,6 +141,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
             b"pong",
             "the correlated reply must carry the responder payload"
         );
+        settle_reply(reply).await;
         requester
     };
 
@@ -225,6 +227,7 @@ async fn late_reply_resolves_no_later_request<Req, Pub, S, M, E>(
             "request_reply: a reply that arrived after its request timed out resolved the next \
              request; a late reply must be discarded, never handed to another request",
         );
+        settle_reply(fresh).await;
     };
     let respond = async move {
         let late = expect_next(
@@ -294,6 +297,7 @@ async fn concurrent_requests_get_their_own_replies<Req, Pub, S, M, E>(
                 "request_reply: two requests in flight at once must each resolve with the reply \
                  to itself",
             );
+            settle_reply(reply).await;
         }
     };
     let respond = async {
@@ -351,4 +355,11 @@ where
             None,
         )
         .await
+}
+
+/// Settles a reply the way a caller that read it does. A reply is a delivery, and one left
+/// unsettled may be handed back to whatever reads the reply subscription next. A transport with no
+/// settlement for replies answers what it answers; the check asserts the reply, not the answer.
+async fn settle_reply<M: IncomingMessage>(reply: M) {
+    let _settled = reply.ack().await;
 }
