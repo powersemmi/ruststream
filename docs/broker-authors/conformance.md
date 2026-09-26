@@ -45,6 +45,9 @@ use ruststream::conformance::harness;
 | nack without requeue drops | after `nack(requeue = false)` there is no redelivery |
 | headers propagate | message headers reach the subscriber unchanged |
 | published log observes publishes | `published(name)` records every published message |
+| the publish log records your own publisher | what your default publisher sends is in `published(name)` next to what the test injected, in order and with its headers (for a broker registered with `register_testable_broker!`) |
+| two subscriptions of one name | each name receives every message as often as `TestableBroker::routes` answers: every message each where the broker fans out, each message once between them where they compete, shared between them unless the answer names the one it goes to |
+| the harness counts balance | on a paused clock, as `TestApp` drives it: a delivery is counted in flight before the publish returns and released once when settled, a requeue counts it again, a publish no subscription receives is not counted, a delayed redelivery is counted when its timer falls due |
 
 A transport that cannot acknowledge (ZeroMQ, MQTT `QoS 0`, Redis pub/sub, Core NATS) returns
 `AckError::Unsupported` from `ack` and `nack`, and the suite accepts that answer everywhere it
@@ -241,10 +244,49 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
         |name| RabbitQuorumQueue::new(name),
         |connected| connected.publisher(LapinPublish::default()),
         nonzero!(2u32),
+
+## The in-process transport against the server
+
+`conformance::in_process` holds what your in-process transport declares to what your server does.
+Both suites connect the broker twice per probe, with `Broker::connect` and with
+`connect_in_process`, so run them where your live suites run:
+
+<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::in_process::{self, Refusal};
+use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn in_process_matches_the_server() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    in_process::backlog_matches_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+    )
+    .await;
+    in_process::refuses_like_the_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+        [
+            Refusal::PayloadOver { name: "conformance.payload".to_owned(), limit: 1024 * 1024 },
+            Refusal::Publish { name: "conformance.bad subject".to_owned() },
+            Refusal::Subscription { source: CoreSubject::new("conformance..empty") },
+        ],
     )
     .await;
 }
 ```
+
+- **`backlog_matches_server`** publishes to a fresh name, opens a subscription by name and
+  publishes again, on both transports. The first message arrives first where
+  `TestableBroker::backlog` declares `Backlog::Delivered`, and never where it declares
+  `Backlog::Missed`. A server that refuses the first publish (a queue or a topic nothing declared)
+  must see it refused in process too.
+- **`refuses_like_the_server`** takes the refusals you know of, each a `Refusal`: a payload one
+  byte over the limit, a refused destination, a refused subscription, a subscription refused
+  beside another one. Both transports must refuse each. A probe your server accepts fails as a
+  probe that proves nothing.
 
 ## Capability suites
 

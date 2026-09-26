@@ -1129,7 +1129,8 @@ never saw. Declare the behaviour by returning `Backlog::Delivered` from `Testabl
 and `run_suite` checks that your transport delivers that message. The default is
 `Backlog::Missed`, the publish/subscribe answer: a subscription receives only what is published
 after it opens. Where a setting decides it (a log read from its earliest offset, a stream consumer
-that delivers all), read the setting off the connected form.
+that delivers all), read the setting off the connected form. `in_process::backlog_matches_server`
+checks the declaration against your server (see [Conformance](conformance.md)).
 
 **Give every gap a comment naming the assertion it makes unsound.** Do not write that the feature
 is missing; write which test a reader may no longer trust, and what covers it instead:
