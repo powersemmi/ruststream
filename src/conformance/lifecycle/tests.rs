@@ -374,6 +374,19 @@ impl Drop for RequeueOnDrop {
     }
 }
 
+/// Consumes the delivery it holds when it is dropped: the stand-in for work that is lost with the
+/// runtime it was left on, now that an unsettled memory delivery goes back to its subscription.
+struct ConsumeOnDrop(Option<MemoryMessage>);
+
+impl Drop for ConsumeOnDrop {
+    fn drop(&mut self) {
+        if let Some(unsettled) = self.0.take() {
+            // The in-memory settlement happens in the call; the future only carries its answer.
+            let _consumed = unsettled.nack(false);
+        }
+    }
+}
+
 impl IncomingMessage for FaultyMessage {
     fn payload(&self) -> &[u8] {
         self.inner.as_ref().map_or(&[], IncomingMessage::payload)
@@ -393,10 +406,17 @@ impl IncomingMessage for FaultyMessage {
     async fn nack(mut self, requeue: bool) -> Result<(), AckError> {
         let inner = self.take();
         match self.fault {
-            Fault::ClaimsAfterShutdown if self.closed.load(Ordering::SeqCst) => Ok(()),
+            Fault::ClaimsAfterShutdown if self.closed.load(Ordering::SeqCst) => {
+                drop(ConsumeOnDrop(Some(inner)));
+                Ok(())
+            }
             Fault::RequeuesOnCaller if requeue => {
+                let guard = ConsumeOnDrop(Some(inner));
                 drop(tokio::spawn(async move {
-                    let _ = inner.nack(true).await;
+                    let mut guard = guard;
+                    if let Some(inner) = guard.0.take() {
+                        let _ = inner.nack(true).await;
+                    }
                 }));
                 Ok(())
             }

@@ -493,8 +493,7 @@ async fn the_honest_double_passes_the_delay_floor() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(
-    expected = "lifecycle delay floor: a delivery settled with nack_after(1.5s) came \
-                           back after"
+    expected = "a broker that ignores the delay or rounds it down redelivers before it runs out"
 )]
 async fn a_delay_rounded_down_fails_the_lifecycle() {
     harness::lifecycle(
