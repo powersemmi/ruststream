@@ -14,6 +14,8 @@ use tokio_util::task::TaskTracker;
 use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle, ConnectedSlot};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
+#[cfg(feature = "poll-diagnostics")]
+use crate::runtime::poll_diagnostics::PollDiagnostics;
 use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
 use crate::runtime::redelivery::ScopeDelivery;
 use crate::runtime::router::RouterSink;
@@ -93,6 +95,9 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     /// non-harness run with the `testing` feature enabled stays inert.
     #[cfg(feature = "testing")]
     pub(super) test_hooks: Arc<TestHooks>,
+    /// Where every subscription's poll-time samples go, and what they are held to.
+    #[cfg(feature = "poll-diagnostics")]
+    pub(super) poll_diagnostics: PollDiagnostics,
     pub(super) global: Layers,
     // `fn() -> Phase` keeps the marker out of auto-trait and variance considerations, matching
     // the router builder's broker marker.
@@ -169,6 +174,8 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
             continuations: TaskTracker::new(),
             #[cfg(feature = "testing")]
             test_hooks: Arc::new(TestHooks::detached()),
+            #[cfg(feature = "poll-diagnostics")]
+            poll_diagnostics: PollDiagnostics::new(),
             global: Identity,
             phase: PhantomData,
         }
@@ -198,6 +205,8 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
+            #[cfg(feature = "poll-diagnostics")]
+            poll_diagnostics: self.poll_diagnostics,
             global: Stack::new(layer, self.global),
             phase: PhantomData,
         }
@@ -263,6 +272,8 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
+            #[cfg(feature = "poll-diagnostics")]
+            poll_diagnostics: self.poll_diagnostics,
             global: self.global,
             phase: PhantomData,
         }
@@ -309,9 +320,38 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
+            #[cfg(feature = "poll-diagnostics")]
+            poll_diagnostics: self.poll_diagnostics,
             global: self.global,
             phase: PhantomData,
         }
+    }
+
+    /// Sets what the poll-time diagnostics hold every subscription's handler to, and where their
+    /// reports go (`poll-diagnostics` feature).
+    ///
+    /// With the feature on, every subscription is sampled whether or not this is called; the call
+    /// changes the threshold or the sampling interval, and the handle kept outside reads the
+    /// reports or hands them to an exporter. Only available before the first
+    /// [`with_broker`](Self::with_broker), which opens subscriptions under the settings in place
+    /// then, so that ordering does not compile.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+    ///
+    /// let diagnostics = PollDiagnostics::new().threshold(Duration::from_micros(500));
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics.clone());
+    /// # let _ = app;
+    /// ```
+    #[cfg(feature = "poll-diagnostics")]
+    #[must_use]
+    pub fn poll_diagnostics(mut self, diagnostics: PollDiagnostics) -> Self {
+        self.poll_diagnostics = diagnostics;
+        self
     }
 }
 
@@ -333,6 +373,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
+            #[cfg(feature = "poll-diagnostics")]
+            poll_diagnostics: self.poll_diagnostics,
             global: self.global,
             phase: PhantomData,
         }
@@ -669,6 +711,8 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
                 self.brokers.len(),
                 #[cfg(feature = "testing")]
                 subscription,
+                #[cfg(feature = "poll-diagnostics")]
+                self.poll_diagnostics.clone(),
             ));
             self.starters.push(Box::new(move |state, shutdown| {
                 let connected = slot

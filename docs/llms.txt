@@ -15,7 +15,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Guides
 
-- [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, batches, workers, dedicated threads for handlers that compute, delayed redelivery and its cap
+- [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, batches, workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
 - [Publishing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing): replies, `Out` slots, publish transforms and the publish pipeline
 - [Routing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing): routers, per-router codecs and layers
 - [Context and state](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state): the per-delivery context and the shared application state

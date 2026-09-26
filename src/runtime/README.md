@@ -271,6 +271,69 @@ arguments of `#[tokio::main]`, `flavor = "current_thread"` or `worker_threads = 
 [`cli::AppRuntime`]). A current-thread app runtime beside dedicated threads gives the rest of the
 service the lowest latency.
 
+## Finding handlers that compute
+
+The `poll-diagnostics` feature finds the handlers that belong on `threads(n)`. With it on, every
+subscription times one poll of its handler in 64 with two reads of the CPU's cycle counter, and
+keeps a moving average and a histogram of that time. When the average crosses 100 microseconds,
+the runtime logs one warning naming the subscription, its average and p99, and `threads(n)`.
+[`PollDiagnostics`] changes the threshold and the interval, reads the reports, and hands them to
+an exporter:
+
+```rust
+# #[cfg(all(feature = "poll-diagnostics", feature = "metrics", feature = "macros", feature = "memory", feature = "json"))]
+# mod demo {
+use std::time::Duration;
+
+use ruststream::memory::prelude::*;
+use ruststream::metrics::Metrics;
+use ruststream::nonzero;
+use ruststream::runtime::PollDiagnostics;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Order {
+    id: u64,
+}
+
+#[subscriber("orders")]
+async fn handle(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+#[ruststream::app]
+fn app() -> impl App {
+    let metrics = Metrics::new().expect("metrics register once");
+    let diagnostics = PollDiagnostics::new()
+        .threshold(Duration::from_micros(250))
+        .sample_every(nonzero!(16u32));
+    metrics
+        .observe_poll_diagnostics(&diagnostics)
+        .expect("poll metrics register once");
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .layer(metrics.consume_layer())
+        .poll_diagnostics(diagnostics)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle);
+        })
+}
+# }
+# fn main() {}
+```
+
+- The time measured is the time inside `poll`, between two `.await` points: a handler that waits
+  on I/O or a timer is not slow here, only one that computes.
+- The average is exponential, each sample moving it by a sixteenth of the difference. It warns
+  after 16 samples, and once per crossing.
+- [`Metrics::observe_poll_diagnostics`](crate::metrics::Metrics::observe_poll_diagnostics)
+  exports the histogram and the average, and
+  [`Otel::observe_poll_diagnostics`](crate::otel::Otel::observe_poll_diagnostics) the average,
+  the p99 and the sample count, each labelled per subscription.
+- The cost is a countdown per poll and, on a timed poll, two counter reads and a few atomic
+  updates of the subscription's statistics. The counter is `rdtsc` on `x86_64` with an invariant
+  TSC and the system counter on `aarch64`; elsewhere it is the monotonic clock. It is
+  calibrated once per process, when the first app is built.
+
 ## Delayed redelivery and its cap
 
 [`HandlerOutcome::retry_after`] asks for the delivery back no sooner than a delay. A broker

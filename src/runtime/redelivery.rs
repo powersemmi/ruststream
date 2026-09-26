@@ -22,6 +22,8 @@ use tracing::info;
 use crate::runtime::dispatch::Delivery;
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
+#[cfg(feature = "poll-diagnostics")]
+use crate::runtime::poll_diagnostics::PollDiagnostics;
 use crate::runtime::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
@@ -516,6 +518,9 @@ pub(crate) struct ScopeDelivery {
     /// from those of a subscription that reports the same name.
     #[cfg(feature = "testing")]
     subscription: usize,
+    /// The app's poll-time diagnostics, which every subscription registers with as it opens.
+    #[cfg(feature = "poll-diagnostics")]
+    poll: PollDiagnostics,
 }
 
 impl ScopeDelivery {
@@ -525,6 +530,7 @@ impl ScopeDelivery {
         #[cfg(feature = "testing")] hooks: Arc<TestHooks>,
         #[cfg(feature = "testing")] scope_id: usize,
         #[cfg(feature = "testing")] subscription: usize,
+        #[cfg(feature = "poll-diagnostics")] poll: PollDiagnostics,
     ) -> Self {
         Self {
             tasks,
@@ -534,7 +540,15 @@ impl ScopeDelivery {
             scope_id,
             #[cfg(feature = "testing")]
             subscription,
+            #[cfg(feature = "poll-diagnostics")]
+            poll,
         }
+    }
+
+    /// The app's poll-time diagnostics.
+    #[cfg(feature = "poll-diagnostics")]
+    pub(crate) const fn poll(&self) -> &PollDiagnostics {
+        &self.poll
     }
 
     /// The tracker post-settle continuations are spawned onto.
@@ -698,7 +712,12 @@ where
         .map_err(|err| Box::new(err) as BoxError)?;
     Ok((
         subscriber,
-        Arc::new(Delivery::for_subscription(scope, retry, declaration)),
+        Arc::new(Delivery::for_subscription(
+            scope,
+            subscription,
+            retry,
+            declaration,
+        )),
     ))
 }
 
@@ -739,9 +758,13 @@ fn announce<Cx>(
 /// The delivery context for a subscriber mounted without a source: nothing describes where a
 /// redelivery of it would be published, and no mount chain can bind the retry position on one, so
 /// there is no retry path to build.
-pub(crate) fn open_mounted_subscriber<Cx>(scope: &ScopeDelivery) -> Arc<Delivery<Cx>> {
+pub(crate) fn open_mounted_subscriber<Cx>(
+    scope: &ScopeDelivery,
+    subscription: &str,
+) -> Arc<Delivery<Cx>> {
     Arc::new(Delivery::for_subscription(
         scope,
+        subscription,
         None,
         RetryDeclaration::new(),
     ))
@@ -778,6 +801,8 @@ mod tests {
             0,
             #[cfg(feature = "testing")]
             0,
+            #[cfg(feature = "poll-diagnostics")]
+            PollDiagnostics::new(),
         )
     }
 
@@ -787,7 +812,7 @@ mod tests {
     // A subscription opens inside the app's startup, on its runtime: the test stands on one too.
     #[tokio::test]
     async fn a_sourceless_mount_carries_no_retry_path() {
-        let delivery = open_mounted_subscriber::<()>(&scope());
+        let delivery = open_mounted_subscriber::<()>(&scope(), "s");
         assert!(delivery.retry.is_none());
         assert!(delivery.declaration.declares_nothing());
     }

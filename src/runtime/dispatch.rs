@@ -30,6 +30,10 @@ use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
 use super::main_runtime::MainRuntime;
+#[cfg(all(test, feature = "poll-diagnostics"))]
+use super::poll_diagnostics::PollDiagnostics;
+#[cfg(feature = "poll-diagnostics")]
+use super::poll_diagnostics::PollSampler;
 use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
@@ -252,13 +256,35 @@ pub(crate) struct Delivery<C = ()> {
     /// The subscription of the app this delivery comes through, identifying its records.
     #[cfg(feature = "testing")]
     pub(crate) subscription: usize,
+    /// Times every Nth poll of this subscription's handler.
+    #[cfg(feature = "poll-diagnostics")]
+    pub(crate) poll: PollSampler,
+}
+
+/// The handler's future, observed by the poll-time diagnostics where the feature is on and handed
+/// through untouched where it is off.
+#[cfg(feature = "poll-diagnostics")]
+macro_rules! observed {
+    ($delivery:expr, $future:expr) => {
+        $delivery.poll.observe($future)
+    };
+}
+
+/// See the feature's counterpart above: without the feature, the expression itself.
+#[cfg(not(feature = "poll-diagnostics"))]
+macro_rules! observed {
+    ($delivery:expr, $future:expr) => {
+        $future
+    };
 }
 
 impl<C> Delivery<C> {
     /// The context one subscription dispatches under: its own retry path over what the whole
     /// scope shares.
+    #[cfg_attr(not(feature = "poll-diagnostics"), allow(unused_variables))]
     pub(crate) fn for_subscription(
         scope: &ScopeDelivery,
+        subscription: &str,
         retry: Option<DeferredRetry<C>>,
         declaration: RetryDeclaration,
     ) -> Self {
@@ -275,6 +301,8 @@ impl<C> Delivery<C> {
             scope_id: scope.scope_id(),
             #[cfg(feature = "testing")]
             subscription: scope.subscription(),
+            #[cfg(feature = "poll-diagnostics")]
+            poll: scope.poll().register(subscription),
         }
     }
 
@@ -294,6 +322,8 @@ impl<C> Delivery<C> {
             scope_id: 0,
             #[cfg(feature = "testing")]
             subscription: 0,
+            #[cfg(feature = "poll-diagnostics")]
+            poll: PollDiagnostics::new().register("detached"),
         }
     }
 
@@ -367,6 +397,8 @@ impl<C> Delivery<C> {
             scope_id: self.scope_id,
             #[cfg(feature = "testing")]
             subscription: self.subscription,
+            #[cfg(feature = "poll-diagnostics")]
+            poll: self.poll.for_thread(),
         }
     }
 }
@@ -1001,13 +1033,18 @@ async fn dispatch<H, M, C, St>(
         #[cfg(feature = "testing")]
         let result = in_harness_scope(
             harness_scope(delivery),
-            AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind(),
+            observed!(
+                delivery,
+                AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+            ),
         )
         .await;
         #[cfg(not(feature = "testing"))]
-        let result = AssertUnwindSafe(handler.handle(msg, &mut ctx))
-            .catch_unwind()
-            .await;
+        let result = observed!(
+            delivery,
+            AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+        )
+        .await;
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
         // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None`
@@ -1155,13 +1192,18 @@ async fn run_batch<H, M, C, St>(
     #[cfg(feature = "testing")]
     let result = in_harness_scope(
         harness_scope(delivery),
-        AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind(),
+        observed!(
+            delivery,
+            AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+        ),
     )
     .await;
     #[cfg(not(feature = "testing"))]
-    let result = AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx))
-        .catch_unwind()
-        .await;
+    let result = observed!(
+        delivery,
+        AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+    )
+    .await;
     match result {
         Ok(()) => {
             // As on the single-message path: a batch that registered no hook pays the branch.

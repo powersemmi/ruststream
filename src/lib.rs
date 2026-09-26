@@ -82,6 +82,8 @@
 //! * `testing`: the [`testing::TestApp`] harness, which runs the service's production app in
 //!   process or against running brokers.
 //! * `cli`: the `ruststream` binary (`run`, `asyncapi gen`, `new`).
+//! * `poll-diagnostics`: every subscription samples the time its handler spends in `poll` and
+//!   warns when a handler computes on the app's runtime ([`runtime::PollDiagnostics`]).
 //!
 //! Disable defaults (`default-features = false`) to drop the bundled JSON codec; the core traits,
 //! runtime, and dispatch remain. Add back only what you need.

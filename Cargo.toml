@@ -473,6 +473,7 @@ asyncapi = ["json", "dep:schemars", "dep:serde_norway"]
 metrics = ["dep:prometheus"]
 logging = ["dep:tracing-subscriber"]
 cli = ["dep:clap", "dep:anyhow"]
+poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
 testing = ["dep:inventory", "tokio/test-util"]
 otel = [
     "dep:opentelemetry",
@@ -506,6 +507,10 @@ tokio-util = { version = "0.7.10", features = ["rt"] }
 # 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
 # where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
 tracing = "0.1.29"
+# The cycle counter the poll-time diagnostics read: `rdtsc` on x86_64 with an invariant TSC, the
+# system counter on aarch64, the monotonic clock elsewhere.
+quanta = { version = "0.12.6", optional = true }
+pin-project-lite = { version = "0.2", optional = true }
 
 # Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
@@ -634,6 +639,8 @@ opentelemetry = { version = "0.33", default-features = false, features = ["trace
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
 gungraun = "=0.19.4"
 divan = "0.1.21"
+# The poll-diagnostics suite reads the warning the way an operator does: as a formatted log line.
+tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std"] }
 
 # What ships is optimized across crate boundaries: the framework is generic to the point where a
 # dispatch path is only as cheap as the inlining it gets, and a build that stops at each crate
