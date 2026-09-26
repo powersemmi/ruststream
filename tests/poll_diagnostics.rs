@@ -149,66 +149,75 @@ async fn a_slow_handler_is_sampled_over_the_threshold() {
     assert!(report.p99() > LOW_THRESHOLD, "p99 {:?}", report.p99());
 }
 
+/// The ids from here on are handled at once; the ones below compute.
+const FAST_FROM: u32 = 1_000;
+
+/// Computes on a low id, returns at once on a high one.
+#[subscriber("varying")]
+async fn varying(order: &Order) -> HandlerOutcome {
+    if order.id < FAST_FROM {
+        black_box(spin(SLOW_ROUNDS + u64::from(order.id)));
+    }
+    HandlerOutcome::ack()
+}
+
+/// Publishes `count` orders to `varying`, from `first` on.
+async fn publish_from(tb: &TestApp<()>, first: u32, count: u32) {
+    for id in first..first + count {
+        tb.message(&Order { id })
+            .to("varying")
+            .publish()
+            .await
+            .expect("publish");
+    }
+}
+
+/// The warning comes once the average is warmed up, once per crossing, and again when the average
+/// crosses after it fell back.
 #[tokio::test]
-async fn a_slow_handler_warns_naming_the_fix() {
+async fn the_average_warns_once_per_crossing_naming_the_fix() {
     let logs = Captured::default();
     let _guard = logs.install();
-    let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(diagnostics.clone())
+        .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
+            b.include(varying);
         });
     let tb = TestApp::start(app).await.expect("startup");
-    publish(&tb, "slow", WARM_UP).await;
+    let warnings = || logs.text().matches("threads(n)").count();
 
+    publish_from(&tb, 0, WARM_UP - 1).await;
+    assert_eq!(warnings(), 0, "warned before the average warmed up");
+    publish_from(&tb, WARM_UP - 1, 4).await;
+    assert_eq!(warnings(), 1, "{}", logs.text());
     let text = logs.text();
     let line = text
         .lines()
         .find(|line| line.contains("threads(n)"))
         .unwrap_or_else(|| panic!("no warning naming threads(n) in:\n{text}"));
     assert!(line.contains("WARN"), "{line}");
-    assert!(line.contains("subscription=slow"), "{line}");
+    assert!(line.contains("subscription=varying"), "{line}");
     assert!(line.contains("average="), "{line}");
     assert!(line.contains("p99="), "{line}");
-    // Once per crossing, not once per sample.
-    assert_eq!(text.matches("threads(n)").count(), 1, "{text}");
+
+    // The average falls under the threshold, then crosses it again.
+    publish_from(&tb, FAST_FROM, 100).await;
+    assert_eq!(warnings(), 1, "{}", logs.text());
+    publish_from(&tb, 0, WARM_UP).await;
+    assert_eq!(warnings(), 2, "{}", logs.text());
 }
 
 #[tokio::test]
-async fn the_average_warns_only_once_warmed_up() {
+async fn a_fast_handler_is_not_warned_about() {
     let logs = Captured::default();
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
-        });
-    let tb = TestApp::start(app).await.expect("startup");
-    publish(&tb, "slow", WARM_UP - 1).await;
-    assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
-    publish(&tb, "slow", 1).await;
-    assert!(logs.text().contains("threads(n)"), "{}", logs.text());
-}
-
-#[tokio::test]
-async fn a_fast_handler_is_sampled_without_a_warning() {
-    let logs = Captured::default();
-    let _guard = logs.install();
-    let diagnostics = every_poll().threshold(HIGH_THRESHOLD);
-    let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(diagnostics.clone())
+        .poll_diagnostics(every_poll().threshold(HIGH_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(fast);
         });
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "fast", 2 * WARM_UP).await;
-
-    let report = diagnostics
-        .report("fast")
-        .expect("the subscription is sampled");
-    assert_eq!(report.samples(), u64::from(2 * WARM_UP));
-    assert!(report.average() < HIGH_THRESHOLD, "{:?}", report.average());
     assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
 }
 

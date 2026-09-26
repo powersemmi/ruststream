@@ -359,3 +359,17 @@ async fn failed_after_startup_unwinds_connected_brokers() {
         .expect_err("the unwound broker must reject the publish");
     assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
+
+/// `#[ruststream::app(worker_threads = n)]` builds: the generated `main` runs the service on a
+/// runtime of that size (the size itself is `AppRuntime`'s to honour).
+// The generated `main` is the service's entry point, and a test binary has its own.
+#[allow(dead_code)]
+mod sized_runtime {
+    use ruststream::memory::MemoryBroker;
+    use ruststream::runtime::{App, AppInfo, RustStream};
+
+    #[ruststream::app(worker_threads = 2)]
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("sized", "0.1.0")).register_broker(MemoryBroker::new())
+    }
+}

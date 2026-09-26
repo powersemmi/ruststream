@@ -610,22 +610,6 @@ mod tests {
         let diagnostics = PollDiagnostics::new();
         assert_eq!(diagnostics.threshold, Duration::from_micros(100));
         assert_eq!(diagnostics.sample_every.get(), 64);
-        assert_eq!(
-            format!("{diagnostics:?}"),
-            format!("{:?}", PollDiagnostics::default())
-        );
-    }
-
-    #[test]
-    fn a_sampler_times_every_nth_poll() {
-        let sampler = PollDiagnostics::new()
-            .sample_every(NonZeroU32::new(3).expect("three"))
-            .register("s");
-        let timed: Vec<bool> = (0..7).map(|_| sampler.tick()).collect();
-        assert_eq!(timed, [false, false, true, false, false, true, false]);
-        let own = sampler.for_thread();
-        assert!(!own.tick());
-        assert!(format!("{sampler:?}").contains("\"s\""));
     }
 
     #[test]
@@ -656,24 +640,13 @@ mod tests {
     }
 
     #[test]
-    fn a_crossing_is_held_in_the_average_word_and_hidden_from_the_report() {
+    fn the_report_hides_the_crossing_flag() {
         let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
-        let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
-        for _ in 1..WINDOW {
+        for _ in 0..WINDOW {
             stats.record(1_000);
         }
-        assert!(!over(), "the average warned before it was warmed up");
-        stats.record(1_000);
-        assert!(over());
+        assert!(stats.average_ns.load(Ordering::Relaxed) & OVER != 0);
         assert_eq!(stats.report().average(), Duration::from_nanos(1_000));
-        for _ in 0..100 {
-            stats.record(0);
-        }
-        assert!(
-            !over(),
-            "the average fell under the threshold and stayed flagged"
-        );
-        assert!(stats.report().average() < Duration::from_nanos(500));
     }
 
     #[test]

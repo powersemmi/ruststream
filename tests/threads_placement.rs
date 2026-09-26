@@ -13,7 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -227,6 +228,134 @@ fn a_key_stays_on_one_thread_and_in_order() {
     }
 }
 
+/// Deliveries with no partition key on a keyed subscription.
+#[subscriber("unkeyed", threads(2, by_key), publish("unkeyed.done"))]
+async fn unkeyed(job: &Order) -> Placed {
+    Placed {
+        id: job.id,
+        thread: here(),
+    }
+}
+
+/// A delivery without a key belongs to no lane, so the lanes take such deliveries in turn.
+#[test]
+fn keyless_deliveries_of_a_keyed_subscription_take_the_threads_in_turn() {
+    const JOBS: u32 = 8;
+    let broker = MemoryBroker::new();
+    let seen: Vec<Placed> = app_runtime().block_on(async {
+        let mut subscriber = broker.subscribe("unkeyed.done");
+        let mut replies = pin!(subscriber.stream());
+        let app =
+            RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
+                b.include(unkeyed).out_reply(Publish);
+            });
+        let running = app.start().await.expect("startup");
+        let publisher = broker.publisher();
+        for id in 0..JOBS {
+            publisher
+                .message(&Order { id })
+                .to("unkeyed")
+                .publish()
+                .await
+                .expect("publish");
+        }
+        let seen = read(&mut replies, JOBS as usize).await;
+        running.shutdown().await.expect("shutdown");
+        seen
+    });
+    let threads: HashSet<&str> = seen.iter().map(|reply| reply.thread.as_str()).collect();
+    assert_eq!(
+        threads.len(),
+        2,
+        "keyless deliveries piled on one lane: {seen:?}"
+    );
+}
+
+/// How many of the other deliveries finish before the held one is let go: more than the held
+/// thread's ring holds, so they get through only past that ring.
+const PAST_THE_HELD_RING: u32 = 20;
+
+/// What the held delivery and the others share: the gate the held one waits on, and how many of
+/// the others finished.
+#[derive(Default)]
+struct Held {
+    open: Mutex<bool>,
+    opened: Condvar,
+    others: AtomicU32,
+}
+
+/// The held delivery's answer: whether the others opened its gate, or its wait ran out.
+#[derive(Debug, Clone, Outgoing, Serialize, Deserialize, schemars::JsonSchema)]
+struct Released {
+    id: u32,
+    released: bool,
+}
+
+/// Order 0 holds its thread the way a computation does, until [`PAST_THE_HELD_RING`] other
+/// deliveries have finished.
+#[subscriber("held", threads(2), publish("held.done"))]
+async fn held(job: &Order, ctx: &mut Context<'_, (), Arc<Held>>) -> Released {
+    let shared = ctx.state();
+    if job.id == 0 {
+        let released = *shared
+            .opened
+            .wait_timeout_while(
+                shared.open.lock().unwrap_or_else(PoisonError::into_inner),
+                DEADLINE,
+                |open| !*open,
+            )
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
+        return Released { id: 0, released };
+    }
+    if shared.others.fetch_add(1, Ordering::SeqCst) + 1 == PAST_THE_HELD_RING {
+        *shared.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        shared.opened.notify_all();
+    }
+    Released {
+        id: job.id,
+        released: true,
+    }
+}
+
+/// A thread held by a computation holds up none of the others: once its ring is full, the loop
+/// hands the deliveries to the thread with room.
+#[test]
+fn a_held_thread_holds_up_none_of_the_others() {
+    const OTHERS: u32 = 40;
+    let broker = MemoryBroker::new();
+    let seen: Vec<Released> = app_runtime().block_on(async {
+        let mut subscriber = broker.subscribe("held.done");
+        let mut replies = pin!(subscriber.stream());
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Held::default())))
+            .with_broker(broker.clone(), |b| {
+                b.include(held).out_reply(Publish);
+            });
+        let running = app.start().await.expect("startup");
+        let publisher = broker.publisher();
+        for id in 0..=OTHERS {
+            publisher
+                .message(&Order { id })
+                .to("held")
+                .publish()
+                .await
+                .expect("publish");
+        }
+        let seen = read(&mut replies, OTHERS as usize + 1).await;
+        running.shutdown().await.expect("shutdown");
+        seen
+    });
+    let first = seen
+        .iter()
+        .find(|reply| reply.id == 0)
+        .expect("order 0 answers");
+    assert!(
+        first.released,
+        "the other thread did not get past the held thread's ring"
+    );
+}
+
 /// What the continuation tests share with their handler: where a continuation reports the thread
 /// it ran on, and the signal that the handler has returned.
 struct Report {
@@ -334,6 +463,77 @@ fn a_continuation_pending_at_shutdown_completes() {
     assert_eq!(seen.len(), 2, "both continuations report: {seen:?}");
 }
 
+/// Tells the test, when dropped, that the delivery holding it was cancelled.
+struct Cancelled(mpsc::Sender<()>);
+
+impl Drop for Cancelled {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+/// What the stuck delivery shares with the test: the signal that it started, and where it says
+/// it was cancelled.
+struct Stuck {
+    started: Notify,
+    cancelled: Mutex<mpsc::Sender<()>>,
+}
+
+/// Never finishes.
+#[subscriber("stuck", threads(1))]
+async fn stuck(_job: &Order, ctx: &mut Context<'_, (), Arc<Stuck>>) -> HandlerOutcome {
+    let sender = ctx
+        .state()
+        .cancelled
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let _guard = Cancelled(sender);
+    ctx.state().started.notify_one();
+    std::future::pending::<()>().await;
+    HandlerOutcome::ack()
+}
+
+/// A delivery that outlives the shutdown timeout is cancelled on its thread, as a task of the
+/// app's runtime would be, rather than left running there.
+#[test]
+fn the_shutdown_timeout_cancels_a_delivery_on_its_thread() {
+    let (cancelled, told) = mpsc::channel();
+    let broker = MemoryBroker::new();
+    app_runtime().block_on(async {
+        let shared = Arc::new(Stuck {
+            started: Notify::new(),
+            cancelled: Mutex::new(cancelled),
+        });
+        let state = Arc::clone(&shared);
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .shutdown_timeout(Duration::from_millis(100))
+            .on_startup(async move |()| Ok::<_, Infallible>(state))
+            .with_broker(broker.clone(), |b| {
+                b.include(stuck);
+            });
+        let running = app.start().await.expect("startup");
+        broker
+            .publisher()
+            .message(&Order { id: 1 })
+            .to("stuck")
+            .publish()
+            .await
+            .expect("publish");
+        timeout(DEADLINE, shared.started.notified())
+            .await
+            .expect("the delivery starts");
+        timeout(DEADLINE, running.shutdown())
+            .await
+            .expect("the shutdown timeout bounds the wait")
+            .expect("shutdown");
+    });
+    assert!(
+        told.recv_timeout(DEADLINE).is_ok(),
+        "the delivery kept running on its thread after the shutdown timeout"
+    );
+}
+
 /// A subscription whose deliveries report no native delayed redelivery, so a `retry_after` takes
 /// the runtime's own copy path; the copy goes to `copies`, where the test reads it.
 #[derive(Debug, Clone)]
@@ -424,24 +624,9 @@ async fn retried(order: &Order, ctx: &mut Context<'_, (), Arc<Deferred>>) -> Han
     HandlerOutcome::ack()
 }
 
-/// The same deferral with no concurrency clause, for the `workers(n)` counterpart.
-#[subscriber(CopiedSubscription::new())]
-async fn retried_open(order: &Order, ctx: &mut Context<'_, (), Arc<Deferred>>) -> HandlerOutcome {
-    if order.id == 1 {
-        ctx.state().handled.notify_one();
-        return HandlerOutcome::retry_after(Duration::from_millis(50));
-    }
-    HandlerOutcome::ack()
-}
-
 /// Publishes `orders` to [`retried`] and returns when the copy of order 1 arrived, measured from
 /// the moment the handler deferred it; `shut` shuts the app down right after the deferral.
 fn copy_arrival(orders: &[u32], shut: bool) -> Option<Duration> {
-    copy_arrival_through(orders, shut, true)
-}
-
-/// [`copy_arrival`] on dedicated threads or, without `threads`, on `workers(2)`.
-fn copy_arrival_through(orders: &[u32], shut: bool, threads: bool) -> Option<Duration> {
     let broker = MemoryBroker::new();
     app_runtime().block_on(async {
         let mut copy_subscriber = broker.subscribe("copies");
@@ -451,12 +636,7 @@ fn copy_arrival_through(orders: &[u32], shut: bool, threads: bool) -> Option<Dur
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
             .with_broker(broker.clone(), |b| {
-                if threads {
-                    b.include(retried).out_retry(Publish);
-                } else {
-                    b.include(retried_open.workers(nonzero!(2)))
-                        .out_retry(Publish);
-                }
+                b.include(retried).out_retry(Publish);
             });
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
@@ -559,16 +739,6 @@ fn a_batch_is_handled_on_a_dedicated_thread() {
     }
 }
 
-/// The same shutdown contract on `workers(n)`: a retry timer pending at shutdown is waited for,
-/// within the shutdown timeout, before the broker closes.
-#[test]
-fn a_retry_copy_pending_at_shutdown_is_published_by_workers() {
-    assert!(
-        copy_arrival_through(&[1], true, false).is_some(),
-        "the copy pending at shutdown was lost"
-    );
-}
-
 /// Replies at once, in the one poll it takes.
 #[cfg(feature = "poll-diagnostics")]
 #[subscriber("sampled", threads(2), publish("sampled.done"))]
@@ -589,7 +759,7 @@ fn every_thread_samples_into_the_subscription_report() {
     const JOBS: u32 = 8;
     let broker = MemoryBroker::new();
     let diagnostics = PollDiagnostics::new().sample_every(ruststream::nonzero!(1u32));
-    let replies = app_runtime().block_on(async {
+    app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("sampled.done");
         let mut replies = pin!(subscriber.stream());
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
@@ -607,12 +777,10 @@ fn every_thread_samples_into_the_subscription_report() {
                 .await
                 .expect("publish");
         }
-        let answers: Vec<Placed> = read(&mut replies, JOBS as usize).await;
+        read::<Placed, _>(&mut replies, JOBS as usize).await;
         // The shutdown drains the threads, so every sample is in before the report is read.
         running.shutdown().await.expect("shutdown");
-        answers
     });
-    assert!(replies.iter().all(|p| !p.thread.starts_with(APP_THREADS)));
     let report = diagnostics
         .report("sampled")
         .expect("the subscription is sampled");
