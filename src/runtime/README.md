@@ -329,6 +329,8 @@ fn app() -> impl App {
   on I/O or a timer is not slow here, only one that computes.
 - The average is exponential, each sample moving it by a sixteenth of the difference. It warns
   after 16 samples, and once per crossing.
+- A subscription declared on `threads(n)` is measured and reported the same way, and no warning
+  names it: its computation holds up none of the app runtime's threads.
 - [`Metrics::observe_poll_diagnostics`](crate::metrics::Metrics::observe_poll_diagnostics)
   exports the histogram and the average, and
   [`Otel::observe_poll_diagnostics`](crate::otel::Otel::observe_poll_diagnostics) the average,
