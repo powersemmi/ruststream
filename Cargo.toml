@@ -39,7 +39,7 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "threads"
-required-features = ["macros", "memory", "json"]
+required-features = ["macros", "memory", "json", "logging"]
 
 # No codec feature in the list, and none missing: the message serializes itself, so the whole
 # service builds with the codec layer switched off.

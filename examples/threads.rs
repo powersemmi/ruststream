@@ -2,7 +2,7 @@
 //! current-thread runtime.
 //!
 //! ```text
-//! cargo run --example threads --features macros,memory,json -- run
+//! cargo run --example threads --features macros,memory,json,logging -- run
 //! ```
 
 use std::time::Duration;
