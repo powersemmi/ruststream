@@ -47,6 +47,9 @@ use ruststream::conformance::harness;
 | nack без requeue отбрасывает | после `nack(requeue = false)` повторной доставки нет |
 | заголовки передаются | заголовки сообщения приходят к подписчику без изменений |
 | лог публикаций фиксирует публикации | `published(name)` записывает каждое опубликованное сообщение |
+| лог публикаций фиксирует ваш издатель | то, что отправил ваш издатель по умолчанию, лежит в `published(name)` рядом с тем, что внедрил тест, в порядке публикации и с заголовками (для брокера, зарегистрированного через `register_testable_broker!`) |
+| две подписки на одно имя | каждое имя получает сообщение столько раз, сколько отвечает `TestableBroker::routes`: при рассылке каждая подписка получает всё, при конкурирующих потребителях каждое сообщение приходит одной из них, и сообщения делятся между ними, если ответ не называет ту, что получает все |
+| счётчики обвязки сходятся | на остановленных часах, так, как их ведёт `TestApp`: доставка учитывается до возврата из публикации и снимается один раз при завершении, возврат в очередь учитывает её снова, публикация без получателей не учитывается, отложенная повторная доставка учитывается, когда истекает её таймер |
 
 Транспорт, который не умеет подтверждать (ZeroMQ, MQTT `QoS 0`, Redis pub/sub, Core NATS),
 возвращает `AckError::Unsupported` из `ack` и `nack`, и набор принимает такой ответ везде, где сам
@@ -254,10 +257,49 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
         |name| RabbitQuorumQueue::new(name),
         |connected| connected.publisher(LapinPublish::default()),
         nonzero!(2u32),
+
+## Транспорт внутри процесса против сервера
+
+`conformance::in_process` сверяет то, что объявляет ваш транспорт внутри процесса, с тем, что делает
+сервер. Оба набора подключают брокер дважды на каждую пробу, через `Broker::connect` и через
+`connect_in_process`, поэтому запускайте их там же, где проверки против сервера:
+
+<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::in_process::{self, Refusal};
+use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn in_process_matches_the_server() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    in_process::backlog_matches_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+    )
+    .await;
+    in_process::refuses_like_the_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+        [
+            Refusal::PayloadOver { name: "conformance.payload".to_owned(), limit: 1024 * 1024 },
+            Refusal::Publish { name: "conformance.bad subject".to_owned() },
+            Refusal::Subscription { source: CoreSubject::new("conformance..empty") },
+        ],
     )
     .await;
 }
 ```
+
+- **`backlog_matches_server`** на обоих транспортах публикует сообщение под новым именем,
+  открывает подписку на это имя и публикует ещё одно. Первое сообщение приходит первым, если
+  `TestableBroker::backlog` объявляет `Backlog::Delivered`, и не приходит вовсе, если он объявляет
+  `Backlog::Missed`. Если сервер отвергает первую публикацию (очередь или тему никто не объявил),
+  транспорт внутри процесса обязан её отвергнуть тоже.
+- **`refuses_like_the_server`** принимает известные вам отказы, каждый в виде `Refusal`: полезная
+  нагрузка на байт больше предела, отвергнутое назначение, отвергнутая подписка, подписка,
+  отвергнутая рядом с другой. Каждый отказ должны дать оба транспорта. Проба, которую сервер
+  принимает, считается ошибкой: она ничего не доказывает.
 
 ## Наборы проверок для совместимостей {#capability-suites}
 

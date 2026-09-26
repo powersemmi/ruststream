@@ -76,7 +76,8 @@
 //!   [`otel::OtelBuilder::init`], plus per-handler dispatch metrics middleware and W3C
 //!   trace-context propagation ([`otel::propagation`]).
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
-//!   [`conformance::capabilities`], and broker-agnostic [`conformance::helpers`] for application
+//!   [`conformance::capabilities`], the in-process transport held to the server in
+//!   [`conformance::in_process`], and broker-agnostic [`conformance::helpers`] for application
 //!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
 //!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
 //! * `testing`: the [`testing::TestApp`] harness, which runs the service's production app in

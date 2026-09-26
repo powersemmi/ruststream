@@ -42,6 +42,9 @@ use ruststream::conformance::harness;
 | 不重新入队的 nack 丢弃消息 | `nack(requeue = false)` 之后没有重新投递 |
 | 消息头会传递 | 消息头原样到达订阅者 |
 | 发布日志记录发布 | `published(name)` 记录每一条已发布的消息 |
+| 发布日志记录你自己的发布者 | 默认发布者发出的消息出现在 `published(name)` 里，和测试注入的消息按发布顺序排在一起，并带着消息头（适用于用 `register_testable_broker!` 注册过的 Broker） |
+| 同名的两个订阅 | 每个名字收到消息的次数与 `TestableBroker::routes` 的答复一致：Broker 扇出时每个订阅都收到全部消息，订阅互相竞争时每条消息只到其中一个，并且消息在两者之间分摊，除非答复指明全部消息去往哪一个 |
+| harness 的计数保持平衡 | 在暂停的时钟上，按 `TestApp` 驱动的方式：发布返回之前投递已计入在途，结算时恰好释放一次，重新入队再次计入，没有订阅收到的发布不计入，延迟的重新投递在定时器到期时计入 |
 
 无法确认的传输（ZeroMQ、MQTT `QoS 0`、Redis pub/sub 和 Core NATS）从 `ack` 和 `nack` 返回
 `AckError::Unsupported`。套件在每一处结算投递的地方都接受这个答复。你的进程内传输务必答得和
@@ -217,10 +220,47 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
         |name| RabbitQuorumQueue::new(name),
         |connected| connected.publisher(LapinPublish::default()),
         nonzero!(2u32),
+
+## 进程内传输对照服务器
+
+`conformance::in_process` 把进程内传输声明的行为和服务器的实际行为对照起来。两个套件每个探测都
+连接 Broker 两次，一次用 `Broker::connect`，一次用 `connect_in_process`，所以要在跑针对服务器的
+套件的地方运行它们：
+
+<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::in_process::{self, Refusal};
+use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a running nats-server; set NATS_TEST_URL"]
+async fn in_process_matches_the_server() {
+    let url = std::env::var("NATS_TEST_URL").unwrap();
+    in_process::backlog_matches_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+    )
+    .await;
+    in_process::refuses_like_the_server(
+        || NatsBroker::new(url.clone()),
+        |connected| connected.publisher(NatsPublish),
+        [
+            Refusal::PayloadOver { name: "conformance.payload".to_owned(), limit: 1024 * 1024 },
+            Refusal::Publish { name: "conformance.bad subject".to_owned() },
+            Refusal::Subscription { source: CoreSubject::new("conformance..empty") },
+        ],
     )
     .await;
 }
 ```
+
+- **`backlog_matches_server`** 在两种传输上各做一遍：向一个新名字发布一条消息，按名字打开订阅，
+  再发布一条。`TestableBroker::backlog` 声明 `Backlog::Delivered` 时第一条最先到达，声明
+  `Backlog::Missed` 时它不会到达。服务器拒绝第一次发布时（没有人声明过的队列或主题），进程内传输
+  也必须拒绝。
+- **`refuses_like_the_server`** 接收你知道的拒绝情形，每个都是一个 `Refusal`：超出上限一个字节的
+  负载、被拒绝的目的地、被拒绝的订阅、在另一个订阅旁边被拒绝的订阅。两种传输都必须拒绝每一个。
+  服务器接受的探测会以失败告终：它什么也证明不了。
 
 ## 能力套件 { #capability-suites }
 

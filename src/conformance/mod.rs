@@ -7,6 +7,7 @@
 pub mod capabilities;
 pub mod harness;
 pub mod helpers;
+pub mod in_process;
 pub mod lifecycle;
 pub mod retry;
 pub mod settlement;
