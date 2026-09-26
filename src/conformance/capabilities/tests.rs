@@ -91,6 +91,8 @@ enum SettleFault {
     NackOnCallerRuntime,
     /// Every ack fails with a timeout.
     AckFails,
+    /// Every ack waits forever.
+    AckHangs,
     /// Every nack fails with a timeout.
     NackFails,
     /// Every nack answers that the transport has none. The honest answer of a transport with no
@@ -141,6 +143,9 @@ enum SeekFault {
     /// A seek to an evicted position is refused, and the subscription delivers nothing more
     /// without ending.
     EvictedStalls,
+    /// A seek to an evicted position is refused, and the stream yields an error on every poll from
+    /// then on, each one ready at once.
+    EvictedErrorsForever,
 }
 
 /// What a subscription double's stream does next, set by a refused seek.
@@ -148,6 +153,7 @@ const GOES_ON: u8 = 0;
 const ERROR_THEN_GOES_ON: u8 = 1;
 const ERROR_THEN_ENDS: u8 = 2;
 const STALLS: u8 = 3;
+const ERRORS_FOREVER: u8 = 4;
 
 /// The error a subscription double's stream yields.
 #[derive(Debug, thiserror::Error)]
@@ -248,6 +254,10 @@ impl<Log: LogMode> Subscriber for FaultySubscriber<Log> {
                     ERROR_THEN_GOES_ON => Some((Err(StreamError), (deliveries, next, false))),
                     ERROR_THEN_ENDS => Some((Err(StreamError), (deliveries, next, true))),
                     STALLS => pending().await,
+                    ERRORS_FOREVER => {
+                        next.store(ERRORS_FOREVER, Ordering::SeqCst);
+                        Some((Err(StreamError), (deliveries, next, false)))
+                    }
                     _ => {
                         let msg = deliveries.next().await?;
                         Some((Ok(msg), (deliveries, next, false)))
@@ -300,6 +310,19 @@ struct FaultyMessage<Log> {
     settle: Option<SettleFault>,
 }
 
+/// Consumes the delivery it holds when it is dropped: the stand-in for a settlement lost with the
+/// runtime it was left on, now that an unsettled memory delivery goes back to its subscription.
+struct LostWithRuntime<Log: LogMode>(Option<MemoryMessage<Log>>);
+
+impl<Log: LogMode> Drop for LostWithRuntime<Log> {
+    fn drop(&mut self) {
+        if let Some(unsettled) = self.0.take() {
+            // The in-memory settlement happens in the call; the future only carries its answer.
+            let _consumed = unsettled.nack(false);
+        }
+    }
+}
+
 impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
     fn payload(&self) -> &[u8] {
         self.inner.payload()
@@ -312,6 +335,7 @@ impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
     async fn ack(self) -> Result<(), AckError> {
         match self.settle {
             Some(SettleFault::AckFails) => Err(AckError::Timeout),
+            Some(SettleFault::AckHangs) => pending().await,
             _ => self.inner.ack().await,
         }
     }
@@ -326,10 +350,13 @@ impl<Log: LogMode> IncomingMessage for FaultyMessage<Log> {
             }
             Some(SettleFault::NackDrops) if requeue => self.inner.ack().await,
             Some(SettleFault::NackOnCallerRuntime) if on_current_thread_runtime() => {
-                let inner = self.inner;
+                let guard = LostWithRuntime(Some(self.inner));
                 tokio::spawn(async move {
+                    let mut guard = guard;
                     sleep(LOST_AFTER).await;
-                    let _ = inner.nack(requeue).await;
+                    if let Some(inner) = guard.0.take() {
+                        let _ = inner.nack(requeue).await;
+                    }
                 });
                 Ok(())
             }
@@ -425,6 +452,9 @@ impl Seeker for FaultySeeker {
                 self.refuse_evicted(to, false, ERROR_THEN_ENDS).await
             }
             Some(SeekFault::EvictedStalls) => self.refuse_evicted(to, false, STALLS).await,
+            Some(SeekFault::EvictedErrorsForever) => {
+                self.refuse_evicted(to, false, ERRORS_FOREVER).await
+            }
             _ => self.inner.seek(to).await,
         }
     }
@@ -549,11 +579,10 @@ async fn batches_catch_a_batch_past_its_size() {
     .await;
 }
 
-/// Before the batches were kept apart, three singletons passed as a batch settled element by
-/// element.
+/// A subscription that hands out one message per batch is within the batch contract, so it passes
+/// the suite; the per-element claim is checked only on a batch that carries several messages.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "no batch carried more than one of them")]
-async fn batches_catch_a_subscription_that_never_groups_waiting_messages() {
+async fn a_subscription_that_never_groups_waiting_messages_passes() {
     batches(
         MemoryBroker::new,
         |name| FaultySource::batching(name, BatchFault::Singletons),
@@ -568,6 +597,18 @@ async fn batches_catch_an_ack_that_fails() {
     batches(
         MemoryBroker::new,
         |name| FaultySource::settling(name, SettleFault::AckFails),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+
+/// A settlement that never returns fails the suite at the step bound instead of holding it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "an ack hung for")]
+async fn batches_catch_an_ack_that_hangs() {
+    batches(
+        MemoryBroker::new,
+        |name| FaultySource::settling(name, SettleFault::AckHangs),
         |broker| broker.publisher(),
     )
     .await;
@@ -646,6 +687,20 @@ async fn seeking_unknown_position_passes_a_subscription_that_ends_with_the_refus
     seeking_unknown_position(
         || MemoryBroker::retaining(Retention::Messages(nonzero!(2))),
         |name| FaultySource::seeking(name, SeekFault::EvictedErrorsAndEnds),
+        |broker| broker.publisher(),
+        |_| MemoryPosition::sequence(0),
+    )
+    .await;
+}
+
+/// A stream that is ready with an error on every poll after the refusal fails the check at its
+/// deadline instead of spinning it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the next publish did not arrive within")]
+async fn seeking_unknown_position_catches_a_subscription_that_only_errors_after_the_refusal() {
+    seeking_unknown_position(
+        || MemoryBroker::retaining(Retention::Messages(nonzero!(2))),
+        |name| FaultySource::seeking(name, SeekFault::EvictedErrorsForever),
         |broker| broker.publisher(),
         |_| MemoryPosition::sequence(0),
     )

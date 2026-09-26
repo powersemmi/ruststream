@@ -401,5 +401,5 @@ where
 /// unsettled may be handed back to whatever reads the reply subscription next. A transport with no
 /// settlement for replies answers what it answers; the check asserts the reply, not the answer.
 async fn settle_reply<M: IncomingMessage>(reply: M) {
-    let _settled = reply.ack().await;
+    let _settled = within(reply.ack(), "request_reply: settling a reply").await;
 }

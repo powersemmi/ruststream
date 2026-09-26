@@ -380,8 +380,15 @@ pub async fn seeking_unknown_position<B, MkBroker, Src, MkSrc, Pub, MkPub, MkUnk
     // anything but the next publish is not. An error is neither: the subscription may go on after
     // it, and where it goes on from is what the suite reads.
     publish_all(&publisher, &subject, &[&[3]]).await;
+    // A stream that is ready with an error on every poll never lets `timeout_at` see its
+    // deadline, so the deadline is read on every turn as well.
     let deadline = Instant::now() + DEFAULT_TIMEOUT;
     let after_refusal = loop {
+        assert!(
+            Instant::now() < deadline,
+            "{LABEL}: after a refused seek the next publish did not arrive within \
+             {DEFAULT_TIMEOUT:?}, and the subscription did not end either"
+        );
         match timeout_at(deadline, stream.next()).await {
             Ok(Some(Err(_))) => {}
             Ok(delivery) => break delivery,

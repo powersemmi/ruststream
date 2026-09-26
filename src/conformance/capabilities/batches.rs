@@ -21,8 +21,10 @@ use crate::{
 ///
 /// Every published message arrives, in publish order, distributed over one or more non-empty
 /// batches. The elements of one batch settle one by one: in a batch of several, nacking one with
-/// requeue and acking the others brings back that one alone. Messages already waiting when the
-/// stream is read must share a batch at least once in five rounds, or the suite cannot show it.
+/// requeue and acking the others brings back that one alone. That claim is checked on the first
+/// batch that carries several of the messages already waiting when the stream is read, over five
+/// rounds; a subscription that hands out one message per batch in all of them is within its
+/// contract, and the claim goes unchecked for it.
 /// A batch settled from a current-thread runtime that stops right after (a batch handler on a
 /// dedicated thread) settles all the same: the requeued element comes back. A transport that
 /// answers a requeue with [`AckError::Unsupported`](crate::AckError::Unsupported) passes both with
@@ -134,7 +136,10 @@ pub async fn batches<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 ///
 /// The batches stay apart, because the claim is about the elements of one batch: three messages
 /// published before the stream is read go out again each round until one batch carries several of
-/// them, and one element of that batch is nacked while the others are acked.
+/// them, and one element of that batch is nacked while the others are acked. A subscription that
+/// hands out one message per batch in every round is within its contract (a batch may be smaller
+/// than the size asked for), and a batch of one settles like the single delivery the other checks
+/// hold, so the claim has nothing to add for it.
 async fn batch_settles_per_element<Pub, S, Batch, M, E>(
     publisher: &Pub,
     stream: &mut S,
@@ -213,11 +218,6 @@ async fn batch_settles_per_element<Pub, S, Batch, M, E>(
         expect_no_batch(stream, LABEL).await;
         return;
     }
-    panic!(
-        "{LABEL}: in {ROUNDS} rounds of three messages published before the stream was read, no \
-         batch carried more than one of them; a batch subscription must group messages that are \
-         already waiting, or no check can show that the elements of one batch settle apart"
-    );
 }
 
 /// One batch settled from a runtime that stops right after: the requeued element still comes

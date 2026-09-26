@@ -103,7 +103,7 @@ async fn within<Work: Future>(work: Work, what: &str) -> Work::Output {
 
 /// Acks `msg`, accepting a transport that has no acknowledgement.
 async fn ack_or_unsupported<M: IncomingMessage>(msg: M, label: &str) {
-    match msg.ack().await {
+    match within(msg.ack(), &format!("{label}: an ack")).await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("{label}: ack must succeed or be unsupported, got: {other:?}"),
     }
@@ -112,7 +112,7 @@ async fn ack_or_unsupported<M: IncomingMessage>(msg: M, label: &str) {
 /// Nacks `msg` with requeue and reports whether the transport performs the requeue; a transport
 /// that has none answers [`AckError::Unsupported`].
 async fn nack_requeue<M: IncomingMessage>(msg: M, label: &str) -> bool {
-    match msg.nack(true).await {
+    match within(msg.nack(true), &format!("{label}: a nack with requeue")).await {
         Ok(()) => true,
         Err(AckError::Unsupported) => false,
         Err(other) => panic!("{label}: nack must succeed or be unsupported, got: {other:?}"),

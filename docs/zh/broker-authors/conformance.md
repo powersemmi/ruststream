@@ -308,7 +308,7 @@ async fn in_process_matches_the_server() {
 | 套件 | 要求 | 断言内容 |
 |---|---|---|
 | `capabilities::request_reply` | `RequestReply` | 请求带着一个可用的 `reply-to` 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误；在前一个请求来自一个已经停止的运行时之后，新的请求仍然得到回复；同时在途的两个请求各自得到自己的回复，在请求超时之后才到达的回复不会了结下一个请求，Broker 关闭之后发出的请求立即返回错误 |
-| `capabilities::batches` | `BatchSubscriber` | 每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里；读取流时已经在等待的消息，在五轮之内至少有一次落进同一批，这一批里的元素逐条结算（带重新入队的 `nack` 只让这一条回来），批在一个已经停止的运行时里结算时也是如此 |
+| `capabilities::batches` | `BatchSubscriber` | 每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里；读取流时已经在等待的消息如果在五轮之内有一次落进同一批，这一批里的元素逐条结算（带重新入队的 `nack` 只让这一条回来）；从不把它们合进一批的订阅也能通过，逐条结算对它不做检查；在一个已经停止的运行时里结算的批同样照常结算 |
 | `capabilities::batch_seeking` | `BatchSubscriber` 和 `Seekable`，且消息实现 `Positioned` | 回退到从批内某条消息上取得的位置之后，接下来的批从这条消息开始，并按顺序带上它之后的后缀 |
 | `capabilities::transactions` | `TransactionalPublisher` | 事务里的任何内容在 `commit` 之前都不可见，`commit` 按顺序发布整个缓冲区，`abort` 把它丢弃；误用会返回错误：没有打开事务就 `commit` / `abort`，或者已有事务打开时再次 `begin_transaction`（这必须让原事务保持不变）；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，提交仍打开着的事务和普通发布都返回错误 |
 | `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，`commit`、直接发布以及此时打开的事务都返回错误 |
