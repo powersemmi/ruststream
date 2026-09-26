@@ -758,7 +758,7 @@ async fn within<Work: Future>(work: Work, what: &str) -> Work::Output {
 }
 
 /// Shuts `connected` down within [`SHUTDOWN_TIMEOUT`], panicking when it hangs or fails.
-async fn shutdown_within<C: ConnectedBroker>(connected: C, scenario: &str) {
+pub(crate) async fn shutdown_within<C: ConnectedBroker>(connected: C, scenario: &str) {
     let answer = timeout(SHUTDOWN_TIMEOUT, connected.shutdown())
         .await
         .unwrap_or_else(|_| {

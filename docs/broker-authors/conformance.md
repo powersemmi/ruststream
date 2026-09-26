@@ -95,6 +95,13 @@ Every step comes from where a service reaches the broker:
   down or run on the settling thread's runtime fails.
 - `shutdown` must return within ten seconds.
 
+Before the ladder, on a connection of its own, the check holds your publisher to what a message
+carries. Thirty-two messages published one after another must arrive in that order on one
+subscription. Four more carry headers: many entries, an empty value, a value that is not UTF-8, and
+the framework's own retry count and trace context. Each header must come back byte for byte, or the
+publish carrying it must fail. A message whose publish failed must never arrive, and a header
+dropped or rewritten on the way fails the check.
+
 The owner of the connected form cannot reach it after shutdown: that code does not compile. The
 runtime rule is the **aliased-handle contract**. After the shutdown, a publish must return an error
 through a publisher paired before it and never used, through one used on the broker's runtime and
@@ -288,6 +295,27 @@ async fn in_process_matches_the_server() {
   beside another one. Both transports must refuse each. A probe your server accepts fails as a
   probe that proves nothing.
 
+
+## What a message carries
+
+Four checks in `conformance::message_shape` need an input only your broker can supply, so your crate
+calls them itself, live and in process like the other suites:
+
+| Check | Your input | Asserts |
+|---|---|---|
+| `keyed_order` | a subject, and where a key goes: a header or an options field | every delivery reports the key it was published under from `partition_key`, and the messages of one key arrive in publish order |
+| `publish_options` | the publish policy, the cases, and a way to read a setting off a delivery | a publish with no options shows the policy's setting; a call's options win over it for that call alone; a value the transport cannot honour fails the publish and never arrives |
+| `publishes_without_credentials` | a publish policy configured with a password | no binding the policy adds to the document carries the password |
+| `describes_addresses_without_credentials` | a broker built from several addresses, each with a user and a password | the server description carries none of that userinfo |
+
+A transport with no keys does not call `keyed_order`: `None` is its honest answer. Configure the
+policy you pass to `publish_options` away from the transport's default, so a publisher that forgets
+the policy cannot pass by landing on the default.
+
+```rust
+--8<-- "tests/conformance_message_shape.rs:keyed_order"
+```
+
 ## Capability suites
 
 If your broker implements a capability trait, run the matching suite from
@@ -360,6 +388,8 @@ Before publishing a broker crate:
 - [ ] `harness::redelivery_address` passes for every `AddressedCopies` descriptor, and for the bare
       `Name` where `Subscribe::Copies` is `AddressedCopies`; `retry::broker_moves` passes for every
       `BrokerMoves` descriptor.
+- [ ] Where the transport has keys or per-message settings, `message_shape::keyed_order` and
+      `message_shape::publish_options` pass, in process and against a real server.
 - [ ] An end-to-end suite covers broker-specific semantics, enabled by that same variable.
 - [ ] `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
       `categories`), and CI checks `--no-default-features` and `--all-features`.

@@ -159,7 +159,7 @@ impl ConnectedBroker for ConnectedFaulty {
 }
 
 /// What a publish hands the connection a [`Fault::AttachesOnFirstCaller`] publisher attached.
-type Frame = (String, Bytes, Option<oneshot::Sender<()>>);
+type Frame = (String, Bytes, HeaderMap, Option<oneshot::Sender<()>>);
 
 struct FaultyPublisher {
     fault: Fault,
@@ -185,6 +185,7 @@ impl Publisher for FaultyPublisher {
     ) -> Result<(), Self::Error> {
         let name = msg.name().to_owned();
         let payload = Bytes::copy_from_slice(msg.payload());
+        let headers = msg.headers().clone();
         match self.fault {
             Fault::UntouchedReconnects => {
                 let publisher = if let Some(publisher) = self.lazy.get() {
@@ -196,7 +197,10 @@ impl Publisher for FaultyPublisher {
                     self.lazy.get_or_init(|| attached.publisher())
                 };
                 publisher
-                    .publish(OutgoingMessage::new(&name, &payload), None)
+                    .publish(
+                        OutgoingMessage::new(&name, &payload).with_headers(headers),
+                        None,
+                    )
                     .await
             }
             Fault::AttachesOnFirstCaller => {
@@ -207,9 +211,14 @@ impl Publisher for FaultyPublisher {
                         let (frames, mut incoming) = mpsc::unbounded_channel::<Frame>();
                         let publisher = self.connected.publisher();
                         drop(tokio::spawn(async move {
-                            while let Some((name, payload, attached)) = incoming.recv().await {
+                            while let Some((name, payload, headers, attached)) =
+                                incoming.recv().await
+                            {
                                 let _ = publisher
-                                    .publish(OutgoingMessage::new(&name, &payload), None)
+                                    .publish(
+                                        OutgoingMessage::new(&name, &payload).with_headers(headers),
+                                        None,
+                                    )
                                     .await;
                                 if let Some(attached) = attached {
                                     let _ = attached.send(());
@@ -224,10 +233,10 @@ impl Publisher for FaultyPublisher {
                 };
                 if first {
                     let (attached, handshake) = oneshot::channel();
-                    let _ = socket.send((name, payload, Some(attached)));
+                    let _ = socket.send((name, payload, headers, Some(attached)));
                     let _ = handshake.await;
                 } else {
-                    let _ = socket.send((name, payload, None));
+                    let _ = socket.send((name, payload, headers, None));
                 }
                 Ok(())
             }
@@ -240,7 +249,10 @@ impl Publisher for FaultyPublisher {
                     sleep(Duration::from_millis(50)).await;
                     let _ = connected
                         .publisher()
-                        .publish(OutgoingMessage::new(&name, &payload), None)
+                        .publish(
+                            OutgoingMessage::new(&name, &payload).with_headers(headers),
+                            None,
+                        )
                         .await;
                 });
                 self.deferred
@@ -251,7 +263,10 @@ impl Publisher for FaultyPublisher {
             }
             _ => {
                 self.paired
-                    .publish(OutgoingMessage::new(&name, &payload), None)
+                    .publish(
+                        OutgoingMessage::new(&name, &payload).with_headers(headers),
+                        None,
+                    )
                     .await
             }
         }
