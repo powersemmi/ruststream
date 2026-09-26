@@ -1,8 +1,8 @@
 //! Shared helpers for the integration tests.
 //!
 //! What lives here is what a suite needs but is never the subject of its assertions: the
-//! stand-in message, the wait primitive, the connected form the publish-log assertions read
-//! from. A suite that tests one of these shapes itself declares its own instead.
+//! stand-in message and the connected form the publish-log assertions read from. A suite that
+//! tests one of these shapes itself declares its own instead.
 //!
 //! Each test binary compiles its own copy of this module and uses what it needs, hence the
 //! `dead_code` allowances.
@@ -13,27 +13,6 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-
-/// Waits until `cond` holds, yielding between checks, but no longer than `timeout`.
-///
-/// The yield loop is the sanctioned no-sleep wait: in multi-thread mode the handler runs on
-/// another worker and flips the observed state independently, so yielding is enough to let it
-/// progress.
-///
-/// A suite whose subject is the application surface does not need this: the
-/// [`TestApp`](ruststream::testing::TestApp) harness settles the whole reaction before its
-/// injection returns. What is left here serves the one suite that must observe a RUNNING app
-/// mid-reaction: the otel suite, which kills the bus under a handler still holding its delivery.
-#[allow(dead_code)]
-pub(crate) async fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) {
-    let result = tokio::time::timeout(timeout, async {
-        while !cond() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(result.is_ok(), "condition not met within {timeout:?}");
-}
 
 /// The message the suites drive when the payload is not what they are asserting on: one field,
 /// so a decode either happened or did not.

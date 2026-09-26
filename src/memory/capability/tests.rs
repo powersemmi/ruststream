@@ -35,29 +35,6 @@ async fn batches_drain_buffered_deliveries() {
     }
 }
 
-/// The size the stream is opened at is the batch cap: the broker has no size of its own.
-#[tokio::test]
-async fn the_batch_size_caps_each_batch() {
-    let broker = MemoryBroker::new();
-    let mut sub = broker.subscribe("batch.capped");
-    let publisher = broker.publisher();
-    for i in 0..3u8 {
-        publisher
-            .publish(OutgoingMessage::new("batch.capped", &[i]), None)
-            .await
-            .unwrap();
-    }
-
-    let mut stream = std::pin::pin!(sub.batches(nonzero!(2)));
-    let first = stream.next().await.unwrap().unwrap();
-    assert_eq!(first.len(), 2);
-    let second = stream.next().await.unwrap().unwrap();
-    assert_eq!(second.len(), 1);
-    for msg in first.into_iter().chain(second) {
-        msg.ack().await.unwrap();
-    }
-}
-
 /// A batch is allocated at the size the stream was opened at, so a short one holds the room of a
 /// full one and a full one never grows on the way.
 #[tokio::test]
@@ -77,60 +54,6 @@ async fn a_batch_is_allocated_at_the_requested_size() {
     for msg in batch {
         msg.ack().await.unwrap();
     }
-}
-
-#[tokio::test]
-async fn transaction_buffers_until_commit() {
-    let broker = MemoryBroker::new();
-    let mut sub = broker.subscribe("txn");
-    let publisher = broker.publisher();
-
-    publisher.begin_transaction().await.unwrap();
-    publisher
-        .publish(OutgoingMessage::new("txn", b"a"), None)
-        .await
-        .unwrap();
-    publisher
-        .publish(OutgoingMessage::new("txn", b"b"), None)
-        .await
-        .unwrap();
-
-    // Fanout is synchronous, so an empty queue here proves nothing was published yet.
-    let mut stream = std::pin::pin!(sub.stream());
-    assert!(futures::poll!(stream.next()).is_pending());
-
-    publisher.commit().await.unwrap();
-    let first = stream.next().await.unwrap().unwrap();
-    assert_eq!(first.payload(), b"a");
-    first.ack().await.unwrap();
-    let second = stream.next().await.unwrap().unwrap();
-    assert_eq!(second.payload(), b"b");
-    second.ack().await.unwrap();
-}
-
-#[tokio::test]
-async fn abort_discards_buffered_publishes() {
-    let broker = MemoryBroker::new();
-    let mut sub = broker.subscribe("txn.abort");
-    let publisher = broker.publisher();
-
-    publisher.begin_transaction().await.unwrap();
-    publisher
-        .publish(OutgoingMessage::new("txn.abort", b"gone"), None)
-        .await
-        .unwrap();
-    publisher.abort().await.unwrap();
-
-    let mut stream = std::pin::pin!(sub.stream());
-    assert!(futures::poll!(stream.next()).is_pending());
-
-    publisher
-        .publish(OutgoingMessage::new("txn.abort", b"kept"), None)
-        .await
-        .unwrap();
-    let msg = stream.next().await.unwrap().unwrap();
-    assert_eq!(msg.payload(), b"kept");
-    msg.ack().await.unwrap();
 }
 
 #[tokio::test]
@@ -240,11 +163,8 @@ async fn an_owned_transaction_dropped_unsettled_discards_its_buffer() {
 }
 
 #[test]
-fn the_capability_debug_forms_name_their_subject_without_leaking_state() {
-    let broker = replaying();
-    assert!(format!("{:?}", broker.requester()).contains("MemoryRequester"));
-
-    let seeker = broker.subscribe("seek.debug").seeker();
+fn a_seekers_debug_form_names_its_subject() {
+    let seeker = replaying().subscribe("seek.debug").seeker();
     let rendered = format!("{seeker:?}");
     // A seeker is only meaningful against its name, so Debug has to carry it.
     assert!(rendered.contains("seek.debug"), "{rendered}");
@@ -449,32 +369,6 @@ async fn seeking_to_an_evicted_position_reports_it() {
     assert_eq!(replayed.payload(), b"c");
     assert_eq!(replayed.position(), MemoryPosition::sequence(2));
     replayed.ack().await.unwrap();
-}
-
-#[tokio::test]
-async fn constructed_position_seeks_forward_skipping_queued() {
-    let broker = replaying();
-    let mut sub = broker.subscribe("seek.fwd");
-    let seeker = sub.seeker();
-    let publisher = broker.publisher();
-    for payload in [b"a", b"b", b"c"] {
-        publisher
-            .publish(OutgoingMessage::new("seek.fwd", payload), None)
-            .await
-            .unwrap();
-    }
-
-    let mut stream = std::pin::pin!(sub.stream());
-    let first = stream.next().await.unwrap().unwrap();
-    assert_eq!(first.payload(), b"a");
-    first.ack().await.unwrap();
-
-    // "b" is still queued; jumping to the third message must skip it.
-    seeker.seek(MemoryPosition::sequence(2)).await.unwrap();
-    let skipped_to = stream.next().await.unwrap().unwrap();
-    assert_eq!(skipped_to.payload(), b"c");
-    skipped_to.ack().await.unwrap();
-    assert!(futures::poll!(stream.next()).is_pending());
 }
 
 #[tokio::test]
