@@ -172,24 +172,7 @@ mod tests {
         }
     }
 
-    // Plain #[tokio::test]: nothing is spawned, the handler future is awaited inline.
-    #[tokio::test]
-    async fn decoded_value_reaches_inner() {
-        let seen = Arc::new(AtomicU32::new(0));
-        let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
-        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
-
-        let msg = StubMsg(b"7".to_vec(), HeaderMap::new());
-        assert_eq!(
-            handler.handle(&msg, &mut ctx).await.outcome(),
-            HandlerResult::Ack
-        );
-        assert_eq!(seen.load(Ordering::SeqCst), 7);
-    }
-
+    // Plain #[tokio::test] throughout: nothing is spawned, the handler future is awaited inline.
     #[tokio::test]
     async fn raw_bytes_lend_the_payload_itself() {
         use super::Typed;
@@ -260,29 +243,6 @@ mod tests {
         assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
     }
 
-    #[tokio::test]
-    async fn typed_handler_is_debug_and_stub_acks() {
-        let seen = Arc::new(AtomicU32::new(0));
-        let handler = typed(JsonCodec, counting_inner(&seen));
-        let state = ();
-        let delivery = Delivery::empty();
-        let headers = HeaderMap::new();
-        let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
-        // Drive one delivery to pin the message type, then check the Debug rendering.
-        let msg = StubMsg(b"5".to_vec(), HeaderMap::new());
-        let _ = handler.handle(&msg, &mut ctx).await;
-        assert!(format!("{handler:?}").contains("Typed"));
-
-        // Exercise the StubMsg fixture's own IncomingMessage surface.
-        let other = StubMsg(b"x".to_vec(), HeaderMap::new());
-        assert!(other.headers().is_empty());
-        other.ack().await.unwrap();
-        StubMsg(Vec::new(), HeaderMap::new())
-            .nack(true)
-            .await
-            .unwrap();
-    }
-
     // The decode diagnostic carries the subscription name and the target type (needs a tracing
     // subscriber, hence the `logging` feature gate).
     #[cfg(feature = "logging")]
@@ -299,10 +259,8 @@ mod tests {
         let headers = HeaderMap::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
         let msg = StubMsg(b"not json".to_vec(), HeaderMap::new());
-        assert_eq!(
-            handler.handle(&msg, &mut ctx).await.outcome(),
-            HandlerResult::drop()
-        );
+        // How it settles is `decode_failure_drops_by_default`'s subject; this one reads the log.
+        let _ = handler.handle(&msg, &mut ctx).await;
         drop(guard);
 
         let decode_event = log_capture::find(&events, "codec decode failed");

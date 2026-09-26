@@ -110,72 +110,8 @@ async fn mirror(
     HandlerOutcome::ack()
 }
 
-/// The app-wide publish middleware wraps a slot publish, and it runs above the slot's attributed
-/// leaf: the per-slot capture and the broker's log see the same stamped message.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_app_wide_publish_layer_stamps_every_slot_publish() {
-    let app = RustStream::new(AppInfo::new("out-layer", "0.1.0"))
-        .publish_layer(AppStamp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(mirror)
-                .out(Audit, Publish)
-                .out(Journal, Publish)
-                .build();
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 7 })
-        .to("out.orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.out::<Audit>()
-        .assert_called_once()
-        .with_header("x-app", b"1");
-    tb.out::<Journal>()
-        .assert_called_once()
-        .with_header("x-app", b"1");
-    tb.broker::<MemoryBroker>()
-        .published::<Order>("out.audit")
-        .assert_called_once()
-        .with(&Order { id: 7 })
-        .with_header("x-app", b"1");
-}
-
-/// `.transform(..)` rides the slot the `.out(..)` before it bound, and only that one.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_slot_transform_rides_the_slot_it_follows() {
-    let app = RustStream::new(AppInfo::new("out-transform", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(mirror)
-                .out(Audit, Publish)
-                .transform(Envelope)
-                .out(Journal, Publish)
-                .build();
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 3 })
-        .to("out.orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.out::<Audit>()
-        .assert_called_once()
-        .with_header("x-outbox", b"1");
-    let journal = tb.out::<Journal>().assert_called_once();
-    assert_eq!(
-        journal.messages()[0].headers().get("x-outbox"),
-        None,
-        "the transform belongs to the slot it was named on",
-    );
-}
-
-/// The order of the two calls does not matter: each transform lands on its own slot.
+/// `.transform(..)` rides the slot the `.out(..)` right before it bound, and only that one,
+/// whichever order the slots are bound in.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn each_slot_keeps_its_own_transform_stack() {
     let app = RustStream::new(AppInfo::new("out-transform-both", "0.1.0")).with_broker(

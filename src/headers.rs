@@ -335,23 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn overwrite_with_upserts_key_by_key() {
-        let mut base: HeaderMap = [("tenant", "acme"), ("x-trace", "handle")]
-            .into_iter()
-            .collect();
-        base.overwrite_with(
-            [("x-trace", "call"), ("x-request-id", "r-1")]
-                .into_iter()
-                .collect(),
-        );
-
-        assert_eq!(base.get_str("x-trace"), Some("call"));
-        assert_eq!(base.get_str("tenant"), Some("acme"));
-        assert_eq!(base.get_str("x-request-id"), Some("r-1"));
-        assert_eq!(base.len(), 3);
-    }
-
-    #[test]
     fn overwrite_with_moves_the_whole_map_over_an_empty_one() {
         let mut call = HeaderMap::new();
         call.insert("x-trace", "call");

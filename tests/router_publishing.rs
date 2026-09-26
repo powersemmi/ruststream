@@ -1,189 +1,61 @@
-//! Integration tests for the `Router` publishing include family (single-message and batch),
-//! in both codec forms: the default codec and a chain codec set with `with_codec`. Replies are
-//! verified end to end by plain subscribers on the reply topics.
+//! The `Router` publishing include family (single-message, batch and byte-for-byte replies): the
+//! chain codec decodes the request while the reply keeps its own, the app's publish layers reach
+//! what a router mounts, and the route threads the typed delivery context to the publish path.
 #![cfg(all(
     feature = "macros",
     feature = "testing",
     feature = "memory",
-    feature = "json"
+    feature = "json",
+    feature = "cbor"
 ))]
 
 mod common;
 
-use common::{Order, Receipt};
-use ruststream::codec::JsonCodec;
+use std::error::Error;
+use std::future::Future;
+
+use common::{Order, Receipt, Wire};
+use ruststream::codec::CborCodec;
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{ForReply, Outgoing, PublishContext, PublishTransform, Reads};
+use ruststream::runtime::{
+    ForReply, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
+    PublishTransform, Reads,
+};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
-
-#[subscriber("rp-in", publish("rp-out"))]
-async fn rp_relay(o: &Order) -> Receipt {
-    Receipt { id: o.id }
-}
-
-#[subscriber("rp-in-on", publish("rp-out-on"))]
-async fn rp_relay_on(o: &Order) -> Receipt {
-    Receipt { id: o.id }
-}
-
-#[subscriber("rp-out")]
-async fn rp_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber("rp-out-on")]
-async fn rp_check_on(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-/// Default-codec `include` on the publishing form, twice over: replies reach the reply topics.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_codec_router_publishing_replies() {
-    let router = Router::<MemoryBroker>::new()
-        .include(rp_relay)
-        .out(Reply, Publish)
-        .build()
-        .include(rp_relay_on)
-        .out(Reply, Publish)
-        .build();
-
-    let app = RustStream::new(AppInfo::new("rp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-        b.include(rp_check);
-        b.include(rp_check_on);
-    });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    for topic in ["rp-in", "rp-in-on"] {
-        tb.message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
-
-    for reply in ["rp-out", "rp-out-on"] {
-        tb.broker::<MemoryBroker>()
-            .subscriber(reply)
-            .assert_called_once()
-            .with(&Receipt { id: 1 })
-            .settled(HandlerOutcome::ack());
-    }
-}
 
 #[subscriber("rpc-in", publish("rpc-out"))]
 async fn rpc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("rpc-in-on", publish("rpc-out-on"))]
-async fn rpc_relay_on(o: &Order) -> Receipt {
-    Receipt { id: o.id }
-}
-
-#[subscriber("rpc-out")]
-async fn rpc_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber("rpc-out-on")]
-async fn rpc_check_on(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-/// Chain-codec `include` on the publishing form: the input decodes with the `with_codec` codec,
-/// the reply goes through the publisher's own.
+/// The router's chain codec decodes the request; the reply leaves under the reply position's
+/// codec, the crate default, so the two formats differ on one registration.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn chain_codec_router_publishing_replies() {
+async fn a_chain_codec_decodes_the_request_and_leaves_the_reply_its_own() {
     let router = Router::<MemoryBroker>::new()
-        .with_codec(JsonCodec)
+        .with_codec(CborCodec)
         .include(rpc_relay)
-        .out(Reply, Publish)
-        .build()
-        .include(rpc_relay_on)
         .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("rpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
-        b.include(rpc_check);
-        b.include(rpc_check_on);
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    for topic in ["rpc-in", "rpc-in-on"] {
-        tb.message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
+    tb.message(&Order { id: 1 })
+        .with_codec(CborCodec)
+        .to("rpc-in")
+        .publish()
+        .await
+        .expect("publish");
 
-    for reply in ["rpc-out", "rpc-out-on"] {
-        tb.broker::<MemoryBroker>()
-            .subscriber(reply)
-            .assert_called_once()
-            .with(&Receipt { id: 1 })
-            .settled(HandlerOutcome::ack());
-    }
-}
-
-#[subscriber("bp-in", publish("bp-out"))]
-async fn bp_relay(orders: &[Order]) -> Vec<Receipt> {
-    orders.iter().map(|o| Receipt { id: o.id }).collect()
-}
-
-#[subscriber("bp-in-on", publish("bp-out-on"))]
-async fn bp_relay_on(orders: &[Order]) -> Vec<Receipt> {
-    orders.iter().map(|o| Receipt { id: o.id }).collect()
-}
-
-#[subscriber("bp-out")]
-async fn bp_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber("bp-out-on")]
-async fn bp_check_on(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-/// Default-codec `include` on the batch publishing form: every batch element is republished to
-/// the reply topic.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_codec_router_batch_publishing_replies() {
-    let router = Router::<MemoryBroker>::new()
-        .include(bp_relay.batch(nonzero!(8)))
-        .out(Reply, Publish)
-        .build()
-        .include(bp_relay_on.batch(nonzero!(8)))
-        .out(Reply, Publish)
-        .build();
-
-    let app = RustStream::new(AppInfo::new("bp", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include_router(router);
-        b.include(bp_check);
-        b.include(bp_check_on);
-    });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    for topic in ["bp-in", "bp-in-on"] {
-        tb.message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
-
-    for reply in ["bp-out", "bp-out-on"] {
-        tb.broker::<MemoryBroker>()
-            .subscriber(reply)
-            .assert_called_once()
-            .with(&Receipt { id: 1 })
-            .settled(HandlerOutcome::ack());
-    }
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("rpc-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 });
 }
 
 #[subscriber("bpc-in", publish("bpc-out"))]
@@ -191,56 +63,32 @@ async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber("bpc-in-on", publish("bpc-out-on"))]
-async fn bpc_relay_on(orders: &[Order]) -> Vec<Receipt> {
-    orders.iter().map(|o| Receipt { id: o.id }).collect()
-}
-
-#[subscriber("bpc-out")]
-async fn bpc_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber("bpc-out-on")]
-async fn bpc_check_on(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-/// Chain-codec `include` on the batch publishing form: elements decode with the `with_codec`
-/// codec, replies go through the publisher's own.
+/// The same on the batch publishing form: elements decode with the chain codec, replies leave
+/// under their own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn chain_codec_router_batch_publishing_replies() {
+async fn a_chain_codec_decodes_a_batch_and_leaves_the_replies_their_own() {
     let router = Router::<MemoryBroker>::new()
-        .with_codec(JsonCodec)
+        .with_codec(CborCodec)
         .include(bpc_relay.batch(nonzero!(8)))
-        .out(Reply, Publish)
-        .build()
-        .include(bpc_relay_on.batch(nonzero!(8)))
         .out(Reply, Publish)
         .build();
 
     let app = RustStream::new(AppInfo::new("bpc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
-        b.include(bpc_check);
-        b.include(bpc_check_on);
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    for topic in ["bpc-in", "bpc-in-on"] {
-        tb.message(&Order { id: 1 })
-            .to(topic)
-            .publish()
-            .await
-            .expect("publish");
-    }
+    tb.message(&Order { id: 1 })
+        .with_codec(CborCodec)
+        .to("bpc-in")
+        .publish()
+        .await
+        .expect("publish");
 
-    for reply in ["bpc-out", "bpc-out-on"] {
-        tb.broker::<MemoryBroker>()
-            .subscriber(reply)
-            .assert_called_once()
-            .with(&Receipt { id: 1 })
-            .settled(HandlerOutcome::ack());
-    }
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("bpc-out")
+        .assert_called_once()
+        .with(&Receipt { id: 1 });
 }
 
 // A static, app-wide publish middleware that stamps a header onto every reply. Used to prove the
@@ -248,13 +96,12 @@ async fn chain_codec_router_batch_publishing_replies() {
 #[derive(Clone)]
 struct StampApp;
 
-impl ruststream::runtime::PublishLayer for StampApp {
-    fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
+impl PublishLayer for StampApp {
+    fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
-        next: ruststream::runtime::PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
-    {
+        next: PublishNext<'a, N, P>,
+    ) -> impl Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send + 'a {
         out.headers_mut().insert("x-app", b"1".to_vec());
         next.run(out)
     }
@@ -265,11 +112,8 @@ async fn rl_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("rl-out")]
-async fn rl_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
+/// A router is typed before the app exists, yet its reply pairs at startup, where the app is
+/// known, so the app-wide publish layers wrap it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_publish_layer_reaches_router_publishing_handlers() {
     let router = Router::<MemoryBroker>::new()
@@ -281,7 +125,6 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
         .publish_layer(StampApp)
         .with_broker(MemoryBroker::new(), |b| {
             b.include_router(router);
-            b.include(rl_check);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -291,31 +134,19 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
         .await
         .expect("publish");
 
-    // The app-wide publish_layer must reach a router-mounted publishing handler, so the reply it
-    // sent carries the stamp - and still arrives at the consumer.
     tb.broker::<MemoryBroker>()
         .published::<Receipt>("rl-out")
         .assert_called_once()
         .with(&Receipt { id: 1 })
         .with_header("x-app", b"1");
-    tb.broker::<MemoryBroker>()
-        .subscriber("rl-out")
-        .assert_called_once()
-        .with(&Receipt { id: 1 });
 }
 
-// The same on the BATCH router-publishing path: the app's publish_layer must reach a
-// router-mounted batch publishing handler.
 #[subscriber("bl-in", publish("bl-out"))]
 async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
 
-#[subscriber("bl-out")]
-async fn bl_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
+/// The same on the batch router-publishing path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
     let router = Router::<MemoryBroker>::new()
@@ -327,7 +158,6 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
         .publish_layer(StampApp)
         .with_broker(MemoryBroker::new(), |b| {
             b.include_router(router);
-            b.include(bl_check);
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -342,10 +172,39 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
         .assert_called_once()
         .with(&Receipt { id: 1 })
         .with_header("x-app", b"1");
+}
+
+/// A byte-for-byte reply: its bytes are the payload, so the router's route for it carries a
+/// policy and no codec.
+#[subscriber("raw-in", publish("raw-out"))]
+async fn raw_relay(o: &Order) -> Wire {
+    Wire::of(o.id.to_be_bytes())
+}
+
+/// The byte-for-byte reply route of a router publishes the reply's own bytes to the mount-site
+/// destination.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_publishes_a_byte_for_byte_reply() {
+    let router = Router::<MemoryBroker>::new()
+        .include(raw_relay)
+        .out(Reply, Publish)
+        .build();
+
+    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include_router(router);
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 4 })
+        .to("raw-in")
+        .publish()
+        .await
+        .expect("publish");
+
     tb.broker::<MemoryBroker>()
-        .subscriber("bl-out")
+        .published::<()>("raw-out")
         .assert_called_once()
-        .with(&Receipt { id: 1 });
+        .with_raw(4u32.to_be_bytes().as_slice());
 }
 
 // A typed delivery context on a ROUTER-mounted publishing handler: the route threads
@@ -392,13 +251,8 @@ impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrela
 }
 
 #[subscriber("tc-in", publish("tc-out"))]
-async fn tc_relay(o: &Order, _ctx: &mut ruststream::runtime::Context<'_, TraceCtx>) -> Receipt {
+async fn tc_relay(o: &Order, _ctx: &mut Context<'_, TraceCtx>) -> Receipt {
     Receipt { id: o.id }
-}
-
-#[subscriber("tc-out")]
-async fn tc_check(_r: &Receipt) -> HandlerOutcome {
-    HandlerOutcome::ack()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -411,7 +265,6 @@ async fn router_publishing_threads_typed_delivery_context() {
 
     let app = RustStream::new(AppInfo::new("tc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include_router(router);
-        b.include(tc_check);
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -429,9 +282,6 @@ async fn router_publishing_threads_typed_delivery_context() {
     tb.broker::<MemoryBroker>()
         .published::<Receipt>("tc-out")
         .assert_called_once()
+        .with(&Receipt { id: 1 })
         .with_header("correlation-id", b"trace-xyz");
-    tb.broker::<MemoryBroker>()
-        .subscriber("tc-out")
-        .assert_called_once()
-        .with(&Receipt { id: 1 });
 }

@@ -14,7 +14,7 @@
 
 use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
-use ruststream::testing::TestApp;
+use ruststream::testing::{Outcome, TestApp};
 use ruststream::{Buffered, OutMessages};
 use serde::{Deserialize, Serialize};
 
@@ -433,11 +433,32 @@ mod generic_message_derives {
     struct Fixed<const N: usize>([u8; N]);
 }
 
-/// Records the shape of each batch invocation: the payload sequence numbers next to the header
-/// contracts behind them, so the test can assert they line up element for element.
-type BatchShape = (Vec<u64>, Vec<(u64, u32)>);
+/// Acks only where every element's header contract is the one published with its own body: the
+/// tests below publish `chunk_no` equal to `seq`, so a contract read against the wrong body, or
+/// not read at all, settles as something other than an ack.
+fn aligned<'a>(chunks: impl IntoIterator<Item = &'a Message<ChunkMeta, Chunk>>) -> HandlerOutcome {
+    if chunks
+        .into_iter()
+        .all(|chunk| u64::from(chunk.headers.chunk_no) == chunk.body.seq)
+    {
+        HandlerOutcome::ack()
+    } else {
+        HandlerOutcome::drop()
+    }
+}
 
-static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec::new());
+/// Publishes `seq` with a contract whose `chunk_no` is the same number.
+async fn publish_chunk(tb: &TestApp<()>, name: &str, seq: u64) {
+    let meta = ChunkMeta {
+        task_id: 7,
+        chunk_no: u32::try_from(seq).expect("small"),
+        trace: None,
+    };
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers(name, &Chunk { seq }, &meta)
+        .await
+        .expect("publish");
+}
 
 // The client-side buffer, so a batch closes on the mount's size rather than on delivery timing
 // and the per-element alignment is actually exercised across more than one element. The wait
@@ -445,16 +466,7 @@ static BATCH_SEEN: std::sync::Mutex<Vec<BatchShape>> = std::sync::Mutex::new(Vec
 // batch.
 #[subscriber(Buffered::<Name>::new(Name::new("chunks.bulk")))]
 async fn bulk(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
-    let mut seen = BATCH_SEEN.lock().expect("the test holds no poisoned lock");
-    seen.push((
-        chunks.iter().map(|chunk| chunk.body.seq).collect(),
-        chunks
-            .iter()
-            .map(|chunk| (chunk.headers.task_id, chunk.headers.chunk_no))
-            .collect(),
-    ));
-    drop(seen);
-    HandlerOutcome::ack()
+    aligned(chunks)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -466,74 +478,51 @@ async fn a_batch_handler_reads_one_header_contract_per_element() {
         },
     );
     let tb = TestApp::start(app).await.expect("start");
-    let broker = tb.broker::<MemoryBroker>();
 
     // The second delivery carries no contract at all, so it is the one the decode policy drops
     // from inside an otherwise good batch.
-    for seq in [1u64, 2, 3, 4] {
-        if seq == 2 {
-            broker
-                .message(&Chunk { seq })
-                .to("chunks.bulk")
-                .publish()
-                .await
-                .expect("publish");
-            continue;
-        }
-        let meta = ChunkMeta {
-            task_id: 7,
-            chunk_no: u32::try_from(seq).expect("small"),
-            trace: None,
-        };
-        broker
-            .publish_with_headers("chunks.bulk", &Chunk { seq }, &meta)
+    // Published together, so the buffer holds two at once and closes on its size.
+    let bare = async {
+        tb.broker::<MemoryBroker>()
+            .message(&Chunk { seq: 2 })
+            .to("chunks.bulk")
+            .publish()
             .await
             .expect("publish");
-    }
+    };
+    futures::join!(
+        publish_chunk(&tb, "chunks.bulk", 1),
+        bare,
+        publish_chunk(&tb, "chunks.bulk", 3),
+        publish_chunk(&tb, "chunks.bulk", 4),
+    );
     tb.settle().await.expect("settle");
 
-    let seen = BATCH_SEEN
-        .lock()
-        .expect("the test holds no poisoned lock")
-        .clone();
-    for (payloads, headers) in &seen {
-        assert_eq!(
-            payloads.len(),
-            headers.len(),
-            "the header vector must have one entry per delivered element",
-        );
-        for (seq, (_, chunk_no)) in payloads.iter().zip(headers) {
-            assert_eq!(
-                u64::from(*chunk_no),
-                *seq,
-                "header {chunk_no} landed against payload {seq}",
-            );
-        }
-    }
-    let delivered: Vec<u64> = seen
-        .iter()
-        .flat_map(|(payloads, _)| payloads)
-        .copied()
-        .collect();
-    assert_eq!(
-        delivered,
-        vec![1, 3, 4],
-        "the element failing the header contract must be dropped, the rest handled in order",
+    // Every batch acked, so every element's contract was read against its own body; the element
+    // without one never reached the handler, and the rest arrived in order.
+    let broker = tb.broker::<MemoryBroker>();
+    let handled = broker.subscriber("chunks.bulk");
+    assert!(
+        handled
+            .outcomes()
+            .iter()
+            .all(|outcome| *outcome == Outcome::Ack),
+        "a contract landed against another element's body: {:?}",
+        handled.outcomes(),
     );
-    tb.shutdown().await.expect("shutdown");
+    let delivered: Vec<u64> = handled
+        .batches::<Chunk>()
+        .into_iter()
+        .flatten()
+        .map(|chunk| chunk.seq)
+        .collect();
+    assert_eq!(delivered, [1, 3, 4]);
 }
 
-/// What the router-mounted handler saw, so the Router path is proven to carry the contracts too.
-static ROUTED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
-
+/// The router-mounted batch handler, so the Router path is proven to carry the contracts too.
 #[subscriber("chunks.routed")]
 async fn routed(chunks: &[Message<ChunkMeta, Chunk>]) -> HandlerOutcome {
-    let mut seen = ROUTED_SEEN.lock().expect("the test holds no poisoned lock");
-    for chunk in chunks {
-        seen.push((chunk.body.seq, chunk.headers.chunk_no));
-    }
-    drop(seen);
-    HandlerOutcome::ack()
+    aligned(chunks)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -549,38 +538,21 @@ async fn the_router_path_carries_the_batch_header_contract() {
         },
     );
     let tb = TestApp::start(app).await.expect("start");
-    let broker = tb.broker::<MemoryBroker>();
 
-    let meta = ChunkMeta {
-        task_id: 4,
-        chunk_no: 9,
-        trace: None,
-    };
-    broker
-        .publish_with_headers("chunks.routed", &Chunk { seq: 5 }, &meta)
-        .await
-        .expect("publish");
-    tb.settle().await.expect("settle");
+    publish_chunk(&tb, "chunks.routed", 5).await;
 
-    let seen = ROUTED_SEEN
-        .lock()
-        .expect("the test holds no poisoned lock")
-        .clone();
-    assert_eq!(seen, vec![(5, 9)]);
-    tb.shutdown().await.expect("shutdown");
+    tb.broker::<MemoryBroker>()
+        .subscriber("chunks.routed")
+        .assert_called_once()
+        .with(&Chunk { seq: 5 })
+        .settled(HandlerOutcome::ack());
 }
 
-/// What the solo pair-input handler saw: the `Message` axis works at the single-message shape
-/// too (the `Headers<T>` extractor stays the recommended spelling there).
-static PAIRED_SEEN: std::sync::Mutex<Vec<(u64, u32)>> = std::sync::Mutex::new(Vec::new());
-
+/// The solo pair-input handler: the `Message` axis works at the single-message shape too (the
+/// `Headers<T>` extractor stays the recommended spelling there).
 #[subscriber("chunks.paired")]
 async fn paired(chunk: &Message<ChunkMeta, Chunk>) -> HandlerOutcome {
-    PAIRED_SEEN
-        .lock()
-        .expect("the test holds no poisoned lock")
-        .push((chunk.body.seq, chunk.headers.chunk_no));
-    HandlerOutcome::ack()
+    aligned([chunk])
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -592,23 +564,12 @@ async fn a_single_message_handler_takes_the_message_pair_input() {
         },
     );
     let tb = TestApp::start(app).await.expect("start");
-    let broker = tb.broker::<MemoryBroker>();
 
-    let meta = ChunkMeta {
-        task_id: 2,
-        chunk_no: 8,
-        trace: None,
-    };
-    broker
-        .publish_with_headers("chunks.paired", &Chunk { seq: 3 }, &meta)
-        .await
-        .expect("publish");
-    tb.settle().await.expect("settle");
+    publish_chunk(&tb, "chunks.paired", 3).await;
 
-    let seen = PAIRED_SEEN
-        .lock()
-        .expect("the test holds no poisoned lock")
-        .clone();
-    assert_eq!(seen, vec![(3, 8)]);
-    tb.shutdown().await.expect("shutdown");
+    tb.broker::<MemoryBroker>()
+        .subscriber("chunks.paired")
+        .assert_called_once()
+        .with(&Chunk { seq: 3 })
+        .settled(HandlerOutcome::ack());
 }

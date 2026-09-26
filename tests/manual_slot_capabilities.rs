@@ -1,8 +1,8 @@
 //! The broker capabilities driven through an arena entry, pinned on the manual path: a body
 //! bounds the entry's wired value with the capability it needs (`TransactionalPublisher`,
-//! `OwnedTransactions`, `RequestReply`) and drives that capability's typed form through the
-//! entry against the in-memory broker, which carries all three natively. No broker type appears
-//! in any body.
+//! `RequestReply`) and drives that capability's typed form through the entry against the
+//! in-memory broker, which carries both natively. No broker type appears in any body. The owned
+//! transaction kind through a slot is pinned in `out_slots.rs`.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
 use std::time::Duration;
@@ -161,74 +161,6 @@ async fn a_transactional_entry_settles_its_scope_atomically() {
     broker
         .published::<Audit>("ledger.audit")
         .assert_called_once();
-}
-
-// --- the owned kind: an independent transaction value, buffered outside the slot ---
-
-struct Ledger;
-
-impl OutSlot for Ledger {
-    const NAME: &'static str = "Ledger";
-    type Destination = Reads;
-}
-
-impl PublishedThrough<Ledger> for Settled {}
-
-/// Settles an order through an owned transaction opened on the entry.
-struct SettleOwned;
-
-impl<L> Handle<Order, (), Outs<(L,)>> for SettleOwned
-where
-    L: OutEntry<Ledger, Wire: OwnedTransactions>,
-{
-    async fn handle(
-        &self,
-        order: &Order,
-        outs: &Outs<(L,)>,
-        _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
-        let Ok(mut txn) = outs.get(Ledger).transaction().await else {
-            return Err(HandlerOutcome::retry());
-        };
-        if txn
-            .message(&Settled { id: order.id })
-            .publish()
-            .await
-            .is_err()
-            || txn.commit().await.is_err()
-        {
-            return Err(HandlerOutcome::retry());
-        }
-        Ok(())
-    }
-}
-
-/// The owned transaction's buffer settles outside the slot: the record lands in the broker's
-/// publish log and is not attributed to the slot (the documented capture boundary).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_owned_transactional_entry_commits_its_buffer() {
-    let app = RustStream::new(AppInfo::new("ledger-owned", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(subscriber("ledger.orders", SettleOwned).build())
-                .out(Ledger, TransactionalPublish)
-                .build();
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 4 })
-        .to("ledger.orders")
-        .publish()
-        .await
-        .expect("publish");
-    tb.settle().await.expect("settle");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Settled>("ledger.settled")
-        .assert_called_once()
-        .with(&Settled { id: 4 });
-    tb.out::<Ledger>().assert_not_called();
 }
 
 // --- request / reply: a correlated round trip through the entry ---

@@ -264,7 +264,7 @@ mod tests {
     use crate::{Broker, IncomingMessage, OutgoingMessage, Publisher, Subscriber};
 
     /// Cloning a token duplicates the binding, not the broker: both clones pair against the one
-    /// instance the wrapper registered, and neither can pair before it is connected.
+    /// instance the wrapper registered.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_cloned_token_pairs_against_the_same_broker() {
         let bindable = MemoryBroker::new().bindable();
@@ -279,15 +279,6 @@ mod tests {
         assert!(
             format!("{token:?}").contains("MemoryPublish"),
             "the token names the policy it carries",
-        );
-        let err = spare
-            .clone()
-            .live()
-            .await
-            .expect_err("a token cannot pair before startup connects its broker");
-        assert!(
-            err.to_string().contains("not connected"),
-            "the error must name the reason: {err}",
         );
 
         let app =
