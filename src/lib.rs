@@ -77,7 +77,8 @@
 //!   trace-context propagation ([`otel::propagation`]).
 //! * `conformance`: the [`conformance::harness`] contract suite, per-capability suites in
 //!   [`conformance::capabilities`], the in-process transport held to the server in
-//!   [`conformance::in_process`], and broker-agnostic [`conformance::helpers`] for application
+//!   [`conformance::in_process`], the checks of what a message carries in
+//!   [`conformance::message_shape`], and broker-agnostic [`conformance::helpers`] for application
 //!   tests. Generic over any broker's [`testing::TestableBroker`], so it pulls in no concrete broker
 //!   (enable `memory` too to run it against [`memory::MemoryBroker`]).
 //! * `testing`: the [`testing::TestApp`] harness, which runs the service's production app in

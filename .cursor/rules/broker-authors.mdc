@@ -64,7 +64,8 @@ alwaysApply: false
   `publish(msg, options)` resolves the call's fields over them, and `options` is `None` on every
   path with no call site - a reply, a deferred retry. `Transaction` names an `Options` of its own,
   because a transaction may honour a different set than the publisher it was opened from. A value
-  you cannot honour is a publish error, never a silent fallback.
+  you cannot honour is a publish error, never a silent fallback;
+  `conformance::message_shape::publish_options` checks all three.
 - `DescribeServer` reports a coordinate, not the configuration: the host and port clients connect
   to, never credentials - the generated document is published. A broker configured from a URL
   builds its `ServerSpec` with `ServerSpec::from_url` (several addresses: `host_from_url` each);
@@ -77,7 +78,9 @@ alwaysApply: false
   where the specification has no binding for the transport. They are computed from the descriptor
   alone (the document is built before connect, so a live partition count or a queue ARN cannot
   appear) and never carry a credential; `conformance::harness::describes_without_credentials`
-  checks that. All of it is gated on the core's `asyncapi` feature, which your crate forwards.
+  checks that, and `conformance::message_shape` extends it to publish-policy bindings and to a
+  server built from several addresses. All of it is gated on the core's `asyncapi` feature, which
+  your crate forwards.
 - Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
   `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
   the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching

@@ -1472,7 +1472,20 @@ mod protocol_bindings {
             harness::describes_without_credentials(&MemoryBroker::new(), &LeakyQueue, "hunter2");
         });
 
-        assert!(leak.is_err(), "a password in a binding must fail the scan");
+        let message = leak.expect_err("a password in a binding must fail the scan");
+        let text = message
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| message.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            text.contains("carries the broker's password"),
+            "the failure must say what it found: {text}"
+        );
+        assert!(
+            !text.contains("hunter2"),
+            "the failure must not print the password it found: {text}"
+        );
     }
 }
 

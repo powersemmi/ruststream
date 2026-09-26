@@ -9,5 +9,6 @@ pub mod harness;
 pub mod helpers;
 pub mod in_process;
 pub mod lifecycle;
+pub mod message_shape;
 pub mod retry;
 pub mod settlement;
