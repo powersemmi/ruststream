@@ -104,7 +104,10 @@ async fn retried(_order: &Order, ctx: &mut Context<'_, (), Arc<Notify>>) -> Hand
     HandlerOutcome::retry_after(Duration::from_millis(300))
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Paused time: the delay cannot elapse before shutdown begins, so the copy is always still a
+// timer when it does, and every wait below, shutdown included, fails at its deadline instead of
+// hanging.
+#[tokio::test(start_paused = true)]
 async fn a_copy_pending_at_shutdown_is_published() {
     let broker = MemoryBroker::new();
     let mut copies = broker.subscribe("copies");
@@ -128,7 +131,10 @@ async fn a_copy_pending_at_shutdown_is_published() {
         .await
         .expect("the handler defers the delivery");
     // Inside the delay: the original is already dropped, the copy is only a timer.
-    running.shutdown().await.expect("shutdown");
+    timeout(DEADLINE, running.shutdown())
+        .await
+        .expect("shutdown waits for the copy, not forever")
+        .expect("shutdown");
     let copy = timeout(DEADLINE, arrivals.next()).await;
     assert!(
         matches!(copy, Ok(Some(Ok(_)))),

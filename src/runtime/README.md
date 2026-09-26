@@ -193,8 +193,9 @@ with native delayed redelivery gets the delay. On any other the runtime publishe
 to the subscription after the delay and drops the original, with the framework's
 [`RETRY_COUNT_HEADER`] incremented; that copy is at most once over the delay window. A graceful
 shutdown waits for a pending copy within the [`shutdown_timeout`](RustStream::shutdown_timeout),
-so it is published before the broker closes. A zero delay publishes the copy at once, on the
-dispatch path, as `retry()` does. The
+so it is published before the broker closes. The timeout is unset by default, so a shutdown
+waits out the longest pending delay; set one when delays run long. A zero delay publishes the
+copy at once, on the dispatch path, as `retry()` does. The
 publisher it leaves through is on every registration already, from the broker's default
 policy. `.out_retry(policy)` replaces it, and the steps after it are the slot steps,
 `.codec(..)` and `.transform(..)`. The copy lends its bytes rather than handing them over, so
