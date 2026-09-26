@@ -499,8 +499,9 @@ rtrb = "0.3.5"
 serde = { version = "1.0.69", features = ["derive"] }
 thiserror = "2"
 
-# 1.37 is the real floor: the app clones the health `watch::Sender`, and `Clone` on it landed there.
-tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+# 1.44 is the real floor: a `threads(n)` thread yields through `task::coop::consume_budget`, which
+# landed there.
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 # 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
 # landed there, so nothing below it ever compiled here.
 tokio-util = { version = "0.7.10", features = ["rt"] }

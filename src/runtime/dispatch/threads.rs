@@ -39,6 +39,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
+use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error};
 
@@ -52,8 +53,7 @@ pub(super) const RING: usize = 8;
 /// drains its ring faster than the loop fills it; parked on its runtime's driver between
 /// deliveries, the thread would cost the loop a system call to wake it for most of them. Within
 /// this window the next delivery usually comes first. It is also the CPU a thread spends after
-/// the last delivery of a burst, and the longest a task or a timer of its own runtime waits
-/// behind it, as it waits behind a handler's poll.
+/// the last delivery of a burst.
 const SPIN: Duration = Duration::from_micros(10);
 
 /// The spins between two looks at an empty ring, at their longest.
@@ -244,6 +244,12 @@ async fn work<Item, Handle>(
             // Freed before the handler runs, so the loop refills the ring meanwhile.
             signals.freed(index, ring.slots());
             handle(item).await;
+            // A thread whose ring never stays empty for `SPIN` never parks, and a handler that
+            // completes without waiting never yields: without this, an `and_after` continuation,
+            // an `after(..)` hook or a `retry_after` timer on this runtime would wait for the
+            // whole burst. Each delivery takes one unit of the task's cooperative budget, and the
+            // thread yields once it runs out.
+            consume_budget().await;
             continue;
         }
         if ring.is_abandoned() {
@@ -578,7 +584,7 @@ fn report(name: &str, stuck: &Stuck) {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicU32, AtomicUsize};
 
     use futures::StreamExt;
     use futures::stream;
@@ -637,6 +643,47 @@ mod tests {
             handled.load(Ordering::SeqCst),
             pulled,
             "a delivery read was not handled"
+        );
+    }
+
+    /// A thread that never runs out of work still lets the tasks of its own runtime run: a task
+    /// its handler spawns runs within a bounded run of deliveries, not after the whole burst.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_busy_thread_lets_its_own_tasks_run() {
+        const ITEMS: u32 = 1000;
+        let ran = Arc::new(AtomicBool::new(false));
+        let first_seen = Arc::new(AtomicU32::new(u32::MAX));
+        let threads = Threads::start("busy", 1, false, |_own| {
+            let (ran, first_seen) = (Arc::clone(&ran), Arc::clone(&first_seen));
+            async move |item: u32| {
+                if item == 0 {
+                    let ran = Arc::clone(&ran);
+                    tokio::spawn(async move { ran.store(true, Ordering::SeqCst) });
+                } else if ran.load(Ordering::SeqCst) {
+                    let _ = first_seen.compare_exchange(
+                        u32::MAX,
+                        item,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                }
+                // Computation that never waits, long enough for the loop to refill the ring:
+                // the thread never finds it empty, so it never parks.
+                let until = Instant::now() + Duration::from_micros(50);
+                while Instant::now() < until {
+                    spin_loop();
+                }
+            }
+        })
+        .expect("the threads start");
+        let items = stream::iter(0..ITEMS).map(Ok::<_, Infallible>);
+        threads
+            .feed(items, "busy", &Shutdown::new(), |_| None)
+            .await;
+        let seen = first_seen.load(Ordering::SeqCst);
+        assert!(
+            seen < ITEMS / 2,
+            "the spawned task ran only at delivery {seen} of {ITEMS}"
         );
     }
 
