@@ -4,9 +4,10 @@
 //! inconsistent.
 
 use ruststream::{
-    conformance::{capabilities, harness},
+    conformance::{capabilities, harness, lifecycle},
     memory::{MemoryBroker, MemorySource, Retaining, Retention},
     nonzero,
+    testing::Backlog,
 };
 
 // --8<-- [start:run_suite]
@@ -37,6 +38,35 @@ async fn memory_broker_passes_lifecycle() {
     .await;
 }
 // --8<-- [end:lifecycle]
+
+// --8<-- [start:shutdown_flushes]
+// Every broker the factory builds is a clone of one bus, so the second connection reaches what the
+// first one published, the way two connections reach one server.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_flushes_at_shutdown() {
+    let bus = MemoryBroker::new();
+    lifecycle::shutdown_flushes(
+        move || bus.clone(),
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+        Backlog::Missed,
+    )
+    .await;
+}
+
+// The connected form is a cheap, cloneable handle on the bus.
+#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_broker_clones_close_with_the_original() {
+    lifecycle::shared_handle_closes(
+        MemoryBroker::new,
+        |name| MemorySource::new(name),
+        |broker| broker.publisher(),
+    )
+    .await;
+}
+// --8<-- [end:shutdown_flushes]
 
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
