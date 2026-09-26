@@ -181,6 +181,47 @@ use ruststream::testing::Backlog;
 `harness::InProcessBroker` 运行它，两边回答不同就失败：声称做到了服务器拒绝的结算的进程内传输，
 会让处理器的重试在测试里通过，却在生产环境丢掉消息。
 
+## 重试检查 { #retry-checks }
+
+描述符的 `type Copies` 说明一条注册怎样重试，`conformance::retry` 逐一检查那些对服务有所承诺的
+答案。
+
+`harness::redelivery_address` 接收声明 `AddressedCopies` 的描述符。它用这个描述符打开两个订阅，就
+像服务的两个副本读同一个订阅，然后向描述符报出的地址发布一份副本。副本从一个单线程运行时发出，该
+运行时随即停止：专用线程上的处理器正是从这里发布 `retry_after` 的副本。副本必须恰好到达组内的一个
+订阅（如果你的传输把一切交给每个订阅，就是每一个），并且消息头和 `RETRY_COUNT_HEADER` 原样到达。
+随后检查把它放回队列两次，报出 `redelivery_count` 的投递必须依次数到 1、2、3。如果你的已连接形态
+答的是 `Subscribe::Copies = AddressedCopies`，再用光名字的 `Name` 源跑一遍：这个答案就是每条
+`#[subscriber("orders")]` 注册的地址。
+
+```rust
+--8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```
+
+`retry::broker_moves` 接收声明 `BrokerMoves` 的描述符。它声明 `max_attempts(n)` 和一个死信地址，把
+消息一次次放回队列直到上限用完，然后期望它恰好在 `n` 次投递之后、只一次出现在死信地址。只声明其中
+一半时，Broker 必须在启动时拒绝。传入你的 Broker 接受的 `n`。`make_source(name)` 也用来打开死信地
+址，所以它要创建发布到 `name` 所需的一切。
+
+<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::harness::InProcessBroker;
+use ruststream::conformance::retry;
+use ruststream::nonzero;
+use ruststream_lapin::{LapinBroker, LapinPublish, RabbitQuorumQueue};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_quorum_queue_dead_letters_at_the_cap() {
+    retry::broker_moves(
+        || InProcessBroker::new(LapinBroker::new("amqp://localhost:5672").declare_topology(true)),
+        |name| RabbitQuorumQueue::new(name),
+        |connected| connected.publisher(LapinPublish::default()),
+        nonzero!(2u32),
+    )
+    .await;
+}
+```
+
 ## 能力套件 { #capability-suites }
 
 如果你的 Broker 实现了某个能力 trait，就从 `conformance::capabilities` 跑对应的套件，它证明这份
@@ -246,6 +287,9 @@ async fn passes_request_reply() {
       时，`lifecycle::shared_handle_closes` 也通过。
 - [ ] `settlement::matches_in_process` 针对真实服务器通过，同样由该环境变量控制（ack、nack、乱序
       结算和未结算就放掉，在服务器上和进程内含义相同）。
+- [ ] `harness::redelivery_address` 对每个声明 `AddressedCopies` 的描述符通过；`Subscribe::Copies`
+      为 `AddressedCopies` 时对光名字的 `Name` 也通过；`retry::broker_moves` 对每个声明
+      `BrokerMoves` 的描述符通过。
 - [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量控制。
 - [ ] `Cargo.toml` 元数据完整（`description`、`license`、`repository`、`keywords`、
       `categories`），并且 CI 检查 `--no-default-features` 和 `--all-features`。

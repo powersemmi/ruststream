@@ -214,6 +214,51 @@ use ruststream::testing::Backlog;
 расходятся: внутрипроцессный транспорт, который заявляет подтверждение, отвергнутое сервером,
 пропускает в тесте повтор обработчика, а в продакшене теряет сообщение.
 
+## Проверки повторов {#retry-checks}
+
+`type Copies` дескриптора говорит, как регистрация повторяет доставку, и `conformance::retry`
+проверяет каждый ответ, который что-то обещает сервису.
+
+`harness::redelivery_address` принимает дескриптор с `AddressedCopies`. Проверка открывает по нему
+две подписки, как две реплики сервиса читают одну подписку, и публикует копию по адресу, который
+называет дескриптор. Копия уходит из однопоточного рантайма, который сразу после этого
+останавливается: именно оттуда копию для `retry_after` публикует обработчик на выделенных потоках.
+Копия обязана дойти ровно до одной подписки группы (или до каждой, если ваш транспорт отдаёт каждой
+подписке всё) и прийти с заголовками и `RETRY_COUNT_HEADER` без изменений. Затем проверка дважды
+возвращает её в очередь, и доставка, которая сообщает `redelivery_count`, обязана насчитать 1, 2 и
+3. Прогоните проверку второй раз с голым источником `Name`, если ваша подключённая форма отвечает
+`Subscribe::Copies = AddressedCopies`: этот ответ и есть адрес каждой регистрации
+`#[subscriber("orders")]`.
+
+```rust
+--8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```
+
+`retry::broker_moves` принимает дескриптор с `BrokerMoves`. Проверка объявляет `max_attempts(n)` и
+адрес мёртвых писем, возвращает сообщение в очередь, пока предел не исчерпан, и ждёт его по адресу
+мёртвых писем ровно один раз и ровно после `n` доставок. Каждую половину объявления по отдельности
+брокер обязан отклонить на старте. Передайте `n`, который ваш брокер принимает. `make_source(name)`
+открывает и адрес мёртвых писем, поэтому он создаёт всё, что нужно публикации в `name`.
+
+<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::harness::InProcessBroker;
+use ruststream::conformance::retry;
+use ruststream::nonzero;
+use ruststream_lapin::{LapinBroker, LapinPublish, RabbitQuorumQueue};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_quorum_queue_dead_letters_at_the_cap() {
+    retry::broker_moves(
+        || InProcessBroker::new(LapinBroker::new("amqp://localhost:5672").declare_topology(true)),
+        |name| RabbitQuorumQueue::new(name),
+        |connected| connected.publisher(LapinPublish::default()),
+        nonzero!(2u32),
+    )
+    .await;
+}
+```
+
 ## Наборы проверок для совместимостей {#capability-suites}
 
 Если ваш брокер реализует трейт-совместимость, запустите соответствующий набор из
@@ -286,6 +331,9 @@ In-memory брокер реализует все совместимости на
 - [ ] `settlement::matches_in_process` проходит против настоящего сервера и включается по той же
       переменной (ack, nack, подтверждение не по порядку и отпущенная доставка значат одно и то же
       на сервере и внутри процесса).
+- [ ] `harness::redelivery_address` проходит для каждого дескриптора с `AddressedCopies` и для
+      голого `Name`, если `Subscribe::Copies` равен `AddressedCopies`; `retry::broker_moves`
+      проходит для каждого дескриптора с `BrokerMoves`.
 - [ ] Сквозной набор тестов покрывает специфичную для брокера семантику и включается по той же
       переменной.
 - [ ] Метаданные `Cargo.toml` заполнены полностью (`description`, `license`, `repository`,

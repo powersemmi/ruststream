@@ -466,6 +466,10 @@ whose cap silently went missing outlives its own dead-letter policy. Implement t
 the broker has a mechanism a bare name reaches - a Pub/Sub dead-letter policy, an SQS redrive
 policy, a Pulsar `DeadLetterPolicy` - and leave it alone everywhere else.
 
+`retry::broker_moves` checks the mapping on a `BrokerMoves` descriptor and on the bare name: the
+message goes to the dead-letter destination after exactly the declared number of deliveries, and
+half a declaration is refused at startup.
+
 ### Where a retry copy is published
 
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
@@ -486,9 +490,11 @@ A `.to(name)` names a channel the registration sends to, so the generated docume
 a `send` operation. The address you answer with is not reported: it is the subscription's own
 channel, which the document already carries.
 
-`harness::redelivery_address` checks the answer you give: a publish to the reported address must
-arrive at the subscription that reported it. A `NamedCopies` descriptor has no answer to check, and
-`harness::lifecycle` covers the rest of the ladder for both.
+`harness::redelivery_address` checks the answer you give: a copy published to the reported address
+from a handler thread's runtime must arrive at the subscription that reported it, once per group,
+with its headers. Run it with the bare `Name` source as well where `Subscribe::Copies` is
+`AddressedCopies`. A `NamedCopies` descriptor has no answer to check, and `harness::lifecycle`
+covers the rest of the ladder for both.
 
 ### Naming a kind by one string
 

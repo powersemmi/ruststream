@@ -414,6 +414,9 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 这个方法实现出来 - Pub/Sub 的死信策略、SQS 的 redrive 策略、Pulsar 消费者的 `DeadLetterPolicy` -
 其余情况不要碰它。
 
+`retry::broker_moves` 在声明 `BrokerMoves` 的描述符和光名字上检查这个映射：消息恰好在声明的投递
+次数之后进入死信地址，只声明一半时在启动时被拒绝。
+
 ### 重试副本发往哪里 { #where-a-retry-copy-is-published }
 
 没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
@@ -433,9 +436,10 @@ topic，Redis 上是流的键。
 `.to(name)` 命名的是这条注册要发往的通道，所以生成的文档会把它连同一个 `send` 操作一起报出来。你
 回答的那个地址不会被报出来：它是这条订阅自己的通道，文档里已经有了。
 
-`harness::redelivery_address` 会按你给出的答案检查：发往所报地址的一次发布，必须到达报出它的那条
-订阅。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由 `harness::lifecycle`
-覆盖。
+`harness::redelivery_address` 会按你给出的答案检查：从处理器线程的运行时发往所报地址的副本，必须
+到达报出它的那条订阅，每个组一次，并带着消息头。`Subscribe::Copies` 为 `AddressedCopies` 时，再用
+光名字的 `Name` 源跑一遍。声明了 `NamedCopies` 的描述符没有可检查的答案，两者其余的转移链都由
+`harness::lifecycle` 覆盖。
 
 ### 用一个字符串命名一种订阅方式
 

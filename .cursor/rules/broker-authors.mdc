@@ -41,7 +41,9 @@ alwaysApply: false
 - `Subscribe` carries the same `type Copies` for the by-name form: `AddressedCopies` where a
   publish under a subscribe name reaches the subscription opened by it, and the name is then the
   address; `NamedCopies` where it is not (a Pub/Sub subscription, an MQTT filter).
-  `harness::redelivery_address` holds an addressed descriptor to its answer, and
+  `harness::redelivery_address` holds an addressed descriptor, and the bare `Name` where
+  `Subscribe::Copies` is `AddressedCopies`, to its answer; `retry::broker_moves` holds a
+  `BrokerMoves` descriptor to the cap and dead-letter destination it declares; and
   `harness::lifecycle` covers the rest of the ladder.
 - `declare_retry` hands the descriptor the registration's `max_attempts(..)` and `dead_letter(..)`
   before it subscribes. Apply them to your own topology where the broker has a mechanism for them,

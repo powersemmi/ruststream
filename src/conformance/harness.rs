@@ -23,7 +23,7 @@
 
 use std::{fmt, future::Future, thread, time::Duration};
 
-use super::helpers::unique_subject;
+pub use super::retry::redelivery_address;
 #[cfg(feature = "asyncapi")]
 use crate::DescribeServer;
 #[cfg(feature = "asyncapi")]
@@ -31,8 +31,8 @@ use crate::asyncapi::build_spec;
 #[cfg(feature = "asyncapi")]
 use crate::runtime::{AppInfo, RustStream};
 use crate::{
-    AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage,
-    Publisher, RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, Subscribe,
+    Subscriber, SubscriptionSource,
     testing::{Backlog, InProcess, TestableBroker},
 };
 use bytes::Bytes;
@@ -228,7 +228,7 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 ///
 /// Run it from the broker crate against a real server, and a second time in process by wrapping
 /// the production broker in [`InProcessBroker`]. The subject it publishes under is unique per run
-/// (see [`unique_subject`]), so a server that keeps what an earlier run left - a retained log, a
+/// (see [`unique_subject`](super::helpers::unique_subject)), so a server that keeps what an earlier run left - a retained log, a
 /// durable queue - does not fail the next one.
 ///
 /// # Examples
@@ -267,76 +267,6 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     MkPub: Fn(&Connected<B>) -> Pub,
 {
     super::lifecycle::ladder(make_broker, make_source, make_publisher).await;
-}
-
-/// What a descriptor that addresses its own retry copies promises: publish to the address it
-/// reports and the subscription that reported it gets the message.
-///
-/// The runtime publishes a `retry_after` copy exactly like this, so an address that reaches
-/// nothing would lose every delayed message. Only a descriptor declaring
-/// [`AddressedCopies`](crate::AddressedCopies) has one; a
-/// [`NamedCopies`](crate::NamedCopies) descriptor takes its destination from the mount site and
-/// has nothing to check here.
-///
-/// # Panics
-///
-/// Panics with a descriptive message if the reported address does not reach the subscription.
-pub async fn redelivery_address<B, MkBroker, Src, MkSrc, Pub, MkPub>(
-    make_broker: MkBroker,
-    make_source: MkSrc,
-    make_publisher: MkPub,
-) where
-    B: Broker,
-    MkBroker: Fn() -> B,
-    Src: RedeliveryAddressed<Connected<B>> + Clone + Send + Sync,
-    Src::Subscriber: Send,
-    MkSrc: Fn(&str) -> Src,
-    Pub: Publisher,
-    MkPub: Fn(&Connected<B>) -> Pub,
-{
-    let subject = unique_subject("conformance.redelivery");
-
-    let connected = make_broker()
-        .connect()
-        .await
-        .expect("broker must connect after synchronous construction");
-
-    let source = make_source(&subject);
-    let address = source
-        .redelivery_address(&connected)
-        .await
-        .expect("reporting a redelivery address must not fail against a live connection");
-    let mut subscriber = source
-        .subscribe(&connected)
-        .await
-        .expect("subscription source must open against the connected form");
-    let publisher = make_publisher(&connected);
-
-    publisher
-        .publish(
-            OutgoingMessage::new(address.as_str(), b"redelivered".as_slice()),
-            None,
-        )
-        .await
-        .expect("publish to the reported redelivery address failed");
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let msg = expect_next(&mut stream, "redelivery_address").await;
-    assert_eq!(
-        msg.payload(),
-        b"redelivered",
-        "a publish to the reported redelivery address must reach the subscription that reported \
-         it",
-    );
-    match msg.ack().await {
-        Ok(()) | Err(AckError::Unsupported) => {}
-        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-    }
-
-    let _closed = connected
-        .shutdown()
-        .await
-        .expect("broker must shut down cleanly");
 }
 
 /// Fails when anything the broker contributes to the generated document carries `secret`.
