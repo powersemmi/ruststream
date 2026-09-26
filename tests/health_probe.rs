@@ -95,7 +95,10 @@ async fn fail_fast_flips_the_probe_without_a_shutdown_call() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// A paused clock on the current-thread runtime: the sleep below advances only once every other
+// task has run, so it lets the fail-fast watcher fire against zero probes before the probe is
+// taken, without waiting on real time.
+#[tokio::test(start_paused = true)]
 async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
@@ -114,10 +117,10 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
         .expect("publish failed");
     running.stopping().await;
     // The watcher's send is unobservable without a subscriber, and subscribing early would
-    // itself keep the transition alive - so a real-time barrier is the only way to let it fire
-    // against zero probes. The single read below must then see the stored state; waiting on
-    // `changed()` instead would mask a transition that was dropped for lack of subscribers.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // itself keep the transition alive, so the watcher is let run to quiescence first. The single
+    // read below must then see the stored state; waiting on `changed()` instead would mask a
+    // transition that was dropped for lack of subscribers.
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let health = running.health();
     match health.state() {

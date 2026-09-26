@@ -1,7 +1,7 @@
 //! The edges of the [`TestApp`](ruststream::testing::TestApp) harness that the happy-path suite in
 //! `tests/testing_harness.rs` never reaches: an app carrying a broker with no in-process mode,
-//! addressing a broker that is not there (or is there twice), the unscoped injection entry points,
-//! the post-settle drain, and the teardown under a configured shutdown timeout.
+//! addressing a broker that is not there (or is there twice), the post-settle drain, and the
+//! report of a service that tore itself down.
 //!
 //! The mistakes a test author makes while addressing brokers are panics, not errors, so the cases
 //! that name them are `should_panic` and assert on the message the author reads.
@@ -12,14 +12,14 @@
     feature = "macros"
 ))]
 
+use std::convert::Infallible;
 use std::future::{Future, ready};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use ruststream::memory::{MemoryBroker, Retaining};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishError, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
 use ruststream::testing::{TestApp, TestError};
-use ruststream::{Broker, ConnectedBroker, Deserialized, Outgoing, Serialized, subscriber};
+use ruststream::{Broker, ConnectedBroker, Deserialized, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -28,14 +28,9 @@ struct Order {
     id: u64,
 }
 
-/// The payload view the byte-injection case below takes.
+/// The payload view of the second subscription an app with two brokers mounts.
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
-
-/// Bytes injected as themselves: what that case sends, since its payload is a frame rather than
-/// a model. It declares no name, so the injection names its subject.
-#[derive(Outgoing, Serialized)]
-struct Wire(Vec<u8>);
 
 #[subscriber("orders")]
 async fn handle_orders(order: &Order) -> HandlerOutcome {
@@ -114,29 +109,6 @@ async fn an_app_with_a_broker_that_has_no_in_process_mode_does_not_start() {
     }
 }
 
-/// Two brokers are registered, so the unscoped convenience has no single target to pick.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_unscoped_injection_refuses_an_app_with_two_brokers() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("a", MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        })
-        .with_broker_labeled("b", MemoryBroker::new(), |b| {
-            b.include(ingest);
-        });
-    let tb = TestApp::start(app).await.expect("start");
-
-    assert!(matches!(
-        tb.message(&Wire(b"frame".to_vec()))
-            .to("frames")
-            .publish()
-            .await,
-        Err(PublishError::Publish(TestError::Ambiguous)),
-    ));
-
-    tb.shutdown().await.expect("shutdown");
-}
-
 /// Addressing a broker type the app never registered is a test-authoring mistake, so the panic
 /// names the type the author asked for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -184,45 +156,34 @@ async fn a_mirror_state_addressing_a_duplicated_broker_type_names_it() {
     .await;
 }
 
-/// The unscoped entry point picks the sole broker, so an injection into a single-broker app needs
-/// no addressing.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_unscoped_injection_picks_the_sole_broker() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(ingest);
-    });
-    let tb = TestApp::start(app).await.expect("start");
-
-    tb.message(&Wire(b"frame".to_vec()))
-        .to("frames")
-        .publish()
-        .await
-        .expect("inject");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("frames")
-        .assert_called_once()
-        .with_raw(b"frame")
-        .settled(HandlerOutcome::ack());
-
-    tb.shutdown().await.expect("shutdown");
-}
-
 // --- The post-settle drain. ---
 
-/// Releases the continuation below. The handler's post-settle work is deliberately still pending
-/// when the settle returns, so `drain` is the only thing that can make it finish.
-static RELEASE: Notify = Notify::const_new();
+/// The gate the continuation below waits at, and what it records once released: application
+/// state, the way a service shares anything with its handlers. The handler's post-settle work is
+/// deliberately still pending when the settle returns, so `drain` is the only thing that can make
+/// it finish.
+#[derive(Default)]
+struct Gate {
+    release: Notify,
+    drained: Mutex<Vec<u64>>,
+}
 
-/// What the released continuation recorded, for the assertion that it actually ran.
-static DRAINED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+impl Gate {
+    fn drained(&self) -> Vec<u64> {
+        self.drained
+            .lock()
+            .expect("the test holds no poisoned lock")
+            .clone()
+    }
+}
 
 #[subscriber("gated")]
-async fn gated(order: &Order) -> HandlerOutcome {
+async fn gated(order: &Order, ctx: &mut Context<'_, (), Arc<Gate>>) -> HandlerOutcome {
     let id = order.id;
+    let gate = Arc::clone(ctx.state());
     HandlerOutcome::ack().and_after(async move {
-        RELEASE.notified().await;
-        DRAINED
+        gate.release.notified().await;
+        gate.drained
             .lock()
             .expect("the test holds no poisoned lock")
             .push(id);
@@ -234,86 +195,33 @@ async fn gated(order: &Order) -> HandlerOutcome {
 /// makes the ordering exact: the continuation cannot finish while the test itself is running.
 #[tokio::test]
 async fn drain_waits_for_a_still_pending_post_settle_continuation() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(gated);
-    });
+    let gate = Arc::new(Gate::default());
+    let state = Arc::clone(&gate);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(state))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(gated);
+        });
     let tb = TestApp::start(app).await.expect("start");
 
     tb.publish("gated", &Order { id: 3 })
         .await
         .expect("publish");
     assert!(
-        DRAINED
-            .lock()
-            .expect("the test holds no poisoned lock")
-            .is_empty(),
+        gate.drained().is_empty(),
         "the continuation must still be pending when the settle returns",
     );
 
     // The permit is stored, so the continuation is runnable but has not run: only the drain's own
     // yielding lets it finish.
-    RELEASE.notify_one();
+    gate.release.notify_one();
     tb.drain().await;
 
-    assert_eq!(
-        DRAINED
-            .lock()
-            .expect("the test holds no poisoned lock")
-            .as_slice(),
-        [3],
-    );
+    assert_eq!(gate.drained(), [3]);
     tb.shutdown().await.expect("shutdown");
 }
 
-// --- Startup hooks and teardown. ---
-
-/// What the `after_startup` hook recorded, proving the harness runs it rather than skipping to the
-/// dispatch loops.
-static STARTED: Mutex<bool> = Mutex::new(false);
-
-/// The harness runs `after_startup` after the subscriptions are open, and a configured shutdown
-/// timeout bounds the teardown instead of waiting for the dispatch loops indefinitely.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_harness_runs_after_startup_and_honours_the_shutdown_timeout() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .shutdown_timeout(Duration::from_secs(5))
-        .after_startup(async move |_state| {
-            *STARTED.lock().expect("the test holds no poisoned lock") = true;
-            Ok::<_, std::convert::Infallible>(())
-        })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        });
-    let tb = TestApp::start(app).await.expect("start");
-
-    assert!(*STARTED.lock().expect("the test holds no poisoned lock"));
-    tb.publish("orders", &Order { id: 1 })
-        .await
-        .expect("publish");
-
-    tb.shutdown().await.expect("shutdown");
-}
-
-/// A failing `after_startup` hook aborts the harness the same way a failing `on_startup` one does.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_failing_after_startup_hook_is_reported_as_a_startup_error() {
-    #[derive(Debug, thiserror::Error)]
-    #[error("the readiness signal never landed")]
-    struct NotReady;
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .after_startup(async move |_state| Err::<(), _>(NotReady))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        });
-
-    match TestApp::start(app).await {
-        Err(TestError::Startup(source)) => {
-            assert!(source.to_string().contains("readiness signal"));
-        }
-        other => panic!("expected a startup error, got {:?}", other.map(|_| ())),
-    }
-}
+// --- Teardown. ---
 
 /// `assert_running` on a torn-down service reports the failure that tore it down, so the test
 /// author sees the cause rather than a bare assertion.

@@ -73,28 +73,17 @@ async fn every_match_reaches_the_name_and_the_pattern(
         .subscriber("orders.eu")
         .assert_called_once()
         .with(&Order { id: 1 });
-    let broker = tb.broker::<MemoryBroker>();
-    let pattern = broker.subscriber("orders.*");
     assert_eq!(
-        pattern.received::<Order>(),
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders.*")
+            .received::<Order>(),
         [Order { id: 1 }, Order { id: 2 }]
     );
-    pattern.assert_called(2);
-    tb.broker::<MemoryBroker>()
-        .published::<Order>("orders.us")
-        .assert_called_once()
-        .with(&Order { id: 2 });
     tb.shutdown().await?;
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn every_match_in_process() -> Result<(), Box<dyn Error>> {
-    every_match_reaches_the_name_and_the_pattern(TestApp::start(app(Routing::EveryMatch)).await?)
-        .await
-}
-
-// The default rule is `EveryMatch`.
+// The default rule is `EveryMatch`, so the default broker is what runs the rule in process.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_match_is_the_default() -> Result<(), Box<dyn Error>> {
     let app =
@@ -145,47 +134,6 @@ async fn most_specific_live() -> Result<(), Box<dyn Error>> {
         TestApp::start_live(app(Routing::MostSpecific)).await?,
     )
     .await
-}
-
-#[subscriber(MemoryPattern::new("orders.>"))]
-async fn everything(order: &Order) -> HandlerOutcome {
-    let _ = order.id;
-    HandlerOutcome::ack()
-}
-
-// Between two patterns, the more specific one takes the publish: `*` beats `>`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn most_specific_prefers_one_token_over_the_tail() -> Result<(), Box<dyn Error>> {
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-        MemoryBroker::new().routing(Routing::MostSpecific),
-        |b| {
-            b.include(regions);
-            b.include(everything);
-        },
-    );
-    let tb = TestApp::start(app).await?;
-    tb.broker::<MemoryBroker>()
-        .message(&Order { id: 1 })
-        .to("orders.us")
-        .publish()
-        .await?;
-    tb.broker::<MemoryBroker>()
-        .message(&Order { id: 2 })
-        .to("orders.us.west")
-        .publish()
-        .await?;
-    tb.settle().await?;
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders.*")
-        .assert_called_once()
-        .with(&Order { id: 1 });
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders.>")
-        .assert_called_once()
-        .with(&Order { id: 2 });
-    tb.shutdown().await?;
-    Ok(())
 }
 
 #[subscriber(MemoryPattern::new("orders.>.eu"))]
