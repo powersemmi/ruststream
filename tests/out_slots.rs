@@ -102,8 +102,8 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
         .assert_called_once();
 }
 
-/// The second slot targets a different broker through a bound token; the marker still picks the
-/// position, so the calls stay order-independent.
+/// The second slot targets a different broker through a bound token, and binding it first does
+/// not hand the token to the other slot: the marker picks the position.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slot_binds_a_foreign_broker_through_a_token() {
     let ingress = MemoryBroker::new();
@@ -114,8 +114,8 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
         .with_broker_labeled("other", other, |_b| {})
         .with_broker_labeled("ingress", ingress, |b| {
             b.include(transcode)
-                .out(Encoded, Publish)
                 .out(Audit, to_other)
+                .out(Encoded, Publish)
                 .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
@@ -127,11 +127,19 @@ async fn a_slot_binds_a_foreign_broker_through_a_token() {
         .await
         .expect("publish");
 
-    // Both slots captured regardless of which broker each policy pairs against.
-    tb.out::<Encoded>().assert_called_once().with_raw(b"xy");
-    tb.out::<Audit>()
+    // Each slot's publish lands on the broker its own policy paired against, and only there.
+    let ingress = tb.broker_named("ingress");
+    let other = tb.broker_named("other");
+    ingress
+        .published::<()>("slots.encoded")
+        .assert_called_once()
+        .with_raw(b"xy");
+    other.published::<()>("slots.encoded").assert_not_called();
+    other
+        .published::<()>("slots.audit")
         .assert_called_once()
         .with_raw(2u64.to_be_bytes().as_slice());
+    ingress.published::<()>("slots.audit").assert_not_called();
 }
 
 /// A capability-refined slot: the handler settles a ledger through an owned transaction without
@@ -176,6 +184,7 @@ async fn a_capability_refined_slot_pairs_a_transactional_publisher() {
         .published::<Event>("slots.settled")
         .assert_called_once()
         .with(&Event { id: 4 });
+    tb.out::<Encoded>().assert_not_called();
 }
 
 /// The same settling, driven through the raw capability methods instead of the typed openers:

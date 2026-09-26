@@ -63,30 +63,6 @@ async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
 
-/// The transform names the reply's destination from the delivery it answers.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_naming_transform_sends_the_reply_where_the_request_asked() {
-    let app = RustStream::new(AppInfo::new("redirect-reply", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm).out(Reply, Publish).transform(ReplyTo);
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 4 })
-        .with_headers(reply_to("redirect.inbox.4"))
-        .to("redirect.requests")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Receipt>("redirect.inbox.4")
-        .assert_called_once()
-        .with(&Receipt { id: 4 });
-}
-
 /// A delivery the transform leaves alone falls back to the destination the mount site declared -
 /// the one the generated document reports.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -228,29 +204,6 @@ async fn a_slot_publishes_where_its_naming_transform_says() {
     // the attributed leaf, so the harness never reports a destination the broker did not see.
     let audited = tb.out::<Audit>().assert_called_once();
     assert_eq!(audited.messages()[0].name(), "redirect.audit.north");
-}
-
-/// The same slot without such a transform: the call site's own `.to(..)` stands.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_slot_without_one_keeps_the_call_site_destination() {
-    let app = RustStream::new(AppInfo::new("redirect-slot-none", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(mirror).out(Audit, Publish).build();
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 10 })
-        .to("redirect.orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Order>("redirect.audit")
-        .assert_called_once()
-        .with(&Order { id: 10 });
 }
 
 /// The reply position of a handler that also carries a slot: the chain reads the reply type

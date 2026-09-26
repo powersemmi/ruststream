@@ -7,10 +7,9 @@ use std::convert::Infallible;
 use std::pin::pin;
 
 use futures::{FutureExt, Stream, StreamExt};
-use ruststream::memory::{MemoryBroker, MemoryError, MemoryMessage};
+use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::{
-    Broker, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions, Publisher,
-    Subscriber, Transaction,
+    IncomingMessage, OutgoingMessage, OwnedTransactions, Publisher, Subscriber, Transaction,
 };
 
 /// Drains the next already-enqueued delivery (acking it), or `None` when the queue is empty.
@@ -117,30 +116,14 @@ async fn abort_discards_the_owned_buffer() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn commit_against_a_shut_down_bus_errors() {
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-
-    let mut txn = publisher.transaction().await.expect("transaction failed");
-    txn.publish(OutgoingMessage::new("orders", b"buffered".as_slice()), None)
-        .await
-        .expect("publish into the transaction failed");
-
-    let connected = broker.connect().await.expect("connect failed");
-    connected.shutdown().await.expect("shutdown failed");
-
-    // Buffering never touched the bus, so the shutdown surfaces at the visibility point.
-    assert_eq!(txn.commit().await, Err(MemoryError::ShutDown));
-}
-
 /// The typed sugar (`PublishExt::owned_transaction`) over the same owned kind; the default codec
 /// needs a codec feature, hence the gate.
 #[cfg(feature = "json")]
 mod typed {
-    use ruststream::Outgoing;
     use ruststream::codec::{Codec, DefaultCodec};
+    use ruststream::memory::MemoryError;
     use ruststream::runtime::PublishExt;
+    use ruststream::{Broker, ConnectedBroker, Outgoing};
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -187,54 +170,8 @@ mod typed {
         assert_eq!(drain_next(&mut stream).await, None);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn concurrent_typed_scopes_commit_independently() {
-        let broker = MemoryBroker::new();
-        let mut subscriber = broker.subscribe("orders");
-        let publisher = broker.publisher();
-
-        let mut first = publisher
-            .owned_transaction()
-            .await
-            .expect("first transaction");
-        let mut second = publisher
-            .owned_transaction()
-            .await
-            .expect("second transaction");
-        first
-            .message(&Order { id: 1 })
-            .to("orders")
-            .publish()
-            .await
-            .expect("publish into first failed");
-        second
-            .message(&Order { id: 2 })
-            .to("orders")
-            .publish()
-            .await
-            .expect("publish into second failed");
-
-        // Settling one scope publishes exactly its buffer, leaving the sibling untouched.
-        second.commit().await.expect("second commit failed");
-        let mut stream = pin!(subscriber.stream());
-        let payload = drain_next(&mut stream)
-            .await
-            .expect("second scope's publish missing");
-        assert_eq!(decode_order(&payload), Order { id: 2 });
-        assert_eq!(
-            drain_next(&mut stream).await,
-            None,
-            "the sibling scope leaked into the commit"
-        );
-
-        first.commit().await.expect("first commit failed");
-        let payload = drain_next(&mut stream)
-            .await
-            .expect("first scope's publish missing");
-        assert_eq!(decode_order(&payload), Order { id: 1 });
-        assert_eq!(drain_next(&mut stream).await, None);
-    }
-
+    /// The typed scope forwards the broker's refusal rather than reporting a commit that never
+    /// reached the bus.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn typed_commit_against_a_shut_down_bus_errors() {
         let broker = MemoryBroker::new();

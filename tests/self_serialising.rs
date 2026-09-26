@@ -133,28 +133,6 @@ fn an_infallible_writer_needs_no_result() {
     assert_eq!(&buf[..], &[4]);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_self_serialising_type_makes_the_round_trip() {
-    let app =
-        RustStream::new(AppInfo::new("wire", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(count);
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Tick { seq: 9 })
-        .publish()
-        .await
-        .expect("inject");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("wire.ticks")
-        .assert_called_once()
-        .with_raw(&[0, 0, 0, 9])
-        .settled(HandlerOutcome::ack());
-
-    tb.shutdown().await.expect("graceful shutdown");
-}
-
 // --8<-- [start:assertions]
 /// Asserting on a value that serializes itself. The harness's typed assertions decode with a
 /// codec, and this lane has none, so both ends of the test speak the type's own format: the

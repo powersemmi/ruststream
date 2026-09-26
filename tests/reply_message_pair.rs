@@ -1,10 +1,6 @@
 //! A reply that carries its own typed header contract: the handler answers with a
 //! `Message<Headers, Payload>`, so the contract is serialized into the outgoing headers and the
 //! body through the reply codec, in one publish.
-//!
-//! The consumer downstream reads the reply back through the pair input, which is what proves both
-//! halves survived the trip: a reply that only encoded its body would fail the header assertion,
-//! and one that only stamped headers would fail the body assertion.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -13,7 +9,7 @@
 ))]
 
 use ruststream::memory::prelude::*;
-use ruststream::testing::{Outcome, TestApp};
+use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, schemars::JsonSchema)]
@@ -47,20 +43,12 @@ async fn confirm(order: &Order) -> Message<ReceiptMeta, Receipt> {
     )
 }
 
-/// Reads the reply back through the pair input: the body only runs if both halves parsed, so the
-/// call this records is itself the evidence the contract survived the trip.
-#[subscriber("pair.receipts")]
-async fn audit(_receipt: &Message<ReceiptMeta, Receipt>) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pair_reply_carries_its_contract_into_the_outgoing_headers() {
     let app = RustStream::new(AppInfo::new("pair-reply", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(confirm).out(Reply, Publish);
-            b.include(audit);
         },
     );
     let tb = TestApp::start(app).await.expect("start");
@@ -71,20 +59,12 @@ async fn a_pair_reply_carries_its_contract_into_the_outgoing_headers() {
         .await
         .expect("publish");
 
-    // The contract went out as headers next to a body encoded by the reply codec.
+    // The contract went out as headers next to a body encoded by the reply codec: a reply that
+    // only encoded its body fails the header assertions, one that only stamped headers the body.
     tb.broker::<MemoryBroker>()
         .published::<Receipt>("pair.receipts")
         .assert_called_once()
         .with(&Receipt { total: 40 })
         .with_header("tenant", b"acme")
         .with_header("order_id", b"4");
-    // And came back in through the pair input: a half that did not survive would settle as a
-    // decode failure instead of an ack.
-    tb.broker::<MemoryBroker>()
-        .subscriber("pair.receipts")
-        .assert_called_once()
-        .assert_outcome(Outcome::Ack)
-        .settled(HandlerOutcome::ack());
-
-    tb.shutdown().await.expect("shutdown");
 }

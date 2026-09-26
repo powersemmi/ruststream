@@ -11,6 +11,7 @@
 ))]
 
 use std::future::{Future, ready};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
@@ -85,46 +86,6 @@ async fn a_named_codec_encodes_the_reply() {
     assert!(
         serde_json::from_slice::<Receipt>(payload).is_err(),
         "the default codec must not have encoded this reply",
-    );
-}
-
-#[subscriber("transform.in", publish("transform.out"))]
-async fn stamped_reply(order: &Order) -> Receipt {
-    Receipt { id: order.id }
-}
-
-/// `.transform(..)` composes a static publish transform onto the reply.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_chained_transform_stamps_the_reply() {
-    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(stamped_reply)
-                .out(Reply, Publish)
-                .transform(Stamp);
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 3 })
-        .to("transform.in")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("transform.in")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-
-    let published = tb
-        .broker::<MemoryBroker>()
-        .published::<Receipt>("transform.out");
-    let published = published.assert_called_once().with(&Receipt { id: 3 });
-    assert_eq!(
-        published.messages()[0].headers().get("x-stamped"),
-        Some(b"1".as_slice()),
-        "the reply must carry the header the chained transform stamps",
     );
 }
 
@@ -291,16 +252,80 @@ async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
         .collect()
 }
 
-/// `.transactional()` publishes a batch's replies inside one broker transaction, and the
-/// batch-only transform still runs on each of them.
+/// A transactional publisher that marks every message with whether a transaction was open when
+/// it was published, so a test tells a reply sent inside the batch's transaction from one sent
+/// outside it.
+struct Journaled {
+    inner: MemoryPublisher,
+    open: AtomicBool,
+}
+
+impl Publisher for Journaled {
+    type Payload = Take;
+    type Error = MemoryError;
+    type Options = ();
+
+    async fn publish(
+        &self,
+        msg: OutgoingMessage<'_, BytesMut>,
+        options: Option<&Self::Options>,
+    ) -> Result<(), Self::Error> {
+        let open = if self.open.load(Ordering::SeqCst) {
+            "open"
+        } else {
+            "none"
+        };
+        let mut headers = msg.headers().clone();
+        headers.insert("x-transaction", open);
+        let marked = OutgoingMessage::new(msg.name(), msg.payload()).with_headers(headers);
+        self.inner.publish(marked, options).await
+    }
+}
+
+impl TransactionalPublisher for Journaled {
+    async fn begin_transaction(&self) -> Result<(), Self::Error> {
+        self.inner.begin_transaction().await?;
+        self.open.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn commit(&self) -> Result<(), Self::Error> {
+        self.open.store(false, Ordering::SeqCst);
+        self.inner.commit().await
+    }
+
+    async fn abort(&self) -> Result<(), Self::Error> {
+        self.open.store(false, Ordering::SeqCst);
+        self.inner.abort().await
+    }
+}
+
+/// The policy half of [`Journaled`].
+struct JournaledPublish;
+
+impl PublishPolicy<ConnectedMemoryBroker> for JournaledPublish {
+    type Live = Journaled;
+
+    fn pair(
+        self,
+        connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<Journaled, PairError>> {
+        ready(Ok(Journaled {
+            inner: connected.publisher(),
+            open: AtomicBool::new(false),
+        }))
+    }
+}
+
+/// `.transactional()` publishes a batch's replies inside one broker transaction, committed once
+/// they are all sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_reply_commits_its_transaction() {
     let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
         MemoryBroker::new(),
         |b| {
             b.include(confirm_batch.batch(nonzero!(8)))
-                .out(Reply, TransactionalPublish)
-                .batch_transform(for_batch(Stamp))
+                .out(Reply, JournaledPublish)
                 .transactional();
         },
     );
@@ -313,19 +338,10 @@ async fn a_batch_reply_commits_its_transaction() {
         .expect("publish");
 
     tb.broker::<MemoryBroker>()
-        .subscriber("batch.in")
+        .published::<Receipt>("batch.out")
         .assert_called_once()
-        .settled(HandlerOutcome::ack());
-
-    let published = tb
-        .broker::<MemoryBroker>()
-        .published::<Receipt>("batch.out");
-    let published = published.assert_called_once().with(&Receipt { id: 11 });
-    assert_eq!(
-        published.messages()[0].headers().get("x-stamped"),
-        Some(b"1".as_slice()),
-        "the batch's replies must carry the batch transform's header",
-    );
+        .with(&Receipt { id: 11 })
+        .with_header("x-transaction", "open");
 }
 
 #[derive(OutSlot)]

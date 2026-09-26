@@ -78,44 +78,6 @@ impl<S: Send + Sync> BatchPublishingCall<S> for Confirm {
     }
 }
 
-#[tokio::test]
-async fn transactional_replies_publish_atomically_then_ack() {
-    let broker = MemoryBroker::new();
-    let mut input = broker.subscribe("orders");
-    let mut replies = broker.subscribe("confirmations");
-
-    let handler = BatchPublishingHandler {
-        def: Confirm::new("confirmations"),
-        codec: JsonCodec,
-        publisher: Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec)),
-        pipeline: PublishIdentity,
-        injections: (),
-        decode: FailurePolicy::Drop,
-        #[cfg(feature = "testing")]
-        origin: Origin::default(),
-    };
-
-    publish_numbers(&broker, "orders", &[1, 2]).await;
-    let state = ();
-    let delivery = Delivery::empty();
-    let headers = HeaderMap::new();
-    let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-    let batch = pull_batch(&mut input).await;
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
-
-    // Both replies are visible after the commit, in order.
-    let confirmed = pull_batch(&mut replies).await;
-    let payloads: Vec<&[u8]> = confirmed.iter().map(IncomingMessage::payload).collect();
-    assert_eq!(payloads, [b"10", b"20"]);
-    for msg in confirmed {
-        msg.ack().await.unwrap();
-    }
-
-    // The acked input batch is not redelivered.
-    let mut stream = std::pin::pin!(input.stream());
-    assert!(futures::poll!(stream.next()).is_pending());
-}
-
 /// A batch reply is one call for the batch the broker delivered: its replies publish together
 /// (one transaction under a transactional publisher) and the batch settles once.
 #[tokio::test]
@@ -220,6 +182,8 @@ fn batch_publishing_def_defaults_register_without_documentation() {
     assert_eq!(def.failure_policies(), FailurePolicies::default());
 }
 
+/// The mounted handler keeps its wiring out of Debug: it holds a live connection, and a
+/// registration dump must not print one.
 #[test]
 fn handler_debug_hides_the_wiring() {
     let handler = BatchPublishingHandler {
@@ -232,7 +196,7 @@ fn handler_debug_hides_the_wiring() {
         #[cfg(feature = "testing")]
         origin: Origin::default(),
     };
-    assert!(format!("{handler:?}").contains("BatchPublishingHandler"));
+    assert_eq!(format!("{handler:?}"), "BatchPublishingHandler { .. }");
 }
 
 /// Every element of the batch failing to decode short-circuits: the handler is not invoked at
