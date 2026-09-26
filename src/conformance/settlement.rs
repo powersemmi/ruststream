@@ -411,7 +411,7 @@ where
         }
 
         // A new connection to the same subscription: a settlement the broker kept only in the
-        // closed connection shows up here as a redelivery ahead of the sentinel.
+        // closed connection shows up here as a redelivery, ahead of the sentinel or behind it.
         let (connected, mut subscriber) = self.open(&source, label).await;
         publish(
             &(self.make_publisher)(&connected),
@@ -422,7 +422,7 @@ where
         .await;
         {
             let mut stream = pin!(subscriber.stream());
-            until_sentinel(&mut stream, self.redelivery_timeout + ARRIVAL, label).await;
+            until_sentinel(&mut stream, self.redelivery_timeout, label).await;
         }
         Self::close(connected, subscriber, label).await;
         (answer, delay)
@@ -679,9 +679,9 @@ where
     }
 }
 
-/// Reads the sentinel and acknowledges it, then watches for a short while more: any other
+/// Reads the sentinel and acknowledges it, then watches for a redelivery timeout more: any other
 /// delivery, ahead of the sentinel or behind it, fails the check.
-async fn until_sentinel<S, M, E>(stream: &mut S, within: Duration, label: &str)
+async fn until_sentinel<S, M, E>(stream: &mut S, redelivery_timeout: Duration, label: &str)
 where
     S: Stream<Item = Result<M, E>> + Unpin,
     M: IncomingMessage,
@@ -689,7 +689,7 @@ where
 {
     const CAME_BACK: &str =
         "the settled delivery came back on a new connection to its subscription";
-    let msg = arrival(stream, within, label).await;
+    let msg = arrival(stream, redelivery_timeout + ARRIVAL, label).await;
     assert!(
         msg.payload() == SENTINEL,
         "{label}: {CAME_BACK}: {:?}",
@@ -697,8 +697,9 @@ where
     );
     settle(msg.ack(), label, "ack").await;
     // A transport that does not keep a subscription's order redelivers a lost settlement behind a
-    // message published after it, and on a new connection that message is already available.
-    quiet(stream, QUIET_MARGIN, label, CAME_BACK).await;
+    // message published after it, at once or only once its redelivery timeout runs out, so the
+    // sentinel alone does not prove the settlement held.
+    quiet(stream, redelivery_timeout + QUIET_MARGIN, label, CAME_BACK).await;
 }
 
 /// Collects redeliveries of `missing` until none is left or `within` runs out, acknowledging each.

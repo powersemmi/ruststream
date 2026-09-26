@@ -50,8 +50,8 @@ enum Flaw {
     /// `nack(false)` answers `Unsupported` and leaves the delivery unsettled, so it comes back.
     RejectUnsupported,
     /// The first `ack` answers `Ok` and is lost with its connection: a new connection to the
-    /// subscription gets the delivery again, ahead of the first message it reads or behind it.
-    AckLostOnReconnect { behind: bool },
+    /// subscription gets the delivery again, where `back` puts it.
+    AckLostOnReconnect { back: Back },
     /// A delivery dropped unsettled comes back twice.
     DropDuplicates,
     /// `ack` fails.
@@ -61,6 +61,21 @@ enum Flaw {
     /// `connect` never returns.
     ConnectHangs,
 }
+
+/// Where a new connection hands back the delivery whose acknowledgement was lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Back {
+    /// Ahead of the first message the new connection reads.
+    Ahead,
+    /// Right behind it.
+    Behind,
+    /// Behind it, once [`LATE`] has passed, the way a visibility timeout hands it back.
+    Late,
+}
+
+/// How long after the first message [`Back::Late`] hands the lost delivery back, and the
+/// redelivery timeout the suite is told for it.
+const LATE: Duration = Duration::from_secs(5);
 
 /// A delivery whose acknowledgement was lost, waiting for the next subscription to its name.
 #[derive(Debug, Default)]
@@ -220,11 +235,12 @@ impl Subscriber for FlawedSubscriber {
         // new connection finds waiting.
         let mut lost = self.lost_here();
         let ahead = match flaw {
-            Flaw::AckLostOnReconnect { behind: false } => lost.take(),
+            Flaw::AckLostOnReconnect { back: Back::Ahead } => lost.take(),
             _ => None,
         };
         let committed = Arc::clone(&self.committed);
         let (bus, name, lost_acks) = (self.bus.clone(), self.name.clone(), Arc::clone(&self.lost));
+        let late = matches!(flaw, Flaw::AckLostOnReconnect { back: Back::Late });
         let next = &mut self.next;
         let mut wrap = move |inner| {
             let seq = *next;
@@ -245,7 +261,15 @@ impl Subscriber for FlawedSubscriber {
             .flat_map(move |delivery| {
                 // Behind the first delivery, where the flaw puts the lost one.
                 let behind = lost.take().map(Ok);
-                stream::iter([Some(delivery), behind].into_iter().flatten())
+                stream::once(ready(delivery)).chain(
+                    stream::once(async move {
+                        if late && behind.is_some() {
+                            sleep(LATE).await;
+                        }
+                        behind
+                    })
+                    .filter_map(ready),
+                )
             })
             .map(move |delivery| delivery.map(&mut wrap))
     }
@@ -605,8 +629,7 @@ async fn the_honest_double_passes_the_delay_floor() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(
-    expected = "lifecycle delay floor: a delivery settled with nack_after(1.5s) came \
-                           back after"
+    expected = "a broker that ignores the delay or rounds it down redelivers before it runs out"
 )]
 async fn a_delay_rounded_down_fails_the_lifecycle() {
     harness::lifecycle(
@@ -630,7 +653,7 @@ async fn a_reject_answered_unsupported_may_come_back() {
                 subscription: \"settled\""
 )]
 async fn an_ack_lost_on_reconnect_fails_ahead_of_the_sentinel() {
-    run_suite_on(Flaw::AckLostOnReconnect { behind: false }).await;
+    run_suite_on(Flaw::AckLostOnReconnect { back: Back::Ahead }).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -639,7 +662,24 @@ async fn an_ack_lost_on_reconnect_fails_ahead_of_the_sentinel() {
                 subscription within"
 )]
 async fn an_ack_lost_on_reconnect_fails_behind_the_sentinel() {
-    run_suite_on(Flaw::AckLostOnReconnect { behind: true }).await;
+    run_suite_on(Flaw::AckLostOnReconnect { back: Back::Behind }).await;
+}
+
+// A paused clock, so the redelivery timeout the late copy waits out passes at once.
+#[tokio::test(start_paused = true)]
+#[should_panic(
+    expected = "settlement ack consumes: the settled delivery came back on a new connection to its \
+                subscription within"
+)]
+async fn an_ack_lost_on_reconnect_fails_when_it_comes_back_late() {
+    let broker = Flawed::new(Flaw::AckLostOnReconnect { back: Back::Late });
+    suite(
+        || broker.clone(),
+        |name| FlawedSource(MemorySource::new(name)),
+        FlawedConnected::publisher,
+        LATE,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
