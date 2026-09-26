@@ -1,0 +1,5 @@
+error: #[ruststream::app] takes `flavor = "current_thread"` or `flavor = "multi_thread"`, and `worker_threads = n`
+ --> tests/ui/app_unknown_argument.rs:4:7
+  |
+4 | #[app(something)]
+  |       ^^^^^^^^^

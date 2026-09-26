@@ -14,8 +14,11 @@ mod parse;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
+use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Attribute, DeriveInput, Ident, ItemFn, Meta, Token, Type, parse_macro_input};
+use syn::{
+    Attribute, DeriveInput, Ident, ItemFn, LitInt, LitStr, Meta, Token, Type, parse_macro_input,
+};
 
 use parse::{SubscriberArgs, doc_description};
 
@@ -137,7 +140,23 @@ use parse::{SubscriberArgs, doc_description};
 /// sequential lanes keyed by the message's partition key, preserving per-key ordering
 /// (single-message forms only). The default is the sequential loop.
 ///
-/// Clause values need not be literals: `workers(..)` takes any `usize` expression (a constant,
+/// A `threads(n)` clause is the same position for a handler that computes: the subscription's
+/// deliveries (or batches) are handled on `n` dedicated threads of its own, each running a
+/// current-thread runtime, so the computation holds up none of the app runtime's threads.
+/// `threads(n, by_key)` keeps a key on one thread. A subscription names `workers(..)` or
+/// `threads(..)`, not both. What the delivery leaves behind (continuations, hooks, a retry timer)
+/// stays on its thread; the handler sends work to the app's runtime through the `spawn` and `run`
+/// methods of a `Ctx(main): Ctx<MainRuntime>` parameter.
+///
+/// ```ignore
+/// #[subscriber("images.resize", threads(8))]
+/// async fn resize(job: &Resize) -> HandlerOutcome {
+///     render(job);
+///     HandlerOutcome::ack()
+/// }
+/// ```
+///
+/// Clause values need not be literals: `workers(..)` and `threads(..)` take any `usize` expression (a constant,
 /// a static, a function call - an integer literal keeps the compile-time zero rejection, a
 /// runtime value of zero panics at registration), `publish(..)` takes a `&'static str`
 /// expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next to the keyword
@@ -212,19 +231,134 @@ pub fn subscriber(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
 /// }
 /// ```
+///
+/// The attribute takes the runtime arguments of `#[tokio::main]`: `flavor = "current_thread"`
+/// runs the service on a current-thread runtime, `worker_threads = n` sizes the default
+/// multi-threaded one (`flavor = "multi_thread"` names the default). A service whose CPU-bound
+/// subscriptions run on dedicated threads (`threads(n)`) sizes the runtime for its I/O alone.
+///
+/// ```ignore
+/// #[ruststream::app(flavor = "current_thread")]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn app(attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
-    expand_app(&attr.into(), &func).unwrap_or_else(|err| err.to_compile_error().into())
+    let runtime = parse_macro_input!(attr as AppRuntimeArgs);
+    expand_app(&runtime, &func).unwrap_or_else(|err| err.to_compile_error().into())
 }
 
-fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
-    if !attr.is_empty() {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "#[ruststream::app] takes no arguments",
-        ));
+/// The runtime arguments of `#[ruststream::app]`, as `#[tokio::main]` spells them.
+struct AppRuntimeArgs {
+    flavor: Option<LitStr>,
+    worker_threads: Option<LitInt>,
+}
+
+impl Parse for AppRuntimeArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut args = Self {
+            flavor: None,
+            worker_threads: None,
+        };
+        let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
+        let mut pairs = Vec::with_capacity(metas.len());
+        for meta in metas {
+            let Meta::NameValue(pair) = meta else {
+                return Err(syn::Error::new_spanned(
+                    meta,
+                    "#[ruststream::app] takes `flavor = \"current_thread\"` or \
+                     `flavor = \"multi_thread\"`, and `worker_threads = n`",
+                ));
+            };
+            pairs.push(pair);
+        }
+        for pair in pairs {
+            let syn::Expr::Lit(syn::ExprLit { lit, .. }) = &pair.value else {
+                return Err(syn::Error::new_spanned(
+                    &pair.value,
+                    "expected a literal, as `#[tokio::main]` takes",
+                ));
+            };
+            if pair.path.is_ident("flavor") {
+                let syn::Lit::Str(flavor) = lit else {
+                    return Err(syn::Error::new_spanned(
+                        lit,
+                        "expected \"current_thread\" or \"multi_thread\"",
+                    ));
+                };
+                if !matches!(flavor.value().as_str(), "current_thread" | "multi_thread") {
+                    return Err(syn::Error::new_spanned(
+                        flavor,
+                        "unknown runtime flavor; expected \"current_thread\" or \"multi_thread\"",
+                    ));
+                }
+                if args.flavor.replace(flavor.clone()).is_some() {
+                    return Err(syn::Error::new_spanned(&pair.path, "duplicate `flavor`"));
+                }
+            } else if pair.path.is_ident("worker_threads") {
+                let syn::Lit::Int(count) = lit else {
+                    return Err(syn::Error::new_spanned(lit, "expected a worker count"));
+                };
+                if count.base10_parse::<usize>()? == 0 {
+                    return Err(syn::Error::new_spanned(
+                        count,
+                        "a runtime needs at least one worker",
+                    ));
+                }
+                if args.worker_threads.replace(count.clone()).is_some() {
+                    return Err(syn::Error::new_spanned(
+                        &pair.path,
+                        "duplicate `worker_threads`",
+                    ));
+                }
+            } else {
+                return Err(syn::Error::new_spanned(
+                    &pair.path,
+                    "unknown argument; #[ruststream::app] takes `flavor` and `worker_threads`",
+                ));
+            }
+        }
+        if let (Some(flavor), Some(count)) = (&args.flavor, &args.worker_threads)
+            && flavor.value() == "current_thread"
+        {
+            return Err(syn::Error::new_spanned(
+                count,
+                "`worker_threads` sizes a multi-threaded runtime; a current-thread runtime runs \
+                 on the thread that calls `main`",
+            ));
+        }
+        Ok(args)
     }
+}
+
+impl AppRuntimeArgs {
+    /// The `AppRuntime` value the arguments name.
+    fn runtime(&self) -> TokenStream2 {
+        let runtime = quote!(::ruststream::runtime::cli::AppRuntime);
+        if self
+            .flavor
+            .as_ref()
+            .is_some_and(|flavor| flavor.value() == "current_thread")
+        {
+            return quote!(#runtime::CurrentThread);
+        }
+        let Some(count) = &self.worker_threads else {
+            return quote!(#runtime::MultiThread);
+        };
+        // The literal was checked to be non-zero, so the `None` arm is unreachable; MIN keeps
+        // the lowering panic-free.
+        quote! {
+            #runtime::MultiThreadWorkers(match ::core::num::NonZeroUsize::new(#count) {
+                ::core::option::Option::Some(count) => count,
+                ::core::option::Option::None => ::core::num::NonZeroUsize::MIN,
+            })
+        }
+    }
+}
+
+fn expand_app(runtime: &AppRuntimeArgs, func: &ItemFn) -> syn::Result<TokenStream> {
     if let Some(asyncness) = func.sig.asyncness {
         return Err(syn::Error::new_spanned(
             asyncness,
@@ -238,11 +372,12 @@ fn expand_app(attr: &TokenStream2, func: &ItemFn) -> syn::Result<TokenStream> {
         ));
     }
     let name = &func.sig.ident;
+    let runtime = runtime.runtime();
     Ok(quote! {
         #func
 
         fn main() -> ::std::process::ExitCode {
-            ::ruststream::runtime::cli::run_main(#name)
+            ::ruststream::runtime::cli::run_main_on(#runtime, #name)
         }
     }
     .into())

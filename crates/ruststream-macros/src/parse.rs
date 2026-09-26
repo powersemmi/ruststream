@@ -58,6 +58,7 @@ const CLAUSES: &[&str] = &[
     "publish",
     "publish_raw",
     "start_at",
+    "threads",
     "workers",
 ];
 
@@ -75,11 +76,22 @@ fn peeks_clause(input: ParseStream) -> bool {
     fork.is_empty() || fork.peek(Token![,]) || fork.peek(token::Paren)
 }
 
+/// The concurrency clause: `workers(n[, by_key])` on the app's runtime, or `threads(n[, by_key])`
+/// on dedicated threads. Both fill the one concurrency position.
 pub(crate) struct WorkersArg {
+    /// The clause keyword, `workers` or `threads`.
+    pub(crate) keyword: Ident,
     /// The worker count: an integer literal (zero rejected at expansion), or any `usize`
     /// expression - a constant, a static, a function call (zero rejected at registration).
     pub(crate) count: Expr,
     pub(crate) by_key: Option<Ident>,
+}
+
+impl WorkersArg {
+    /// Whether the clause asks for dedicated threads.
+    pub(crate) fn dedicated(&self) -> bool {
+        self.keyword == "threads"
+    }
 }
 
 /// The `on_failure(panic = .., decode = ..)` clause. Each key is optional; an omitted key keeps
@@ -246,18 +258,26 @@ impl Parse for SubscriberArgs {
                     ));
                 }
                 start_at = Some(content.parse()?);
-            } else if keyword == "workers" {
-                if workers.is_some() {
-                    return Err(Error::new(keyword.span(), "duplicate workers(..)"));
+            } else if keyword == "workers" || keyword == "threads" {
+                if let Some(WorkersArg { keyword: first, .. }) = &workers {
+                    let message = if *first == keyword {
+                        format!("duplicate {keyword}(..)")
+                    } else {
+                        "workers(..) and threads(..) fill the same concurrency position: name one \
+                         of them"
+                            .to_owned()
+                    };
+                    return Err(Error::new(keyword.span(), message));
                 }
                 let content;
                 parenthesized!(content in input);
-                workers = Some(parse_workers(&content)?);
+                workers = Some(parse_workers(keyword, &content)?);
             } else {
                 return Err(Error::new(
                     keyword.span(),
                     "expected `publish` / `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
-                     `on_failure(panic = .., decode = ..)`, or `start_at(<position>)`",
+                     `threads(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or \
+                     `start_at(<position>)`",
                 ));
             }
         }
@@ -320,8 +340,9 @@ fn source_arg(expr: Expr) -> SourceArg {
     }
 }
 
-/// Parses the inside of a `workers(..)` clause: the count, optionally followed by `by_key`.
-fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
+/// Parses the inside of a `workers(..)` or `threads(..)` clause: the count, optionally followed
+/// by `by_key`.
+fn parse_workers(keyword: Ident, content: ParseStream) -> syn::Result<WorkersArg> {
     let count: Expr = content.parse()?;
     let mut by_key = None;
     if content.peek(Token![,]) {
@@ -330,12 +351,16 @@ fn parse_workers(content: ParseStream) -> syn::Result<WorkersArg> {
         if marker != "by_key" {
             return Err(Error::new(
                 marker.span(),
-                "expected `by_key`: workers(n) or workers(n, by_key)",
+                format!("expected `by_key`: {keyword}(n) or {keyword}(n, by_key)"),
             ));
         }
         by_key = Some(marker);
     }
-    Ok(WorkersArg { count, by_key })
+    Ok(WorkersArg {
+        keyword,
+        count,
+        by_key,
+    })
 }
 
 /// Derives the subscription `Source` type and a constructor expression from the macro argument.

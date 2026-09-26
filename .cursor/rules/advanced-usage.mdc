@@ -25,7 +25,8 @@ alwaysApply: false
   single forms, the broker's subscription-scoped batch context (`BuildBatchContext`, built once per
   batch) on the batch ones - and `S` the application state the body reads with `ctx.state()`. What
   the signature does not carry rides the chain: the declarative settings (`.name`, `.workers`,
-  `.workers_by_key`, `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply declaration
+  `.workers_by_key`, `.threads`, `.threads_by_key`, `.on_failure`, `.batch`, `.start_at`,
+  `.codec`), the reply declaration
   (`.reply()`, `.to(dest)` - never a publisher, which is the mount site's `.out_reply(policy)`)
   and the document controls (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and
   `include` mounts it. The registration metadata comes off the source and the body's input type.
@@ -457,8 +458,9 @@ still free, `Fixed` per setting already named), which is what makes naming one t
 error rather than a silent override.
 
 A `Router` adds two steps of its own, each applying to the registration just included:
-`.workers(Workers::pool(n))` / `Workers::keyed(n)` is the functional counterpart of the
-`workers(..)` clause, and `.layer(..)` wraps that one registration outside its decode step.
+`.workers(Workers::pool(n))` / `Workers::keyed(n)` / `Workers::threads(n)` /
+`Workers::threads_keyed(n)` is the functional counterpart of the `workers(..)` and `threads(..)`
+clauses, and `.layer(..)` wraps that one registration outside its decode step.
 `Router::with_codec` sets the decode codec of everything included after it.
 
 Read the expansion in `crates/ruststream-macros/src/expand/unified.rs` when you need the exact

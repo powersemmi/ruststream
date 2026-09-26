@@ -21,6 +21,7 @@ use crate::ContextField;
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::HandlerOutcome;
+use super::main_runtime::MainRuntime;
 
 /// A value resolved from the per-delivery [`Context`] and shared state, ready to be passed to a
 /// handler as a parameter.
@@ -190,9 +191,45 @@ where
 /// let extracted = Ctx::<Offset>(42);
 /// assert_eq!(extracted.0, 42);
 /// ```
-pub struct Ctx<K: ContextField>(pub K::Value);
+pub struct Ctx<K: CtxKey>(pub K::Value);
 
-impl<K: ContextField> fmt::Debug for Ctx<K>
+/// A key the [`Ctx`] extractor takes: every [`ContextField`], which reads the broker's
+/// per-delivery context, and [`MainRuntime`], which binds the app's runtime.
+///
+/// Sealed: a new key implements [`ContextField`].
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::{CtxKey, MainRuntime};
+///
+/// fn binds_itself<K: CtxKey<Value = K>>() {}
+/// binds_itself::<MainRuntime>();
+/// ```
+pub trait CtxKey: sealed::Sealed {
+    /// The owned value the extractor binds.
+    type Value: Send + 'static;
+}
+
+impl<K: ContextField> CtxKey for K {
+    type Value = K::Value;
+}
+
+impl CtxKey for MainRuntime {
+    type Value = Self;
+}
+
+mod sealed {
+    use super::{ContextField, MainRuntime};
+
+    pub trait Sealed {}
+
+    impl<K: ContextField> Sealed for K {}
+
+    impl Sealed for MainRuntime {}
+}
+
+impl<K: CtxKey> fmt::Debug for Ctx<K>
 where
     K::Value: fmt::Debug,
 {
@@ -212,6 +249,20 @@ where
         ctx: &mut Context<'_, K::Context, S>,
     ) -> impl Future<Output = Result<Self, Infallible>> + Send {
         let value = K::default().read(ctx.cx_ref());
+        async move { Ok(Self(value)) }
+    }
+}
+
+impl<C, S> FromContext<C, S> for Ctx<MainRuntime>
+where
+    C: Send,
+    S: Sync,
+{
+    type Rejection = Infallible;
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, Infallible>> + Send {
+        let value = ctx.main_runtime().clone();
         async move { Ok(Self(value)) }
     }
 }

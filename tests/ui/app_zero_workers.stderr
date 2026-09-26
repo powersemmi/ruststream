@@ -1,0 +1,5 @@
+error: a runtime needs at least one worker
+ --> tests/ui/app_zero_workers.rs:4:24
+  |
+4 | #[app(worker_threads = 0)]
+  |                        ^

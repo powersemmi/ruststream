@@ -1,0 +1,5 @@
+error: unknown runtime flavor; expected "current_thread" or "multi_thread"
+ --> tests/ui/app_unknown_flavor.rs:4:16
+  |
+4 | #[app(flavor = "work_stealing")]
+  |                ^^^^^^^^^^^^^^^

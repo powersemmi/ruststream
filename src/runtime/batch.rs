@@ -566,7 +566,7 @@ async fn settle_split_batch<M, C>(
         )
         .await;
         if let Some(after) = after {
-            delivery.tasks.spawn(after);
+            delivery.spawn_after(after);
         }
     }
 }
@@ -606,7 +606,7 @@ pub(crate) async fn settle_batch<M, C>(
             // tracked set so a graceful shutdown drains it (at-most-once, like the
             // per-element ones below).
             if let Some(after) = after {
-                delivery.tasks.spawn(after);
+                delivery.spawn_after(after);
             }
         }
         BatchResult::PerElement(results) => {
@@ -639,7 +639,7 @@ pub(crate) async fn settle_batch<M, C>(
                 // graceful shutdown drains it. At-most-once: a lost or panicking continuation
                 // never redelivers the already-settled message.
                 if let Some(after) = after {
-                    delivery.tasks.spawn(after);
+                    delivery.spawn_after(after);
                 }
             }
         }

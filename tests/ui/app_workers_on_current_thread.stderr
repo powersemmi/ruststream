@@ -1,0 +1,5 @@
+error: `worker_threads` sizes a multi-threaded runtime; a current-thread runtime runs on the thread that calls `main`
+ --> tests/ui/app_workers_on_current_thread.rs:4:51
+  |
+4 | #[app(flavor = "current_thread", worker_threads = 4)]
+  |                                                   ^

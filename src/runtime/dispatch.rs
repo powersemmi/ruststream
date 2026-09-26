@@ -13,7 +13,9 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use futures::{FutureExt, Stream};
+use futures::{FutureExt, Stream, StreamExt};
+#[cfg(test)]
+use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, warn};
@@ -27,6 +29,7 @@ use super::batch::BatchHandler;
 use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
+use super::main_runtime::MainRuntime;
 use super::publish::PublishContext;
 #[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
@@ -36,6 +39,8 @@ use super::shutdown::Shutdown;
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, TestHooks, in_harness_scope,
 };
+pub(crate) use threads::StartThreadError;
+use threads::Threads;
 
 /// Header carrying the framework's own retry count.
 ///
@@ -71,8 +76,8 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
         .unwrap_or(0)
 }
 
-/// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` macro
-/// argument (or [`Workers::sequential`] by default).
+/// Concurrency policy for one subscriber's dispatch loop, declared with the `workers(..)` or
+/// `threads(..)` macro argument (or [`Workers::sequential`] by default).
 ///
 /// - `workers(n)`: `n` long-lived workers, tasks of the runtime the app runs on, process up to
 ///   `n` deliveries of the subscriber concurrently; a free worker takes the next one.
@@ -81,15 +86,31 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// - `workers(n, by_key)`: the same `n` workers as sequential lanes; a delivery goes to the lane
 ///   picked by hashing its [`partition_key`](crate::IncomingMessage::partition_key), so per-key
 ///   ordering is preserved. Messages without a key rotate over the lanes.
+/// - `threads(n)`: `n` dedicated threads of the subscription's own, each with a current-thread
+///   runtime, for a handler that computes. The subscription's loop stays on the app's runtime and
+///   spreads deliveries over the threads round-robin; decoding, the handler and settling run on
+///   the thread a delivery was handed to, and only there. The app's runtime stays free for I/O,
+///   timers and the other subscriptions.
+/// - `threads(n, by_key)`: the same threads as sequential lanes by partition key.
 ///
-/// The workers and the channels that feed them are made when the subscription starts: handing a
-/// delivery to one allocates nothing.
+/// The workers or threads and the queues that feed them are made when the subscription starts:
+/// handing a delivery to one allocates nothing.
 ///
 /// The default is sequential dispatch (`workers(1)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workers {
     count: usize,
     by_key: bool,
+    placement: Placement,
+}
+
+/// Where a subscription's concurrent deliveries run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Placement {
+    /// As tasks of the runtime the app runs on.
+    Runtime,
+    /// On dedicated threads of the subscription's own.
+    Threads,
 }
 
 impl Workers {
@@ -99,6 +120,7 @@ impl Workers {
         Self {
             count: 1,
             by_key: false,
+            placement: Placement::Runtime,
         }
     }
 
@@ -108,6 +130,7 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: false,
+            placement: Placement::Runtime,
         }
     }
 
@@ -119,12 +142,71 @@ impl Workers {
         Self {
             count: count.get(),
             by_key: true,
+            placement: Placement::Runtime,
         }
     }
 
-    /// One worker is indistinguishable from the sequential loop.
+    /// `count` dedicated threads for a CPU-bound handler: the subscription's deliveries are
+    /// handled on threads of its own, each running a current-thread runtime, so the handler's
+    /// computation holds up none of the app runtime's threads. The router-chain spelling of
+    /// `threads(n)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::nonzero;
+    /// use ruststream::runtime::Workers;
+    ///
+    /// let workers = Workers::threads(nonzero!(8));
+    /// assert_ne!(workers, Workers::pool(nonzero!(8)));
+    /// ```
+    #[must_use]
+    pub const fn threads(count: NonZeroUsize) -> Self {
+        Self {
+            count: count.get(),
+            by_key: false,
+            placement: Placement::Threads,
+        }
+    }
+
+    /// `count` dedicated threads as sequential lanes keyed by the message
+    /// [`partition_key`](crate::IncomingMessage::partition_key): a key always lands on the same
+    /// thread, so per-key ordering is preserved. The router-chain spelling of
+    /// `threads(n, by_key)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::nonzero;
+    /// use ruststream::runtime::Workers;
+    ///
+    /// let workers = Workers::threads_keyed(nonzero!(4));
+    /// assert_ne!(workers, Workers::threads(nonzero!(4)));
+    /// ```
+    #[must_use]
+    pub const fn threads_keyed(count: NonZeroUsize) -> Self {
+        Self {
+            count: count.get(),
+            by_key: true,
+            placement: Placement::Threads,
+        }
+    }
+
+    /// One worker on the app's runtime is indistinguishable from the sequential loop; one
+    /// dedicated thread is still a thread of its own.
     pub(crate) const fn is_sequential(&self) -> bool {
-        self.count <= 1
+        self.count <= 1 && matches!(self.placement, Placement::Runtime)
+    }
+
+    /// The same concurrency as tasks of the runtime the loop runs on: what a `threads(n)`
+    /// subscription becomes under the test harness, which runs every subscription on the test's
+    /// own runtime.
+    #[cfg(feature = "testing")]
+    pub(crate) const fn on_runtime(self) -> Self {
+        Self {
+            placement: Placement::Runtime,
+            ..self
+        }
     }
 }
 
@@ -151,6 +233,15 @@ pub(crate) struct Delivery<C = ()> {
     /// dispatcher spawns each element's continuation onto it after settling, so a graceful
     /// shutdown drains them.
     pub(crate) tasks: TaskTracker,
+    /// The runtime the app connected its brokers on, captured when the subscription opens. Work
+    /// that must outlive the delivery (a continuation, a delayed retry copy) runs here, wherever
+    /// the handler itself runs, and a handler reaches it through
+    /// [`Context::main_runtime`](super::context::Context::main_runtime).
+    pub(crate) runtime: MainRuntime,
+    /// On a dedicated thread (`threads(n)`), the thread's own tracker: the thread waits for what
+    /// its deliveries left behind before it ends, so a shutdown does not drop it with the
+    /// thread's runtime. `None` everywhere else.
+    pub(crate) thread_tasks: Option<TaskTracker>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
     /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
@@ -175,6 +266,9 @@ impl<C> Delivery<C> {
             retry,
             declaration,
             tasks: scope.tasks().clone(),
+            // A subscription opens inside the app's startup, on the runtime it connected on.
+            runtime: MainRuntime::current(),
+            thread_tasks: None,
             #[cfg(feature = "testing")]
             hooks: Arc::clone(scope.hooks()),
             #[cfg(feature = "testing")]
@@ -192,6 +286,8 @@ impl<C> Delivery<C> {
             retry,
             declaration: RetryDeclaration::new(),
             tasks,
+            runtime: MainRuntime::new(test_runtime()),
+            thread_tasks: None,
             #[cfg(feature = "testing")]
             hooks: Arc::new(TestHooks::detached()),
             #[cfg(feature = "testing")]
@@ -238,6 +334,54 @@ impl<C> Delivery<C> {
     pub(crate) fn with_tasks(tasks: TaskTracker) -> Self {
         Self::detached(None, tasks)
     }
+}
+
+impl<C> Delivery<C> {
+    /// Spawns work the delivery leaves behind (a continuation, a post-settle hook, the timer of a
+    /// deferred copy) on the runtime the delivery runs on, tracked so a graceful shutdown waits
+    /// for it.
+    pub(crate) fn spawn_after<Work>(&self, work: Work)
+    where
+        Work: Future<Output = ()> + Send + 'static,
+    {
+        match &self.thread_tasks {
+            None => drop(self.tasks.spawn(work)),
+            Some(own) => drop(self.tasks.spawn(own.track_future(work))),
+        }
+    }
+
+    /// The same context for one dedicated thread, whose leftovers `own` tracks as well.
+    fn on_thread(&self, own: TaskTracker) -> Self {
+        Self {
+            retry: self.retry.as_ref().map(|retry| DeferredRetry {
+                publisher: Arc::clone(&retry.publisher),
+                destination: retry.destination.clone(),
+            }),
+            declaration: self.declaration.clone(),
+            tasks: self.tasks.clone(),
+            runtime: self.runtime.clone(),
+            thread_tasks: Some(own),
+            #[cfg(feature = "testing")]
+            hooks: Arc::clone(&self.hooks),
+            #[cfg(feature = "testing")]
+            scope_id: self.scope_id,
+            #[cfg(feature = "testing")]
+            subscription: self.subscription,
+        }
+    }
+}
+
+/// The runtime a delivery context built by a unit test answers `main_runtime` with: the test's
+/// own where it runs inside one, and a shared idle one where a synchronous test builds a context.
+#[cfg(test)]
+fn test_runtime() -> Handle {
+    static IDLE: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a current-thread runtime builds")
+    });
+    Handle::try_current().unwrap_or_else(|_| IDLE.handle().clone())
 }
 
 impl<C> fmt::Debug for Delivery<C> {
@@ -501,7 +645,7 @@ pub(crate) fn spawn_dispatch_workers<S, H, C, St>(
     delivery: Arc<Delivery<C>>,
     failure: DispatchFailure,
     workers: Workers,
-) -> JoinHandle<()>
+) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: Subscriber + Send + 'static,
     S::Message: Send + Sync + 'static,
@@ -509,14 +653,86 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
+    // The harness drives every subscription on the test's own runtime, so a timer the handler
+    // arms is one `advance` reaches; it does not reproduce the thread topology.
+    #[cfg(feature = "testing")]
+    let workers = if delivery.hooks.coordinator().is_some() {
+        workers.on_runtime()
+    } else {
+        workers
+    };
     if workers.is_sequential() {
-        return spawn_dispatch(
+        return Ok(spawn_dispatch(
             subscriber, handler, shutdown, name, state, delivery, failure,
+        ));
+    }
+    if matches!(workers.placement, Placement::Threads) {
+        return spawn_dispatch_threads(
+            subscriber, handler, shutdown, name, state, delivery, failure, workers,
         );
     }
-    pool::spawn_dispatch_pool(
+    Ok(pool::spawn_dispatch_pool(
         subscriber, handler, shutdown, name, state, delivery, failure, workers,
-    )
+    ))
+}
+
+/// Starts the dedicated threads of a `threads(n)` subscription and spawns its loop on the app's
+/// runtime (see [`threads`]).
+// See `spawn_dispatch_workers`: each part is the registration's own.
+#[allow(clippy::too_many_arguments)]
+fn spawn_dispatch_threads<S, H, C, St>(
+    mut subscriber: S,
+    handler: Arc<H>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
+    workers: Workers,
+) -> Result<JoinHandle<()>, StartThreadError>
+where
+    S: Subscriber + Send + 'static,
+    S::Message: Send + Sync + 'static,
+    H: Handler<S::Message, C, St> + 'static,
+    C: crate::BuildContext<S::Message> + Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    let shared = Arc::new(pool::Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    });
+    let threads = Threads::start(&shared.name, workers.count, workers.by_key, |own| {
+        let shared = Arc::clone(&shared);
+        let delivery = shared.delivery.on_thread(own);
+        // One encode buffer per thread, for the reason the sequential loop has one.
+        let mut encode = BytesMut::new();
+        async move |msg: S::Message| {
+            let mut slot = Slot::new(msg);
+            dispatch(
+                &*shared.handler,
+                &mut slot,
+                &mut encode,
+                &shared.name,
+                &shared.state,
+                &delivery,
+                &shared.failure,
+            )
+            .await;
+        }
+    })?;
+    Ok(tokio::spawn(async move {
+        threads
+            .feed(
+                subscriber.stream(),
+                &shared.name,
+                &shutdown,
+                <S::Message as IncomingMessage>::partition_key,
+            )
+            .await;
+    }))
 }
 
 fn lane_of(key: &[u8], lanes: usize) -> usize {
@@ -558,7 +774,7 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
     failure: DispatchFailure,
     workers: Workers,
     batch_size: NonZeroUsize,
-) -> JoinHandle<()>
+) -> Result<JoinHandle<()>, StartThreadError>
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
@@ -566,7 +782,19 @@ where
     C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    tokio::spawn(async move {
+    // See `spawn_dispatch_workers`: the harness runs every subscription on the test's runtime.
+    #[cfg(feature = "testing")]
+    let workers = if delivery.hooks.coordinator().is_some() {
+        workers.on_runtime()
+    } else {
+        workers
+    };
+    if matches!(workers.placement, Placement::Threads) {
+        return spawn_batch_threads(
+            subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
+        );
+    }
+    Ok(tokio::spawn(async move {
         // The registration's own batch size, straight to the broker: whatever comes back is the
         // batch the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(batch_size));
@@ -663,7 +891,65 @@ where
         while let Some(joined) = tasks.join_next().await {
             log_worker_exit(joined);
         }
-    })
+    }))
+}
+
+/// The batch counterpart of [`spawn_dispatch_threads`]: each thread takes whole batches off its
+/// ring, with a decode and an encode buffer of its own. Keyed lanes do not apply to batches, so a
+/// keyed policy spreads batches as the plain one does.
+#[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
+fn spawn_batch_threads<S, H, C, St>(
+    mut subscriber: S,
+    handler: Arc<H>,
+    shutdown: Shutdown,
+    name: Arc<str>,
+    state: Arc<St>,
+    delivery: Arc<Delivery<C>>,
+    failure: DispatchFailure,
+    workers: Workers,
+    batch_size: NonZeroUsize,
+) -> Result<JoinHandle<()>, StartThreadError>
+where
+    S: BatchSubscriber + Send + 'static,
+    S::Message: Send + 'static,
+    H: BatchHandler<S::Message, C, St> + 'static,
+    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    let shared = Arc::new(pool::Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    });
+    let threads = Threads::start(&shared.name, workers.count, false, |own| {
+        let shared = Arc::clone(&shared);
+        let delivery = shared.delivery.on_thread(own);
+        let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
+        let mut encode = BytesMut::new();
+        async move |batch: Vec<S::Message>| {
+            run_batch::<_, _, C, _>(
+                &*shared.handler,
+                batch,
+                &mut scratch,
+                &mut encode,
+                &shared.name,
+                &shared.state,
+                &delivery,
+                &shared.failure,
+            )
+            .await;
+        }
+    })?;
+    Ok(tokio::spawn(async move {
+        let batches = subscriber
+            .batches(batch_size)
+            .map(|batch| batch.map(|batch| batch.into_iter().collect::<Vec<_>>()));
+        threads
+            .feed(batches, &shared.name, &shutdown, |_| None)
+            .await;
+    }))
 }
 
 async fn dispatch<H, M, C, St>(
@@ -791,7 +1077,7 @@ async fn dispatch<H, M, C, St>(
         // drains it. At-most-once: the message is already settled, so a lost or panicking
         // continuation never redelivers it.
         if let Some(after) = s.take_after() {
-            delivery.tasks.spawn(after);
+            delivery.spawn_after(after);
         }
     } else {
         // A fail-fast left the delivery unsettled: it is released here, as it always was at the
@@ -803,7 +1089,7 @@ async fn dispatch<H, M, C, St>(
     // covers both - the harness's `drain` and the shutdown's alike.
     if let Some(continuations) = continuations {
         for fut in continuations {
-            delivery.tasks.spawn(fut);
+            delivery.spawn_after(fut);
         }
     }
     #[cfg(feature = "testing")]
@@ -881,7 +1167,7 @@ async fn run_batch<H, M, C, St>(
             // As on the single-message path: a batch that registered no hook pays the branch.
             if ctx.has_hooks() {
                 for fut in ctx.take_settle_hooks() {
-                    delivery.tasks.spawn(fut);
+                    delivery.spawn_after(fut);
                 }
             }
         }
@@ -1352,10 +1638,9 @@ where
         coordinator.schedule_redelivery_future(delay, republish);
         return Ok(());
     }
-    // Tracked like a continuation: the original is already dropped, so the copy is the message
-    // now, and a graceful shutdown waits for it (within the shutdown timeout) before the brokers
-    // close. Untracked, a shutdown inside the delay lost it.
-    delivery.tasks.spawn(async move {
+    // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
+    // graceful shutdown waits for it and the copy leaves before the broker closes.
+    delivery.spawn_after(async move {
         tokio::time::sleep(delay).await;
         republish.await;
     });
@@ -1365,3 +1650,4 @@ where
 mod pool;
 #[cfg(all(test, feature = "memory"))]
 mod tests;
+mod threads;

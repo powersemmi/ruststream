@@ -229,6 +229,7 @@ the broker's server-side semantics are the transport's model of them, and live t
 server's own.
 
 Either way, every subscription loop and every worker of `workers(n)` runs as a task on the
-test's own runtime, whatever runtime the generated `main` builds, so
+test's own runtime, whatever runtime the generated `main` builds, and a `threads(n)`
+subscription runs as `n` such workers rather than on threads of its own, so
 [`advance`](TestApp::advance) reaches every timer the app arms and [`settle`](TestApp::settle)
 sees every delivery.

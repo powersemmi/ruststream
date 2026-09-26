@@ -21,6 +21,7 @@ use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
 use super::handler::{HandlerOutcome, HandlerResult};
+use super::main_runtime::MainRuntime;
 use super::shutdown::Shutdown;
 
 /// Where one delivery's header map comes from.
@@ -283,6 +284,29 @@ impl<'a, C, S> Context<'a, C, S> {
     #[must_use]
     pub fn name(&self) -> &str {
         self.name
+    }
+
+    /// The runtime the app runs on: the one explicit way from a handler on dedicated threads
+    /// (`threads(n)`) to send work to the app's runtime (see [`MainRuntime`]). On any other
+    /// placement the handler already runs there.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::IncomingMessage;
+    /// use ruststream::runtime::{Context, HandlerOutcome};
+    ///
+    /// async fn notify(_id: u64) {}
+    ///
+    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     // The notification leaves the handler's thread; the handler does not wait for it.
+    ///     ctx.main_runtime().spawn(notify(7));
+    ///     HandlerOutcome::ack()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn main_runtime(&self) -> &MainRuntime {
+        &self.delivery.runtime
     }
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest

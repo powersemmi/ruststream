@@ -4,8 +4,9 @@
 //! `RustStream<_>`) and marks it with the attribute macro, which expands to a `main` that calls
 //! [`run_main`]. That gives a zero-boilerplate binary which understands two commands:
 //!
-//! - `run` (the default) builds a multi-thread Tokio runtime and runs the service until an
-//!   interrupt, mirroring [`RustStream::run`](crate::runtime::RustStream::run). With the `logging`
+//! - `run` (the default) builds the Tokio runtime the attribute names (a multi-threaded one
+//!   unless `flavor = "current_thread"` or `worker_threads = n` says otherwise, see
+//!   [`AppRuntime`]) and runs the service until an interrupt, mirroring [`RustStream::run`](crate::runtime::RustStream::run). With the `logging`
 //!   feature enabled it first installs
 //!   the colored console logger ([`crate::logging`]), so a scaffolded service prints logs without
 //!   any setup; an app that installs its own subscriber keeps it.
@@ -34,9 +35,12 @@
 //! in this repository, and the quick start has the command:
 //! <https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/>.
 
+use std::io;
+use std::num::NonZeroUsize;
 use std::process::ExitCode;
 
 use thiserror::Error;
+use tokio::runtime::{Builder, Runtime};
 
 use super::app::{App, RustStreamError};
 
@@ -46,7 +50,7 @@ use super::app::{App, RustStreamError};
 pub enum CliError {
     /// The Tokio runtime could not be built.
     #[error("failed to build the async runtime: {0}")]
-    Runtime(#[source] std::io::Error),
+    Runtime(#[source] io::Error),
     /// The service returned an error while running (see [`RustStreamError`]).
     #[error(transparent)]
     Run(#[from] RustStreamError),
@@ -69,7 +73,7 @@ pub enum CliError {
         path: String,
         /// The underlying I/O error.
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
     /// The spec could not be serialized to JSON.
     #[cfg(feature = "asyncapi")]
@@ -92,6 +96,61 @@ enum Command {
         /// Emit YAML instead of JSON.
         yaml: bool,
     },
+}
+
+/// The Tokio runtime the generated `main` runs the service on: the `flavor` and `worker_threads`
+/// arguments of [`#[ruststream::app]`](macro@crate::app), which mirror `#[tokio::main]`'s.
+///
+/// A service whose CPU-bound subscriptions run on dedicated threads (`threads(n)`) sizes the app's
+/// runtime for its I/O alone: the dedicated threads and the runtime's workers share the machine's
+/// cores. A current-thread runtime next to dedicated threads gives the rest of the service the
+/// lowest latency.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::runtime::cli::{AppRuntime, run_main_on};
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+///
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
+/// }
+///
+/// // What `#[ruststream::app(flavor = "current_thread")]` expands to.
+/// fn main() -> std::process::ExitCode {
+///     run_main_on(AppRuntime::CurrentThread, app)
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AppRuntime {
+    /// A multi-threaded runtime with Tokio's default of one worker per core.
+    #[default]
+    MultiThread,
+    /// A multi-threaded runtime with this many workers (`worker_threads = n`).
+    MultiThreadWorkers(NonZeroUsize),
+    /// A runtime on the thread that calls `main` (`flavor = "current_thread"`).
+    CurrentThread,
+}
+
+impl AppRuntime {
+    /// Builds the runtime, with every driver the framework uses enabled.
+    fn build(self) -> io::Result<Runtime> {
+        let mut builder = match self {
+            Self::MultiThread => Builder::new_multi_thread(),
+            Self::MultiThreadWorkers(count) => {
+                let mut builder = Builder::new_multi_thread();
+                builder.worker_threads(count.get());
+                builder
+            }
+            Self::CurrentThread => Builder::new_current_thread(),
+        };
+        builder.enable_all().build()
+    }
 }
 
 /// Runs the generated CLI for `build`'s service, returning a process exit code.
@@ -123,8 +182,39 @@ where
     A: App,
     F: FnOnce() -> A,
 {
+    run_main_on(AppRuntime::default(), build)
+}
+
+/// [`run_main`] on the runtime `runtime` names: what `#[ruststream::app]` expands to when it
+/// carries `flavor` or `worker_threads`.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::nonzero;
+/// use ruststream::runtime::cli::{AppRuntime, run_main_on};
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+///
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new())
+/// }
+///
+/// fn main() -> std::process::ExitCode {
+///     run_main_on(AppRuntime::MultiThreadWorkers(nonzero!(2)), app)
+/// }
+/// # }
+/// ```
+#[must_use]
+pub fn run_main_on<A, F>(runtime: AppRuntime, build: F) -> ExitCode
+where
+    A: App,
+    F: FnOnce() -> A,
+{
     let args: Vec<String> = std::env::args().skip(1).collect();
-    report(execute(&args, build))
+    report(execute(&args, runtime, build))
 }
 
 /// Maps a dispatch outcome onto the process exit code, printing the error to stderr. Split from
@@ -139,7 +229,7 @@ fn report(outcome: Result<(), CliError>) -> ExitCode {
     }
 }
 
-fn execute<A, F>(args: &[String], build: F) -> Result<(), CliError>
+fn execute<A, F>(args: &[String], runtime: AppRuntime, build: F) -> Result<(), CliError>
 where
     A: App,
     F: FnOnce() -> A,
@@ -152,10 +242,7 @@ where
             #[cfg(feature = "logging")]
             let _ = crate::logging::init();
             let app = build();
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .map_err(CliError::Runtime)?;
+            let runtime = runtime.build().map_err(CliError::Runtime)?;
             runtime.block_on(app.run())?;
             Ok(())
         }
@@ -229,6 +316,16 @@ mod tests {
     use super::execute;
     use super::{CliError, Command, parse, report};
 
+    /// `execute` on the runtime `run_main` builds.
+    #[cfg(feature = "memory")]
+    fn execute_default<A, F>(args: &[String], build: F) -> Result<(), CliError>
+    where
+        A: App,
+        F: FnOnce() -> A,
+    {
+        execute(args, super::AppRuntime::default(), build)
+    }
+
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| (*s).to_owned()).collect()
     }
@@ -289,11 +386,11 @@ mod tests {
     #[cfg(feature = "memory")]
     #[test]
     fn an_unknown_command_surfaces_before_the_service_runs() {
-        let outcome = execute(&args(&["frobnicate"]), demo_app);
+        let outcome = execute_default(&args(&["frobnicate"]), demo_app);
         let err = outcome.expect_err("an unrecognized command must not run the service");
         assert!(matches!(err, CliError::UnknownCommand(cmd) if cmd == "frobnicate"));
         assert_eq!(
-            code_of(execute(&args(&["asyncapi", "lint"]), demo_app)),
+            code_of(execute_default(&args(&["asyncapi", "lint"]), demo_app)),
             format!("{:?}", ExitCode::FAILURE),
         );
     }
@@ -311,7 +408,7 @@ mod tests {
                 })
                 .with_broker(MemoryBroker::new(), |_b| {})
         };
-        let err = execute(&args(&["run"]), build).expect_err("the failing state producer");
+        let err = execute_default(&args(&["run"]), build).expect_err("the failing state producer");
         assert!(
             matches!(err, CliError::Run(RustStreamError::Startup(_))),
             "got: {err:?}",
@@ -324,7 +421,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let json_path = dir.join(format!("ruststream-cli-{}-spec.json", std::process::id()));
         let json_out = json_path.to_str().expect("utf-8 temp path").to_owned();
-        execute(
+        execute_default(
             &args(&["asyncapi", "gen", "-o", json_out.as_str()]),
             demo_app,
         )
@@ -336,7 +433,7 @@ mod tests {
 
         let yaml_path = dir.join(format!("ruststream-cli-{}-spec.yaml", std::process::id()));
         let yaml_out = yaml_path.to_str().expect("utf-8 temp path").to_owned();
-        execute(
+        execute_default(
             &args(&["asyncapi", "gen", "-o", yaml_out.as_str(), "--yaml"]),
             demo_app,
         )
@@ -352,7 +449,7 @@ mod tests {
     fn asyncapi_gen_defaults_to_stdout() {
         // Nothing to read back (the document goes to stdout), so the assertion is that the
         // stdout arm reports success rather than falling through to a write error.
-        execute(&args(&["asyncapi", "gen"]), demo_app).expect("the spec must reach stdout");
+        execute_default(&args(&["asyncapi", "gen"]), demo_app).expect("the spec must reach stdout");
     }
 
     #[cfg(all(feature = "memory", feature = "asyncapi"))]
@@ -362,7 +459,7 @@ mod tests {
             .join("ruststream-cli-absent-directory")
             .join("spec.json");
         let out = missing.to_str().expect("utf-8 temp path").to_owned();
-        let err = execute(&args(&["asyncapi", "gen", "-o", out.as_str()]), demo_app)
+        let err = execute_default(&args(&["asyncapi", "gen", "-o", out.as_str()]), demo_app)
             .expect_err("a spec cannot be written into a missing directory");
         let CliError::WriteSpec { path, .. } = err else {
             panic!("expected a write error, got: {err:?}");
@@ -373,8 +470,65 @@ mod tests {
     #[cfg(all(feature = "memory", not(feature = "asyncapi")))]
     #[test]
     fn asyncapi_gen_without_the_feature_is_rejected() {
-        let err = execute(&args(&["asyncapi", "gen"]), demo_app)
+        let err = execute_default(&args(&["asyncapi", "gen"]), demo_app)
             .expect_err("the spec needs the asyncapi feature");
         assert!(matches!(err, CliError::AsyncApiDisabled), "got: {err:?}");
+    }
+
+    /// The runtime the generated `main` builds, per `#[ruststream::app]` argument.
+    mod runtimes {
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::time::Duration;
+
+        use tokio::runtime::RuntimeFlavor;
+
+        use super::super::AppRuntime;
+        use crate::nonzero;
+
+        #[test]
+        fn the_default_is_multi_threaded() {
+            let runtime = AppRuntime::default().build().expect("the runtime builds");
+            assert_eq!(
+                runtime.handle().runtime_flavor(),
+                RuntimeFlavor::MultiThread
+            );
+        }
+
+        #[test]
+        fn a_current_thread_flavor_builds_a_current_thread_runtime() {
+            let runtime = AppRuntime::CurrentThread
+                .build()
+                .expect("the runtime builds");
+            assert_eq!(
+                runtime.handle().runtime_flavor(),
+                RuntimeFlavor::CurrentThread
+            );
+        }
+
+        /// Three tasks that each hold a worker until all three arrive pass only with three
+        /// workers.
+        #[test]
+        fn a_worker_count_starts_that_many_workers() {
+            let runtime = AppRuntime::MultiThreadWorkers(nonzero!(3))
+                .build()
+                .expect("the runtime builds");
+            assert_eq!(
+                runtime.handle().runtime_flavor(),
+                RuntimeFlavor::MultiThread
+            );
+            let barrier = Arc::new(Barrier::new(3));
+            let (passed, arrivals) = mpsc::channel();
+            for _ in 0..3 {
+                let (barrier, passed) = (Arc::clone(&barrier), passed.clone());
+                runtime.spawn(async move {
+                    barrier.wait();
+                    let _ = passed.send(());
+                });
+            }
+            let arrived = (0..3).all(|_| arrivals.recv_timeout(Duration::from_secs(5)).is_ok());
+            // Workers stuck on the barrier would hold a dropped runtime forever.
+            runtime.shutdown_background();
+            assert!(arrived, "three workers hold the barrier at once");
+        }
     }
 }

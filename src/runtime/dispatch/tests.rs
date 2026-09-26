@@ -292,7 +292,8 @@ async fn dispatched_under(workers: Workers, payloads: &[&'static str]) -> Vec<By
         Arc::new(Delivery::empty()),
         dispatch_failure(),
         workers,
-    );
+    )
+    .expect("the dispatch starts");
 
     let mut handled = Vec::with_capacity(payloads.len());
     for _ in payloads {
@@ -418,6 +419,7 @@ where
             dispatch_failure(),
             workers,
         )
+        .expect("the dispatch starts")
     }
 }
 
@@ -441,6 +443,7 @@ where
             workers,
             crate::nonzero!(1usize),
         )
+        .expect("the dispatch starts")
     }
 }
 
@@ -641,7 +644,8 @@ async fn an_aborted_loop_takes_its_running_workers_down() {
             Arc::new(Delivery::empty()),
             dispatch_failure(),
             form,
-        );
+        )
+        .expect("the dispatch starts");
         running.recv().await.expect("the handler started");
         shutdown.cancel();
         // The loop now waits for its worker, which the stuck handler never lets finish: what the
@@ -714,7 +718,8 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
         Arc::new(Delivery::empty()),
         dispatch_failure(),
         WORKER_FORMS[1],
-    );
+    )
+    .expect("the dispatch starts");
     // The keyed lanes and the sequential loop stop on a worker that is gone; a pool that kept
     // going on the workers left would run at a capacity nobody configured, and say nothing.
     timeout(Duration::from_secs(1), joined)
