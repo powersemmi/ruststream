@@ -166,6 +166,42 @@ dials a server passes the routing suite and the ladder in process:
 --8<-- "tests/in_process.rs:suites"
 ```
 
+## The settlement suite
+
+`settlement::suite` holds each settlement to its meaning on the transport the broker connects to,
+the live server included:
+
+| Check | Asserts |
+|---|---|
+| ack consumes | an acked message does not come back, neither within the redelivery timeout nor on a new connection to the same subscription |
+| nack without requeue drops | the same after `nack(requeue = false)` |
+| nack with requeue returns | `Ok(())` from `nack(requeue = true)` brings the message back |
+| out-of-order settlement | with three messages in flight, acking the third and dropping the first two unsettled brings the first two back: on the subscription, on it opened again, or on a new connection to it |
+| unsettled drop | a message dropped without a settlement, from a runtime that stops right after, comes back |
+
+A settlement that answers `AckError::Unsupported` is checked on its own subscription only: the
+transport never learned of it, so what a new connection reads depends on where it starts. The last
+two checks end where `nack(requeue = true)` answers `AckError::Unsupported`: a transport
+that takes nothing back has no redelivery to observe. A log that commits a contiguous prefix may
+deliver the acked third message again with the first two; a duplicate passes, a loss does not.
+
+```rust
+--8<-- "src/conformance/settlement/tests.rs:matches_in_process"
+```
+
+- **`make_broker`** is called once per connection, and a check connects twice, so every broker it
+  returns reaches the same server: the same address live, clones of one broker in process.
+- **`make_source`** opens the same subscription on both connections: a durable consumer, a queue
+  or a consumer group where the broker has one. It lets three deliveries be in flight at once.
+- **The redelivery timeout** is how long the broker takes to hand back a delivery nobody settled:
+  the ack wait, visibility timeout or ack deadline the descriptor configures. A broker that hands
+  such a delivery back only when the connection closes passes `Duration::ZERO`.
+
+`settlement::suite` returns what each settlement answered. `settlement::matches_in_process` runs
+it against the server and through `harness::InProcessBroker`, and fails when the two answer
+differently: an in-process transport that claims a settlement the server refuses passes a
+handler's retry in a test and loses the message in production.
+
 ## Capability suites
 
 If your broker implements a capability trait, run the matching suite from
@@ -233,6 +269,8 @@ Before publishing a broker crate:
       aliased-handle error after it).
 - [ ] `lifecycle::shutdown_flushes` passes with the broker's `Backlog` answer, and
       `lifecycle::shared_handle_closes` passes where the connected form is `Clone`.
+- [ ] `settlement::matches_in_process` passes against a real server, enabled by the same variable
+      (ack, nack, out-of-order settlement and an unsettled drop mean the same live and in process).
 - [ ] An end-to-end suite covers broker-specific semantics, enabled by that same variable.
 - [ ] `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
       `categories`), and CI checks `--no-default-features` and `--all-features`.

@@ -405,11 +405,12 @@ async fn a_pattern_reads_every_match_and_the_rule_survives_shutdown() {
     }
     {
         let mut stream = std::pin::pin!(pattern.stream());
-        assert_eq!(stream.next().await.unwrap().unwrap().name(), "orders.eu");
-        assert_eq!(
-            stream.next().await.unwrap().unwrap().name(),
-            "orders.eu.created"
-        );
+        for expected in ["orders.eu", "orders.eu.created"] {
+            let delivery = stream.next().await.unwrap().unwrap();
+            assert_eq!(delivery.name(), expected);
+            // Settled, because a delivery dropped unsettled comes back.
+            delivery.ack().await.unwrap();
+        }
         assert!(stream.next().now_or_never().is_none());
     }
 
