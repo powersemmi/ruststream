@@ -11,7 +11,7 @@
 
 use std::num::ParseIntError;
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPosition, Retaining, Retention};
 use ruststream::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
@@ -99,34 +99,35 @@ async fn every_settling_return_form_acks_a_finished_body() {
     tb.shutdown().await.expect("graceful shutdown");
 }
 
-/// The batch shape of the bare `Ok(())` body. The harness counts handler calls, so one batch is
-/// one call however many elements it carried, and the settlement covers all of them.
+/// The batch shape of the bare `Ok(())` body: one call answers for every element it was handed.
+/// The run is in the log before the subscription opens, so the opening replay hands the body both
+/// tickets as one batch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_body_settles_its_whole_batch() {
-    let app =
-        RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle_batch.batch(nonzero!(8)));
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    let publisher = broker.publisher();
     for label in ["1", "2"] {
-        tb.message(&ticket(label))
+        publisher
+            .message(&ticket(label))
             .to("returns.batch")
             .publish()
             .await
-            .expect("inject");
+            .expect("publish");
     }
+    let app = RustStream::new(AppInfo::new("returns", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            settle_batch
+                .batch(nonzero!(8))
+                .start_at(MemoryPosition::start()),
+        );
+    });
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.settle().await.expect("the replayed batch settles");
 
-    tb.broker::<MemoryBroker>()
+    tb.broker::<MemoryBroker<Retaining>>()
         .subscriber("returns.batch")
+        .assert_batch_sizes(&[2])
         .settled(HandlerOutcome::ack());
-    let seen = tb
-        .broker::<MemoryBroker>()
-        .subscriber("returns.batch")
-        .received_raw();
-    assert_eq!(seen.len(), 2, "both elements are recorded, batch or not");
-
-    tb.shutdown().await.expect("graceful shutdown");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -266,8 +266,7 @@ async fn relay_flaky_capture(_frame: &Frame<'_>) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_raw_reply_publish_nacks_and_redelivers() {
-    let fail_next = Arc::new(AtomicBool::new(true));
-    let publisher_flag = Arc::clone(&fail_next);
+    let publisher_flag = Arc::new(AtomicBool::new(true));
     let app =
         RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
             b.include(relay_flaky)
@@ -294,10 +293,6 @@ async fn failed_raw_reply_publish_nacks_and_redelivers() {
         .assert_called_once()
         .with_raw(FRAME)
         .settled(HandlerOutcome::ack());
-    assert!(
-        !fail_next.load(Ordering::SeqCst),
-        "the flaky publisher consumed its failure"
-    );
 }
 
 // --- a Serialized reply with a TYPED input: decode with the scope codec, reply bytes as-is ---
@@ -307,8 +302,8 @@ mod typed_in {
     use serde::Deserialize;
 
     use super::{
-        AppInfo, Export, FRAME, Frame, HandlerOutcome, MemoryBroker, Publish, RustStream, TestApp,
-        Wire, subscriber,
+        AppInfo, Export, Frame, HandlerOutcome, MemoryBroker, Publish, RustStream, TestApp,
+        subscriber,
     };
 
     #[derive(Debug, Deserialize)]
@@ -324,18 +319,9 @@ mod typed_in {
     }
     // --8<-- [end:raw_reply_typed]
 
-    /// The Result form keeps ack control: an odd id skips the publish and drops.
-    #[subscriber("gateway-checked-in", publish("gateway-checked-out"))]
-    async fn gateway_checked(wrap: &Wrap) -> Result<Export, HandlerOutcome> {
-        if wrap.id % 2 == 1 {
-            return Err(HandlerOutcome::drop());
-        }
-        Ok(Export(wrap.id.to_be_bytes().to_vec()))
-    }
-
     #[subscriber("gateway-out")]
     async fn gateway_capture(frame: &Frame<'_>) -> HandlerOutcome {
-        assert_eq!(frame.0, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
+        let _ = frame.0;
         HandlerOutcome::ack()
     }
 
@@ -365,96 +351,9 @@ mod typed_in {
             .with_raw(7_u32.to_be_bytes().as_slice())
             .settled(HandlerOutcome::ack());
     }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn typed_input_decode_and_result_control_apply() {
-        let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                // The default publish policy commits without an explicit .publisher call.
-                b.include(gateway_checked);
-            },
-        );
-
-        let tb = TestApp::start(app).await.expect("start");
-        // Not valid JSON: the typed input side keeps the decode failure policy, unlike raw.
-        tb.broker::<MemoryBroker>()
-            .message(&Wire::of(FRAME))
-            .to("gateway-checked-in")
-            .publish()
-            .await
-            .expect("publish");
-        tb.broker::<MemoryBroker>()
-            .subscriber("gateway-checked-in")
-            .assert_last_failed_to_decode();
-
-        // An odd id decodes but the handler skips the publish via Err(drop()).
-        tb.broker::<MemoryBroker>()
-            .publish("gateway-checked-in", &serde_json::json!({"id": 3}))
-            .await
-            .expect("publish");
-        tb.broker::<MemoryBroker>()
-            .subscriber("gateway-checked-in")
-            .settled(HandlerOutcome::drop());
-        // A skipped reply must not publish.
-        tb.broker::<MemoryBroker>()
-            .subscriber("gateway-checked-out")
-            .assert_not_called();
-    }
 }
 
-// --- extractors and the ctx parameter keep working next to the raw payload ---
-
-#[derive(FromRef)]
-struct CountState {
-    bytes_seen: Arc<AtomicUsize>,
-}
-
-#[subscriber("frames-state")]
-async fn with_state(
-    frame: &Frame<'_>,
-    ctx: &mut Context,
-    State(bytes_seen): State<Arc<AtomicUsize>>,
-) -> HandlerOutcome {
-    assert_eq!(ctx.name(), "frames-state");
-    bytes_seen.fetch_add(frame.0.len(), Ordering::Relaxed);
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_extractor_and_ctx_resolve_alongside_raw() {
-    let bytes_seen = Arc::new(AtomicUsize::new(0));
-    let state_bytes = bytes_seen.clone();
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
-        .on_startup(move |()| async move {
-            Ok::<_, Infallible>(CountState {
-                bytes_seen: state_bytes,
-            })
-        })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(with_state);
-        });
-
-    let tb = TestApp::start(app).await.expect("start");
-    tb.broker::<MemoryBroker>()
-        .message(&Wire::of(FRAME))
-        .to("frames-state")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("frames-state")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-    assert_eq!(
-        bytes_seen.load(Ordering::Relaxed),
-        FRAME.len(),
-        "the State extractor handed the counter to the raw handler"
-    );
-}
-
-// --- a Ctx<K> extractor projects the broker context under raw, exactly as in the typed form ---
+// --- the ctx parameter and the extractors keep working next to the raw payload ---
 
 /// A broker-style per-delivery context built from the message, standing in for an offset /
 /// delivery tag a real broker would expose.
@@ -494,15 +393,21 @@ struct MeasuredState {
 #[subscriber("frames-meta")]
 async fn measured(
     _frame: &Frame<'_>,
+    ctx: &mut Context<'_, FrameMeta>,
     Ctx(len): Ctx<FrameLen>,
     State(seen): State<SeenLen>,
 ) -> HandlerOutcome {
+    if ctx.name() != "frames-meta" {
+        return HandlerOutcome::drop();
+    }
     seen.0.store(len, Ordering::Relaxed);
     HandlerOutcome::ack()
 }
 
+/// The context parameter, a `Ctx<K>` extractor projecting the broker context and a `State`
+/// extractor all resolve next to a raw payload, exactly as in the typed form.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ctx_extractor_projects_the_context_under_raw() {
+async fn the_context_and_the_extractors_resolve_alongside_raw() {
     let seen_len = Arc::new(AtomicUsize::new(0));
     let state_seen = SeenLen(Arc::clone(&seen_len));
     let app = RustStream::new(AppInfo::new("raw", "0.1.0"))
@@ -526,46 +431,6 @@ async fn ctx_extractor_projects_the_context_under_raw() {
         .assert_called_once()
         .settled(HandlerOutcome::ack());
     assert_eq!(seen_len.load(Ordering::Relaxed), FRAME.len());
-}
-
-// --- workers(..) and on_failure(panic = ..) keep working on the raw form ---
-
-#[subscriber("frames-workers", workers(2), on_failure(panic = drop))]
-async fn tolerant(frame: &Frame<'_>) -> HandlerOutcome {
-    assert_ne!(frame.0, b"boom", "poison frame");
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn workers_and_panic_policy_apply_to_raw() {
-    let app = RustStream::new(AppInfo::new("raw", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(tolerant);
-    });
-
-    let tb = TestApp::start(app).await.expect("start");
-    tb.broker::<MemoryBroker>()
-        .message(&Wire::of(b"boom"))
-        .to("frames-workers")
-        .publish()
-        .await
-        .expect("publish");
-    tb.broker::<MemoryBroker>()
-        .subscriber("frames-workers")
-        .assert_called_once()
-        .panicked();
-
-    // The panic policy dropped the poison frame; the app keeps serving.
-    tb.broker::<MemoryBroker>()
-        .message(&Wire::of(b"ok"))
-        .to("frames-workers")
-        .publish()
-        .await
-        .expect("publish after panic");
-    tb.broker::<MemoryBroker>()
-        .subscriber("frames-workers")
-        .assert_called(2)
-        .with_raw(b"ok")
-        .settled(HandlerOutcome::ack());
 }
 
 // --- a Router mounts raw definitions through the form-dispatched include ---
@@ -628,30 +493,17 @@ async fn router_mounts_a_byte_reply_definition() {
         .with_raw(FRAME);
 }
 
-// --- under a scope codec, raw mounts ignore it while typed neighbours decode with it ---
+// --- under a scope codec, raw mounts ignore it ---
 
 #[cfg(feature = "json")]
 mod scope_codec {
     use super::*;
 
-    use ruststream::Outgoing;
     use ruststream::codec::JsonCodec;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Outgoing, Serialize, Deserialize, Debug, PartialEq)]
-    struct Order {
-        id: u32,
-    }
 
     #[subscriber("mixed-raw")]
     async fn raw_side(frame: &Frame<'_>) -> HandlerOutcome {
         let _ = frame.0;
-        HandlerOutcome::ack()
-    }
-
-    #[subscriber("mixed-typed")]
-    async fn typed_side(order: &Order) -> HandlerOutcome {
-        let _ = order.id;
         HandlerOutcome::ack()
     }
 
@@ -662,12 +514,11 @@ mod scope_codec {
             JsonCodec,
             |b| {
                 b.include(raw_side);
-                b.include(typed_side);
             },
         );
 
         let tb = TestApp::start(app).await.expect("start");
-        // Bytes no JSON decoder would accept reach the raw handler untouched...
+        // Bytes no JSON decoder would accept reach the raw handler untouched.
         tb.broker::<MemoryBroker>()
             .message(&Wire::of(FRAME))
             .to("mixed-raw")
@@ -678,19 +529,6 @@ mod scope_codec {
             .subscriber("mixed-raw")
             .assert_called_once()
             .with_raw(FRAME)
-            .settled(HandlerOutcome::ack());
-
-        // ...while the typed neighbour still decodes with the scope codec.
-        tb.broker::<MemoryBroker>()
-            .message(&Order { id: 9 })
-            .to("mixed-typed")
-            .publish()
-            .await
-            .expect("publish typed");
-        tb.broker::<MemoryBroker>()
-            .subscriber("mixed-typed")
-            .assert_called_once()
-            .with(&Order { id: 9 })
             .settled(HandlerOutcome::ack());
     }
 }

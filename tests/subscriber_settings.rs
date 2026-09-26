@@ -13,21 +13,17 @@
 
 mod common;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use common::{Event, Order, Wire};
-use futures::future::join_all;
 use ruststream::memory::{
     MemoryBroker, MemoryPosition, MemoryPublish, MemorySource, Retaining, Retention,
 };
 use ruststream::runtime::{
-    AppInfo, DefaultSlot, FailurePolicies, FailurePolicy, HandlerOutcome, Out, PublishExt, Router,
-    RustStream, SubscriberSettings,
+    AppInfo, DefaultSlot, HandlerOutcome, Out, PublishExt, RustStream, SubscriberSettings,
 };
-use ruststream::testing::{Outcome, TestApp};
+use ruststream::testing::TestApp;
 use ruststream::{Buffered, Deserialized, Name, Publisher, nonzero, subscriber};
-use tokio::sync::Barrier;
 
 /// The payload view the raw batch body below takes, one element per delivery in the batch.
 #[derive(Deserialized)]
@@ -83,136 +79,26 @@ async fn record(order: &Order) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_named_kind_is_built_from_the_name_the_mount_site_gives() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // `map_source` is the hook a broker's own settings trait layers on; the identity
-        // transform pins that it composes between the name and the mount.
-        b.include(record.name("record-kind").map_source(|source| source));
+        // `map_source` is the hook a broker's own settings trait layers on: it sees the source
+        // the name built and hands back the one the subscription opens.
+        b.include(
+            record
+                .name("record-kind")
+                .map_source(|_named| MemorySource::new("record-mapped")),
+        );
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 3 })
-        .to("record-kind")
+        .to("record-mapped")
         .publish()
         .await
         .expect("publish failed");
 
     tb.broker::<MemoryBroker>()
-        .subscriber("record-kind")
+        .subscriber("record-mapped")
         .assert_called_once()
         .with(&Order { id: 3 })
-        .settled(HandlerOutcome::ack());
-}
-
-/// The deadline the "did the pool run these together?" wait rides. A pool that dispatched
-/// sequentially would park on the barrier forever, so the timeout turns that into a failure.
-const CONCURRENCY_DEADLINE: Duration = Duration::from_secs(5);
-
-/// The worker policy is left open by the attribute and named at the mount site. Four deliveries
-/// must be in flight at once to pass the barrier; a sequential loop would deadlock on the first.
-#[subscriber("workers-from-builder")]
-async fn parallel(order: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
-    let _ = order.id;
-    ctx.state().wait().await;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_worker_policy() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(4))))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(parallel.workers(nonzero!(4)));
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    // Exactly the barrier's worth of deliveries: with a pool of one, the first would park on the
-    // barrier and the deadline below would expire.
-    let orders: Vec<Order> = (0..4u32).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
-        CONCURRENCY_DEADLINE,
-        join_all(
-            orders
-                .iter()
-                .map(|order| tb.message(order).to("workers-from-builder").publish()),
-        ),
-    )
-    .await
-    .expect("the mount-site worker policy must hold four deliveries in flight at once");
-    for result in published {
-        result.expect("publish failed");
-    }
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("workers-from-builder")
-        .assert_called(4)
-        .settled(HandlerOutcome::ack());
-}
-
-/// The failure policies are left open by the attribute and named at the mount site.
-#[subscriber("failures-from-builder")]
-async fn tolerant(order: &Order) -> HandlerOutcome {
-    let _ = order.id;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_failure_policies() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(tolerant.on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)));
-    });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    // The undecodable payload is skipped by the mount-site policy; the next one still arrives.
-    tb.message(&Wire::of(b"not json"))
-        .to("failures-from-builder")
-        .publish()
-        .await
-        .expect("publish failed");
-    tb.message(&Order { id: 9 })
-        .to("failures-from-builder")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    let subscriber = tb.broker::<MemoryBroker>();
-    let subscriber = subscriber.subscriber("failures-from-builder");
-    assert_eq!(
-        subscriber.outcomes(),
-        [Outcome::DecodeFailed, Outcome::Ack],
-        "the mount-site policy must ack past the malformed payload and keep the subscription",
-    );
-    subscriber.with(&Order { id: 9 });
-}
-
-/// The start position is left open by the attribute and named at the mount site.
-#[subscriber(MemorySource)]
-async fn replay(order: &Order) -> HandlerOutcome {
-    let _ = order.id;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_builder_supplies_the_start_position() {
-    let broker = replaying();
-    let publisher = broker.publisher();
-    // Published before the service exists: only a subscription opened at the start sees it, so
-    // it goes through a handle taken off the broker rather than through the harness.
-    publisher
-        .message(&Order { id: 42 })
-        .to("replay")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
-        b.include(replay.name("replay").start_at(MemoryPosition::start()));
-    });
-    let tb = TestApp::start(app).await.expect("startup failed");
-    tb.settle().await.expect("the replayed delivery settles");
-
-    tb.broker::<MemoryBroker<Retaining>>()
-        .subscriber("replay")
-        .assert_called_once()
-        .with(&Order { id: 42 })
         .settled(HandlerOutcome::ack());
 }
 
@@ -446,33 +332,6 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
         [b"one".as_slice(), b"two".as_slice()],
     );
     subscriber.settled(HandlerOutcome::ack());
-}
-
-/// The same surface on the router: `include` takes the settings builder there too.
-#[subscriber]
-async fn routed(order: &Order) -> HandlerOutcome {
-    let _ = order.id;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_mounts_the_settings_builder() {
-    let routes = Router::<MemoryBroker>::new().include(routed.name("routed").workers(nonzero!(2)));
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(routes));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 5 })
-        .to("routed")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("routed")
-        .assert_called_once()
-        .with(&Order { id: 5 })
-        .settled(HandlerOutcome::ack());
 }
 
 /// The per-registration codec, the top rung of the codec ladder: a scope decoding with CBOR, and

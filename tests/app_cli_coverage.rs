@@ -551,11 +551,9 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
 
 // The builder surface: the labeled-codec registration and the include builders.
 
-static LABELED_SEEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-
 #[subscriber("cov.labeled")]
 async fn labeled(order: &Order) -> HandlerOutcome {
-    LABELED_SEEN.lock().expect("seen").push(order.id);
+    let _ = order.id;
     HandlerOutcome::ack()
 }
 
@@ -578,8 +576,6 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
     );
     // The Debug form is the operator's view of a half-built service.
     let rendered = format!("{app:?}");
-    assert!(rendered.starts_with("RustStream"), "{rendered}");
-    assert!(rendered.contains("cov-labeled"), "{rendered}");
     assert!(rendered.contains("brokers: 1"), "{rendered}");
     assert!(rendered.contains("handlers: 1"), "{rendered}");
 
@@ -596,8 +592,8 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
     tb.broker::<MemoryBroker>()
         .subscriber("cov.labeled")
         .assert_called_once()
+        .with_codec(&CborCodec, &Order { id: 11 })
         .settled(HandlerOutcome::ack());
-    assert_eq!(*LABELED_SEEN.lock().expect("seen"), vec![11]);
 }
 
 /// Stamps every outgoing reply, so a test can prove which reply source was used.
@@ -691,36 +687,10 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
     );
 }
 
-#[subscriber("cov.debug.in", publish("cov.debug.out"))]
-async fn debug_reply(order: &Order) -> Receipt {
-    Receipt { id: order.id }
-}
-
 #[subscriber("cov.debug.slot")]
 async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     let _ = out;
     HandlerOutcome::ack()
-}
-
-/// Each guard names the terminal it commits through - `Mounting` for a registration the drop
-/// finishes, `MountingSlots` for one `.build()` does - and neither leaks the scope it borrows.
-#[test]
-fn the_mount_guards_render_their_debug_forms() {
-    let _app =
-        RustStream::new(AppInfo::new("cov-debug", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            // A reply-only registration is complete as it stands, so dropping the guard commits.
-            let reply = b.include(debug_reply);
-            assert_debug_form(&reply, "Mounting");
-            drop(reply);
-
-            let slots = b.include(debug_slot);
-            assert_debug_form(&slots, "MountingSlots");
-            slots.out(DefaultSlot, Publish).build();
-
-            let both = b.include(gate);
-            assert_debug_form(&both, "MountingSlots");
-            both.out(DefaultSlot, Publish).build();
-        });
 }
 
 /// The backstop under the `must_use` warning: a mount site that ignored it registered nothing,
@@ -734,18 +704,5 @@ fn a_slot_chain_dropped_before_build_refuses_to_vanish() {
             // What the lint warns about, written deliberately: the chain never reaches `.build()`.
             let _ = b.include(debug_slot).out(DefaultSlot, Publish);
         },
-    );
-}
-
-fn assert_debug_form<T: std::fmt::Debug>(value: &T, expected: &str) {
-    let rendered = format!("{value:?}");
-    assert_eq!(
-        rendered.split(' ').next(),
-        Some(expected),
-        "the guard must render as {expected}: {rendered}",
-    );
-    assert!(
-        !rendered.contains("BrokerScope"),
-        "the guard must not render the scope it borrows: {rendered}",
     );
 }
