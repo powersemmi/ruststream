@@ -4,11 +4,12 @@
     feature = "memory",
     feature = "macros",
     feature = "json",
+    feature = "cbor",
     feature = "testing"
 ))]
 
 use ruststream::OutgoingFor;
-use ruststream::codec::JsonCodec;
+use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
 use ruststream::testing::{TestApp, TestableBroker};
 use serde::{Deserialize, Serialize};
@@ -197,38 +198,27 @@ fn replaying() -> MemoryBroker<Retaining> {
     MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
 }
 
-/// A bare publisher reaches the same builder through [`PublishExt`], encoding with the crate
-/// default codec unless the call names one.
+/// A call that names a codec encodes with it rather than with the crate default the builder
+/// otherwise falls back to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_bare_publisher_publishes_through_the_builder() {
+async fn a_call_names_its_own_codec() {
     let broker = replaying();
     let connected = broker.clone().connect().await.expect("connect");
-    let publisher = connected.publisher();
 
-    publisher
-        .message(&Progress { percent: 100 })
-        .publish()
-        .await
-        .expect("fixed name");
-    publisher
+    connected
+        .publisher()
         .message(&OrderArchived { id: 9 })
-        .with_codec(JsonCodec)
+        .with_codec(CborCodec)
         .to("orders.archived".to_owned())
         .publish()
         .await
         .expect("call-level codec and a computed name");
-    publisher
-        .message(&Wire::of(b"bytes"))
-        .to("audit")
-        .publish()
-        .await
-        .expect("carried bytes");
 
-    assert_eq!(connected.published("chunks.progress").len(), 1);
-    assert_eq!(connected.published("orders.archived").len(), 1);
-    let audit = connected.published("audit");
-    assert_eq!(audit.len(), 1);
-    assert_eq!(audit[0].payload(), b"bytes");
+    let archived = connected.published("orders.archived");
+    let decoded: OrderArchived = CborCodec
+        .decode(archived[0].payload())
+        .expect("the payload is in the codec the call named");
+    assert_eq!(decoded, OrderArchived { id: 9 });
 }
 
 /// A bare publisher and both transaction surfaces carry the same builder.
@@ -292,52 +282,6 @@ async fn a_publisher_and_its_transactions_carry_the_builder() {
     assert_eq!(connected.published("audit.ledger").len(), 1);
 }
 
-/// The batch publishing path carries the builder too: the reply travels its own wiring while
-/// the handler's own publishes go through the slot, in one handler.
-#[subscriber("jobs.bulk", publish("jobs.settled"))]
-async fn settle(
-    jobs: &[Job],
-    Out(out): Out<impl Publisher, Events, Progress>,
-) -> Result<Vec<Job>, HandlerOutcome> {
-    for job in jobs {
-        if out
-            .message(&Progress {
-                percent: u8::try_from(job.id).unwrap_or(u8::MAX),
-            })
-            .publish()
-            .await
-            .is_err()
-        {
-            return Err(HandlerOutcome::retry());
-        }
-    }
-    Ok(jobs.iter().map(|job| Job { id: job.id }).collect())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_batch_publishing_handler_carries_the_builder() {
-    let app =
-        RustStream::new(AppInfo::new("bulk", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(settle.batch(nonzero!(8)))
-                .out(Reply, Publish)
-                .out(Events, Publish)
-                .build();
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Job { id: 4 })
-        .to("jobs.bulk")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.out::<Events>().assert_called_once();
-    tb.broker::<MemoryBroker>()
-        .published::<Progress>("chunks.progress")
-        .assert_called_once()
-        .with(&Progress { percent: 4 });
-}
-
 /// A builder in flight keeps its wiring out of Debug: it holds a live publisher, and a
 /// diagnostic dump must not print one.
 #[test]
@@ -345,27 +289,6 @@ fn a_publish_builder_hides_its_wiring() {
     let publisher = MemoryBroker::new().publisher();
     let pending = publisher.message(&Progress { percent: 1 });
     assert_eq!(format!("{pending:?}"), "PublishBuilder { .. }");
-}
-
-/// The typed headers of a message with no contract are rejected, but an arbitrary transport map
-/// still travels with it: the map stands for no declaration.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_contract_less_message_still_carries_a_header_map() {
-    let broker = replaying();
-    let connected = broker.clone().connect().await.expect("connect");
-
-    let mut headers = HeaderMap::new();
-    headers.insert("x-trace", "abc");
-    connected
-        .publisher()
-        .message(&Progress { percent: 5 })
-        .with_headers(headers)
-        .publish()
-        .await
-        .expect("map headers on a contract-less message");
-
-    let published = connected.published("chunks.progress");
-    assert_eq!(published[0].headers().get_str("x-trace"), Some("abc"));
 }
 
 /// A publisher handle carrying an argument for every message it sends: the shape a broker

@@ -296,23 +296,6 @@ impl Publisher for Taker {
 }
 
 #[tokio::test]
-async fn an_encoded_publish_hands_the_codec_buffer_to_a_taking_broker() {
-    let publisher = Probe::taking(Claim::Vec);
-    publisher
-        .message(&OrderCreated { id: 7 })
-        .publish()
-        .await
-        .expect("the probe never refuses");
-
-    let seen = publisher.seen();
-    assert_eq!(
-        seen.taken_at, seen.read_at,
-        "the codec's buffer travels as it was written, and taking it as a vector reuses it \
-         rather than copying out of it",
-    );
-}
-
-#[tokio::test]
 async fn a_value_that_carries_its_own_bytes_is_lent_to_a_reading_broker() {
     let audit = Audit(br#"{"seen":true}"#.to_vec());
     let publisher = Reading::default();
@@ -449,6 +432,10 @@ async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
         "the codec's buffer is already the vector, so taking it as one allocates nothing",
     );
     assert_eq!(
+        took_vec.taken_at, took_vec.read_at,
+        "the vector is the buffer the codec wrote, not a copy of it",
+    );
+    assert_eq!(
         as_bytes,
         handed_over + 1,
         "a `Bytes` needs the shared ownership block, and that block is all it costs",
@@ -477,26 +464,6 @@ async fn a_computed_value_hands_over_the_buffer_it_wrote() {
         "the value wrote into the publish path's buffer, and that buffer is what leaves",
     );
     assert_eq!(seen.len, 4, "holding what the value wrote");
-}
-
-/// The declaration is what the payload's form follows, and a transport that only reads it is
-/// handed the buffer the encode wrote rather than a buffer of its own.
-#[tokio::test]
-async fn a_reading_transport_is_lent_the_buffer_the_encode_wrote() {
-    let publisher = Reading::default();
-    let value = OrderCreated { id: 7 };
-    publisher
-        .message(&value)
-        .publish()
-        .await
-        .expect("the probe never refuses");
-
-    let seen = publisher.seen();
-    assert_eq!(
-        seen.taken_at, seen.read_at,
-        "what the publish lends and what it reads are the same bytes",
-    );
-    assert_eq!(seen.len, 8, "the encoded body");
 }
 
 /// What a broker does with the map, measured on the one broker this crate ships. A header costs

@@ -192,100 +192,14 @@ mod tests {
 
     use super::*;
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    enum Encoding {
-        Binary,
-        Json,
-    }
-
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    // Every scalar kind and every shape, in each direction, is pinned by the serializer's and the
+    // deserializer's own tests; these pin what a contract meets as a whole.
+    #[derive(Debug, Deserialize)]
     struct Meta {
+        #[allow(dead_code)]
         task_id: u64,
+        #[allow(dead_code)]
         ratio: f64,
-        active: bool,
-        label: String,
-        encoding: Encoding,
-        note: Option<String>,
-        #[serde(
-            with = "serde_bytes_shim",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        blob: Option<Vec<u8>>,
-    }
-
-    // A tiny stand-in for serde_bytes: forces the bytes path through the value (de)serializer.
-    mod serde_bytes_shim {
-        use serde::de::{Deserializer, Error as _, Visitor};
-        use serde::ser::Serializer;
-
-        // serde's `with` contract passes the field by reference, so `&Option<..>` is forced.
-        #[allow(clippy::ref_option)]
-        pub(super) fn serialize<S: Serializer>(
-            value: &Option<Vec<u8>>,
-            serializer: S,
-        ) -> Result<S::Ok, S::Error> {
-            match value {
-                Some(bytes) => serializer.serialize_bytes(bytes),
-                None => serializer.serialize_none(),
-            }
-        }
-
-        pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-            deserializer: D,
-        ) -> Result<Option<Vec<u8>>, D::Error> {
-            struct BytesVisitor;
-            impl<'de> Visitor<'de> for BytesVisitor {
-                type Value = Option<Vec<u8>>;
-                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.write_str("bytes")
-                }
-                fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
-                    Ok(Some(v.to_vec()))
-                }
-                fn visit_some<D2: Deserializer<'de>>(
-                    self,
-                    d: D2,
-                ) -> Result<Self::Value, D2::Error> {
-                    d.deserialize_bytes(Self)
-                }
-                fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
-                    Ok(None)
-                }
-            }
-            deserializer
-                .deserialize_option(BytesVisitor)
-                .map_err(|e| D::Error::custom(format!("blob: {e}")))
-        }
-    }
-
-    fn sample() -> Meta {
-        Meta {
-            task_id: 7,
-            ratio: 0.5,
-            active: true,
-            label: "movie".to_owned(),
-            encoding: Encoding::Json,
-            note: None,
-            blob: Some(vec![0xff, 0x00]),
-        }
-    }
-
-    #[test]
-    fn round_trips_every_scalar_kind() {
-        let mut headers = HeaderMap::new();
-        headers.insert_typed(&sample()).expect("flat struct");
-
-        assert_eq!(headers.get_str("task_id"), Some("7"));
-        assert_eq!(headers.get_str("ratio"), Some("0.5"));
-        assert_eq!(headers.get_str("active"), Some("true"));
-        assert_eq!(headers.get_str("label"), Some("movie"));
-        assert_eq!(headers.get_str("encoding"), Some("Json"));
-        assert!(!headers.contains("note"));
-        assert_eq!(headers.get("blob"), Some([0xff, 0x00].as_slice()));
-
-        let back: Meta = headers.to_typed().expect("round trip");
-        assert_eq!(back, sample());
     }
 
     #[test]
@@ -294,20 +208,6 @@ mod tests {
         headers.insert("task_id", "7");
         let err = headers.to_typed::<Meta>().expect_err("ratio missing");
         assert!(err.to_string().contains("ratio"), "got: {err}");
-    }
-
-    #[test]
-    fn unparsable_value_names_header_and_type() {
-        #[derive(Debug, Deserialize)]
-        struct OnlyId {
-            #[allow(dead_code)]
-            task_id: u64,
-        }
-        let mut headers = HeaderMap::new();
-        headers.insert("task_id", "not-a-number");
-        let err = headers.to_typed::<OnlyId>().expect_err("parse failure");
-        let msg = err.to_string();
-        assert!(msg.contains("task_id") && msg.contains("u64"), "got: {msg}");
     }
 
     #[test]
@@ -322,28 +222,6 @@ mod tests {
         let err = headers.to_typed::<OnlyLabel>().expect_err("not utf-8");
         assert!(
             matches!(err, DeserializeHeadersError::NotUtf8 { .. }),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn nested_value_is_rejected_on_serialize() {
-        #[derive(Serialize)]
-        struct Inner {
-            x: u8,
-        }
-        #[derive(Serialize)]
-        struct Nested {
-            inner: Inner,
-        }
-        let mut headers = HeaderMap::new();
-        let err = headers
-            .insert_typed(&Nested {
-                inner: Inner { x: 1 },
-            })
-            .expect_err("nested struct");
-        assert!(
-            matches!(err, SerializeHeadersError::UnsupportedValue { ref field, .. } if field == "inner"),
             "got: {err}"
         );
     }
@@ -391,46 +269,14 @@ mod tests {
         assert!(err.to_string().contains("this value refuses to travel"));
     }
 
+    // The serializing half of the same rejection is one of the shapes the serializer's own tests
+    // walk through.
     #[test]
-    fn top_level_scalar_is_rejected_both_ways() {
-        let mut headers = HeaderMap::new();
+    fn a_top_level_scalar_is_rejected_on_read() {
         assert!(matches!(
-            headers.insert_typed(&7_u64),
-            Err(SerializeHeadersError::TopLevel { .. })
-        ));
-        assert!(matches!(
-            headers.to_typed::<u64>(),
+            HeaderMap::new().to_typed::<u64>(),
             Err(DeserializeHeadersError::TopLevel { .. })
         ));
-    }
-
-    #[test]
-    fn string_keyed_map_round_trips() {
-        use std::collections::BTreeMap;
-
-        let mut source = BTreeMap::new();
-        source.insert("a".to_owned(), "1".to_owned());
-        source.insert("b".to_owned(), "two".to_owned());
-
-        let mut headers = HeaderMap::new();
-        headers.insert_typed(&source).expect("string map");
-        let back: BTreeMap<String, String> = headers.to_typed().expect("map back");
-        assert_eq!(back, source);
-    }
-
-    #[test]
-    fn untagged_union_serializes_as_its_content() {
-        #[derive(Serialize)]
-        #[serde(untagged)]
-        enum Either {
-            #[allow(dead_code)]
-            Upload { size: u64 },
-        }
-        let mut headers = HeaderMap::new();
-        headers
-            .insert_typed(&Either::Upload { size: 9 })
-            .expect("untagged");
-        assert_eq!(headers.get_str("size"), Some("9"));
     }
 
     #[test]
