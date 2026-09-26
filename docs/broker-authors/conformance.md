@@ -202,6 +202,50 @@ it against the server and through `harness::InProcessBroker`, and fails when the
 differently: an in-process transport that claims a settlement the server refuses passes a
 handler's retry in a test and loses the message in production.
 
+## Retry checks
+
+A descriptor's `type Copies` says how a registration retries, and `conformance::retry` holds each
+answer that promises the service something to that promise.
+
+`harness::redelivery_address` takes an `AddressedCopies` descriptor. It opens two subscriptions from
+it, the way two replicas read one subscription, and publishes a copy to the address the descriptor
+reports. The copy leaves from a current-thread runtime that stops right after, which is where a
+handler on dedicated threads publishes a `retry_after` copy. It must reach exactly one subscription
+of a group, or each of them where your transport hands every subscription everything, and arrive
+with its headers and `RETRY_COUNT_HEADER` intact. The check then requeues it twice, and a delivery
+that reports `redelivery_count` must count 1, 2 and 3. Run it a second time with the bare `Name`
+source when your connected form answers `Subscribe::Copies = AddressedCopies`: that answer is the
+address of every `#[subscriber("orders")]` registration.
+
+```rust
+--8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```
+
+`retry::broker_moves` takes a `BrokerMoves` descriptor. It declares `max_attempts(n)` and a
+dead-letter destination, requeues the message until the cap is spent, and expects it in the
+dead-letter destination once, after exactly `n` deliveries. Each half of the declaration on its own
+must be refused at startup. Pass an `n` your broker accepts. `make_source(name)` opens the
+dead-letter destination too, so it creates whatever a publish to `name` needs.
+
+<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+```rust
+use ruststream::conformance::harness::InProcessBroker;
+use ruststream::conformance::retry;
+use ruststream::nonzero;
+use ruststream_lapin::{LapinBroker, LapinPublish, RabbitQuorumQueue};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_quorum_queue_dead_letters_at_the_cap() {
+    retry::broker_moves(
+        || InProcessBroker::new(LapinBroker::new("amqp://localhost:5672").declare_topology(true)),
+        |name| RabbitQuorumQueue::new(name),
+        |connected| connected.publisher(LapinPublish::default()),
+        nonzero!(2u32),
+    )
+    .await;
+}
+```
+
 ## Capability suites
 
 If your broker implements a capability trait, run the matching suite from
@@ -271,6 +315,9 @@ Before publishing a broker crate:
       `lifecycle::shared_handle_closes` passes where the connected form is `Clone`.
 - [ ] `settlement::matches_in_process` passes against a real server, enabled by the same variable
       (ack, nack, out-of-order settlement and an unsettled drop mean the same live and in process).
+- [ ] `harness::redelivery_address` passes for every `AddressedCopies` descriptor, and for the bare
+      `Name` where `Subscribe::Copies` is `AddressedCopies`; `retry::broker_moves` passes for every
+      `BrokerMoves` descriptor.
 - [ ] An end-to-end suite covers broker-specific semantics, enabled by that same variable.
 - [ ] `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
       `categories`), and CI checks `--no-default-features` and `--all-features`.
