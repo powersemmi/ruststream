@@ -267,6 +267,8 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: Publisher + 'static,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
+    let (make_broker, make_source, make_publisher) =
+        super::message_shape::publisher_carries(make_broker, make_source, make_publisher).await;
     super::lifecycle::ladder(make_broker, make_source, make_publisher).await;
 }
 

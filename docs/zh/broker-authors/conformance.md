@@ -84,6 +84,11 @@ use ruststream::conformance::harness;
   延迟之后十秒。忽略延迟、把延迟向下取整，或者在确认线程的运行时里计时，都通不过检查。
 - `shutdown` 必须在十秒内返回。
 
+在走阶梯之前，检查会在一条单独的连接上核对你的发布者能把消息的哪些内容送到。一个接一个发布的
+三十二条消息，必须按同样的顺序到达同一个订阅。另外四条消息带有头部：大量条目、空值、非 UTF-8
+的值，以及框架自己的重试计数和追踪上下文。每个头部都必须逐字节原样回来，否则携带它的那次发布
+必须失败。发布失败的消息绝不能到达；途中被丢掉或被改写的头部会让检查失败。
+
 已连接形态的持有者在关闭之后再用它，代码在编译期就通不过。留在运行时的规则是**别名句柄契约**。
 关闭之后，通过以下发布者发布都必须返回错误：关闭之前创建、从未用过的发布者，只在 Broker 运行时
 里用过的发布者，以及在已停止的运行时里用过的发布者。关闭之前收到、关闭之后重新入队的投递，必须
@@ -262,6 +267,26 @@ async fn in_process_matches_the_server() {
   负载、被拒绝的目的地、被拒绝的订阅、在另一个订阅旁边被拒绝的订阅。两种传输都必须拒绝每一个。
   服务器接受的探测会以失败告终：它什么也证明不了。
 
+
+## 消息携带的内容
+
+`conformance::message_shape` 中的四项检查需要只有你的 Broker 才能给出的输入，所以由你的 crate
+自己调用，和其他套件一样针对服务器跑一遍、在进程内再跑一遍：
+
+| 检查 | 你提供的输入 | 断言 |
+|---|---|---|
+| `keyed_order` | 一个主题，以及键放在哪里：头部或发布参数的字段 | 每次投递都从 `partition_key` 报告它发布时的键，同一个键的消息按发布顺序到达 |
+| `publish_options` | 发布策略、用例，以及从投递上读出设置的方式 | 不带参数的发布呈现策略的设置；调用的参数只对这一次调用覆盖策略；传输无法兑现的值让发布失败，消息也不会到达 |
+| `publishes_without_credentials` | 一个配置了密码的发布策略 | 策略加入文档的任何绑定都不含该密码 |
+| `describes_addresses_without_credentials` | 由多个带用户名和密码的地址构建的 Broker | 服务器描述中不含这些凭据 |
+
+没有键的传输不调用 `keyed_order`：`None` 就是它诚实的回答。传给 `publish_options` 的策略要配置成
+不同于传输默认值的设置，这样忘了策略的发布者不会因为恰好落在默认值上而通过检查。
+
+```rust
+--8<-- "tests/conformance_message_shape.rs:keyed_order"
+```
+
 ## 能力套件 { #capability-suites }
 
 如果你的 Broker 实现了某个能力 trait，就从 `conformance::capabilities` 跑对应的套件，它证明这份
@@ -330,6 +355,8 @@ async fn passes_request_reply() {
 - [ ] `harness::redelivery_address` 对每个声明 `AddressedCopies` 的描述符通过；`Subscribe::Copies`
       为 `AddressedCopies` 时对光名字的 `Name` 也通过；`retry::broker_moves` 对每个声明
       `BrokerMoves` 的描述符通过。
+- [ ] 传输有键或单条消息的设置时，`message_shape::keyed_order` 和 `message_shape::publish_options`
+      在进程内和针对真实服务器都通过。
 - [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量控制。
 - [ ] `Cargo.toml` 元数据完整（`description`、`license`、`repository`、`keywords`、
       `categories`），并且 CI 检查 `--no-default-features` 和 `--all-features`。
