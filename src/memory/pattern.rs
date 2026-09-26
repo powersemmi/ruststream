@@ -425,7 +425,15 @@ impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPatt
                 connected
                     .state
                     .register_pattern(&self.pattern, pattern, tx.clone())
-                    .map(|()| MemorySubscriber::new(self.pattern, rx, tx, &connected.state))
+                    .map(|()| {
+                        MemorySubscriber::new(
+                            self.pattern,
+                            rx,
+                            tx,
+                            &connected.state,
+                            Some(connected.runtime.clone()),
+                        )
+                    })
             }
             Err(reason) => Err(MemoryError::InvalidPattern {
                 pattern: self.pattern,

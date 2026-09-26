@@ -48,6 +48,30 @@ Broker 还可以额外持有一个由 `connect` 填充的共享单元，或者�
 [conformance 校验套件](conformance.md)会验证整条转移链，[NATS 示例](example-nats.md)则在真实客户端上
 走完这条链。
 
+Broker 为自己启动的任务，运行在 `connect` 所在的运行时上。延迟重投的定时器、回复分发器、提交窗口都属于
+这类任务。已连接形态在 `connect` 里保存 `Handle::current()`，并通过这个句柄启动每一个这样的任务，
+不论发布、确认或请求来自哪个线程：
+
+<!-- inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below -->
+```rust
+pub struct ConnectedExampleBroker {
+    runtime: Handle, // captured in `connect`
+    // ...
+}
+
+impl ConnectedExampleBroker {
+    fn requeue_after(&self, delivery: Delivery, delay: Duration) {
+        self.runtime.spawn(async move {
+            sleep(delay).await;
+            delivery.requeue();
+        });
+    }
+}
+```
+
+专用线程上的处理器，在该线程自己的运行时里发布和确认消息。在那里用 `tokio::spawn` 启动的任务要等处理器
+算完才能运行，并随这个运行时一起停止，而它所服务的连接仍然活着。
+
 在一个已经关闭的 Broker 上，没有发布或订阅方法可以调用，所以持有者一侧的误用通不过编译。共用连接只能
 在运行时检查：共用它的句柄（已连接形态交出去的发布者、可共享 Broker 的克隆）在关闭之后使用时必须返回
 错误，绝不能悄悄返回成功。`lifecycle` 检查也会走到这条路径。

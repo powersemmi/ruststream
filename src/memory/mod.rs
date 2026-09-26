@@ -128,7 +128,9 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::Stream;
+use futures::future::lazy;
 use thiserror::Error;
+use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::sleep;
 
@@ -763,7 +765,7 @@ impl<Log: LogMode> MemoryBroker<Log> {
         } else {
             let _ = self.state.register(&name, tx.clone());
         }
-        MemorySubscriber::new(name, rx, tx, &self.state)
+        MemorySubscriber::new(name, rx, tx, &self.state, None)
     }
 
     /// Returns a publisher bound to this broker.
@@ -800,21 +802,33 @@ impl<Log: LogMode> Broker for MemoryBroker<Log> {
     /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
     /// the shared state down) is revived with a fresh, empty registration map, so the connected
     /// form always starts live; a live bus keeps its registrations.
+    ///
+    /// The connected form keeps the runtime it was connected on, and a delayed redelivery's timer
+    /// runs there whichever thread settles the delivery.
+    ///
+    /// # Panics
+    ///
+    /// Panics when polled outside a Tokio runtime, the one thing it has to capture.
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
-        {
-            let mut bus = self
-                .state
-                .subscribers
-                .lock()
-                .expect("memory broker mutex poisoned");
-            if let Bus::ShutDown(routing) = *bus {
-                *bus = Bus::Live(Registry::new(routing));
+        // Run on the first poll, so the runtime captured is the one the connection runs on, not
+        // the one the future happened to be built on.
+        lazy(move |_| {
+            {
+                let mut bus = self
+                    .state
+                    .subscribers
+                    .lock()
+                    .expect("memory broker mutex poisoned");
+                if let Bus::ShutDown(routing) = *bus {
+                    *bus = Bus::Live(Registry::new(routing));
+                }
             }
-        }
-        ready(Ok(ConnectedMemoryBroker {
-            state: self.state,
-            mode: PhantomData,
-        }))
+            Ok(ConnectedMemoryBroker {
+                state: self.state,
+                runtime: Handle::current(),
+                mode: PhantomData,
+            })
+        })
     }
 }
 
@@ -826,6 +840,8 @@ impl<Log: LogMode> Broker for MemoryBroker<Log> {
 /// broker's log mode: only a [`Retaining`] one opens repositionable subscriptions.
 pub struct ConnectedMemoryBroker<Log = Discarding> {
     state: Arc<MemoryState>,
+    /// The runtime `connect` ran on, which every task the broker starts runs on.
+    runtime: Handle,
     mode: PhantomData<Log>,
 }
 
@@ -833,6 +849,7 @@ impl<Log> Clone for ConnectedMemoryBroker<Log> {
     fn clone(&self) -> Self {
         Self {
             state: Arc::clone(&self.state),
+            runtime: self.runtime.clone(),
             mode: PhantomData,
         }
     }
@@ -1083,7 +1100,13 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
         if let Err(err) = self.state.register(&name, tx.clone()) {
             return ready(Err(err));
         }
-        ready(Ok(MemorySubscriber::new(name, rx, tx, &self.state)))
+        ready(Ok(MemorySubscriber::new(
+            name,
+            rx,
+            tx,
+            &self.state,
+            Some(self.runtime.clone()),
+        )))
     }
 }
 
@@ -1181,6 +1204,11 @@ struct SubscriptionShared {
     state: Arc<MemoryState>,
     /// The subscription's own channel: a requeue and a replay go back through it.
     requeue: Sender,
+    /// The runtime a delayed redelivery's timer runs on: the one the broker connected on.
+    ///
+    /// Optional because [`MemoryBroker::subscribe`] opens a subscription without connecting, and
+    /// may run outside any runtime; such a subscription's timer runs on the settling caller's.
+    runtime: Option<Handle>,
     /// The pending reposition, the stale-delivery watermark, and the waker that rouses a parked
     /// stream.
     seek: SeekControl,
@@ -1193,6 +1221,7 @@ impl<Log> MemorySubscriber<Log> {
         rx: mpsc::UnboundedReceiver<MemoryDelivery>,
         requeue: Sender,
         state: &Arc<MemoryState>,
+        runtime: Option<Handle>,
     ) -> Self {
         Self {
             rx,
@@ -1200,6 +1229,7 @@ impl<Log> MemorySubscriber<Log> {
                 name,
                 state: Arc::clone(state),
                 requeue,
+                runtime,
                 seek: SeekControl::default(),
             }),
             mode: PhantomData,
@@ -1568,13 +1598,13 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
         // bus and its publish log, which a redelivery an hour away must not keep alive once the
         // broker and the subscriber are gone.
         let back = subscription.requeue.clone();
-        drop(subscription);
         // Under the harness, register the redelivery with the coordinator so the in-flight count is
         // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
         // settlement (`NackAfter`) was already recorded; the redelivery is off the synchronous
         // reaction `drive` waits on.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = self.coordinator.clone() {
+            drop(subscription);
             let counter = coordinator.clone();
             coordinator.schedule_redelivery(delay, move || {
                 if back.send(delivery).is_ok() {
@@ -1583,11 +1613,17 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
             });
             return ready(Ok(()));
         }
-        tokio::spawn(async move {
+        let redeliver = async move {
             sleep(delay).await;
             // The subscriber may be gone by then; a dropped receiver is not an error.
             let _ = back.send(delivery);
-        });
+        };
+        // On the runtime the broker connected on, not the settling caller's: a handler on a
+        // dedicated thread settles from a runtime that may stop before the delay runs out.
+        match &subscription.runtime {
+            Some(runtime) => drop(runtime.spawn(redeliver)),
+            None => drop(tokio::spawn(redeliver)),
+        }
         ready(Ok(()))
     }
 }

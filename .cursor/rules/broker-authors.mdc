@@ -16,6 +16,10 @@ alwaysApply: false
   happens in `connect`, and the connected form holds the live client directly - it never checks a
   "maybe connected" state. A shared cell that `connect` fills is a legal internal pattern for
   handles given out before connect, but it is not the contract.
+- A task the broker starts on its own behalf (a delayed-redelivery timer, a reply dispatcher, a
+  commit window) runs on the runtime `connect` ran on: keep `Handle::current()` from `connect` in
+  the connected form and spawn through it, never `tokio::spawn` from a publish, settle or request
+  path. `harness::lifecycle` and `capabilities::request_reply` call from a runtime that stops.
 - What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
   broker must surface an error when used after shutdown, never a silent success against a dead
   connection. `shutdown` never blocks or panics; do all fallible teardown there.

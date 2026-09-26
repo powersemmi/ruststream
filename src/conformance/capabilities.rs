@@ -18,7 +18,7 @@ use std::{fmt, num::NonZeroUsize, time::Duration};
 use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
-use super::harness::{expect_next, expect_no_more};
+use super::harness::{expect_next, expect_no_more, on_foreign_runtime};
 use super::helpers::unique_subject;
 use crate::{
     AckError, BatchSubscriber, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage,
@@ -33,6 +33,12 @@ const MISS_TIMEOUT: Duration = Duration::from_millis(100);
 ///
 /// A request reaches a responder with a usable `reply-to` header, the correlated reply resolves
 /// the request, and a request nobody answers fails once its timeout elapses.
+///
+/// The first request comes from a current-thread runtime on a thread of its own, which stops once
+/// the reply arrives, and a second request from the suite's runtime must still resolve: what the
+/// requester starts on the first request (a reply dispatcher, a reply consumer) runs on the
+/// runtime the broker connected on, not on the caller's. The requester moves to that thread, so it
+/// is `'static`.
 ///
 /// The factories mirror [`harness::lifecycle`](super::harness::lifecycle): `make_source` opens
 /// the responder's subscription, `make_requester` produces the [`RequestReply`] publisher under
@@ -70,7 +76,7 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
     Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
     MkSrc: Fn(&str) -> Src,
-    Req: RequestReply,
+    Req: RequestReply + 'static,
     MkReq: Fn(&Connected<B>) -> Req,
     Pub: Publisher,
     MkPub: Fn(&Connected<B>) -> Pub,
@@ -91,48 +97,83 @@ pub async fn request_reply<B, MkBroker, Src, MkSrc, Req, MkReq, Pub, MkPub>(
 
     let respond = async {
         let mut stream = std::pin::pin!(responder.stream());
-        let msg = expect_next(&mut stream, "request_reply responder").await;
-        assert_eq!(
-            msg.payload(),
-            b"ping",
-            "responder must receive the request payload"
-        );
-        let reply_to = msg
-            .headers()
-            .reply_to()
-            .expect("a request must carry a usable reply-to header")
-            .to_owned();
+        // One request from another runtime, then one from this one.
+        for label in [
+            "request_reply responder, the request from another runtime",
+            "request_reply responder, the request after that runtime stopped",
+        ] {
+            let msg = expect_next(&mut stream, label).await;
+            assert_eq!(
+                msg.payload(),
+                b"ping",
+                "responder must receive the request payload"
+            );
+            let reply_to = msg
+                .headers()
+                .reply_to()
+                .expect("a request must carry a usable reply-to header")
+                .to_owned();
 
-        // Echo the correlation id when the requester set one; replies must at minimum go to
-        // the reply-to destination.
-        let mut headers = HeaderMap::new();
-        if let Some(correlation_id) = msg.headers().correlation_id() {
-            headers.insert("correlation-id", correlation_id.to_owned());
-        }
-        publisher
-            .publish(
-                OutgoingMessage::new(&reply_to, b"pong".as_slice()).with_headers(headers),
-                None,
-            )
-            .await
-            .expect("reply publish failed");
-        match msg.ack().await {
-            Ok(()) | Err(AckError::Unsupported) => {}
-            Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+            // Echo the correlation id when the requester set one; replies must at minimum go to
+            // the reply-to destination.
+            let mut headers = HeaderMap::new();
+            if let Some(correlation_id) = msg.headers().correlation_id() {
+                headers.insert("correlation-id", correlation_id.to_owned());
+            }
+            publisher
+                .publish(
+                    OutgoingMessage::new(&reply_to, b"pong".as_slice()).with_headers(headers),
+                    None,
+                )
+                .await
+                .expect("reply publish failed");
+            match msg.ack().await {
+                Ok(()) | Err(AckError::Unsupported) => {}
+                Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
+            }
         }
     };
-    let request = requester.request(
-        OutgoingMessage::new(&subject, b"ping".as_slice()),
-        DEFAULT_TIMEOUT,
-    );
+    let requests = async {
+        // The first request comes from a runtime that stops once it is answered, the way a
+        // handler on a dedicated thread requests: whatever the requester starts on it (a reply
+        // dispatcher, a correlation table's reader) must run on the broker's runtime, or the
+        // second request finds it gone.
+        let first = subject.clone();
+        let requester = on_foreign_runtime(async move || {
+            let reply = requester
+                .request(
+                    OutgoingMessage::new(&first, b"ping".as_slice()),
+                    DEFAULT_TIMEOUT,
+                )
+                .await
+                .expect("request must resolve once the responder replies");
+            assert_eq!(
+                reply.payload(),
+                b"pong",
+                "the correlated reply must carry the responder payload"
+            );
+            requester
+        })
+        .await;
+        let reply = requester
+            .request(
+                OutgoingMessage::new(&subject, b"ping".as_slice()),
+                DEFAULT_TIMEOUT,
+            )
+            .await
+            .expect(
+                "a request must resolve after an earlier one was made from a runtime that has \
+                 stopped; the broker must run its internal tasks on the runtime it connected on",
+            );
+        assert_eq!(
+            reply.payload(),
+            b"pong",
+            "the correlated reply must carry the responder payload"
+        );
+        requester
+    };
 
-    let (reply, ()) = futures::join!(request, respond);
-    let reply = reply.expect("request must resolve once the responder replies");
-    assert_eq!(
-        reply.payload(),
-        b"pong",
-        "the correlated reply must carry the responder payload"
-    );
+    let (requester, ()) = futures::join!(requests, respond);
 
     let unanswered = requester
         .request(

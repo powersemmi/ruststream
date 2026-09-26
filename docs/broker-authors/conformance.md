@@ -76,6 +76,12 @@ with no I/O, then the consuming `connect` that yields the typed connected form, 
 opened through the broker's own `SubscriptionSource`, a publish the subscription receives and acks,
 and the consuming `shutdown` that yields the terminal witness.
 
+The publish, the acknowledgement and, where the delivery offers it, a `nack_after` come from a
+current-thread runtime on a thread of its own, which stops before the check goes on. The delayed
+message must come back once the delay runs out: the check holds the broker to running its internal
+tasks on the runtime it connected on (see [Writing a broker](index.md)). The publisher and the
+delivery move to that thread, so both are `'static`.
+
 The owner of the connected form cannot reach it after shutdown: that code does not compile. The
 runtime rule is the **aliased-handle contract**, and the check watches exactly that: a publisher
 created before the shutdown must return an error afterwards, never silently succeed against a
@@ -133,7 +139,7 @@ without that capability does not call it. Each suite takes factories of the same
 
 | Suite | Requires | Asserts |
 |---|---|---|
-| `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, a request with no answer returns an error after its timeout |
+| `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, a request with no answer returns an error after its timeout; a request made after an earlier one came from a runtime that has since stopped still resolves |
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
 | `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it; misuse returns an error - `commit` / `abort` with no open transaction, a second `begin_transaction` while one is open (which must leave it untouched) |
 | `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one publisher settle independently, and that publisher keeps publishing directly while one is open |

@@ -53,6 +53,32 @@ form.
 The [conformance harness](conformance.md) proves the whole sequence of transitions, and the
 [NATS example](example-nats.md) walks it on a real client.
 
+A task the broker starts on its own behalf runs on the runtime `connect` ran on. A delayed
+redelivery's timer, a reply dispatcher and a commit window are such tasks. The connected form
+keeps `Handle::current()` from `connect` and spawns every such task through that handle,
+whichever thread publishes, settles or requests:
+
+<!-- inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below -->
+```rust
+pub struct ConnectedExampleBroker {
+    runtime: Handle, // captured in `connect`
+    // ...
+}
+
+impl ConnectedExampleBroker {
+    fn requeue_after(&self, delivery: Delivery, delay: Duration) {
+        self.runtime.spawn(async move {
+            sleep(delay).await;
+            delivery.requeue();
+        });
+    }
+}
+```
+
+A handler on a dedicated thread publishes and settles from that thread's own runtime. A task
+spawned there with `tokio::spawn` waits behind the handler's computation and stops with that
+runtime, while the connection it serves lives on.
+
 A broker you already shut down has nothing left to call, neither publish nor subscribe, so misuse
 by the owner does not compile. Sharing the connection is checked at run time: handles that share
 it (publishers handed out from the connected form, clones of a shareable broker) must return an
