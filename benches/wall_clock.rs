@@ -56,6 +56,13 @@ async fn threaded(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOut
     HandlerOutcome::ack()
 }
 
+#[subscriber("orders", threads(1))]
+async fn threaded_one(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutcome {
+    black_box((order.id, order.quantity));
+    ctx.state().arrived();
+    HandlerOutcome::ack()
+}
+
 #[subscriber("orders", publish)]
 async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmation {
     ctx.state().arrived();
@@ -109,6 +116,15 @@ fn threaded_across_threads() -> Started {
     .started()
 }
 
+// One dedicated thread: with a handler this light the thread drains its ring faster than the loop
+// fills it, so what this shows is the cost of a thread that keeps running out of work.
+fn threaded_one_across_threads() -> Started {
+    common::pending_on(common::worker_runtime(), MESSAGES, 0, |b| {
+        b.include(threaded_one);
+    })
+    .started()
+}
+
 #[divan::bench]
 fn consume_json(bencher: Bencher) {
     bencher
@@ -146,5 +162,13 @@ fn threads_across_threads(bencher: Bencher) {
     bencher
         .counter(ItemsCount::new(MESSAGES))
         .with_inputs(threaded_across_threads)
+        .bench_local_values(|started| started.publish_and_drain());
+}
+
+#[divan::bench]
+fn one_thread_across_threads(bencher: Bencher) {
+    bencher
+        .counter(ItemsCount::new(MESSAGES))
+        .with_inputs(threaded_one_across_threads)
         .bench_local_values(|started| started.publish_and_drain());
 }

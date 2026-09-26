@@ -4,9 +4,10 @@
 //! The subscription's loop stays on the app's runtime and reads the stream. It spreads what it
 //! reads over the rings round-robin, skipping a full ring to the next one with room, and stops
 //! polling only when every ring is full; `by_key` hashes the key onto a fixed ring and waits on
-//! that one, so a key keeps its order. A thread drains its ring and parks only when it finds it
-//! empty; the loop wakes it only when it is flagged parked, so under load a delivery costs no
-//! wake. A loop that waits on room is woken by the first ring to drain to half (or, waiting on a
+//! that one, so a key keeps its order. A thread drains its ring and parks only when it has found
+//! it empty for a few microseconds of spinning; the loop wakes it only when it is flagged parked,
+//! so under load a delivery costs no wake, and behind a handler lighter than the loop's read
+//! few do. A loop that waits on room is woken by the first ring to drain to half (or, waiting on a
 //! lane, by the lane's first free slot), not by every pop.
 //!
 //! Per delivery, under load: `rtrb`'s push and pop (a store each, the other side's index read only
@@ -22,6 +23,7 @@
 
 use std::fmt::Display;
 use std::future::{Future, Pending, poll_fn};
+use std::hint::spin_loop;
 use std::io;
 use std::ops::Deref;
 use std::pin::{Pin, pin};
@@ -29,6 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::task::{Context as TaskContext, Poll};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use futures::Stream;
 use futures::task::AtomicWaker;
@@ -44,6 +47,17 @@ use super::{Shutdown, Turn, lane_of};
 /// The entries of each thread's ring: enough that a thread finishing a delivery finds the next
 /// one waiting while the loop reads on, few enough that the read-ahead stays small.
 pub(super) const RING: usize = 8;
+
+/// How long a thread that found its ring empty keeps looking before it parks. A light handler
+/// drains its ring faster than the loop fills it; parked on its runtime's driver between
+/// deliveries, the thread would cost the loop a system call to wake it for most of them. Within
+/// this window the next delivery usually comes first. It is also the CPU a thread spends after
+/// the last delivery of a burst, and the longest a task or a timer of its own runtime waits
+/// behind it, as it waits behind a handler's poll.
+const SPIN: Duration = Duration::from_micros(10);
+
+/// The spins between two looks at an empty ring, at their longest.
+const LONGEST_GAP: u32 = 64;
 
 /// A thread of a `threads(n)` subscription could not be started: the subscription does not open.
 #[derive(Debug, Error)]
@@ -207,8 +221,8 @@ impl Drop for Leaving<'_> {
     }
 }
 
-/// One thread's work: drains its ring through `handle`, parks when it is empty, and ends once the
-/// loop has let go of the ring and it is empty.
+/// One thread's work: drains its ring through `handle`, parks when it has stayed empty for
+/// [`SPIN`], and ends once the loop has let go of the ring and it is empty.
 // The future is built on its thread and polled there alone, so it need not be `Send`: the
 // handler behind it only is.
 #[allow(clippy::future_not_send)]
@@ -241,6 +255,9 @@ async fn work<Item, Handle>(
             }
             continue;
         }
+        if arrives(&ring) {
+            continue;
+        }
         let waiting = &ring;
         poll_fn(|cx| {
             signals.wakers[index].register(cx.waker());
@@ -253,6 +270,28 @@ async fn work<Item, Handle>(
             Poll::Pending
         })
         .await;
+    }
+}
+
+/// Waits up to [`SPIN`] on the empty ring for a delivery, or for the loop to let go of it: whether
+/// either came first. The first looks come a few spins apart, so a delivery pushed right behind
+/// the last one is taken at once; the clock is read only once the gap between looks has grown to
+/// its longest.
+fn arrives<Item>(ring: &Consumer<Item>) -> bool {
+    let start = Instant::now();
+    let mut spins = 1;
+    loop {
+        for _ in 0..spins {
+            spin_loop();
+        }
+        if !ring.is_empty() || ring.is_abandoned() {
+            return true;
+        }
+        if spins < LONGEST_GAP {
+            spins *= 2;
+        } else if start.elapsed() >= SPIN {
+            return false;
+        }
     }
 }
 
@@ -615,7 +654,7 @@ mod tests {
             let items = stream::iter(0..1000u32).map(Ok::<_, Infallible>);
             let shutdown = Shutdown::new();
             let fed = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
+                Duration::from_secs(10),
                 threads.feed(items, "dying", &shutdown, |_| Some(b"key".as_slice())),
             )
             .await;
