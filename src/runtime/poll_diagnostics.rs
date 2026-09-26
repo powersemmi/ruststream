@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
@@ -22,9 +22,14 @@ const DEFAULT_THRESHOLD: Duration = Duration::from_micros(100);
 /// One poll in 64 is timed by default.
 const DEFAULT_SAMPLE_EVERY: NonZeroU32 = NonZeroU32::new(64).expect("64 is not zero");
 
-/// The samples the moving average spans, and the samples it needs before it may warn: one slow
-/// first poll (a cold cache, a lazily built client) is not a handler that computes.
+/// The weight of the moving average (each sample moves it by a sixteenth of the difference, the
+/// first ones by more, so it starts as their plain mean), and the samples it needs before it may
+/// warn: one slow first poll (a cold cache, a lazily built client) is not a handler that
+/// computes.
 const WINDOW: u64 = 16;
+
+/// The flag bit of [`PollStats::average_ns`]; the average itself never reaches it.
+const OVER: u64 = 1 << 63;
 
 /// Upper bounds of the histogram buckets in nanoseconds, 1-2-5 from one microsecond to ten
 /// seconds; one more bucket holds everything longer.
@@ -64,7 +69,9 @@ const BUCKETS: usize = BUCKET_BOUNDS_NS.len() + 1;
 /// cycle counter. When a subscription's average crosses the [`threshold`](Self::threshold)
 /// (100 microseconds by default), the runtime logs one warning naming the subscription, its
 /// average and p99 poll time, and the fix: `threads(n)`, which moves the handler onto threads of
-/// its own. The average spans the last 16 samples and warns only once it has them.
+/// its own. The average is exponential: each sample moves it by a sixteenth of the difference, so
+/// a recent sample weighs most and an old one fades without dropping out at once. It warns only
+/// after 16 samples.
 ///
 /// A handle is cheap to clone, and every clone reads the same reports. Hand one to
 /// [`RustStream::poll_diagnostics`](crate::runtime::RustStream::poll_diagnostics) to set the
@@ -301,7 +308,8 @@ impl PollReport {
         self.samples
     }
 
-    /// The moving average of the time in one poll, over the last 16 samples.
+    /// The exponential moving average of the time in one poll: each sample moves it by a
+    /// sixteenth of the difference.
     ///
     /// # Examples
     ///
@@ -343,10 +351,11 @@ pub(crate) struct PollStats {
     clock: Clock,
     samples: AtomicU64,
     sum_ns: AtomicU64,
+    /// The moving average in nanoseconds, with [`OVER`] set while it stays over the threshold.
+    /// One word, so the update that crosses the threshold is the one that warns, once, however
+    /// many workers record at the same time.
     average_ns: AtomicU64,
     buckets: [AtomicU64; BUCKETS],
-    /// Set while the average stays over the threshold, so a crossing warns once.
-    over: AtomicBool,
 }
 
 impl PollStats {
@@ -359,7 +368,6 @@ impl PollStats {
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
             buckets: std::array::from_fn(|_| AtomicU64::new(0)),
-            over: AtomicBool::new(false),
         }
     }
 
@@ -385,7 +393,7 @@ impl PollStats {
         PollReport {
             subscription: Arc::clone(&self.name),
             samples,
-            average: Duration::from_nanos(self.average_ns.load(Ordering::Relaxed)),
+            average: Duration::from_nanos(self.average_ns.load(Ordering::Relaxed) & !OVER),
             p99: Duration::from_nanos(quantile_ns(&buckets, 0.99)),
         }
     }
@@ -411,25 +419,32 @@ impl PollStats {
         self.sum_ns.fetch_add(ns, Ordering::Relaxed);
         self.buckets[bucket_of(ns)].fetch_add(1, Ordering::Relaxed);
         let weight = taken.min(WINDOW);
-        let step = |average: u64| {
-            Some(if ns >= average {
+        let ns = ns.min(!OVER);
+        let step = |state: u64| {
+            let average = state & !OVER;
+            let average = if ns >= average {
                 average + (ns - average) / weight
             } else {
                 average - (average - ns) / weight
-            })
+            };
+            let over = if average <= self.threshold_ns {
+                0
+            } else if taken >= WINDOW {
+                OVER
+            } else {
+                state & OVER
+            };
+            Some(average | over)
         };
-        // The closure always answers `Some`, so the update always lands.
+        // The closure always answers `Some`, so the update always lands, and the value it stored
+        // is the closure's answer for the value it replaced.
         let previous = self
             .average_ns
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
-        let average = step(previous).unwrap_or(previous);
-        if average <= self.threshold_ns {
-            if self.over.load(Ordering::Relaxed) {
-                self.over.store(false, Ordering::Relaxed);
-            }
-        } else if taken >= WINDOW && !self.over.swap(true, Ordering::Relaxed) {
-            self.warn(average);
+        let current = step(previous).unwrap_or(previous);
+        if previous & OVER == 0 && current & OVER != 0 {
+            self.warn(current & !OVER);
         }
     }
 
@@ -628,6 +643,27 @@ mod tests {
         assert!(stats.report().average() > Duration::from_nanos(9_900));
         stats.record(0);
         assert_eq!(stats.report().average(), Duration::from_nanos(9_361));
+    }
+
+    #[test]
+    fn a_crossing_is_held_in_the_average_word_and_hidden_from_the_report() {
+        let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
+        for _ in 1..WINDOW {
+            stats.record(1_000);
+        }
+        assert!(!over(), "the average warned before it was warmed up");
+        stats.record(1_000);
+        assert!(over());
+        assert_eq!(stats.report().average(), Duration::from_nanos(1_000));
+        for _ in 0..100 {
+            stats.record(0);
+        }
+        assert!(
+            !over(),
+            "the average fell under the threshold and stayed flagged"
+        );
+        assert!(stats.report().average() < Duration::from_nanos(500));
     }
 
     #[test]
