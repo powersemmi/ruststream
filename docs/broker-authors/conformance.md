@@ -325,11 +325,13 @@ without that capability does not call it. Each suite takes factories of the same
 
 | Suite | Requires | Asserts |
 |---|---|---|
-| `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, a request with no answer returns an error after its timeout; a request made after an earlier one came from a runtime that has since stopped still resolves |
-| `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
-| `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it; misuse returns an error - `commit` / `abort` with no open transaction, a second `begin_transaction` while one is open (which must leave it untouched) |
-| `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one publisher settle independently, and that publisher keeps publishing directly while one is open |
-| `capabilities::seeking` | `Seekable`, messages `Positioned` | a seek back to a position captured from a delivered message redelivers exactly that message and the ordered suffix after it, a seek forward skips the queued deliveries before the target, and the subscription keeps delivering new publishes after repositioning |
+| `capabilities::request_reply` | `RequestReply` | the request reaches a responder with a usable `reply-to` header, the correlated reply resolves the request, a request with no answer returns an error after its timeout; a request made after an earlier one came from a runtime that has since stopped still resolves; two requests in flight at once each get their own reply, a reply that arrives after its request timed out resolves no later request, and a request after shutdown returns an error at once |
+| `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches; the elements of one batch settle one by one (a nack with requeue brings back that element alone), also when the batch is settled from a runtime that has since stopped |
+| `capabilities::batch_seeking` | `BatchSubscriber` and `Seekable`, messages `Positioned` | a seek back to a position captured from a batched delivery makes the next batches start at that message and carry the ordered suffix after it |
+| `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it; misuse returns an error - `commit` / `abort` with no open transaction, a second `begin_transaction` while one is open (which must leave it untouched); a commit from a runtime that has since stopped still publishes, and after shutdown the commit of a transaction left open and a plain publish return an error |
+| `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one publisher settle independently, and that publisher keeps publishing directly while one is open; a commit from a runtime that has since stopped still publishes, and after shutdown a commit, a direct publish and a transaction opened then all return an error |
+| `capabilities::seeking` | `Seekable`, messages `Positioned` | a seek back to a position captured from a delivered message redelivers exactly that message and the ordered suffix after it, a seek forward skips the queued deliveries before the target, and the subscription keeps delivering new publishes after repositioning; a fresh subscription that seeks before its first delivery, to a position an earlier subscription captured, starts at that message, a seek from a runtime that has since stopped still repositions, and a seek after shutdown returns an error |
+| `capabilities::seeking_unknown_position` | `Seekable`, and a position the broker builds | a seek to a position the subscription's log does not hold (evicted by retention, or never there) returns an error and does not move the subscription: nothing is read from elsewhere |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -357,7 +359,7 @@ durable queue still holds the earlier messages, a key namespace still holds the 
 suites call `conformance::helpers::unique_subject` for that, and your own end-to-end suite has the
 same problem and the same answer.
 
-The in-memory broker implements every capability natively and passes all five suites in process
+The in-memory broker implements every capability natively and passes all seven suites in process
 (see [Memory](../brokers/memory.md#capabilities)); it is the executable reference for what each
 suite expects.
 

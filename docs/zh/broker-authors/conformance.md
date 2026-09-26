@@ -295,11 +295,13 @@ async fn in_process_matches_the_server() {
 
 | 套件 | 要求 | 断言内容 |
 |---|---|---|
-| `capabilities::request_reply` | `RequestReply` | 请求带着一个可用的 `reply-to` 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误；在前一个请求来自一个已经停止的运行时之后，新的请求仍然得到回复 |
-| `capabilities::batches` | `BatchSubscriber` | 每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里 |
-| `capabilities::transactions` | `TransactionalPublisher` | 事务里的任何内容在 `commit` 之前都不可见，`commit` 按顺序发布整个缓冲区，`abort` 把它丢弃；误用会返回错误：没有打开事务就 `commit` / `abort`，或者已有事务打开时再次 `begin_transaction`（这必须让原事务保持不变） |
-| `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布 |
-| `capabilities::seeking` | `Seekable`，且消息实现 `Positioned` | 回退到从某条已投递消息上取得的位置，会重新投递恰好那一条消息以及它之后按顺序排列的后缀；向前跳转会略过目标之前排队的投递；重新定位之后，订阅继续投递新的发布 |
+| `capabilities::request_reply` | `RequestReply` | 请求带着一个可用的 `reply-to` 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误；在前一个请求来自一个已经停止的运行时之后，新的请求仍然得到回复；同时在途的两个请求各自得到自己的回复，在请求超时之后才到达的回复不会了结下一个请求，Broker 关闭之后发出的请求立即返回错误 |
+| `capabilities::batches` | `BatchSubscriber` | 每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里；同一批里的元素逐条结算（带重新入队的 `nack` 只让这一条回来），批在一个已经停止的运行时里结算时也是如此 |
+| `capabilities::batch_seeking` | `BatchSubscriber` 和 `Seekable`，且消息实现 `Positioned` | 回退到从批内某条消息上取得的位置之后，接下来的批从这条消息开始，并按顺序带上它之后的后缀 |
+| `capabilities::transactions` | `TransactionalPublisher` | 事务里的任何内容在 `commit` 之前都不可见，`commit` 按顺序发布整个缓冲区，`abort` 把它丢弃；误用会返回错误：没有打开事务就 `commit` / `abort`，或者已有事务打开时再次 `begin_transaction`（这必须让原事务保持不变）；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，提交仍打开着的事务和普通发布都返回错误 |
+| `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，`commit`、直接发布以及此时打开的事务都返回错误 |
+| `capabilities::seeking` | `Seekable`，且消息实现 `Positioned` | 回退到从某条已投递消息上取得的位置，会重新投递恰好那一条消息以及它之后按顺序排列的后缀；向前跳转会略过目标之前排队的投递；重新定位之后，订阅继续投递新的发布；新订阅在第一次投递之前跳转到之前的订阅取得的位置，就从这条消息开始；在一个已经停止的运行时里发起的跳转仍然生效；Broker 关闭之后的跳转返回错误 |
+| `capabilities::seeking_unknown_position` | `Seekable`，以及由 Broker 构造的位置 | 跳转到订阅日志里不存在的位置（已被保留策略淘汰，或者从未存在）返回错误，订阅不会移动，也不会从别处读取 |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -326,7 +328,7 @@ async fn passes_request_reply() {
 套件为此调用 `conformance::helpers::unique_subject`。你自己的端到端测试集有同样的问题，也有
 同样的解法。
 
-内存 Broker 原生实现了每一项能力，五个套件都在进程内通过（见
+内存 Broker 原生实现了每一项能力，七个套件都在进程内通过（见
 [内存 Broker](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明每个套件究竟期望什么。
 
 ## 作者检查清单
