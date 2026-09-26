@@ -237,7 +237,11 @@ fn app() -> impl App {
   and spreads deliveries over the threads round-robin, through a bounded ring per thread, and
   stops reading only when every ring is full. `threads(n, by_key)` sends a key to a fixed
   thread, so a key keeps its order. A delivery allocates nothing on its way, and under load it
-  wakes no thread.
+  wakes no thread. A thread that runs out of work spins for up to ten microseconds before it
+  sleeps, so a handler lighter than the loop's read is rarely woken either; that spin is what a
+  thread spends after each burst. A thread that never runs out of work still lets the other
+  tasks and timers of its runtime run once its cooperative budget is spent, as any tokio task
+  does.
 - Decoding, the handler, encoding a reply and settling run on the thread the delivery was handed
   to, and only there, and so does everything the delivery leaves behind: a timer, a publish or a
   plain `tokio::spawn` in the handler, an `and_after` continuation, an `after(..)` hook and the
