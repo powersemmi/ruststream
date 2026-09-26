@@ -19,8 +19,8 @@ use common::Order;
 use futures::{Stream, StreamExt};
 use ruststream::memory::prelude::*;
 use ruststream::{
-    AckError, AddressedCopies, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed,
-    Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, Subscriber,
+    SubscriptionSource,
 };
 use tokio::sync::Notify;
 use tokio::time::timeout;
