@@ -134,7 +134,9 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Paused time: the wait below ends when the runtime, idle, advances its clock, not after a real
+// delay.
+#[tokio::test(start_paused = true)]
 async fn detached_probe_keeps_the_last_state_and_parks() {
     let broker = MemoryBroker::new();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
