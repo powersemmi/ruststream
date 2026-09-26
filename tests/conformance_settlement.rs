@@ -189,13 +189,15 @@ impl<S: Settlement> IncomingMessage for StandinMessage<S> {
         self.inner.headers()
     }
 
-    /// Dropping the wrapped delivery here releases it without requeueing, which is what a
+    /// Taking the wrapped delivery apart here releases it without requeueing, which is what a
     /// transport that settles nothing does with every message it hands over.
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
+        let _ = self.inner.into_raw();
         ready(S::answer())
     }
 
     fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send {
+        let _ = self.inner.into_raw();
         ready(S::answer())
     }
 }
