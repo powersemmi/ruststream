@@ -416,11 +416,11 @@ impl PollStats {
     #[inline(never)]
     fn finish(&self, start: u64) {
         let end = self.clock.raw();
-        self.record(self.clock.delta_as_nanos(start, end));
+        let _ = self.record(self.clock.delta_as_nanos(start, end));
     }
 
-    /// Adds one timed poll.
-    fn record(&self, ns: u64) {
+    /// Adds one timed poll, and says whether it crossed the threshold and warned.
+    fn record(&self, ns: u64) -> bool {
         let taken = self.samples.fetch_add(1, Ordering::Relaxed) + 1;
         self.sum_ns.fetch_add(ns, Ordering::Relaxed);
         self.buckets[bucket_of(ns)].fetch_add(1, Ordering::Relaxed);
@@ -452,9 +452,11 @@ impl PollStats {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
         let current = step(previous).unwrap_or(previous);
-        if previous & OVER == 0 && current & OVER != 0 {
+        let warns = previous & OVER == 0 && current & OVER != 0;
+        if warns {
             self.warn(current & !OVER);
         }
+        warns
     }
 
     #[cold]
@@ -667,6 +669,17 @@ mod tests {
             over(),
             "the app-runtime subscription's crossing was not held"
         );
+    }
+
+    #[test]
+    fn a_crossing_after_the_average_fell_back_warns_again() {
+        let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        // One subscription of the name runs on the app runtime, the one the warning is for.
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
+        let warnings = |ns: u64, count: u64| (0..count).filter(|_| stats.record(ns)).count();
+        assert_eq!(warnings(1_000, WINDOW), 1);
+        assert_eq!(warnings(0, 100), 0, "a fall is not a crossing");
+        assert_eq!(warnings(1_000, WINDOW), 1);
     }
 
     #[test]
