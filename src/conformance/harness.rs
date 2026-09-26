@@ -109,6 +109,7 @@ where
     nack_without_requeue_drops(connect(factory()).await).await;
     headers_propagate(connect(factory()).await).await;
     published_log_observes_publishes(connect(factory()).await).await;
+    super::in_process::run(factory).await;
 }
 
 /// A broker whose `connect` is its [`InProcess`] transition, so the suites that take any

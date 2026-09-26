@@ -484,10 +484,13 @@ The suites are written against the traits, so they run unchanged in process (the
 `InProcess` transition, whose connected form is the `TestableBroker`) and against a real server
 behind an env gate. Run both: the in-process mode is what a service's whole test suite rides on,
 and the server is what the release runs against. `run_suite` covers the routing contract - ordering, ack and nack, headers,
-the publish log; the `capabilities::*` suites are yours to call, one per capability you implement,
-and they are not part of `run_suite`. `settlement::matches_in_process` holds ack, nack, out-of-order
-settlement and an unsettled drop to their meaning live and in process, and fails when the two
-answer differently; `lifecycle` holds a `nack_after` delay as a floor.
+the publish log, the `routes` answer and the harness counts; the `capabilities::*` suites are yours
+to call, one per capability you implement, and they are not part of `run_suite`.
+`settlement::matches_in_process` holds ack, nack, out-of-order settlement and an unsettled drop to
+their meaning live and in process, and fails when the two answer differently; `lifecycle` holds a
+`nack_after` delay as a floor. `conformance::in_process::{backlog_matches_server,
+refuses_like_the_server}` hold the in-process transport's backlog declaration and its refusals to
+the real server; run them with the live suites.
 
 ```rust
 use ruststream::conformance::harness;
