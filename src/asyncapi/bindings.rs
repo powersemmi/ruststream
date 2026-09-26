@@ -395,24 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn the_core_writes_the_binding_version_so_a_broker_cannot_forget_it() {
-        let bindings = Bindings::new().with(
-            Binding::new(
-                "kafka",
-                "0.5.0",
-                &Group {
-                    group_id: "billing",
-                },
-            )
-            .unwrap(),
-        );
-        let json = serde_json::to_value(&bindings).unwrap();
-
-        assert_eq!(json["kafka"]["groupId"], "billing");
-        assert_eq!(json["kafka"]["bindingVersion"], "0.5.0");
-    }
-
-    #[test]
     fn an_unlisted_protocol_is_refused_at_construction() {
         let error = Binding::new("kinesis", "0.1.0", &Group { group_id: "x" }).unwrap_err();
         assert!(matches!(

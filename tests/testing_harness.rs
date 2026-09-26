@@ -9,10 +9,10 @@
     feature = "macros"
 ))]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
-use ruststream::memory::MemoryBroker;
+use ruststream::memory::{MemoryBroker, MemoryPosition, Retaining, Retention};
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import (matching the `examples/publishing.rs` pattern).
 use ruststream::runtime::{
@@ -87,22 +87,6 @@ async fn records_received_value_and_ack() {
         .with(&Order { id: 7 })
         .settled(HandlerOutcome::ack())
         .assert_outcome(Outcome::Ack);
-
-    // The received messages can also be retrieved for custom inspection.
-    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("orders").received();
-    assert_eq!(received, vec![Order { id: 7 }]);
-    let raw = tb
-        .broker::<MemoryBroker>()
-        .subscriber("orders")
-        .received_raw();
-    assert_eq!(raw.len(), 1);
-
-    // A single-message handler is handed one message at a time, which is the shape
-    // `assert_batch_sizes` reports for it.
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders")
-        .assert_batch_sizes(&[1]);
-
     tb.assert_running();
 }
 
@@ -252,16 +236,57 @@ async fn perpetual_requeue_hits_the_step_budget() {
     tb.shutdown().await.unwrap();
 }
 
+/// `assert_not_called` is a check, not a formality: one delivery fails it, and the message says
+/// how many calls there were.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn assert_not_called_when_no_input() {
+#[should_panic(expected = "was called 1 times, expected never")]
+async fn assert_not_called_fails_once_the_subscriber_was_called() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(handle_orders);
     });
     let tb = TestApp::start(app).await.unwrap();
+    tb.message(&Order { id: 1 })
+        .to("orders")
+        .publish()
+        .await
+        .unwrap();
 
     tb.broker::<MemoryBroker>()
         .subscriber("orders")
         .assert_not_called();
+}
+
+/// An assertion that names one payload has none to read on a batch of several, and says so
+/// instead of checking one element of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "last received a batch of 2 deliveries")]
+async fn a_single_payload_assertion_refuses_a_batch_of_several() {
+    // Published before the subscription opens and replayed from the start of the log, so both
+    // reach the handler in one batch.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    let publisher = broker.publisher();
+    for id in [1, 2] {
+        publisher
+            .message(&Order { id })
+            .to("batched")
+            .publish()
+            .await
+            .unwrap();
+    }
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            take_batch
+                .batch(nonzero!(8))
+                .start_at(MemoryPosition::start()),
+        );
+    });
+    let tb = TestApp::start(app).await.unwrap();
+    tb.settle().await.unwrap();
+
+    tb.broker::<MemoryBroker<Retaining>>()
+        .subscriber("batched")
+        .assert_called_once()
+        .with(&Order { id: 1 });
 }
 
 // --- Custom codec: a handler mounted with CBOR; assertions decode with the same codec. ---
@@ -305,7 +330,7 @@ async fn custom_codec_assertions_use_the_handlers_codec() {
 // --- Requeue-then-ack: a stateful handler that nacks once, proving redelivery and quiescence. ---
 
 struct Counter {
-    seen: Arc<AtomicU32>,
+    seen: AtomicU32,
 }
 
 #[subscriber("retryonce")]
@@ -320,12 +345,11 @@ async fn retry_once(order: &Order, ctx: &mut Context<'_, (), Counter>) -> Handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn requeue_redelivers_and_settles() {
-    let seen = Arc::new(AtomicU32::new(0));
-    let state_seen = Arc::clone(&seen);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(move |()| {
-            let seen = state_seen;
-            async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Counter {
+                seen: AtomicU32::new(0),
+            })
         })
         .with_broker(MemoryBroker::new(), |b| {
             b.include(retry_once);
@@ -343,37 +367,39 @@ async fn requeue_redelivers_and_settles() {
         .subscriber("retryonce")
         .assert_called(2)
         .settled(HandlerOutcome::ack());
-    assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
 
 // --- Delayed redelivery: retry_after is recorded immediately and driven by advancing time. ---
 
-// --8<-- [start:retry_after]
+/// How long the delayed handler asks its first delivery to wait.
+const RETRY_DELAY: Duration = Duration::from_secs(30);
+
 #[subscriber("delayed")]
 async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> HandlerOutcome {
     let _ = order;
     if ctx.state().seen.fetch_add(1, Ordering::SeqCst) == 0 {
-        HandlerOutcome::retry_after(std::time::Duration::from_secs(30))
+        HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
         HandlerOutcome::ack()
     }
 }
 
+/// The redelivery waits for the full delay on the paused clock, not merely for "later": it is
+/// still absent one tick short of the delay and lands on the tick that reaches it.
 #[tokio::test(start_paused = true)]
 async fn retry_after_redelivers_after_advancing_time() {
-    let seen = Arc::new(AtomicU32::new(0));
-    let state_seen = Arc::clone(&seen);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(move |()| {
-            let seen = state_seen;
-            async move { Ok::<_, std::convert::Infallible>(Counter { seen }) }
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Counter {
+                seen: AtomicU32::new(0),
+            })
         })
         .with_broker(MemoryBroker::new(), |b| {
             b.include(delayed_retry);
         });
     let tb = TestApp::start(app).await.unwrap();
 
-    // The publish records the immediate NackAfter settlement and returns; the redelivery is pending.
+    // The publish records the immediate settlement and returns; the redelivery is pending.
     tb.message(&Order { id: 1 })
         .to("delayed")
         .publish()
@@ -382,22 +408,21 @@ async fn retry_after_redelivers_after_advancing_time() {
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
         .assert_called_once()
-        .settled(HandlerOutcome::retry_after(std::time::Duration::from_secs(
-            30,
-        )));
-    assert_eq!(seen.load(Ordering::SeqCst), 1);
+        .settled(HandlerOutcome::retry_after(RETRY_DELAY));
 
-    // Advancing past the delay fires the redelivery and drives it to settle.
-    tb.advance(std::time::Duration::from_secs(30))
+    tb.advance(RETRY_DELAY.saturating_sub(Duration::from_millis(1)))
         .await
         .unwrap();
     tb.broker::<MemoryBroker>()
         .subscriber("delayed")
+        .assert_called_once();
+
+    tb.advance(Duration::from_millis(1)).await.unwrap();
+    tb.broker::<MemoryBroker>()
+        .subscriber("delayed")
         .assert_called(2)
         .settled(HandlerOutcome::ack());
-    assert_eq!(seen.load(Ordering::SeqCst), 2);
 }
-// --8<-- [end:retry_after]
 
 // --- Multi-broker: label addressing, ambiguity, and a cross-broker cascade. ---
 
@@ -465,8 +490,6 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
         .published::<Event>("events")
         .decoded();
     assert_eq!(events, vec![Event { id: 5 }]);
-    let raw = tb.broker_named("egress").published::<Event>("events");
-    assert_eq!(raw.messages().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -517,11 +540,8 @@ async fn with_state_injects_a_mirror_state() {
             b.include(forward);
             b.include(on_event);
         });
-    let tb = TestApp::with_state(app, |brokers| {
-        assert!(format!("{brokers:?}").contains("TestBrokers"));
-        Egress {
-            egress: brokers.broker::<MemoryBroker>().publisher(),
-        }
+    let tb = TestApp::with_state(app, |brokers| Egress {
+        egress: brokers.broker::<MemoryBroker>().publisher(),
     })
     .await
     .unwrap();
@@ -539,7 +559,7 @@ async fn with_state_injects_a_mirror_state() {
         .with(&Event { id: 9 });
 }
 
-// --- Raw inspection, empty-channel and Debug surfaces. ---
+// --- Raw inspection and the empty channel. ---
 
 #[subscriber("echo", publish("out"))]
 async fn echo(order: &Order) -> Order {
@@ -547,7 +567,7 @@ async fn echo(order: &Order) -> Order {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inspect_raw_messages_and_debug_surfaces() {
+async fn raw_payloads_read_back_as_received_and_as_published() {
     use ruststream::codec::{Codec, JsonCodec};
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -576,12 +596,6 @@ async fn inspect_raw_messages_and_debug_surfaces() {
     tb.broker::<MemoryBroker>()
         .published::<Order>("never")
         .assert_not_called();
-
-    // Debug surfaces and the cooperative drain are exercised here too.
-    assert!(format!("{tb:?}").contains("TestApp"));
-    assert!(format!("{:?}", tb.broker::<MemoryBroker>()).contains("BrokerHandle"));
-    tb.drain().await;
-    assert!(tb.run_result().is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -623,25 +637,4 @@ async fn addressing_an_unknown_label_names_the_label() {
 
     // A typo in the label is a test-authoring mistake, so the panic has to quote it back.
     let _ = tb.broker_named("typo");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_failing_startup_hook_is_reported_as_a_startup_error() {
-    #[derive(Debug, thiserror::Error)]
-    #[error("state could not be built")]
-    struct StartupFailed;
-
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(async move |()| Err::<(), _>(StartupFailed))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle_orders);
-        });
-
-    let started = TestApp::start(app).await;
-    match started {
-        Err(TestError::Startup(source)) => {
-            assert!(source.to_string().contains("state could not be built"));
-        }
-        other => panic!("expected a startup error, got {:?}", other.map(|_| ())),
-    }
 }

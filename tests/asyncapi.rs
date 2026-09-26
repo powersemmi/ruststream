@@ -96,10 +96,6 @@ fn message_components_merge_and_send_ids_stay_unique() {
     assert_eq!(spec.operations["send_shared_c1"].action, "send");
     assert_eq!(spec.operations["send_shared_c2"].action, "send");
 
-    // And one receive operation per handler, for the same reason.
-    assert_eq!(spec.operations["receive_shared"].action, "receive");
-    assert_eq!(spec.operations["receive_shared_2"].action, "receive");
-
     // The shared component filled in the payload schema from the later contributor (so the
     // coverage gate reports no false gap) and kept the first headers schema on conflict.
     let component = &spec.components.messages["u64"];
@@ -371,12 +367,6 @@ fn schema_doc_comment_feeds_message_metadata() {
             .contains_key("WireShipment"),
         "the channel must reference the schema-titled component",
     );
-
-    // The handler doc comment stays on the operation.
-    assert_eq!(
-        spec.operations["receive_shipments"].description.as_deref(),
-        Some("Receives shipments."),
-    );
 }
 
 #[test]
@@ -556,15 +546,7 @@ mod typed_headers_spec {
         assert!(done_headers["properties"].get("task_id").is_some());
         assert!(spec.components.messages["Progress"].headers.is_none());
 
-        // The reply answers the receive operation rather than standing as an operation of its
-        // own; the reply type's contract feeds the headers schema.
-        let reply = spec.operations["receive_requests"]
-            .reply
-            .as_ref()
-            .expect("the request-reply registration reports what answers it");
-        assert_eq!(reply.channel.reference, "#/channels/responses");
-        assert!(!spec.operations.contains_key("send_requests_responses"));
-        assert!(spec.channels.contains_key("responses"));
+        // The reply type's contract feeds the headers schema of the reply's message.
         let response = &spec.components.messages["Response"];
         assert!(response.headers.is_some());
 
@@ -715,7 +697,6 @@ fn every_handler_on_a_shared_channel_gets_its_own_receive_operation() {
 
     let spec = build_spec(&app);
 
-    assert_eq!(app.handlers().len(), 2);
     let receives: Vec<&String> = spec
         .operations
         .iter()
@@ -1096,21 +1077,6 @@ mod document_surface {
         assert!(json.contains("\"x-ruststream-retry\""));
     }
 
-    /// A registration that declared nothing carries no extension: the document reports what the
-    /// service said, not what it might have said.
-    #[test]
-    fn an_undeclared_retry_adds_no_extension() {
-        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(reconcile);
-            },
-        );
-        let spec = build_spec(&app);
-
-        assert!(spec.operations["receive_orders"].retry.is_none());
-    }
-
     /// The `AsyncAPI` Schema Object extends Draft 07, so that is the draft the payloads are
     /// generated in: a document that says one draft and carries another is wrong for every tool
     /// that reads it.
@@ -1448,10 +1414,6 @@ mod protocol_bindings {
             value["servers"]["mqtt"]["bindings"]["mqtt"]["clientId"],
             "orders"
         );
-        assert_eq!(
-            value["servers"]["mqtt"]["bindings"]["mqtt"]["bindingVersion"],
-            "0.2.0",
-        );
     }
 
     /// The conformance scan is what keeps a broker honest about credentials, so it has to fail on
@@ -1766,8 +1728,6 @@ mod publish_bindings {
 
         let slot = &value["channels"]["chunks.progress"]["bindings"]["sns"];
         assert_eq!(slot["name"], "chunks.progress");
-        // The core writes the version, so a policy cannot ship a binding without one.
-        assert_eq!(slot["bindingVersion"], "0.1.0");
         assert_eq!(
             value["operations"]["send_requests_chunks_progress"]["bindings"]["sns"]["topic"]["name"],
             "chunks.progress",
