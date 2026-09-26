@@ -112,6 +112,49 @@ async fn nack_after_redelivers_after_the_delay() {
     redelivered.ack().await.unwrap();
 }
 
+/// A connect future built outside any runtime connects on the runtime that polls it.
+#[test]
+fn connect_captures_the_runtime_that_polls_it() {
+    let connecting = MemoryBroker::new().connect();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    assert!(runtime.block_on(connecting).is_ok());
+}
+
+/// A subscription opened without connecting keeps no runtime: one opened on a runtime that has
+/// since stopped is redelivered on the runtime that settles it.
+#[test]
+fn an_unconnected_subscription_redelivers_on_the_settling_runtime() {
+    let broker = MemoryBroker::new();
+    let opening = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let mut sub = opening.block_on(async { broker.subscribe("delayed") });
+    drop(opening);
+
+    let settling = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    settling.block_on(async {
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new("delayed", b"later"), None)
+            .await
+            .unwrap();
+        let mut stream = std::pin::pin!(sub.stream());
+        let msg = stream.next().await.unwrap().unwrap();
+        msg.nack_after(Duration::from_secs(5)).await.unwrap();
+        let redelivered = tokio::time::timeout(Duration::from_secs(60), stream.next()).await;
+        assert!(
+            matches!(redelivered, Ok(Some(Ok(_)))),
+            "the redelivery was spawned on the stopped runtime"
+        );
+    });
+}
+
 /// A pending redelivery keeps the way back to its subscription, not the bus: once the broker and
 /// the subscriber are gone, the bus and its publish log are freed while the timer still waits.
 #[tokio::test(start_paused = true)]

@@ -128,6 +128,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::Stream;
+use futures::future::lazy;
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
@@ -764,7 +765,7 @@ impl<Log: LogMode> MemoryBroker<Log> {
         } else {
             let _ = self.state.register(&name, tx.clone());
         }
-        MemorySubscriber::new(name, rx, tx, &self.state, Handle::try_current().ok())
+        MemorySubscriber::new(name, rx, tx, &self.state, None)
     }
 
     /// Returns a publisher bound to this broker.
@@ -807,23 +808,27 @@ impl<Log: LogMode> Broker for MemoryBroker<Log> {
     ///
     /// # Panics
     ///
-    /// Panics when called outside a Tokio runtime, the one thing it has to capture.
+    /// Panics when polled outside a Tokio runtime, the one thing it has to capture.
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
-        {
-            let mut bus = self
-                .state
-                .subscribers
-                .lock()
-                .expect("memory broker mutex poisoned");
-            if let Bus::ShutDown(routing) = *bus {
-                *bus = Bus::Live(Registry::new(routing));
+        // Run on the first poll, so the runtime captured is the one the connection runs on, not
+        // the one the future happened to be built on.
+        lazy(move |_| {
+            {
+                let mut bus = self
+                    .state
+                    .subscribers
+                    .lock()
+                    .expect("memory broker mutex poisoned");
+                if let Bus::ShutDown(routing) = *bus {
+                    *bus = Bus::Live(Registry::new(routing));
+                }
             }
-        }
-        ready(Ok(ConnectedMemoryBroker {
-            state: self.state,
-            runtime: Handle::current(),
-            mode: PhantomData,
-        }))
+            Ok(ConnectedMemoryBroker {
+                state: self.state,
+                runtime: Handle::current(),
+                mode: PhantomData,
+            })
+        })
     }
 }
 
