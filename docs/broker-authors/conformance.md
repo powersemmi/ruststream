@@ -76,16 +76,30 @@ with no I/O, then the consuming `connect` that yields the typed connected form, 
 opened through the broker's own `SubscriptionSource`, a publish the subscription receives and acks,
 and the consuming `shutdown` that yields the terminal witness.
 
-The publish, the acknowledgement and, where the delivery offers it, a `nack_after` come from a
-current-thread runtime on a thread of its own, which stops before the check goes on. The delayed
-message must come back once the delay runs out: the check holds the broker to running its internal
-tasks on the runtime it connected on (see [Writing a broker](index.md)). The publisher and the
-delivery move to that thread, so both are `'static`.
+Every step comes from where a service reaches the broker:
+
+- The constructor runs on a plain thread with no Tokio runtime and must return within a second. A
+  constructor that spawns, calls `Handle::current` or waits on the network fails.
+- The subscription is opened, the first message published and every settlement made from a
+  current-thread runtime on a thread of its own, which stops before the check goes on. The
+  subscription must keep receiving. The publisher of the first message publishes again, from the
+  broker's runtime and from a new runtime, and both messages must arrive. A `nack(requeue = true)`
+  that answers `Ok` must bring the message back, and `nack(requeue = false)` must not. This holds
+  the broker to running its internal tasks on the runtime it connected on (see
+  [Writing a broker](index.md)).
+- Where the delivery offers `nack_after`, the check settles with a delay of 1.5 s. The message must
+  come back no sooner than that and within ten seconds after it: a delay that is ignored, rounded
+  down or run on the settling thread's runtime fails.
+- `shutdown` must return within ten seconds.
 
 The owner of the connected form cannot reach it after shutdown: that code does not compile. The
-runtime rule is the **aliased-handle contract**, and the check watches exactly that: a publisher
-created before the shutdown must return an error afterwards, never silently succeed against a
-connection that is already closed.
+runtime rule is the **aliased-handle contract**. After the shutdown, a publish must return an error
+through a publisher paired before it and never used, through one used on the broker's runtime and
+through one used from the stopped runtimes. A delivery received before the shutdown and requeued
+after it must return an error or come back.
+
+The descriptor, the subscriber, the publisher and the delivery move to other threads, so all of
+them are `'static`.
 
 The check takes three factories, and they keep it broker-agnostic:
 
@@ -107,8 +121,9 @@ async fn passes_lifecycle() {
 }
 ```
 
-- **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
-  does not satisfy it: construct cheaply, connect in `Broker::connect`.
+- **`make_broker`** is **synchronous** (`Fn() -> B`) and `Sync`, because the check calls it from
+  another thread. A broker that can only be built asynchronously does not satisfy it: construct
+  cheaply, connect in `Broker::connect`.
 - **`make_source`** builds the subscription descriptor for a subject (the macro-subscriber path).
 - **`make_publisher`** produces a publisher from the connected form.
 
@@ -116,6 +131,27 @@ A broker with no ack semantics (Core NATS) passes by returning `AckError::Unsupp
 the check accepts that answer as well as a successful ack. `lifecycle` performs a real `connect`, so
 run it against a live server and enable it only when an environment variable like `NATS_TEST_URL` is
 set.
+
+## Shutdown and shared handles
+
+Two more lifecycle checks need an answer only your broker can give, so your crate calls each of
+them itself, in process and against a real server:
+
+| Check | Takes | Asserts |
+|---|---|---|
+| `lifecycle::shutdown_flushes` | the broker's `Backlog` answer | an acknowledgement and a publish made right before `shutdown` are finished by it: the acknowledged message does not come back on a new connection, and the published one reaches another connection (a new one under `Backlog::Delivered`, one subscribed beforehand under `Backlog::Missed`); an acknowledgement made after the shutdown that answers `Ok` must hold too; `shutdown` returns within ten seconds |
+| `lifecycle::shared_handle_closes` | a connected form that is `Clone` | once the original shuts down, every use of a clone errors: a publisher paired from it before or after the shutdown, and a subscription it opens (refused, or ended at once) |
+
+`shutdown_flushes` connects more than once, so `make_broker` must reach the same broker every time:
+a server, or in process one world shared by every broker it builds. The in-memory broker's own run
+shares one bus between clones:
+
+```rust
+use ruststream::conformance::lifecycle;
+use ruststream::testing::Backlog;
+
+--8<-- "tests/conformance_self.rs:shutdown_flushes"
+```
 
 ## The same suites in process
 
@@ -195,6 +231,8 @@ Before publishing a broker crate:
 - [ ] `harness::lifecycle` passes against a real server, enabled by an environment variable (the
       ladder: sync `new`, consuming `connect`, subscribe, ack, consuming `shutdown`, and the
       aliased-handle error after it).
+- [ ] `lifecycle::shutdown_flushes` passes with the broker's `Backlog` answer, and
+      `lifecycle::shared_handle_closes` passes where the connected form is `Clone`.
 - [ ] An end-to-end suite covers broker-specific semantics, enabled by that same variable.
 - [ ] `Cargo.toml` metadata is complete (`description`, `license`, `repository`, `keywords`,
       `categories`), and CI checks `--no-default-features` and `--all-features`.

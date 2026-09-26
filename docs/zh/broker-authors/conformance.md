@@ -68,13 +68,25 @@ use ruststream::conformance::harness;
 `SubscriptionSource` 建立一个订阅，发布一条消息，由该订阅收到并 ack。最后是消费 `self` 的
 `shutdown`，它产出终态见证值。
 
-发布、ack，以及投递支持时的 `nack_after`，都在另一个线程上的单线程运行时里执行，这个运行时在检查继续
-之前就停止。延迟的消息必须在延迟结束后回来：检查以此要求 Broker 的内部任务运行在它连接时所在的运行时上
-（见[编写一个 Broker](index.md)）。发布者和投递会移到那个线程，所以二者都是 `'static`。
+每一步都从服务实际调用 Broker 的地方发出：
 
-已连接形态的持有者在关闭之后再用它，代码在编译期就通不过。留在运行时的规则是**别名句柄契约**，
-这项检查验证的正是它：关闭之前创建的发布者，在关闭之后必须返回错误，不得对着一条已经关闭的
-连接悄悄成功。
+- 构造函数在一个没有 Tokio 运行时的普通线程上调用，必须在一秒内返回。构造函数里 spawn 任务、
+  调用 `Handle::current` 或等待网络，都通不过检查。
+- 订阅的建立、第一条消息的发布以及每一次确认，都在另一个线程上的单线程运行时里执行，这个运行时
+  在检查继续之前就停止。订阅必须继续收到消息。发布第一条消息的发布者再发布两次，一次在 Broker 的
+  运行时里，一次在新的运行时里，两条消息都必须到达。返回 `Ok` 的 `nack(requeue = true)` 必须让
+  消息回来，`nack(requeue = false)` 则不能。检查以此要求 Broker 的内部任务运行在它连接时所在的
+  运行时上（见[编写一个 Broker](index.md)）。
+- 投递支持 `nack_after` 时，检查以 1.5 秒的延迟确认。消息回来的时间不能早于这个延迟，也不能晚于
+  延迟之后十秒。忽略延迟、把延迟向下取整，或者在确认线程的运行时里计时，都通不过检查。
+- `shutdown` 必须在十秒内返回。
+
+已连接形态的持有者在关闭之后再用它，代码在编译期就通不过。留在运行时的规则是**别名句柄契约**。
+关闭之后，通过以下发布者发布都必须返回错误：关闭之前创建、从未用过的发布者，只在 Broker 运行时
+里用过的发布者，以及在已停止的运行时里用过的发布者。关闭之前收到、关闭之后重新入队的投递，必须
+返回错误，或者再次到达。
+
+订阅描述符、订阅者、发布者和投递都会移到其他线程，所以它们都是 `'static`。
 
 这项检查接收三个工厂，因此与具体 Broker 无关：
 
@@ -96,14 +108,35 @@ async fn passes_lifecycle() {
 }
 ```
 
-- **`make_broker`** 是**同步的**（`Fn() -> B`）。只能异步构造的 Broker 满足不了它。构造要廉价，
-  连接放到 `Broker::connect` 里做。
+- **`make_broker`** 是**同步的**（`Fn() -> B`），并且是 `Sync`，因为检查会从另一个线程调用它。
+  只能异步构造的 Broker 满足不了它。构造要廉价，连接放到 `Broker::connect` 里做。
 - **`make_source`** 为某个 subject 构造订阅描述符（宏订阅者那条路径）。
 - **`make_publisher`** 从已连接形态产出一个发布者。
 
 没有 ack 语义的 Broker（Core NATS）从 `ack` 返回 `AckError::Unsupported` 就算通过：这项检查既
 接受这个结果，也接受一次成功的 ack。`lifecycle` 会执行一次真实的 `connect`，所以要针对正在运行
 的服务器跑它，并且只在设置了 `NATS_TEST_URL` 这类环境变量时才运行。
+
+## 关闭与共享句柄
+
+另外两项生命周期检查需要只有你的 Broker 才知道的答案，所以由你的 crate 自己调用，在进程内和针对
+真实服务器各跑一遍：
+
+| 检查 | 接收 | 断言 |
+|---|---|---|
+| `lifecycle::shutdown_flushes` | Broker 的 `Backlog` 答案 | `shutdown` 之前刚做的确认和发布由关闭过程完成：已确认的消息不会在新连接上回来，已发布的消息会到达另一个连接（`Backlog::Delivered` 时是新连接，`Backlog::Missed` 时是事先订阅好的连接）；关闭之后返回 `Ok` 的确认同样必须生效；`shutdown` 在十秒内返回 |
+| `lifecycle::shared_handle_closes` | 实现了 `Clone` 的已连接形态 | 原件关闭之后，通过副本的每一次使用都返回错误：关闭前后从副本创建的发布者，以及副本建立的订阅（被拒绝，或立即结束） |
+
+`shutdown_flushes` 会连接不止一次，所以 `make_broker` 每次都必须通向同一个 Broker：一台服务器，
+或者在进程内由它构造的所有 Broker 共享的同一个世界。内存 Broker 自己的这次运行让各个副本共享一条
+总线：
+
+```rust
+use ruststream::conformance::lifecycle;
+use ruststream::testing::Backlog;
+
+--8<-- "tests/conformance_self.rs:shutdown_flushes"
+```
 
 ## 在进程内跑同样的套件
 
@@ -178,6 +211,8 @@ async fn passes_request_reply() {
 - [ ] `harness::lifecycle` 针对真实服务器通过，并由一个环境变量控制是否运行（就是那条阶梯：
       同步的 `new`、消费 `self` 的 `connect`、订阅、ack、消费 `self` 的 `shutdown`，以及在此
       之后别名句柄返回的错误）。
+- [ ] `lifecycle::shutdown_flushes` 以 Broker 的 `Backlog` 答案通过；已连接形态实现了 `Clone`
+      时，`lifecycle::shared_handle_closes` 也通过。
 - [ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量控制。
 - [ ] `Cargo.toml` 元数据完整（`description`、`license`、`repository`、`keywords`、
       `categories`），并且 CI 检查 `--no-default-features` 和 `--all-features`。

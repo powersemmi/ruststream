@@ -7,3 +7,4 @@
 pub mod capabilities;
 pub mod harness;
 pub mod helpers;
+pub mod lifecycle;

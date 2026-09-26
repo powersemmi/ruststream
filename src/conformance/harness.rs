@@ -41,11 +41,6 @@ use tokio::{runtime, sync::oneshot, time::timeout};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const NEGATIVE_WAIT: Duration = Duration::from_millis(100);
-/// The delay [`lifecycle`] settles with. Short, and still a real timer on every broker.
-const REDELIVERY_DELAY: Duration = Duration::from_millis(200);
-/// How long past the delay [`lifecycle`] waits for the redelivery: brokers whose delays have
-/// second granularity round the short delay up.
-const REDELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The message type a subscriber yields.
 type SubscriberMessage<S> = <S as Subscriber>::Message;
@@ -177,24 +172,42 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
     }
 }
 
-/// Verifies a broker honours the lifecycle ladder end to end.
+/// Verifies a broker honours the lifecycle ladder end to end, from every runtime a service
+/// reaches it from.
 ///
-/// The steps are: synchronous construction (no I/O in the constructor), then the consuming
-/// `connect` producing the typed connected form, a subscription opened through the broker's own
-/// [`SubscriptionSource`], a publish the subscription receives and acks (or reports
-/// [`AckError::Unsupported`] for a broker with no ack semantics), then the consuming `shutdown`
-/// producing the terminal witness. Owner-side misuse after shutdown is a compile error under the
-/// ladder, so what remains checkable at runtime is the aliased-handle contract: a publisher
-/// created before the shutdown must error afterwards, never silently succeed against a dead
-/// connection.
+/// The steps are: synchronous construction, then the consuming `connect` producing the typed
+/// connected form, a subscription opened through the broker's own [`SubscriptionSource`], publishes
+/// the subscription receives and settles, then the consuming `shutdown` producing the terminal
+/// witness. Owner-side misuse after shutdown is a compile error under the ladder, so what remains
+/// checkable at runtime is the aliased-handle contract.
 ///
-/// The publish and the settlements come from a current-thread runtime on a thread of its own,
-/// which stops before the suite goes on, the way a handler on a dedicated thread publishes and
-/// settles. Where the delivery offers
-/// [`nack_after`](IncomingMessage::nack_after), it is settled that way first and must come back
-/// once the delay runs out: a broker that ran the delay on the settling caller's runtime has lost
-/// it with that runtime. That is the rule that a broker's internal tasks run on the runtime it
-/// connected on (see [`Broker`]).
+/// What each step holds the broker to:
+///
+/// * **Construction.** `make_broker` runs on a plain thread with no Tokio runtime and must return
+///   within a second: a constructor that spawns, calls `Handle::current` or waits on the network
+///   fails.
+/// * **The connect runtime** (see [`Broker`]). The subscription is opened, the first message
+///   published and every settlement made from current-thread runtimes on threads of their own,
+///   each stopped before the check goes on, the way a handler on a dedicated thread works. The
+///   subscription must keep receiving; the publisher that made the first publish must publish
+///   again, from the broker's runtime and from a new runtime, and both messages must arrive (a
+///   connection attached lazily on the first caller's runtime dies with it). `nack(requeue =
+///   true)` answering `Ok` must bring the message back, `nack(requeue = false)` must not.
+/// * **The delay.** Where the delivery offers [`nack_after`](IncomingMessage::nack_after), it is
+///   settled with a delay of 1.5 s and must come back no sooner than that and within ten seconds
+///   after it: a broker that ignores the delay, rounds it down or runs its timer on the settling
+///   caller's runtime fails.
+/// * **Shutdown** must return within ten seconds.
+/// * **Aliased handles.** After the shutdown, a publish must error through a publisher paired
+///   before it and never used, through one used only on the broker's runtime and through one used
+///   from the stopped runtimes. A delivery received before the shutdown and settled with
+///   `nack(requeue = true)` after it must answer an error, or come back: on its own subscription or
+///   on a new connection.
+///
+/// Two lifecycle checks need something only the broker can say and are called separately:
+/// [`lifecycle::shutdown_flushes`](super::lifecycle::shutdown_flushes) (what a shutdown must
+/// finish) and [`lifecycle::shared_handle_closes`](super::lifecycle::shared_handle_closes) (clones
+/// of a shareable connected form).
 ///
 /// A descriptor that addresses its own retry copies is held to that address by
 /// [`redelivery_address`], a suite of its own:
@@ -202,14 +215,16 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// does with a delayed message.
 ///
 /// The three factories keep the check broker-agnostic:
-/// * `make_broker` is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
-///   cannot satisfy it, which is exactly the contract: construct cheaply, connect in
-///   [`Broker::connect`].
+/// * `make_broker` is **synchronous** (`Fn() -> B`) and callable from another thread (`Sync`). A
+///   broker that can only be built asynchronously cannot satisfy it, which is exactly the
+///   contract: construct cheaply, connect in [`Broker::connect`].
 /// * `make_source` builds the broker's subscription descriptor for a subject (the macro-subscriber
 ///   path). The descriptor is `Clone`: it is configuration, and the mount rebuilds it per
 ///   registration, so a definition can be mounted on more than one broker.
-/// * `make_publisher` produces a publisher from the connected form. The publisher and the
-///   delivery move to the other runtime's thread, so both are `'static`.
+/// * `make_publisher` produces a publisher from the connected form.
+///
+/// The descriptor, the subscriber, the publisher and the delivery move to the other runtimes'
+/// threads, so all of them are `'static`.
 ///
 /// Run it from the broker crate against a real server, and a second time in process by wrapping
 /// the production broker in [`InProcessBroker`]. The subject it publishes under is unique per run
@@ -234,113 +249,24 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 ///
 /// # Panics
 ///
-/// Panics with a descriptive message if construction, connection, subscription, delivery, ack,
-/// the delayed redelivery, shutdown, or the aliased-handle behaviour does not follow the
-/// contract.
+/// Panics with a descriptive message naming the step when construction, connection,
+/// subscription, delivery, a settlement, the delayed redelivery, shutdown, or an aliased handle
+/// does not follow the contract.
 pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     make_broker: MkBroker,
     make_source: MkSrc,
     make_publisher: MkPub,
 ) where
     B: Broker,
-    MkBroker: Fn() -> B,
-    Src: SubscriptionSource<Connected<B>> + Clone + Send,
-    Src::Subscriber: Send,
+    MkBroker: Fn() -> B + Sync,
+    Src: SubscriptionSource<Connected<B>> + Clone + Send + 'static,
+    Src::Subscriber: Send + 'static,
     MkSrc: Fn(&str) -> Src,
     SubscriberMessage<Src::Subscriber>: 'static,
     Pub: Publisher + 'static,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
-    let subject = unique_subject("conformance.lifecycle");
-
-    let connected = make_broker()
-        .connect()
-        .await
-        .expect("broker must connect after synchronous construction");
-
-    let source = make_source(&subject);
-    let mut subscriber = source
-        .clone()
-        .subscribe(&connected)
-        .await
-        .expect("subscription source must open against the connected form");
-    let publisher = make_publisher(&connected);
-
-    // Published from a runtime that stops before the delivery is read, the way a handler on a
-    // dedicated thread publishes: what the publish left to finish runs on the broker's runtime.
-    let destination = subject.clone();
-    let publisher = on_foreign_runtime(async move || {
-        publisher
-            .publish(
-                OutgoingMessage::new(&destination, b"lifecycle".as_slice()),
-                None,
-            )
-            .await
-            .expect("publish after connect failed");
-        publisher
-    })
-    .await;
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let msg = expect_next(&mut stream, "lifecycle").await;
-    assert_eq!(
-        msg.payload(),
-        b"lifecycle",
-        "subscription opened through SubscriptionSource must receive the publish",
-    );
-    let msg = if msg.supports_nack_after() {
-        // Settled from a runtime that stops at once: the delay has to run out on the runtime the
-        // broker connected on, or the message never comes back.
-        on_foreign_runtime(async move || {
-            msg.nack_after(REDELIVERY_DELAY)
-                .await
-                .expect("a delayed nack the delivery offers must be accepted");
-        })
-        .await;
-        let again = timeout(REDELIVERY_DELAY + REDELIVERY_TIMEOUT, stream.next())
-            .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "lifecycle: a delayed nack settled from another runtime never came back; the \
-                     broker must run its internal tasks on the runtime it connected on",
-                )
-            })
-            .expect("lifecycle: stream ended before the delayed redelivery")
-            .unwrap_or_else(|err| panic!("lifecycle: stream yielded error: {err:?}"));
-        assert_eq!(
-            again.payload(),
-            b"lifecycle",
-            "a delayed nack must redeliver the same message",
-        );
-        again
-    } else {
-        msg
-    };
-    // Ack must either succeed or be explicitly unsupported (a broker with no ack semantics, e.g.
-    // Core NATS). Any other ack error is a real failure. Settled from another runtime as well.
-    on_foreign_runtime(async move || match msg.ack().await {
-        Ok(()) | Err(AckError::Unsupported) => {}
-        Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
-    })
-    .await;
-
-    let _closed = connected
-        .shutdown()
-        .await
-        .expect("broker must shut down cleanly");
-
-    // The ladder makes owner-side misuse unrepresentable; the aliased publisher created before
-    // the shutdown is the surface that must stay honest at runtime.
-    assert!(
-        publisher
-            .publish(
-                OutgoingMessage::new(&subject, b"post-shutdown".as_slice()),
-                None,
-            )
-            .await
-            .is_err(),
-        "publish through a handle aliasing the closed connection must error",
-    );
+    super::lifecycle::ladder(make_broker, make_source, make_publisher).await;
 }
 
 /// What a descriptor that addresses its own retry copies promises: publish to the address it
