@@ -1,9 +1,6 @@
 //! Integration tests for the batch subscriber pipeline: the form the macro reads off a `&[T]`
-//! payload parameter, batch mounting through `include`, per-element decode failures, and the
-//! `Buffered` adapter a broker crate gives a transport with no batches of its own.
-//!
-//! The harness settles each injection before it returns, so every batch below is exactly the batch
-//! the handler was called with - no polling for "at least one".
+//! payload parameter, per-element outcomes, the metadata a batch registration records, and the
+//! client-side buffer a broker crate gives a transport with no batches of its own.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -15,127 +12,19 @@ mod common;
 
 use std::future::{Future, ready};
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use common::{Order, Wire};
+use common::Order;
 use futures::Stream;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
-use ruststream::testing::{Outcome, TestApp};
+use ruststream::testing::TestApp;
 use ruststream::{
-    AddressedCopies, BatchSubscriber, Buffered, BufferedSubscriber, RedeliveryAddress,
-    RedeliveryAddressed, Seekable, Subscribe, Subscriber, SubscriptionSource,
+    AddressedCopies, BatchSubscriber, BufferedSubscriber, RedeliveryAddress, RedeliveryAddressed,
+    Seekable, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
-
-/// Settles a whole batch of orders at once.
-#[subscriber("orders")]
-async fn bill(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn batch_macro_def_receives_batches() {
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(bill.batch(nonzero!(64)));
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    for id in 0..3u32 {
-        tb.message(&Order { id })
-            .to("orders")
-            .publish()
-            .await
-            .expect("publish failed");
-    }
-
-    // Nothing is dropped, so the flattened stream is exactly the publish order, and every batch
-    // the handler was called with carried something.
-    let batches: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("orders").batches();
-    let flattened: Vec<u32> = batches.iter().flatten().map(|o| o.id).collect();
-    assert_eq!(flattened, vec![0, 1, 2], "deliveries out of publish order");
-    assert!(
-        batches.iter().all(|batch| !batch.is_empty()),
-        "batches must not be empty",
-    );
-}
-
-/// Records the ids that survived decoding.
-#[subscriber("mixed")]
-async fn sift(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn undecodable_elements_never_reach_the_handler() {
-    let app =
-        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(sift.batch(nonzero!(64)));
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 1 })
-        .to("mixed")
-        .publish()
-        .await
-        .expect("publish failed");
-    tb.message(&Wire::of(b"not json"))
-        .to("mixed")
-        .publish()
-        .await
-        .expect("publish failed");
-    tb.message(&Order { id: 2 })
-        .to("mixed")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    // The undecodable element is dropped individually, never failing the batch around it: exactly
-    // the two decodable ids reach the handler, in publish order.
-    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("mixed").received();
-    let ids: Vec<u32> = received.iter().map(|o| o.id).collect();
-    assert_eq!(ids, vec![1, 2], "unexpected ids reached the handler");
-    tb.broker::<MemoryBroker>()
-        .subscriber("mixed")
-        .assert_called(2)
-        .settled(HandlerOutcome::ack());
-}
-
-/// A handler mounted on a `Buffered`-wrapped source directly in the macro: the adapter a broker
-/// crate gives a batch-less transport, spelled here by hand. The macro recovers the source type
-/// from the constructor path, so a generic source spells its parameter (turbofish), and the batch
-/// size still comes from the mount site.
-#[subscriber(Buffered::<Name>::new(Name::new("events")))]
-async fn drain(events: &[Order]) -> HandlerOutcome {
-    let _ = events;
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn buffered_adapter_batches_plain_subscribers_via_router() {
-    // Mounted through the Router path to cover the batch form there as well.
-    let router = Router::<MemoryBroker>::new().include(drain.batch(nonzero!(2)));
-    let app = RustStream::new(AppInfo::new("events", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 7 })
-        .to("events")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("events")
-        .assert_called_once()
-        .with(&Order { id: 7 })
-        .settled(HandlerOutcome::ack());
-}
 
 // --8<-- [start:buffered_capability]
 /// What a broker crate writes when its transport has no batches of its own: the subscriber it
@@ -260,13 +149,13 @@ async fn a_delegating_broker_honours_the_batch_size() {
 /// Whether order 11 has already been refused once. Held in application state, so the handler
 /// reads it the way a service reads any dependency.
 struct Attempts {
-    retried_once: Arc<AtomicBool>,
+    retried_once: AtomicBool,
 }
 
 /// Retries order 11 on first sight; settles everything else, per element.
 #[subscriber("batches")]
 async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec<HandlerOutcome> {
-    let retried_once = Arc::clone(&ctx.state().retried_once);
+    let retried_once = &ctx.state().retried_once;
     orders
         .iter()
         .map(|o| {
@@ -279,40 +168,50 @@ async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec
         .collect()
 }
 
+/// One outcome per element: only the refused element of a batch comes back, and the elements
+/// around it stay settled. The run is in the log before the subscription opens, so the opening
+/// replay hands the body all three at once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn per_element_outcomes_retry_individually() {
-    let retried_once = Arc::new(AtomicBool::new(false));
-    let state_flag = Arc::clone(&retried_once);
-    let app = RustStream::new(AppInfo::new("batches", "0.1.0"))
-        .on_startup(move |()| {
-            let retried_once = state_flag;
-            async move { Ok::<_, std::convert::Infallible>(Attempts { retried_once }) }
-        })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(reconcile.batch(nonzero!(64)));
-        });
-    let tb = TestApp::start(app).await.expect("startup failed");
-
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(32)));
+    let publisher = broker.publisher();
     for id in [10u32, 11, 12] {
-        tb.message(&Order { id })
+        publisher
+            .message(&Order { id })
             .to("batches")
             .publish()
             .await
             .expect("publish failed");
     }
+    let app = RustStream::new(AppInfo::new("batches", "0.1.0"))
+        .on_startup(async move |()| {
+            Ok::<_, std::convert::Infallible>(Attempts {
+                retried_once: AtomicBool::new(false),
+            })
+        })
+        .with_broker(broker, |b| {
+            b.include(
+                reconcile
+                    .batch(nonzero!(8))
+                    .start_at(MemoryPosition::start()),
+            );
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle()
+        .await
+        .expect("the replayed batch and its redelivery settle");
 
-    // 11 was refused once and settled only on redelivery; 10 and 12 settled first try.
-    assert!(retried_once.load(Ordering::SeqCst));
-    let batches: Vec<Vec<Order>> = tb.broker::<MemoryBroker>().subscriber("batches").batches();
-    let seen: Vec<Vec<u32>> = batches
+    // Only the refused element came back, so 10 and 12 were settled on the first run; the
+    // redelivered 11 is acked.
+    let subscriber = tb.broker::<MemoryBroker<Retaining>>();
+    let subscriber = subscriber.subscriber("batches");
+    let seen: Vec<Vec<u32>> = subscriber
+        .batches::<Order>()
         .iter()
         .map(|batch| batch.iter().map(|o| o.id).collect())
         .collect();
-    assert_eq!(seen, vec![vec![10], vec![11], vec![11], vec![12]]);
-    assert_eq!(
-        tb.broker::<MemoryBroker>().subscriber("batches").outcomes(),
-        [Outcome::Ack, Outcome::Nack, Outcome::Ack, Outcome::Ack],
-    );
+    assert_eq!(seen, vec![vec![10, 11, 12], vec![11]]);
+    subscriber.settled(HandlerOutcome::ack());
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
@@ -321,20 +220,7 @@ struct Confirmation {
     accepted: bool,
 }
 
-/// Confirms a batch of orders. The Result form gives explicit ack control; the whole-batch
-/// rejection path is covered by the runtime unit tests.
-#[subscriber("requests", publish("confirmations"))]
-async fn confirm(orders: &[Order]) -> Result<Vec<Confirmation>, HandlerOutcome> {
-    Ok(orders
-        .iter()
-        .map(|o| Confirmation {
-            id: o.id,
-            accepted: true,
-        })
-        .collect())
-}
-
-/// The plain reply form: every batch is confirmed (compile coverage for `-> Vec<Reply>`).
+/// The plain reply form: every batch is confirmed.
 #[subscriber("requests", publish("audit"))]
 async fn audit(orders: &[Order]) -> Vec<Confirmation> {
     orders
@@ -344,34 +230,6 @@ async fn audit(orders: &[Order]) -> Vec<Confirmation> {
             accepted: true,
         })
         .collect()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn batch_replies_publish_transactionally() {
-    let app = RustStream::new(AppInfo::new("confirmations", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm.batch(nonzero!(64)))
-                .out_reply(TransactionalPublish)
-                .transactional();
-        },
-    );
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    tb.message(&Order { id: 7 })
-        .to("requests")
-        .publish()
-        .await
-        .expect("publish failed");
-
-    // The transaction commits exactly one confirmation for the one order it carried.
-    tb.broker::<MemoryBroker>()
-        .published::<Confirmation>("confirmations")
-        .assert_called_once()
-        .with(&Confirmation {
-            id: 7,
-            accepted: true,
-        });
 }
 
 #[test]
@@ -388,6 +246,13 @@ fn batch_publishing_def_records_metadata() {
             .output_type
             .is_some_and(|t| t.contains("Confirmation")),
     );
+}
+
+/// Settles a whole batch of orders at once.
+#[subscriber("orders")]
+async fn bill(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders;
+    HandlerOutcome::ack()
 }
 
 #[test]

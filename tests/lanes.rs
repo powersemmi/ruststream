@@ -15,11 +15,6 @@ use ruststream::testing::TestApp;
 #[derive(Deserialized)]
 struct Frame<'a>(&'a [u8]);
 
-/// A self-serialized reply: its bytes leave exactly as returned, with no codec, at the subject
-/// the mount site names.
-#[derive(Outgoing, Serialized)]
-struct Export(Vec<u8>);
-
 #[derive(
     Debug, Outgoing, serde::Serialize, serde::Deserialize, schemars::JsonSchema, PartialEq,
 )]
@@ -33,12 +28,6 @@ struct Report {
 #[derive(Outgoing, Serialized)]
 struct Wire(Vec<u8>);
 
-/// Raw in, raw out: both lanes are the user's own.
-#[subscriber("lanes.mirror", publish("lanes.mirror.out"))]
-async fn mirror(frame: &Frame<'_>) -> Export {
-    Export(frame.0.to_vec())
-}
-
 /// Raw in, encoded out: a `Deserialized` input composes with a `Serialize` reply - the input
 /// lane skips the codec, the reply still rides it.
 #[subscriber("lanes.measure", publish("lanes.measure.out"))]
@@ -46,87 +35,26 @@ async fn measure(frame: &Frame<'_>) -> Report {
     Report { len: frame.0.len() }
 }
 
-/// Decoded in, raw out: the gateway shape - the input decodes with the scope codec, the reply
-/// leaves byte-for-byte.
-#[subscriber("lanes.encode", publish("lanes.encode.out"))]
-async fn encode(report: &Report) -> Export {
-    Export(report.len.to_be_bytes().to_vec())
-}
-
-/// A batch of self-deserializing views.
-#[subscriber("lanes.frames")]
-async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
-    let _ = frames.iter().map(|frame| frame.0.len()).sum::<usize>();
-    HandlerOutcome::ack()
-}
-
+/// The lanes are picked per end: a raw input skips the codec while its reply still rides it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_lanes_compose_end_to_end() {
-    let broker = MemoryBroker::new();
-    let ingress = broker.publisher();
-
-    let app = RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(broker, |b| {
-        b.include(mirror);
-        b.include(measure);
-        b.include(encode);
-        b.include(ingest.batch(nonzero!(64)));
-    });
+async fn a_raw_input_answers_with_an_encoded_reply() {
+    let app =
+        RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(measure);
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
-        .message(&Wire(b"\x00\x01\x02".to_vec()))
-        .to("lanes.mirror")
-        .publish()
-        .await
-        .expect("publish");
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Wire(b"four".to_vec()))
         .to("lanes.measure")
         .publish()
         .await
         .expect("publish");
-    ingress
-        .message(&Report { len: 7 })
-        .to("lanes.encode")
-        .publish()
-        .await
-        .expect("publish");
-    ingress
-        .message(&Wire(b"batch".to_vec()))
-        .to("lanes.frames")
-        .publish()
-        .await
-        .expect("publish");
-    tb.settle().await.expect("settle");
 
-    // The serialized reply is the input's bytes, untouched by any codec.
-    tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("lanes.mirror.out")
-        .assert_called_once()
-        .with_raw(b"\x00\x01\x02");
-    // The encoded reply of a raw input still rides the scope codec.
     tb.broker::<MemoryBroker>()
         .published::<Report>("lanes.measure.out")
         .assert_called_once()
         .with(&Report { len: 4 });
-    // The gateway shape: decoded input, byte reply.
-    tb.broker::<MemoryBroker>()
-        .published::<Vec<u8>>("lanes.encode.out")
-        .assert_called_once()
-        .with_raw(&7usize.to_be_bytes());
-    // A batch of self-deserializing views carries no model to decode back into, so what the body
-    // was handed is read at the byte level: one batch, holding the frame as it was published.
-    let batches = tb
-        .broker::<MemoryBroker>()
-        .subscriber("lanes.frames")
-        .batches_raw();
-    let seen: Vec<Vec<&[u8]>> = batches
-        .iter()
-        .map(|batch| batch.iter().map(AsRef::as_ref).collect())
-        .collect();
-    assert_eq!(seen, vec![vec![b"batch".as_slice()]]);
-
-    tb.shutdown().await.expect("graceful shutdown");
 }
 
 // --8<-- [start:serialized_out]

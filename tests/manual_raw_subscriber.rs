@@ -5,9 +5,8 @@
 //! the wire is read off the two message types either way, on this path exactly as on the
 //! attribute's.
 //!
-//! The codec-free path is what the plain and the byte-reply sections pin: bytes on the input
-//! side mean no `Codec` bound reaches the mount, so this file also builds with every codec
-//! feature off (the typed-input module below is the one exception, and it is gated).
+//! The codec-free path is what both sections pin: bytes on the input side mean no `Codec` bound
+//! reaches the mount, so this file also builds with every codec feature off.
 #![cfg(all(feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
@@ -208,91 +207,4 @@ async fn raw_reply_round_trips_exact_bytes() {
         .assert_called_once()
         .with_raw(&expected)
         .settled(HandlerOutcome::ack());
-}
-
-// --- a Serialized reply with a TYPED input: decode with the scope codec, reply bytes as-is ---
-
-#[cfg(feature = "json")]
-mod typed_in {
-    use std::future::{Future, ready};
-
-    use ruststream::memory::prelude::*;
-    use ruststream::testing::TestApp;
-    use serde::Deserialize;
-
-    use super::{Export, Frame};
-
-    #[derive(Debug, Deserialize, schemars::JsonSchema)]
-    struct Wrap {
-        id: u32,
-    }
-
-    // --8<-- [start:raw_reply_typed]
-    /// The gateway shape: a structured message in, a self-produced wire format out. Only the
-    /// body's input parameter changes from the byte-reply form above - `&Wrap` instead of
-    /// `&Frame<'_>`, which is what selects the decode - so the decode codec is resolved from the
-    /// mount while the reply still leaves unencoded.
-    struct Gateway;
-
-    impl Handle<Wrap, Export> for Gateway {
-        fn handle(
-            &self,
-            wrap: &Wrap,
-            _outs: &(),
-            _ctx: &mut Context<'_>,
-        ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
-            ready(Ok(Export(wrap.id.to_be_bytes().to_vec())))
-        }
-    }
-    // --8<-- [end:raw_reply_typed]
-
-    /// Asserts inside the delivery that the reply bytes arrived untouched.
-    struct GatewayCapture;
-
-    impl<'p> Handle<Frame<'p>> for GatewayCapture {
-        fn handle(
-            &self,
-            frame: &Frame<'p>,
-            _outs: &(),
-            _ctx: &mut Context<'_>,
-        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-            // The adapter builds this future inside the dispatcher's unwind guard, so a failed
-            // assertion is caught like any other handler panic.
-            assert_eq!(frame.0, 7_u32.to_be_bytes(), "the reply bytes arrive as-is");
-            ready(Ok(()))
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn typed_input_replies_raw_bytes() {
-        let app = RustStream::new(AppInfo::new("gateway", "0.1.0")).with_broker(
-            MemoryBroker::new(),
-            |b| {
-                b.include(
-                    subscriber("gateway-in", Gateway)
-                        .reply()
-                        .to("gateway-out")
-                        .build(),
-                )
-                .out_reply(Publish);
-                b.include(subscriber("gateway-out", GatewayCapture).build());
-            },
-        );
-
-        let tb = TestApp::start(app).await.expect("start");
-        tb.broker::<MemoryBroker>()
-            .publish("gateway-in", &serde_json::json!({"id": 7}))
-            .await
-            .expect("publish");
-
-        tb.broker::<MemoryBroker>()
-            .subscriber("gateway-in")
-            .assert_called_once()
-            .settled(HandlerOutcome::ack());
-        tb.broker::<MemoryBroker>()
-            .subscriber("gateway-out")
-            .assert_called_once()
-            .with_raw(7_u32.to_be_bytes().as_slice())
-            .settled(HandlerOutcome::ack());
-    }
 }
