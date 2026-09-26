@@ -212,6 +212,36 @@ async fn a_fast_handler_is_sampled_without_a_warning() {
     assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
 }
 
+/// The slow body, declared on dedicated threads.
+#[subscriber("slow.threads", threads(2))]
+async fn slow_on_threads(order: &Order) -> HandlerOutcome {
+    black_box(spin(SLOW_ROUNDS + u64::from(order.id)));
+    HandlerOutcome::ack()
+}
+
+/// A subscription already on `threads(n)` is measured, and the warning that advises it is not
+/// written for it. The harness runs its threads as workers of the test's runtime, which is what
+/// lets the log be captured here; the placement is the declared one either way.
+#[tokio::test]
+async fn a_slow_handler_on_threads_is_measured_without_a_warning() {
+    let logs = Captured::default();
+    let _guard = logs.install();
+    let diagnostics = every_poll().threshold(LOW_THRESHOLD);
+    let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .poll_diagnostics(diagnostics.clone())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(slow_on_threads);
+        });
+    let tb = TestApp::start(app).await.expect("startup");
+    publish(&tb, "slow.threads", 2 * WARM_UP).await;
+
+    let report = diagnostics
+        .report("slow.threads")
+        .expect("the subscription is sampled");
+    assert!(report.average() > LOW_THRESHOLD, "{:?}", report.average());
+    assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_nth_poll_is_sampled() {
     let diagnostics = PollDiagnostics::new().sample_every(nonzero!(4u32));

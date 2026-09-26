@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
@@ -356,6 +356,9 @@ pub(crate) struct PollStats {
     /// many workers record at the same time.
     average_ns: AtomicU64,
     buckets: [AtomicU64; BUCKETS],
+    /// Set for a subscription declared on `threads(n)`: its computation holds up no thread of
+    /// the app's runtime, so a crossing is measured and reported but not warned about.
+    quiet: AtomicBool,
 }
 
 impl PollStats {
@@ -368,6 +371,7 @@ impl PollStats {
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
             buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+            quiet: AtomicBool::new(false),
         }
     }
 
@@ -443,7 +447,7 @@ impl PollStats {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
         let current = step(previous).unwrap_or(previous);
-        if previous & OVER == 0 && current & OVER != 0 {
+        if previous & OVER == 0 && current & OVER != 0 && !self.quiet.load(Ordering::Relaxed) {
             self.warn(current & !OVER);
         }
     }
@@ -480,6 +484,12 @@ impl PollSampler {
             every: every.get(),
             countdown: AtomicU32::new(every.get()),
         }
+    }
+
+    /// Marks the subscription as declared on `threads(n)`, which the warning's advice already
+    /// describes: its crossings are no longer warned about.
+    pub(crate) fn on_dedicated_threads(&self) {
+        self.stats.quiet.store(true, Ordering::Relaxed);
     }
 
     /// A sampler of the same statistics with a countdown of its own, for one dedicated thread.
