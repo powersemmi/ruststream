@@ -48,6 +48,9 @@ cargo run -- asyncapi gen
 
 ## Как выглядит точка входа
 
+Точка входа - это функция, которая собирает сервис: подключает брокер и монтирует на нём роутер.
+`#[ruststream::app]` превращает её в `main`.
+
 === "Макросы"
 
     ```rust title="src/main.rs"
@@ -60,10 +63,8 @@ cargo run -- asyncapi gen
     --8<-- "examples/manual/tutorial/main.rs:main"
     ```
 
-Вы пишете функцию, которая собирает сервис, а `#[ruststream::app]` превращает её в `main`.
-
 ## Что дальше
 
-- Разобраться в каждой части по [учебнику](tutorial.md).
-- Изучить формы обработчиков в разделе [Подписчики](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers).
-- Управлять сервисом из [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).
+- [Учебник](tutorial.md) разбирает каждую часть сервиса.
+- [Подписчики](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers) описывают все формы обработчиков.
+- [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html) управляет сервисом из командной строки.
