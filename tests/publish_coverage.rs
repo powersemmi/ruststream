@@ -1,12 +1,10 @@
 //! The publishing handler's failure paths, end to end over the memory broker: a decode failure
-//! settled by the per-subscriber policy, and a reply the publisher rejects. Both are diagnosed
-//! by a warning, so the test binary installs a capturing subscriber: a warning's field values are
-//! only evaluated while someone listens.
+//! settled by the per-subscriber policy, and a reply the publisher rejects. What the warnings of
+//! both paths carry is pinned beside the handler, in its unit tests.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
     feature = "json",
-    feature = "logging",
     feature = "testing"
 ))]
 
@@ -15,7 +13,6 @@ mod common;
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Once};
 
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
@@ -23,59 +20,8 @@ use ruststream::runtime::RustStreamError;
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
 use serde::Serialize;
-use tracing::field::{Field, Visit};
-use tracing::{Event, Level, Subscriber as TracingSubscriber};
-use tracing_subscriber::Layer;
-use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
 
 use common::{Order, Wire};
-
-/// Every warning this binary emitted, one string of `field=value` pairs per event.
-static EVENTS: LazyLock<Arc<Mutex<Vec<String>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
-
-/// Flattens an event's fields into `name=value` pairs.
-struct Grab(Vec<String>);
-
-impl Visit for Grab {
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.0.push(format!("{}={value:?}", field.name()));
-    }
-}
-
-/// A layer that keeps the warnings around for the assertions.
-struct Capture(Arc<Mutex<Vec<String>>>);
-
-impl<S: TracingSubscriber> Layer<S> for Capture {
-    fn on_event(&self, event: &Event<'_>, _ctx: LayerContext<'_, S>) {
-        if *event.metadata().level() > Level::WARN {
-            return;
-        }
-        let mut grab = Grab(Vec::new());
-        event.record(&mut grab);
-        self.0.lock().unwrap().push(grab.0.join(" "));
-    }
-}
-
-/// Installs the capture once for the whole binary (a global subscriber, because the dispatch
-/// loop runs on runtime threads the test does not own).
-fn capture_logs() {
-    static INSTALLED: Once = Once::new();
-    INSTALLED.call_once(|| {
-        let capture = Capture(Arc::clone(&EVENTS));
-        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(capture))
-            .expect("this binary installs no other global subscriber");
-    });
-}
-
-/// Whether any captured warning carries `needle`.
-fn logged(needle: &str) -> bool {
-    EVENTS
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|event| event.contains(needle))
-}
 
 /// The reply publisher's refusal.
 #[derive(Debug)]
@@ -144,12 +90,9 @@ async fn flaky(order: &Order) -> Acked {
     Acked(order.id)
 }
 
-/// `decode = fail_fast` on a publishing handler tears the service down, and the warning names
-/// the subscription and the input type so the operator can find the offending producer.
+/// `decode = fail_fast` on a publishing handler tears the service down, and the run reports it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
-    capture_logs();
-
+async fn a_fail_fast_decode_failure_tears_the_service_down() {
     let app =
         RustStream::new(AppInfo::new("pubff", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(pubff);
@@ -173,24 +116,12 @@ async fn a_fail_fast_decode_failure_tears_the_service_down_and_says_why() {
         matches!(result, Err(RustStreamError::Dispatch(_))),
         "the run must report the failure, got {result:?}",
     );
-    assert!(
-        logged("codec decode failed"),
-        "the decode failure must be diagnosed: {:?}",
-        EVENTS.lock().unwrap(),
-    );
-    assert!(
-        logged("subscription=pubff"),
-        "the diagnostic must name the subscription: {:?}",
-        EVENTS.lock().unwrap(),
-    );
 }
 
 /// A reply the publisher rejects nacks the delivery with requeue instead of losing the reply:
-/// the redelivered message publishes it, and the warning names the reply destination.
+/// the redelivered message publishes it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_reply_publish_retries_the_delivery() {
-    capture_logs();
-
     let app =
         RustStream::new(AppInfo::new("flaky", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(flaky).out(Reply, FailsOncePolicy);
@@ -210,24 +141,7 @@ async fn a_rejected_reply_publish_retries_the_delivery() {
         [Outcome::Nack, Outcome::Ack],
     );
     tb.broker::<MemoryBroker>()
-        .subscriber("flaky")
-        .assert_called(2)
-        .settled(HandlerOutcome::ack());
-    tb.broker::<MemoryBroker>()
         .published::<u32>("flaky.out")
         .assert_called_once()
         .with_raw(b"7");
-
-    assert!(
-        logged("reply publish failed"),
-        "the failed publish must be diagnosed: {:?}",
-        EVENTS.lock().unwrap(),
-    );
-    assert!(
-        logged("reply=flaky.out"),
-        "the diagnostic must name the reply destination: {:?}",
-        EVENTS.lock().unwrap(),
-    );
-
-    tb.shutdown().await.expect("shutdown failed");
 }

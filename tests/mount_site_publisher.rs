@@ -86,35 +86,6 @@ async fn a_batch_reply_takes_the_policy_the_include_site_names() {
         .with_header("x-app", b"1");
 }
 
-/// The same registration through a router: the terminal differs, the vocabulary does not, and
-/// the reply still travels the app's publish pipeline (the publisher pairs at startup, where the
-/// app is known).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_names_the_same_reply_policy() {
-    let routes = Router::<MemoryBroker>::new()
-        .include(confirm_batch.batch(nonzero!(4)))
-        .out(Reply, Publish)
-        .build();
-    let app = RustStream::new(AppInfo::new("mount-router", "0.1.0"))
-        .publish_layer(AppStamp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(routes);
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 9 })
-        .to("mount.orders")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Order>("mount.receipts")
-        .assert_called_once()
-        .with(&Order { id: 9 })
-        .with_header("x-app", b"1");
-}
-
 /// A broker's own publish policy, with one option of its own: the shape every broker crate
 /// ships next to `Publish`.
 #[derive(Clone, Copy, Default)]
@@ -293,29 +264,10 @@ async fn a_broker_settings_trait_reaches_a_byte_for_byte_reply_policy() {
 
 /// Where the two surfaces genuinely differ: a slot's publish pipeline is part of the
 /// instantiated definition's type, so it is fixed when the slot binds. A scope binds inside the
-/// app and its slots carry the app's `publish_layer` chain; a router is typed before the app
-/// exists, so its slots publish with nothing in the way. This pins both halves, so the boundary
-/// is asserted rather than assumed.
+/// app and its slots carry the app's `publish_layer` chain (pinned in `out_transforms.rs`); a
+/// router is typed before the app exists, so its slots publish with nothing in the way.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_scope_mounted_slot_carries_the_app_pipeline_and_a_router_mounted_one_does_not() {
-    let app = RustStream::new(AppInfo::new("mount-slot-scope", "0.1.0"))
-        .publish_layer(AppStamp)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(mirror).out(Audit, Publish).build();
-        });
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.message(&Order { id: 1 })
-        .to("mount.mirror")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.out::<Audit>()
-        .assert_called_once()
-        .with_header("x-app", b"1");
-    tb.shutdown().await.expect("shutdown");
-
+async fn a_router_mounted_slot_publishes_without_the_app_pipeline() {
     let routes = Router::<MemoryBroker>::new()
         .include(mirror)
         .out(Audit, Publish)

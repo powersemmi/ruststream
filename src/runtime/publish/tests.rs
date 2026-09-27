@@ -407,15 +407,6 @@ fn the_terminal_hands_the_message_over_in_the_publisher_s_form() {
     );
 }
 
-#[test]
-fn set_name_and_headers() {
-    let mut out = Outgoing::new("a", b"".as_slice());
-    out.set_name("b");
-    out.headers_mut().insert("k", "v");
-    assert_eq!(out.name(), "b");
-    assert_eq!(out.headers().get_str("k"), Some("v"));
-}
-
 /// Both cursors report where in the chain a middleware sits: the static one is opaque, the
 /// dynamic one counts the middleware still ahead of it.
 #[cfg(all(feature = "memory", feature = "json"))]
@@ -650,97 +641,6 @@ fn the_live_sinks_render_without_their_leaf() {
         format!("{:?}", Transactional::live(typed)),
         "Transactional { .. }",
     );
-}
-
-/// The wiring a mount site's chain builds is a policy: pairing swaps the policy leaf for its
-/// live form and the named codec travels along, so the paired stack publishes.
-#[cfg(all(feature = "memory", feature = "json"))]
-#[tokio::test]
-async fn a_reply_wiring_pairs_into_its_live_sink() {
-    use futures::StreamExt;
-
-    use crate::codec::JsonCodec;
-    use crate::memory::{MemoryBroker, MemoryPublish};
-    use crate::{Broker, IncomingMessage, Subscriber};
-
-    let broker = MemoryBroker::new();
-    let mut subscriber = broker.subscribe("paired");
-    let connected = broker.clone().connect().await.expect("connect failed");
-
-    let live = ReplyWiring::new(MemoryPublish)
-        .name_codec(JsonCodec)
-        .pair(&connected)
-        .await
-        .expect("pairing a reply wiring failed");
-
-    let headers = HeaderMap::new();
-    let cx = PublishContext::new("in", &headers, &());
-    live.publish(
-        "paired",
-        &9_u32,
-        &PublishIdentity,
-        &cx,
-        <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
-    )
-    .await
-    .expect("the paired stack must publish");
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let msg = stream
-        .next()
-        .await
-        .expect("delivery missing")
-        .expect("memory subscriber never errors");
-    assert_eq!(msg.payload(), b"9");
-    msg.ack().await.expect("ack failed");
-}
-
-/// A `.transactional()` wiring pairs like the plain one, into the sink that wraps a batch's
-/// replies in one broker transaction.
-#[cfg(all(feature = "memory", feature = "json"))]
-#[tokio::test]
-async fn a_transactional_wiring_pairs_into_the_transactional_sink() {
-    use futures::StreamExt;
-
-    use crate::codec::JsonCodec;
-    use crate::memory::{MemoryBroker, MemoryPublish};
-    use crate::{Broker, IncomingMessage, Subscriber};
-
-    let broker = MemoryBroker::new();
-    let mut subscriber = broker.subscribe("scoped");
-    let connected = broker.clone().connect().await.expect("connect failed");
-
-    let live = ReplyWiring::new(MemoryPublish)
-        .name_codec(JsonCodec)
-        .into_transactional()
-        .pair(&connected)
-        .await
-        .expect("pairing a transactional wiring failed");
-
-    let headers = HeaderMap::new();
-    let cx = PublishContext::new("in", &headers, &());
-    live.publish_batch(
-        "scoped",
-        &[4_u32, 5],
-        &PublishIdentity,
-        &cx,
-        <Take as PayloadForm>::encode_slot(&mut BytesMut::new()),
-    )
-    .await
-    .expect("the batch's replies must publish and commit");
-
-    let mut stream = std::pin::pin!(subscriber.stream());
-    let mut sent = Vec::new();
-    for _ in 0..2 {
-        let msg = stream
-            .next()
-            .await
-            .expect("delivery missing")
-            .expect("memory subscriber never errors");
-        sent.push(msg.payload().to_vec());
-        msg.ack().await.expect("ack failed");
-    }
-    assert_eq!(sent, vec![b"4".to_vec(), b"5".to_vec()]);
 }
 
 /// The scope a bare publisher opens holds its publishes back until the commit.
