@@ -60,6 +60,7 @@ struct Trace {
     spawned: String,
     on_main: String,
     spawned_on_main: String,
+    spawned_on_main_handle: String,
 }
 
 #[subscriber("jobs", threads(2), publish("traces"))]
@@ -71,6 +72,12 @@ async fn traced(job: &Order, Ctx(main): Ctx<MainRuntime>) -> Trace {
     let spawned = tokio::spawn(async { here() }).await.unwrap_or_default();
     let on_main = main.run(async { here() }).await.unwrap_or_default();
     let spawned_on_main = main.spawn(async { here() }).await.unwrap_or_default();
+    // The raw Tokio handle is the same runtime, for what the two methods do not cover.
+    let spawned_on_main_handle = main
+        .as_handle()
+        .spawn(async { here() })
+        .await
+        .unwrap_or_default();
     Trace {
         id: job.id,
         start,
@@ -78,6 +85,7 @@ async fn traced(job: &Order, Ctx(main): Ctx<MainRuntime>) -> Trace {
         spawned,
         on_main,
         spawned_on_main,
+        spawned_on_main_handle,
     }
 }
 
@@ -146,6 +154,10 @@ fn a_delivery_is_handled_on_a_dedicated_thread_alone() {
         assert!(
             trace.spawned_on_main.starts_with(APP_THREADS),
             "the task spawned on the main runtime ran elsewhere: {trace:?}"
+        );
+        assert!(
+            trace.spawned_on_main_handle.starts_with(APP_THREADS),
+            "the task spawned through the main runtime's handle ran elsewhere: {trace:?}"
         );
         threads.insert(trace.start.clone());
     }

@@ -16,8 +16,10 @@
 
 mod common;
 
+use std::convert::Infallible;
 use std::future::{pending, ready};
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -547,6 +549,62 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
         .await
         .expect("the drain ignored its timeout and hung on the continuation")
         .expect("an abandoned continuation is not a shutdown failure");
+}
+
+/// Where a continuation that outlives its delivery reports: `started` once it is in flight, and
+/// `finished` once it ran to its end.
+#[derive(Default)]
+struct Drain {
+    started: Notify,
+    finished: AtomicBool,
+}
+
+/// The work a continuation takes, well inside the shutdown timeout below.
+const BRIEF_WORK: Duration = Duration::from_secs(1);
+
+#[subscriber("cov.continuation.brief")]
+async fn with_brief_continuation(
+    _order: &Order,
+    ctx: &mut Context<'_, (), Arc<Drain>>,
+) -> HandlerOutcome {
+    let drain = Arc::clone(ctx.state());
+    HandlerOutcome::ack().and_after(async move {
+        drain.started.notify_one();
+        tokio::time::sleep(BRIEF_WORK).await;
+        drain.finished.store(true, Ordering::SeqCst);
+    })
+}
+
+/// A continuation that finishes within the shutdown timeout is waited for, not abandoned: it is
+/// still in flight when the shutdown starts, and it has run to its end when the shutdown returns.
+/// On the paused clock its work ends only once every task waits, the drain included.
+#[tokio::test(start_paused = true)]
+async fn the_shutdown_timeout_waits_for_a_continuation_that_finishes_in_time() {
+    let broker = MemoryBroker::new();
+    let publisher = broker.publisher();
+    let drain = Arc::new(Drain::default());
+    let state = Arc::clone(&drain);
+    let app = RustStream::new(AppInfo::new("cov-continuation-brief", "0.1.0"))
+        .shutdown_timeout(Duration::from_secs(5))
+        .on_startup(async move |()| Ok::<_, Infallible>(state))
+        .with_broker(broker, |b| {
+            b.include(with_brief_continuation);
+        });
+
+    let running = app.start().await.expect("startup failed");
+    publisher
+        .message(&Order { id: 1 })
+        .to("cov.continuation.brief")
+        .publish()
+        .await
+        .expect("publish failed");
+    drain.started.notified().await;
+
+    running.shutdown().await.expect("shutdown failed");
+    assert!(
+        drain.finished.load(Ordering::SeqCst),
+        "the shutdown returned before the continuation finished",
+    );
 }
 
 // The builder surface: the labeled-codec registration and the include builders.

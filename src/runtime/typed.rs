@@ -120,7 +120,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "json"))]
+#[cfg(all(test, feature = "json", feature = "memory"))]
 mod tests {
     use std::future::ready;
     use std::sync::{
@@ -132,33 +132,15 @@ mod tests {
 
     use super::{Typed, typed};
     use crate::codec::JsonCodec;
+    use crate::memory::{MemoryBroker, MemoryMessage};
     use crate::runtime::context::Context;
     use crate::runtime::dispatch::Delivery;
     use crate::runtime::failure::FailurePolicy;
     use crate::runtime::handle::Message;
     use crate::runtime::handler::{Handler, HandlerOutcome, HandlerResult};
     use crate::runtime::input::DecodedPair;
+    use crate::testkit::delivery::one_delivery;
     use crate::{AckError, HeaderMap, IncomingMessage};
-
-    struct StubMsg(Vec<u8>, HeaderMap);
-
-    impl IncomingMessage for StubMsg {
-        fn payload(&self) -> &[u8] {
-            &self.0
-        }
-
-        fn headers(&self) -> &HeaderMap {
-            &self.1
-        }
-
-        fn ack(self) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
-        }
-
-        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-            ready(Ok(()))
-        }
-    }
 
     fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
         let seen = Arc::clone(seen);
@@ -170,6 +152,16 @@ mod tests {
                 HandlerOutcome::ack()
             }
         }
+    }
+
+    /// The adapter shows the decode-failure policy it applies and elides the codec and the inner
+    /// handler, a closure more often than not.
+    #[test]
+    fn the_adapter_renders_its_decode_policy() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed::<MemoryMessage, u32, _, _>(JsonCodec, counting_inner(&seen))
+            .on_decode_failure(FailurePolicy::Retry);
+        assert_eq!(format!("{handler:?}"), "Typed { decode: Retry, .. }");
     }
 
     // Plain #[tokio::test] throughout: nothing is spawned, the handler future is awaited inline.
@@ -194,13 +186,13 @@ mod tests {
             }
         };
         // No codec anywhere: the self-deserializing kind decodes with `()`.
-        let handler = Typed::<StubMsg, Provided<Frame>, (), _>::over((), inner);
+        let handler = Typed::<MemoryMessage, Provided<Frame>, (), _>::over((), inner);
         let state = ();
         let delivery = Delivery::empty();
         let headers = HeaderMap::new();
         let mut ctx = Context::new("frames", &headers, &state, (), &delivery);
 
-        let msg = StubMsg(b"not json at all".to_vec(), HeaderMap::new());
+        let msg = one_delivery(&MemoryBroker::new(), "frames", b"not json at all").await;
         assert_eq!(
             handler.handle(&msg, &mut ctx).await.outcome(),
             HandlerResult::Ack
@@ -217,7 +209,7 @@ mod tests {
         let headers = HeaderMap::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
-        let msg = StubMsg(b"not json".to_vec(), HeaderMap::new());
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
         assert_eq!(
             handler.handle(&msg, &mut ctx).await.outcome(),
             HandlerResult::drop()
@@ -235,7 +227,7 @@ mod tests {
         let headers = HeaderMap::new();
         let mut ctx = Context::new("typed", &headers, &state, (), &delivery);
 
-        let msg = StubMsg(b"not json".to_vec(), HeaderMap::new());
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
         assert_eq!(
             handler.handle(&msg, &mut ctx).await.outcome(),
             HandlerResult::retry()
@@ -258,7 +250,7 @@ mod tests {
         let delivery = Delivery::empty();
         let headers = HeaderMap::new();
         let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
-        let msg = StubMsg(b"not json".to_vec(), HeaderMap::new());
+        let msg = one_delivery(&MemoryBroker::new(), "typed", b"not json").await;
         // How it settles is `decode_failure_drops_by_default`'s subject; this one reads the log.
         let _ = handler.handle(&msg, &mut ctx).await;
         drop(guard);

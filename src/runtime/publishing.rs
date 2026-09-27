@@ -524,11 +524,9 @@ mod tests {
     mod diagnostics {
         use std::future::ready;
 
-        use futures::StreamExt;
-
         use super::ManualPub;
         use crate::codec::JsonCodec;
-        use crate::memory::{MemoryBroker, MemoryError, MemoryMessage};
+        use crate::memory::{MemoryBroker, MemoryError};
         use crate::runtime::context::Context;
         use crate::runtime::dispatch::Delivery;
         use crate::runtime::failure::FailurePolicy;
@@ -537,24 +535,9 @@ mod tests {
         use crate::runtime::publishing::PublishingHandler;
         #[cfg(feature = "testing")]
         use crate::testing::coordinator::Origin;
+        use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
-        use crate::{HeaderMap, Lend, OutgoingMessage, Publisher, Subscriber};
-
-        /// Publishes `payload` to `name` and pulls the delivery back off the bus.
-        async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
-            let mut subscriber = broker.subscribe(name);
-            broker
-                .publisher()
-                .publish(OutgoingMessage::new(name, payload), None)
-                .await
-                .expect("publish failed");
-            let mut stream = std::pin::pin!(subscriber.stream());
-            stream
-                .next()
-                .await
-                .expect("delivery missing")
-                .expect("memory subscriber never errors")
-        }
+        use crate::{HeaderMap, Lend, OutgoingMessage, Publisher};
 
         /// A publisher that always refuses, modelling a broker rejecting the reply.
         struct Rejecting;

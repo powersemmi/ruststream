@@ -619,11 +619,32 @@ fn quantile_ns(buckets: &[u64; BUCKETS], q: f64) -> u64 {
 mod tests {
     use super::*;
 
+    /// `new` and `Default` both give the documented defaults.
     #[test]
     fn the_defaults_are_a_hundred_microseconds_and_one_poll_in_64() {
-        let diagnostics = PollDiagnostics::new();
-        assert_eq!(diagnostics.threshold, Duration::from_micros(100));
-        assert_eq!(diagnostics.sample_every.get(), 64);
+        for diagnostics in [PollDiagnostics::new(), PollDiagnostics::default()] {
+            assert_eq!(diagnostics.threshold, Duration::from_micros(100));
+            assert_eq!(diagnostics.sample_every.get(), 64);
+        }
+    }
+
+    /// The diagnostics show their settings and how many subscriptions they sample, and a sampler
+    /// shows the subscription it times and its interval; neither prints the statistics or the
+    /// clock behind them.
+    #[test]
+    fn the_diagnostics_and_a_sampler_render_their_settings() {
+        let diagnostics = PollDiagnostics::new()
+            .threshold(Duration::from_micros(250))
+            .sample_every(NonZeroU32::new(16).expect("16 is nonzero"));
+        let sampler = diagnostics.register("orders");
+        assert_eq!(
+            format!("{diagnostics:?}"),
+            "PollDiagnostics { threshold: 250µs, sample_every: 16, subscriptions: 1, .. }",
+        );
+        assert_eq!(
+            format!("{sampler:?}"),
+            "PollSampler { subscription: \"orders\", every: 16, .. }",
+        );
     }
 
     #[test]

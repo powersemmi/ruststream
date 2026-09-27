@@ -87,6 +87,41 @@ pub(crate) mod log_capture {
     }
 }
 
+/// Hands a unit test one real delivery of the in-memory broker, for the handler adapters that are
+/// driven with a message directly rather than through a dispatch loop.
+///
+/// It stays below `TestApp` on purpose: its callers test an adapter's handling of one delivery,
+/// which `TestApp` never exposes, since it drives the whole dispatch around the adapter.
+/// Behaviour a service can observe is tested through the harness.
+#[cfg(feature = "memory")]
+pub(crate) mod delivery {
+    use futures::StreamExt;
+
+    use crate::memory::{MemoryBroker, MemoryMessage};
+    use crate::{OutgoingMessage, Publisher, Subscriber};
+
+    /// Publishes `payload` to `name` and pulls the delivery back off the bus. It drives the
+    /// transport itself, so it publishes through the broker SPI rather than the typed builder.
+    pub(crate) async fn one_delivery(
+        broker: &MemoryBroker,
+        name: &str,
+        payload: &[u8],
+    ) -> MemoryMessage {
+        let mut subscriber = broker.subscribe(name);
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new(name, payload), None)
+            .await
+            .expect("publish failed");
+        let mut stream = std::pin::pin!(subscriber.stream());
+        stream
+            .next()
+            .await
+            .expect("delivery missing")
+            .expect("memory subscriber never errors")
+    }
+}
+
 /// Drives the in-memory broker for the batch handler tests: publish a few deliveries, then pull
 /// them back as one batch.
 #[cfg(all(feature = "memory", feature = "json"))]
