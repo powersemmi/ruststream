@@ -5,8 +5,7 @@
     feature = "macros",
     feature = "testing",
     feature = "memory",
-    feature = "json",
-    feature = "cbor"
+    feature = "json"
 ))]
 
 mod common;
@@ -15,6 +14,7 @@ use std::error::Error;
 use std::future::Future;
 
 use common::{Order, Receipt, Wire};
+#[cfg(feature = "cbor")]
 use ruststream::codec::CborCodec;
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
@@ -25,6 +25,7 @@ use ruststream::runtime::{
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
 
+#[cfg(feature = "cbor")]
 #[subscriber("rpc-in", publish("rpc-out"))]
 async fn rpc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
@@ -32,6 +33,7 @@ async fn rpc_relay(o: &Order) -> Receipt {
 
 /// The router's chain codec decodes the request; the reply leaves under the reply position's
 /// codec, the crate default, so the two formats differ on one registration.
+#[cfg(feature = "cbor")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_chain_codec_decodes_the_request_and_leaves_the_reply_its_own() {
     let router = Router::<MemoryBroker>::new()
@@ -58,6 +60,7 @@ async fn a_chain_codec_decodes_the_request_and_leaves_the_reply_its_own() {
         .with(&Receipt { id: 1 });
 }
 
+#[cfg(feature = "cbor")]
 #[subscriber("bpc-in", publish("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
@@ -65,6 +68,7 @@ async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
 
 /// The same on the batch publishing form: elements decode with the chain codec, replies leave
 /// under their own.
+#[cfg(feature = "cbor")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_chain_codec_decodes_a_batch_and_leaves_the_replies_their_own() {
     let router = Router::<MemoryBroker>::new()

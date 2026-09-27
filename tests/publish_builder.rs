@@ -4,11 +4,11 @@
     feature = "memory",
     feature = "macros",
     feature = "json",
-    feature = "cbor",
     feature = "testing"
 ))]
 
 use ruststream::OutgoingFor;
+#[cfg(feature = "cbor")]
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
 use ruststream::testing::{TestApp, TestableBroker};
@@ -200,6 +200,7 @@ fn replaying() -> MemoryBroker<Retaining> {
 
 /// A call that names a codec encodes with it rather than with the crate default the builder
 /// otherwise falls back to.
+#[cfg(feature = "cbor")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_call_names_its_own_codec() {
     let broker = replaying();
