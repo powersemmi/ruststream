@@ -350,8 +350,7 @@ to the subscription after the delay and drops the original, with the framework's
 timer runs where the delivery ran, and a graceful shutdown waits for it within the
 [`shutdown_timeout`](RustStream::shutdown_timeout), so a copy pending at shutdown is published
 before the broker closes. The timeout is unset by default, so a shutdown waits out the longest
-pending delay; set one when delays run long. A zero delay publishes the copy at once, on the
-dispatch path, as `retry()` does. The
+pending delay; set one when delays run long. The
 publisher it leaves through is on every registration already, from the broker's default
 policy. `.out_retry(policy)` replaces it, and the steps after it are the slot steps,
 `.codec(..)` and `.transform(..)`. The copy lends its bytes rather than handing them over, so
@@ -371,6 +370,11 @@ keeps none, never both, and an immediate `retry()` obeys the same cap. Where the
 the delivery itself (a queue with a delivery limit and a dead-letter exchange), the
 declaration reaches the descriptor, `.out_retry(..)` does not compile, and a `retry()` stays
 the broker's own requeue, cap or no cap.
+
+A zero delay is `retry()` in effect: `retry_after(Duration::ZERO)` has the delivery processed again
+at once. The path differs: a broker with native delayed redelivery gets `nack_after` with a zero
+delay, and on any other the runtime publishes the copy at once, on the dispatch path, instead of
+requeueing the original. Write `retry()` when no delay is meant.
 
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
