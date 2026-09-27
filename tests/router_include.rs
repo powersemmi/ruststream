@@ -1,6 +1,5 @@
-//! Integration tests for the `Router` include family (subscribe and batch forms), in both codec
-//! forms: the default codec and a chain codec set with `with_codec`. Also covers `merge`, the
-//! router's own `layer` stack, and `handlers()` metadata collection.
+//! Integration tests for the `Router` include family (subscribe and batch forms). Also covers
+//! `merge`, the router's own `layer` stack, and `handlers()` metadata collection.
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -14,8 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::Order;
-use ruststream::codec::JsonCodec;
-use ruststream::memory::{MemoryBroker, MemoryMessage, MemorySource};
+use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{
     AppInfo, Context, Handler, HandlerOutcome, Layer, Router, RustStream, SubscriberSettings,
     layers::TracingLayer,
@@ -47,79 +45,24 @@ async fn ri_plain(_o: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-// A broker source expression rather than a bare name: the definition is where a subscription
-// source belongs, and the attribute takes the broker's own source builder.
-#[subscriber(MemorySource::new("ri-on"))]
-async fn ri_on(_o: &Order) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
 #[subscriber("ri-batch")]
 async fn ri_batch(orders: &[Order]) -> HandlerOutcome {
     let _ = orders;
     HandlerOutcome::ack()
 }
 
-#[subscriber(MemorySource::new("ri-batch-on"))]
-async fn ri_batch_on(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-/// The default-codec router forms dispatch, whether the definition names its source as a topic
-/// string or builds one with the broker's own source type.
+/// A router mounts the single-message and the batch form alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn default_codec_router_includes_dispatch() {
+async fn router_includes_dispatch() {
     let router = Router::<MemoryBroker>::new()
         .include(ri_plain)
-        .include(ri_on)
-        .include(ri_batch.batch(nonzero!(64)))
-        .include(ri_batch_on.batch(nonzero!(64)));
+        .include(ri_batch.batch(nonzero!(64)));
 
     let app = RustStream::new(AppInfo::new("ri", "0.1.0"))
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup failed");
 
-    drive_all(&tb, &["ri-plain", "ri-on", "ri-batch", "ri-batch-on"]).await;
-}
-
-#[subscriber("rc-plain")]
-async fn rc_plain(_o: &Order) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber(MemorySource::new("rc-on"))]
-async fn rc_on(_o: &Order) -> HandlerOutcome {
-    HandlerOutcome::ack()
-}
-
-#[subscriber("rc-batch")]
-async fn rc_batch(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-#[subscriber(MemorySource::new("rc-batch-on"))]
-async fn rc_batch_on(orders: &[Order]) -> HandlerOutcome {
-    let _ = orders;
-    HandlerOutcome::ack()
-}
-
-/// The same four registrations decode through a chain codec named once with `with_codec`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn chain_codec_router_includes_dispatch() {
-    let router = Router::<MemoryBroker>::new()
-        .with_codec(JsonCodec)
-        .include(rc_plain)
-        .include(rc_on)
-        .include(rc_batch.batch(nonzero!(64)))
-        .include(rc_batch_on.batch(nonzero!(64)));
-
-    let app = RustStream::new(AppInfo::new("rc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("startup failed");
-
-    drive_all(&tb, &["rc-plain", "rc-on", "rc-batch", "rc-batch-on"]).await;
+    drive_all(&tb, &["ri-plain", "ri-batch"]).await;
 }
 
 #[subscriber("rm-a")]

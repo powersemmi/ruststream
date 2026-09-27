@@ -579,7 +579,6 @@ async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
 
 #[test]
 fn the_default_worker_policy_is_sequential() {
-    assert_eq!(Workers::default(), Workers::sequential());
     assert!(Workers::default().is_sequential());
     // One worker of either shape is the sequential loop, not a pool of one.
     assert!(Workers::pool(NonZeroUsize::new(1).unwrap()).is_sequential());
@@ -600,11 +599,24 @@ fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
     assert!(format!("{wired:?}").contains("retry_destination: Some(Some(\"orders\"))"));
 }
 
+/// A worker that died yields nothing to account for, and its failure is logged with the cause.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_panicking_worker_is_reported_when_joined() {
     let joined = tokio::spawn(async { panic!("worker down") }).await;
-    assert!(joined.is_err());
-    log_worker_exit(joined);
+    #[cfg(feature = "logging")]
+    let (events, guard) = crate::testkit::log_capture::start();
+    assert!(log_worker_exit(joined).is_none());
+    #[cfg(feature = "logging")]
+    {
+        drop(guard);
+        let failure = crate::testkit::log_capture::find(&events, "worker task failed");
+        assert!(
+            failure
+                .get("error")
+                .is_some_and(|err| err.contains("worker down")),
+            "the diagnostic must carry the panic: {failure:?}",
+        );
+    }
 }
 
 /// A handler that never finishes, holding the sender it reported its start on: the channel

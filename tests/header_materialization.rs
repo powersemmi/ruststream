@@ -20,16 +20,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::{Stream, StreamExt};
-use ruststream::codec::JsonCodec;
 use ruststream::memory::{MemoryBroker, MemoryMessage, MemoryPublish, MemorySubscriber};
 use ruststream::runtime::{
-    AppInfo, Context, ForReply, Handle, HandlerMetadata, HandlerOutcome, IntoSource, Outgoing,
-    PublishContext, PublishTransform, Reads, RustStream, Typed, subscriber, typed,
+    AppInfo, Context, ForReply, Handle, HandlerOutcome, IntoSource, Outgoing, PublishContext,
+    PublishTransform, Reads, RustStream, subscriber,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
-    AckError, AddressedCopies, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed,
-    Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, Deserialized, HeaderMap, IncomingMessage, RedeliveryAddress,
+    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
 };
 
 /// A delivery that counts what the runtime asks of it. Everything else is the in-memory broker's
@@ -78,44 +77,52 @@ impl Subscriber for CountingSubscriber {
     }
 }
 
-/// Runs one delivery of `Order` through `handler`, mounted on the counting subscription, and
+/// Mounts `handler` on the counting subscription, runs one delivery of `Order` through it, and
 /// answers how many times the runtime asked the delivery for its headers.
-async fn header_reads<H>(handler: H) -> usize
-where
-    H: ruststream::runtime::Handler<CountingMessage> + 'static,
-{
-    let reads = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&reads);
-    let app =
-        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), move |b| {
-            let subscriber = CountingSubscriber {
-                inner: b.broker().subscribe("orders"),
-                reads: counter,
-            };
-            b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
-        });
+macro_rules! header_reads {
+    ($handler:expr) => {{
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = Counted {
+            name: "orders",
+            reads: Arc::clone(&reads),
+        };
+        let app =
+            RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(subscriber(counted, $handler).build());
+            });
 
-    let tb = TestApp::start(app).await.expect("startup failed");
-    tb.message(&Order { id: 7 })
-        .to("orders")
-        .publish()
-        .await
-        .expect("publish");
-    tb.broker::<MemoryBroker>()
-        .subscriber("orders")
-        .assert_called(1)
-        .settled(HandlerOutcome::ack());
+        let tb = TestApp::start(app).await.expect("startup failed");
+        tb.message(&Order { id: 7 })
+            .to("orders")
+            .publish()
+            .await
+            .expect("publish");
+        tb.broker::<MemoryBroker>()
+            .subscriber("orders")
+            .assert_called(1)
+            .settled(HandlerOutcome::ack());
 
-    reads.load(Ordering::Relaxed)
+        reads.load(Ordering::Relaxed)
+    }};
+}
+
+/// Takes the decoded order and nothing else.
+struct ReadsNothing;
+
+impl Handle<Order> for ReadsNothing {
+    fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_decoded_handler_never_asks_the_delivery_for_its_headers() {
-    let reads = header_reads(typed(JsonCodec, |order: &Order, _ctx: &mut Context| {
-        assert_eq!(order.id, 7);
-        async { HandlerOutcome::ack() }
-    }))
-    .await;
+    let reads = header_reads!(ReadsNothing);
 
     assert_eq!(
         reads, 0,
@@ -123,21 +130,29 @@ async fn a_decoded_handler_never_asks_the_delivery_for_its_headers() {
     );
 }
 
+/// The payload view of the byte lane: the view stays the delivery's bytes, so nothing decodes and
+/// nothing reads a header.
+#[derive(Deserialized)]
+struct Frame<'a>(&'a [u8]);
+
+/// Takes the delivery's bytes and nothing else.
+struct ReadsBytes;
+
+impl<'p> Handle<Frame<'p>> for ReadsBytes {
+    fn handle(
+        &self,
+        frame: &Frame<'p>,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        let _ = frame.0;
+        ready(Ok(()))
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_byte_lane_handler_never_asks_the_delivery_for_its_headers() {
-    /// The lane marker: the view stays `&[u8]`, so nothing decodes and nothing reads a header.
-    struct Frame;
-
-    let reads = header_reads(Typed::<
-        CountingMessage,
-        ruststream::runtime::Provided<Frame>,
-        (),
-        _,
-    >::over((), |bytes: &[u8], _ctx: &mut Context| {
-        assert!(!bytes.is_empty());
-        async { HandlerOutcome::ack() }
-    }))
-    .await;
+    let reads = header_reads!(ReadsBytes);
 
     assert_eq!(
         reads, 0,
@@ -145,15 +160,29 @@ async fn a_byte_lane_handler_never_asks_the_delivery_for_its_headers() {
     );
 }
 
+/// Reads the header map twice.
+struct ReadsTwice;
+
+impl Handle<Order> for ReadsTwice {
+    fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        // Twice on purpose: the second read answers from the resolved map.
+        let reads = [ctx.headers().is_empty(), ctx.headers().is_empty()];
+        ready(if reads == [true, true] {
+            Ok(())
+        } else {
+            Err(HandlerOutcome::drop())
+        })
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_handler_that_reads_the_headers_materializes_them_once() {
-    let reads = header_reads(typed(JsonCodec, |_order: &Order, ctx: &mut Context| {
-        assert!(ctx.headers().is_empty());
-        // Twice on purpose: the second read answers from the resolved map.
-        assert!(ctx.headers().is_empty());
-        async { HandlerOutcome::ack() }
-    }))
-    .await;
+    let reads = header_reads!(ReadsTwice);
 
     assert_eq!(
         reads, 1,
@@ -161,14 +190,28 @@ async fn a_handler_that_reads_the_headers_materializes_them_once() {
     );
 }
 
+/// Writes a header into the working copy and reads it back.
+struct Enriches;
+
+impl Handle<Order> for Enriches {
+    fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ctx.headers_mut().insert("x-seen", "yes");
+        ready(if ctx.headers().get("x-seen").is_some() {
+            Ok(())
+        } else {
+            Err(HandlerOutcome::drop())
+        })
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_handler_that_enriches_the_headers_asks_the_delivery_once() {
-    let reads = header_reads(typed(JsonCodec, |_order: &Order, ctx: &mut Context| {
-        ctx.headers_mut().insert("x-seen", "yes");
-        assert!(ctx.headers().get("x-seen").is_some());
-        async { HandlerOutcome::ack() }
-    }))
-    .await;
+    let reads = header_reads!(Enriches);
 
     assert_eq!(
         reads, 1,

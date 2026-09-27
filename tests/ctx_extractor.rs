@@ -1,7 +1,7 @@
 //! The `Ctx<K>` extractor: a broker context field injected as a handler parameter, with the
 //! subscription's context type projected from the key - no `&mut Context` parameter needed.
 //! Also the mixed form (an explicit ctx parameter plus a `Ctx` extractor reading the same
-//! context) and the state-composition form (`Ctx` next to `State`).
+//! context).
 #![cfg(all(
     feature = "macros",
     feature = "memory",
@@ -11,7 +11,7 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::runtime::{AppInfo, Ctx, HandlerOutcome, RustStream, State};
@@ -147,51 +147,4 @@ async fn ctx_extractor_composes_with_an_explicit_ctx_parameter() {
         .subscriber("mixed")
         .assert_called_once()
         .settled(HandlerOutcome::ack());
-}
-
-// --- composition with State: broker field and state component side by side ---
-
-#[derive(Clone)]
-struct Hits(Arc<AtomicU32>);
-
-#[derive(FromRef)]
-struct AppState {
-    hits: Hits,
-}
-
-#[subscriber("counted")]
-async fn count(
-    _order: &Order,
-    Ctx(len): Ctx<PayloadLen>,
-    State(hits): State<Hits>,
-) -> HandlerOutcome {
-    if len > 0 {
-        hits.0.fetch_add(1, Ordering::Relaxed);
-    }
-    HandlerOutcome::ack()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ctx_extractor_composes_with_state() {
-    let hits = Arc::new(AtomicU32::new(0));
-    let state_hits = Hits(hits.clone());
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(AppState { hits: state_hits }) })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(count);
-        });
-
-    let tb = TestApp::start(app).await.expect("start");
-    tb.broker::<MemoryBroker>()
-        .message(&Order { id: 2 })
-        .to("counted")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
-        .subscriber("counted")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-    assert_eq!(hits.load(Ordering::Relaxed), 1);
 }

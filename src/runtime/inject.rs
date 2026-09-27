@@ -366,15 +366,17 @@ mod tests {
         assert!(format!("{:?}", def.source()).contains("in"));
     }
 
+    /// The handler names itself and elides the definition, the codec and the resolved injections
+    /// it carries.
     #[test]
-    fn the_handler_names_itself() {
+    fn the_handler_renders_its_name_alone() {
         let handler = InjectHandler {
             def: ManualInject,
             codec: (),
             injections: (),
             decode: FailurePolicy::Drop,
         };
-        assert!(format!("{handler:?}").contains("InjectHandler"));
+        assert_eq!(format!("{handler:?}"), "InjectHandler { .. }");
     }
 
     /// The decode diagnostic of the injected path. It is asserted on the handler itself because
@@ -382,34 +384,17 @@ mod tests {
     /// subscriber listens.
     #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
     mod diagnostics {
-        use futures::StreamExt;
-
         use super::ManualInject;
+        use crate::HeaderMap;
         use crate::codec::JsonCodec;
-        use crate::memory::{MemoryBroker, MemoryMessage};
+        use crate::memory::MemoryBroker;
         use crate::runtime::context::Context;
         use crate::runtime::dispatch::Delivery;
         use crate::runtime::failure::FailurePolicy;
         use crate::runtime::handler::Handler;
         use crate::runtime::inject::InjectHandler;
+        use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
-        use crate::{HeaderMap, OutgoingMessage, Publisher, Subscriber};
-
-        /// Publishes `payload` to `name` and pulls the delivery back off the bus.
-        async fn one_delivery(broker: &MemoryBroker, name: &str, payload: &[u8]) -> MemoryMessage {
-            let mut subscriber = broker.subscribe(name);
-            broker
-                .publisher()
-                .publish(OutgoingMessage::new(name, payload), None)
-                .await
-                .expect("publish failed");
-            let mut stream = std::pin::pin!(subscriber.stream());
-            stream
-                .next()
-                .await
-                .expect("delivery missing")
-                .expect("memory subscriber never errors")
-        }
 
         /// The diagnostic names the subscription and the type that was expected, so the
         /// offending producer is findable from the logs; `fail_fast` still settles the message

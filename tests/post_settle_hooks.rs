@@ -17,6 +17,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
 };
+use std::time::Duration;
 
 use common::Order;
 use ruststream::memory::MemoryBroker;
@@ -113,18 +114,24 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     );
 }
 
-/// A handler whose after-ack hook yields before completing, to prove graceful shutdown drains it.
+/// How long the hook below waits before it counts: on a paused clock the wait ends only when the
+/// runtime has nothing else to do, so the hook is still pending when the delivery settles.
+const HOOK_DELAY: Duration = Duration::from_secs(60);
+
+/// A handler whose after-ack hook is still pending when the delivery settles.
 #[subscriber("slow")]
 async fn handle_slow(_order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerOutcome {
     let done = Arc::clone(&ctx.state().ack);
     ctx.after_ack(async move {
-        tokio::task::yield_now().await;
+        tokio::time::sleep(HOOK_DELAY).await;
         done.fetch_add(1, Ordering::SeqCst);
     });
     HandlerOutcome::ack()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// A shutdown waits for the hooks still in flight: on the paused clock the pending hook finishes
+/// only because the shutdown idles on it.
+#[tokio::test(start_paused = true)]
 async fn hooks_drain_on_graceful_shutdown() {
     let counters = Counters::default();
     let startup_counters = counters.clone();
@@ -141,12 +148,12 @@ async fn hooks_drain_on_graceful_shutdown() {
         .publish()
         .await
         .expect("publish");
-    tb.broker::<MemoryBroker>()
-        .subscriber("slow")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
+    assert_eq!(
+        Counters::read(&counters.ack),
+        0,
+        "the hook must still be pending when the delivery settles",
+    );
 
-    // Shut down without draining first: the in-flight hook must still be drained by the shutdown.
     tb.shutdown().await.expect("graceful shutdown failed");
     assert_eq!(Counters::read(&counters.ack), 1, "hook was not drained");
 }

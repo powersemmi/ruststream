@@ -248,15 +248,17 @@ mod tests {
         assert_eq!(def.failure_policies(), FailurePolicies::default());
     }
 
+    /// The handler names itself and elides the definition, the codec and the resolved injections
+    /// it carries.
     #[test]
-    fn handler_debug_hides_the_injections() {
+    fn the_handler_renders_its_name_alone() {
         let handler = BatchInjectHandler {
             def: Scale::new(),
             codec: JsonCodec,
             injections: 10,
             decode: FailurePolicy::Drop,
         };
-        assert!(format!("{handler:?}").contains("BatchInjectHandler"));
+        assert_eq!(format!("{handler:?}"), "BatchInjectHandler { .. }");
     }
 
     /// The resolved injections reach every call alongside the decoded batch, and the returned

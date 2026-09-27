@@ -134,11 +134,15 @@ async fn extractor_rejection_short_circuits() {
 #[derive(Clone)]
 struct Tally(Arc<AtomicU32>);
 
+/// A state field that is not a dependency: it cannot be cloned, so an extractor generated for it
+/// would not compile, and `#[from_ref(skip)]` is what keeps the derive from generating one.
+struct Label;
+
 #[derive(FromRef)]
 struct DerivedState {
     tally: Tally,
     #[from_ref(skip)]
-    _label: &'static str,
+    _label: Label,
 }
 
 #[subscriber("derived")]
@@ -155,7 +159,7 @@ async fn derive_from_ref_injects_fields() {
         .on_startup(move |()| async move {
             Ok::<_, Infallible>(DerivedState {
                 tally,
-                _label: "svc",
+                _label: Label,
             })
         })
         .with_broker(MemoryBroker::new(), |b| {

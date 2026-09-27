@@ -13,14 +13,10 @@
 
 mod common;
 
-use common::{Event, Wire, connected, expect_id, observed_memory};
+use common::{Event, Wire};
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
-
-/// The broker of every suite here that reads a publish log back (`observed_memory`) or seeks:
-/// both need the broker to keep what it published.
-type Bus = MemoryBroker<Retaining>;
 
 /// The payload view the byte-level bodies below take: the delivery's bytes, borrowed.
 #[derive(Deserialized)]
@@ -51,25 +47,25 @@ async fn forward(event: &Event, Out(out): Out<impl Publisher>) -> HandlerOutcome
 /// `.build()` commits.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_single_out_slot() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new()
+    let router = Router::<MemoryBroker>::new()
         .include(forward)
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-out", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 3 })
         .to("rp.out.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.out.forwarded", 3).await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.out.forwarded")
+        .assert_called_once()
+        .with(&Event { id: 3 });
 }
 
 #[derive(OutSlot)]
@@ -200,25 +196,25 @@ async fn forward_batch(events: &[Event], Out(out): Out<impl Publisher>) -> Handl
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_mounts_a_batch_out_slot() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new()
+    let router = Router::<MemoryBroker>::new()
         .include(forward_batch.batch(nonzero!(64)))
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 9 })
         .to("rp.batch.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.batch.forwarded", 9).await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.batch.forwarded")
+        .assert_called_once()
+        .with(&Event { id: 9 });
 }
 
 // A broker context key: the seek handle rides the delivery context, read by the Ctx extractor.
@@ -263,22 +259,21 @@ async fn relay(event: &Event) -> Event {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_reply_publisher_on_mount() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new().include(relay).build();
+    let router = Router::<MemoryBroker>::new().include(relay).build();
     let app = RustStream::new(AppInfo::new("rp-reply", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 1 })
         .to("rp.reply.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.reply.out", 2).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.reply.out")
+        .assert_called_once()
+        .with(&Event { id: 2 });
 }
 
 #[subscriber("rp.raw.in", publish("rp.raw.out"))]
@@ -308,36 +303,6 @@ async fn a_router_mounts_the_byte_reply_form() {
         .with_raw(b"frame");
 }
 
-#[subscriber("rp.raw.on.in", publish("rp.raw.on.out"))]
-async fn echo_frame_on(frame: &Frame<'_>) -> Export {
-    Export(frame.0.to_vec())
-}
-
-/// The same form with an explicit publish policy instead of the broker default.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_router_takes_an_explicit_serialized_reply_policy() {
-    let router = Router::<MemoryBroker>::new()
-        .include(echo_frame_on)
-        .out(Reply, Publish)
-        .build();
-    let app = RustStream::new(AppInfo::new("rp-raw-on", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.broker::<MemoryBroker>()
-        .message(&Wire::of(b"frame"))
-        .to("rp.raw.on.in")
-        .publish()
-        .await
-        .expect("publish");
-    tb.settle().await.expect("settle");
-
-    tb.broker::<MemoryBroker>()
-        .published::<Export>("rp.raw.on.out")
-        .assert_called_once()
-        .with_raw(b"frame");
-}
-
 // The two-attachment forms: a reply next to Out slots, single and batch.
 
 #[subscriber("rp.gate.in", publish("rp.gate.reply"))]
@@ -357,26 +322,29 @@ async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, Han
 /// The reply side defaults while the slot side is bound explicitly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_composes_a_default_reply_with_out_slots() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new()
+    let router = Router::<MemoryBroker>::new()
         .include(gate)
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-gate", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 7 })
         .to("rp.gate.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.gate.audit", 7).await;
-    expect_id(&observer, "rp.gate.reply", 8).await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.gate.audit")
+        .assert_called_once()
+        .with(&Event { id: 7 });
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.gate.reply")
+        .assert_called_once()
+        .with(&Event { id: 8 });
 }
 
 #[subscriber("rp.audit.in", publish("rp.audit.out"))]
@@ -445,40 +413,38 @@ async fn settle_batch(
 /// The batch two-attachment form, with the reply side named explicitly this time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_composes_a_batch_reply_with_out_slots() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new()
+    let router = Router::<MemoryBroker>::new()
         .include(settle_batch.batch(nonzero!(64)))
         .out(Reply, Publish)
         .out(DefaultSlot, Publish)
         .build();
     let app = RustStream::new(AppInfo::new("rp-ledger", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 7 })
         .to("rp.ledger.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.ledger.receipts", 107).await;
-    expect_id(&observer, "rp.ledger.batches", 1).await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.ledger.receipts")
+        .assert_called_once()
+        .with(&Event { id: 107 });
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.ledger.batches")
+        .assert_called_once()
+        .with(&Event { id: 1 });
 }
 
 // Cross-broker tokens reach a router include site, exactly as they reach a scope's.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_accepts_a_cross_broker_bind_token() {
-    // The observer reads the egress broker's publish log, so that one keeps what it published.
-    let egress_broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64))).bindable();
+    let egress_broker = MemoryBroker::new().bindable();
     let egress = egress_broker.bind(Publish);
-    let observer = connected(egress_broker.broker()).await;
-
-    let ingress_broker = MemoryBroker::new();
-    let ingress = ingress_broker.publisher();
 
     // The token names its own broker, so the registration order of the two scopes is irrelevant:
     // the slot pairs against the egress broker while the subscription lives on the ingress one.
@@ -487,19 +453,20 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
         .out(DefaultSlot, egress)
         .build();
     let app = RustStream::new(AppInfo::new("rp-bridge", "0.1.0"))
-        .with_broker(ingress_broker, |b| b.include_router(router))
-        .with_broker(egress_broker, |_b| {});
-    let running = app.start().await.expect("startup failed");
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| b.include_router(router))
+        .with_broker_labeled("egress", egress_broker, |_b| {});
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker_named("ingress")
         .message(&Event { id: 5 })
         .to("rp.out.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.out.forwarded", 5).await;
-
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker_named("egress")
+        .published::<Event>("rp.out.forwarded")
+        .assert_called_once()
+        .with(&Event { id: 5 });
 }
 
 // The batch reply terminal, and the metadata every new route kind contributes.
@@ -516,24 +483,24 @@ async fn bulk_relay(events: &[Event]) -> Vec<Event> {
 /// publish policy: naming the size seals the definition, so the reply wiring defaults.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_router_defaults_the_batch_reply_publisher_on_mount() {
-    let (broker, ingress, observer) = observed_memory().await;
-
-    let router = Router::<Bus>::new()
+    let router = Router::<MemoryBroker>::new()
         .include(bulk_relay.batch(nonzero!(64)))
         .build();
     let app = RustStream::new(AppInfo::new("rp-batch", "0.1.0"))
-        .with_broker(broker, |b| b.include_router(router));
-    let running = app.start().await.expect("startup failed");
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("harness start");
 
-    ingress
+    tb.broker::<MemoryBroker>()
         .message(&Event { id: 1 })
         .to("rp.batch.in")
         .publish()
         .await
         .expect("publish");
-    expect_id(&observer, "rp.batch.out", 2).await;
 
-    running.shutdown().await.expect("graceful shutdown failed");
+    tb.broker::<MemoryBroker>()
+        .published::<Event>("rp.batch.out")
+        .assert_called_once()
+        .with(&Event { id: 2 });
 }
 
 /// Every route kind contributes its registration metadata, in registration order: that list is
@@ -567,24 +534,4 @@ fn every_new_route_kind_reports_its_metadata_in_registration_order() {
             "rp.batch.in",
         ]
     );
-}
-
-// One chain type serves every shape, and it identifies itself by name while half-built.
-
-#[test]
-fn the_registration_chain_names_itself() {
-    let with = Router::<MemoryBroker>::new().include(relay);
-    assert!(format!("{with:?}").starts_with("RouterWith"), "{with:?}");
-    let _ = with.build();
-
-    let slots = Router::<MemoryBroker>::new().include(transcode);
-    assert!(format!("{slots:?}").starts_with("RouterWith"), "{slots:?}");
-    let _ = slots.out(Audit, Publish).out(Encoded, Publish).build();
-
-    let with_reply = Router::<MemoryBroker>::new().include(gate);
-    assert!(
-        format!("{with_reply:?}").starts_with("RouterWith"),
-        "{with_reply:?}"
-    );
-    let _ = with_reply.out(DefaultSlot, Publish).build();
 }

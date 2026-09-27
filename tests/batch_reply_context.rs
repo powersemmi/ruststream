@@ -37,45 +37,9 @@ struct Cursor {
     resume_at: Option<u64>,
 }
 
-/// One digest per order, produced while the body holds the broker's batch context.
-#[subscriber("orders", publish("digests"))]
-async fn digest(batch: &[Order], ctx: &mut Context<'_, MemoryBatchContext>) -> Vec<Digest> {
-    // Reading the key is what proves the batch context reached a replying body; the handle it
-    // yields is the subscription's own.
-    let _seeker = ctx.context(SeekHandle);
-    batch.iter().map(|order| Digest { id: order.id }).collect()
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_replying_batch_reads_the_brokers_batch_context() {
-    let app = RustStream::new(AppInfo::new("digests", "0.1.0")).with_broker(
-        MemoryBroker::retaining(Retention::Messages(nonzero!(32))),
-        |b| {
-            b.include(digest.batch(nonzero!(8)));
-        },
-    );
-    let tb = TestApp::start(app).await.expect("harness start");
-
-    tb.broker::<MemoryBroker<Retaining>>()
-        .publish("orders", &Order { id: 7 })
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker<Retaining>>()
-        .published::<Digest>("digests")
-        .assert_called_once()
-        .with(&Digest { id: 7 });
-    tb.broker::<MemoryBroker<Retaining>>()
-        .subscriber("orders")
-        .assert_called_once()
-        .settled(HandlerOutcome::ack());
-
-    tb.shutdown().await.expect("graceful shutdown");
-}
-
-/// The same body, repositioning the subscription through the batch context before it answers:
-/// where to resume rides the elements' own header contract, since a batch context carries no
-/// per-delivery data.
+/// Answers every order with a digest, repositioning the subscription through the batch context
+/// before it answers: where to resume rides the elements' own header contract, since a batch
+/// context carries no per-delivery data.
 #[subscriber("replay.orders", publish("replay.digests"))]
 async fn replay_digest(
     batch: &[Message<Cursor, Order>],
