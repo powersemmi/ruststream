@@ -269,6 +269,8 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     Pub: Publisher + 'static,
     MkPub: Fn(&Connected<B>) -> Pub,
 {
+    let (make_broker, make_source, make_publisher) =
+        super::message_shape::publisher_carries(make_broker, make_source, make_publisher).await;
     super::lifecycle::ladder(make_broker, make_source, make_publisher).await;
 }
 
@@ -317,25 +319,29 @@ where
 
     let app = RustStream::new(AppInfo::new("conformance", "0.0.0"))
         .server("broker", broker.describe_server());
-    let document = build_spec(&app)
-        .to_json()
-        .expect("the generated document must serialize");
-    let bindings = serde_json::to_string(&serde_json::json!({
+    let document: serde_json::Value = serde_json::from_str(
+        &build_spec(&app)
+            .to_json()
+            .expect("the generated document must serialize"),
+    )
+    .expect("the generated document is JSON");
+    let bindings = serde_json::json!({
         "channel": source.channel_bindings(),
         "operation": source.operation_bindings(),
         "message": source.message_bindings(),
-    }))
-    .expect("a binding body is serialized once at construction, so it serializes again here");
+    });
 
-    for (what, text) in [
+    // The failure names where the password sits and never prints it: a conformance run's output
+    // lands in CI logs, which are as shared as the document.
+    for (what, tree) in [
         ("the server description", &document),
         ("the subscription bindings", &bindings),
     ] {
         assert!(
-            !text.contains(secret),
+            !super::message_shape::carries_secret(tree, secret),
             "{what} carries the broker's password. A published document is shared: describe the \
              host with ServerSpec::from_url, which drops the userinfo, and keep credentials out \
-             of every binding body. Got: {text}",
+             of every binding body.",
         );
     }
 }
