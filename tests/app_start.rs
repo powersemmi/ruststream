@@ -12,7 +12,7 @@ mod common;
 use std::convert::Infallible;
 use std::future::ready;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -226,8 +226,12 @@ async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
     assert!(matches!(err, PublishError::Publish(MemoryError::ShutDown)));
 }
 
-/// A broker whose connect always fails, for the partial-startup unwind tests.
-struct FailingBroker;
+/// A broker whose connect always fails, for the partial-startup unwind tests. It counts the
+/// dials, so a test can tell a broker that was never dialled from one that was refused.
+#[derive(Default)]
+struct FailingBroker {
+    dials: Arc<AtomicUsize>,
+}
 
 /// Uninhabited connected form: [`FailingBroker::connect`] never produces one.
 enum NeverConnected {}
@@ -237,6 +241,7 @@ impl Broker for FailingBroker {
     type Connected = NeverConnected;
 
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
+        self.dials.fetch_add(1, Ordering::SeqCst);
         ready(Err(io::Error::other("dial refused")))
     }
 }
@@ -259,7 +264,7 @@ async fn failed_connect_unwinds_already_connected_brokers() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .register_broker(broker)
-        .register_broker(FailingBroker);
+        .register_broker(FailingBroker::default());
 
     let err = app
         .start()
@@ -280,15 +285,18 @@ async fn failed_connect_unwinds_already_connected_brokers() {
 /// returns: the broker that could not have connected is never dialled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failing_state_producer_aborts_startup_before_any_broker_connects() {
+    let broker = FailingBroker::default();
+    let dials = Arc::clone(&broker.dials);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Err::<u32, _>(io::Error::other("state boom")))
-        .register_broker(FailingBroker);
+        .register_broker(broker);
 
     let err = app
         .start()
         .await
         .expect_err("the failing state producer must abort startup");
     assert!(matches!(err, RustStreamError::Startup(_)), "got: {err:?}");
+    assert_eq!(dials.load(Ordering::SeqCst), 0, "a broker was dialled");
 }
 
 /// `#[ruststream::app(worker_threads = n)]` builds: the generated `main` runs the service on a

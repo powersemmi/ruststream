@@ -15,7 +15,7 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use common::Order;
+use common::{Order, Wire};
 use futures::Stream;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
@@ -153,6 +153,48 @@ struct Attempts {
 }
 
 /// Retries order 11 on first sight; settles everything else, per element.
+/// Receives the elements that survived decoding.
+#[subscriber("mixed")]
+async fn sift(orders: &[Order]) -> HandlerOutcome {
+    let _ = orders;
+    HandlerOutcome::ack()
+}
+
+/// An element that does not decode is rejected on its own: the valid elements around it reach the
+/// handler, in publish order, and the batch is not failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undecodable_elements_never_reach_the_handler() {
+    let app =
+        RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(sift.batch(nonzero!(64)));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Order { id: 1 })
+        .to("mixed")
+        .publish()
+        .await
+        .expect("publish failed");
+    tb.message(&Wire::of(b"not json"))
+        .to("mixed")
+        .publish()
+        .await
+        .expect("publish failed");
+    tb.message(&Order { id: 2 })
+        .to("mixed")
+        .publish()
+        .await
+        .expect("publish failed");
+
+    let received: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("mixed").received();
+    let ids: Vec<u32> = received.iter().map(|o| o.id).collect();
+    assert_eq!(ids, vec![1, 2], "unexpected ids reached the handler");
+    tb.broker::<MemoryBroker>()
+        .subscriber("mixed")
+        .assert_called(2)
+        .settled(HandlerOutcome::ack());
+}
+
 #[subscriber("batches")]
 async fn reconcile(orders: &[Order], ctx: &mut Context<'_, (), Attempts>) -> Vec<HandlerOutcome> {
     let retried_once = &ctx.state().retried_once;
