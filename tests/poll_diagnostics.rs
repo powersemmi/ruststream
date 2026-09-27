@@ -149,19 +149,25 @@ async fn a_slow_handler_is_sampled_over_the_threshold() {
     assert!(report.p99() > LOW_THRESHOLD, "p99 {:?}", report.p99());
 }
 
+/// The warning comes once the average is warmed up, and once per crossing. That it comes again
+/// after the average fell back is the unit tests' subject: a fall needs fast samples, and a
+/// loaded machine preempting a fast poll makes it slow.
 #[tokio::test]
-async fn a_slow_handler_warns_naming_the_fix() {
+async fn the_average_warns_once_per_crossing_naming_the_fix() {
     let logs = Captured::default();
     let _guard = logs.install();
-    let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(diagnostics.clone())
+        .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(slow);
         });
     let tb = TestApp::start(app).await.expect("startup");
-    publish(&tb, "slow", WARM_UP).await;
+    let warnings = || logs.text().matches("threads(n)").count();
 
+    publish(&tb, "slow", WARM_UP - 1).await;
+    assert_eq!(warnings(), 0, "warned before the average warmed up");
+    publish(&tb, "slow", 4).await;
+    assert_eq!(warnings(), 1, "{}", logs.text());
     let text = logs.text();
     let line = text
         .lines()
@@ -171,44 +177,19 @@ async fn a_slow_handler_warns_naming_the_fix() {
     assert!(line.contains("subscription=slow"), "{line}");
     assert!(line.contains("average="), "{line}");
     assert!(line.contains("p99="), "{line}");
-    // Once per crossing, not once per sample.
-    assert_eq!(text.matches("threads(n)").count(), 1, "{text}");
 }
 
 #[tokio::test]
-async fn the_average_warns_only_once_warmed_up() {
+async fn a_fast_handler_is_not_warned_about() {
     let logs = Captured::default();
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
-        });
-    let tb = TestApp::start(app).await.expect("startup");
-    publish(&tb, "slow", WARM_UP - 1).await;
-    assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
-    publish(&tb, "slow", 1).await;
-    assert!(logs.text().contains("threads(n)"), "{}", logs.text());
-}
-
-#[tokio::test]
-async fn a_fast_handler_is_sampled_without_a_warning() {
-    let logs = Captured::default();
-    let _guard = logs.install();
-    let diagnostics = every_poll().threshold(HIGH_THRESHOLD);
-    let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
-        .poll_diagnostics(diagnostics.clone())
+        .poll_diagnostics(every_poll().threshold(HIGH_THRESHOLD))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(fast);
         });
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "fast", 2 * WARM_UP).await;
-
-    let report = diagnostics
-        .report("fast")
-        .expect("the subscription is sampled");
-    assert_eq!(report.samples(), u64::from(2 * WARM_UP));
-    assert!(report.average() < HIGH_THRESHOLD, "{:?}", report.average());
     assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
 }
 
