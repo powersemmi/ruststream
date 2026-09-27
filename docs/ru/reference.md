@@ -9,7 +9,8 @@
 Командная утилита `ruststream` входит в тот же крейт, за фичей `cli`. Её описывает модуль
 [`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).
 
-Этот сайт охватывает остальное: установку, учебник, брокеры и контракт для авторов брокеров.
+Этот сайт охватывает остальное: установку, учебник, брокеры и контракт для авторов адаптаций
+библиотек брокеров.
 
 ## Локальная сборка справочника
 
@@ -37,4 +38,4 @@ cargo doc --all-features --open
 | `Metrics` | `ruststream::metrics` | метрики Prometheus |
 | `TestApp` | `ruststream::testing` | обвязка для тестов приложения внутри процесса |
 | `TestableBroker` | `ruststream::testing` | контракт, который реализует внутрипроцессный транспорт брокера |
-| `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов брокеров |
+| `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов адаптаций библиотек брокеров |
