@@ -1,8 +1,11 @@
-//! Compile-fail snapshots for the `ruststream-macros` diagnostics.
+//! Compile-fail snapshots for the `ruststream-macros` diagnostics, and the legal combinations
+//! that must keep compiling.
 //!
 //! Each `tests/ui/*.rs` case feeds the `#[subscriber]` / `#[ruststream::app]` / `derive(MessageInfo)`
 //! macros a misuse and pins the compile error against a `.stderr` snapshot, so a regression in a
-//! macro's diagnostics (a reworded or dropped message, a shifted span) fails the build.
+//! macro's diagnostics (a reworded or dropped message, a shifted span) fails the build. Each
+//! `tests/ui/pass/*.rs` case is a combination that looks like a misuse but is legal; it compiles
+//! and runs.
 //!
 //! The snapshots are rustc-version-sensitive, and CI builds a floor..stable matrix, so they are
 //! pinned to a single toolchain: the run sets `RUN_UI_TESTS=1` (only the stable `cargo test` job
@@ -42,4 +45,5 @@ fn ui() {
     }
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
+    t.pass("tests/ui/pass/*.rs");
 }

@@ -7,6 +7,7 @@
 //! handler at startup. A router-mounted publishing handler therefore picks up the app-wide
 //! [`publish_layer`](crate::runtime::RustStream::publish_layer) chain.
 
+use std::any::type_name;
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -32,7 +33,9 @@ use crate::runtime::middleware::BlanketLayer;
 use crate::runtime::publish::{
     ForReply, NamesDestination, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
-use crate::runtime::publishing::{PublishingCall, PublishingDef, PublishingHandler};
+use crate::runtime::publishing::{
+    PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
+};
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
 use crate::runtime::retry::RetryOpen;
 #[cfg(feature = "testing")]
@@ -278,6 +281,12 @@ where
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
+                    warn_ignored_reply_name(
+                        &name,
+                        type_name::<Def::Reply>(),
+                        def.reply_name(),
+                        def.ignored_reply_name(),
+                    );
                     let pairing = publisher.pair(connected.as_ref());
                     #[cfg(feature = "testing")]
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
@@ -388,6 +397,12 @@ where
         sink.push_raw(
             Box::new(move |connected, state, scope, shutdown| {
                 Box::pin(async move {
+                    warn_ignored_reply_name(
+                        &name,
+                        type_name::<Def::Reply>(),
+                        def.reply_name(),
+                        def.ignored_reply_name(),
+                    );
                     let pairing = publisher.pair(connected.as_ref());
                     #[cfg(feature = "testing")]
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
@@ -500,9 +515,16 @@ where
             )
         });
         let setup = setup.resolve::<Source::Copies, _>(retry_pipeline, &mut meta);
+        let subscription = meta.name.clone();
         sink.push_injected_batch::<_, _, _, _, Def::Context>(
             source,
             async move |connected: Arc<Connected<B>>, subscriber| {
+                warn_ignored_reply_name(
+                    &subscription,
+                    type_name::<Def::Reply>(),
+                    def.reply_name(),
+                    def.ignored_reply_name(),
+                );
                 let pairing = publisher.pair(connected.as_ref());
                 #[cfg(feature = "testing")]
                 let (publisher, origin) = paired(connected.as_ref(), pairing).await;

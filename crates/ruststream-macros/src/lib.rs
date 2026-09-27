@@ -100,8 +100,8 @@ use parse::{SubscriberArgs, doc_description};
 /// ```
 ///
 /// A reply type derives `Outgoing`: `#[outgoing(name = "..")]` on it is the destination, and a
-/// derive without a name takes the clause's `publish("..")` as the destination instead. The two
-/// never disagree, because a declared name is the one that applies.
+/// derive without a name takes the clause's `publish("..")` as the destination instead. A declared
+/// name wins over the clause's, and startup logs a warning when the two differ.
 ///
 /// Without a `publish` clause the handler returns any accepted outcome shape (a `HandlerOutcome`,
 /// `()`, or `Result<_, E>`). Attach a post-settle continuation with

@@ -165,6 +165,10 @@ where
     fn reply_name(&self) -> &str {
         self.def.reply_name()
     }
+
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.def.ignored_reply_name()
+    }
 }
 
 impl<Def, Src, State, DC, S> PublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
@@ -235,6 +239,10 @@ where
 
     fn reply_name(&self) -> &str {
         self.def.reply_name()
+    }
+
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.def.ignored_reply_name()
     }
 }
 

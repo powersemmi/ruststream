@@ -108,6 +108,10 @@ where
         self.0.dest.name()
     }
 
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.0.dest.ignored()
+    }
+
     fn description(&self) -> Option<&str> {
         self.0.value.docs.description()
     }
@@ -253,6 +257,10 @@ where
 
     fn reply_name(&self) -> &str {
         self.0.dest.name()
+    }
+
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.0.dest.ignored()
     }
 
     fn description(&self) -> Option<&str> {

@@ -10,5 +10,5 @@ error[E0308]: mismatched types
 note: function defined here
  --> src/runtime/handle/reply.rs
   |
-  | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> &'static str {
+  | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> ResolvedDest {
   |        ^^^^^^^^^^^^^^^^^

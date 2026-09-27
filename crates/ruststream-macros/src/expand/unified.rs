@@ -53,6 +53,13 @@ impl ReplyPlan<'_> {
     /// type resolve between them, not the clause's literal, so the document reports where the
     /// reply actually goes.
     fn channel(dest: &PublishArg, ty: &TokenStream2) -> TokenStream2 {
+        let resolved = Self::resolved(dest, ty);
+        quote!(#resolved.name())
+    }
+
+    /// The resolved destination the definition carries: the name replies go to, plus the
+    /// clause's name when the reply type's declaration overrides it (reported at startup).
+    fn resolved(dest: &PublishArg, ty: &TokenStream2) -> TokenStream2 {
         match dest {
             PublishArg::Declared => {
                 quote!(::ruststream::runtime::declared_reply_destination::<#ty>())
@@ -311,7 +318,7 @@ fn definition_wiring(
     let def_expr = match reply {
         ReplyPlan::None => quote!(::ruststream::runtime::probed_def(self, #docs_expr)),
         ReplyPlan::Publish { dest, ty, .. } => {
-            let resolved = ReplyPlan::channel(dest, ty);
+            let resolved = ReplyPlan::resolved(dest, ty);
             quote!(::ruststream::runtime::probed_reply_def(self, #docs_expr, #resolved))
         }
     };

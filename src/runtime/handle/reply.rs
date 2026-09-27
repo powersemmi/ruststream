@@ -238,22 +238,32 @@ pub trait RedirectableReply {}
 impl<R> RedirectableReply for R where R: ReplyShape<Body: OutgoingDestination<Form = CallerName>> {}
 
 /// The destination of one reply type at the mount-site name, resolved at the expansion site.
+/// A mount-site name the type's own declaration overrides rides along for the startup warning.
 /// Machinery behind the macro expansion; not part of the public API.
 #[doc(hidden)]
 #[must_use]
-pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> &'static str {
-    R::destination(default)
+pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> ResolvedDest {
+    let name = R::destination(default);
+    // A type declaring no name resolves to the mount-site name itself, so only a declared name
+    // that differs from it tells the two apart.
+    ResolvedDest {
+        name,
+        ignored: (name != default).then_some(default),
+    }
 }
 
 /// The destination of one reply type that declares its own. Machinery behind the macro
 /// expansion; not part of the public API.
 #[doc(hidden)]
 #[must_use]
-pub fn declared_reply_destination<R>() -> &'static str
+pub fn declared_reply_destination<R>() -> ResolvedDest
 where
     R: ReplyShape<Body: OutgoingDestination<Form = FixedName>>,
 {
-    <R::Body as OutgoingDestination>::DESTINATION
+    ResolvedDest {
+        name: <R::Body as OutgoingDestination>::DESTINATION,
+        ignored: None,
+    }
 }
 
 /// Where a wired reply goes: the reply type's own declaration, or the mount-site name where the
@@ -262,19 +272,36 @@ where
 pub trait ReplyDest<R>: Send + Sync {
     /// The subject the reply publishes to.
     fn name(&self) -> &str;
+
+    /// The name the mount site wrote when the reply type's own declaration overrode it: the
+    /// startup warning's subject. `None` where the mount site named nothing or the same name.
+    fn ignored(&self) -> Option<&str> {
+        None
+    }
 }
 
 // No obligation on `R`: the destination was resolved where the reply type was named, so a type
 // that declares none is reported at the handler rather than at the chain that mounts it.
 impl<R> ReplyDest<R> for ResolvedDest {
     fn name(&self) -> &str {
-        self.0
+        self.name
+    }
+
+    fn ignored(&self) -> Option<&str> {
+        self.ignored
     }
 }
 
 impl<R: ReplyDestination> ReplyDest<R> for NamedDest {
     fn name(&self) -> &str {
         R::destination(&self.0)
+    }
+
+    // A type declaring no name resolves to the mount-site name itself, so only a declared name
+    // that differs from it tells the two apart.
+    fn ignored(&self) -> Option<&str> {
+        let site: &str = &self.0;
+        (R::destination(site) != site).then_some(site)
     }
 }
 
@@ -382,6 +409,10 @@ where
 
     fn reply_name(&self) -> &str {
         self.0.dest.name()
+    }
+
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.0.dest.ignored()
     }
 
     fn description(&self) -> Option<&str> {
@@ -523,6 +554,10 @@ where
 
     fn reply_name(&self) -> &str {
         self.0.dest.name()
+    }
+
+    fn ignored_reply_name(&self) -> Option<&str> {
+        self.0.dest.ignored()
     }
 
     fn description(&self) -> Option<&str> {
