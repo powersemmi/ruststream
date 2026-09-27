@@ -426,6 +426,9 @@ impl PollStats {
         self.buckets[bucket_of(ns)].fetch_add(1, Ordering::Relaxed);
         let weight = taken.min(WINDOW);
         let ns = ns.min(!OVER);
+        // A crossing is held only while a subscription of the name runs on the app runtime: one
+        // held with nobody to warn would keep a later app-runtime subscription from its warning.
+        let warnable = self.on_app_runtime.load(Ordering::Relaxed) > 0;
         let step = |state: u64| {
             let average = state & !OVER;
             let average = if ns >= average {
@@ -433,7 +436,7 @@ impl PollStats {
             } else {
                 average - (average - ns) / weight
             };
-            let over = if average <= self.threshold_ns {
+            let over = if average <= self.threshold_ns || !warnable {
                 0
             } else if taken >= WINDOW {
                 OVER
@@ -449,10 +452,7 @@ impl PollStats {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
         let current = step(previous).unwrap_or(previous);
-        if previous & OVER == 0
-            && current & OVER != 0
-            && self.on_app_runtime.load(Ordering::Relaxed) > 0
-        {
+        if previous & OVER == 0 && current & OVER != 0 {
             self.warn(current & !OVER);
         }
     }
@@ -667,9 +667,28 @@ mod tests {
         assert_eq!(stats.report().average(), Duration::from_nanos(9_361));
     }
 
+    /// A crossing no app-runtime subscription is there to hear is not held: once one registers
+    /// and stays slow, it is warned about.
+    #[test]
+    fn a_crossing_with_nobody_to_warn_leaves_the_next_one_warnable() {
+        let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
+        for _ in 0..WINDOW {
+            stats.record(1_000);
+        }
+        assert!(!over(), "a crossing with nobody to warn was held");
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
+        stats.record(1_000);
+        assert!(
+            over(),
+            "the app-runtime subscription's crossing was not held"
+        );
+    }
+
     #[test]
     fn a_crossing_is_held_in_the_average_word_and_hidden_from_the_report() {
         let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
         let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
         for _ in 1..WINDOW {
             stats.record(1_000);
