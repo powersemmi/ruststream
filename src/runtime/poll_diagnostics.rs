@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
@@ -229,6 +229,7 @@ impl PollDiagnostics {
             stats
         });
         drop(subscriptions);
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
         PollSampler::new(stats, self.sample_every)
     }
 
@@ -356,9 +357,10 @@ pub(crate) struct PollStats {
     /// many workers record at the same time.
     average_ns: AtomicU64,
     buckets: [AtomicU64; BUCKETS],
-    /// Set for a subscription declared on `threads(n)`: its computation holds up no thread of
-    /// the app's runtime, so a crossing is measured and reported but not warned about.
-    quiet: AtomicBool,
+    /// How many subscriptions measured here run on the app's runtime. A subscription declared on
+    /// `threads(n)` holds up none of its threads, so its crossing is measured and reported but
+    /// warned about only while a subscription sharing its name still runs there.
+    on_app_runtime: AtomicUsize,
 }
 
 impl PollStats {
@@ -371,7 +373,7 @@ impl PollStats {
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
             buckets: std::array::from_fn(|_| AtomicU64::new(0)),
-            quiet: AtomicBool::new(false),
+            on_app_runtime: AtomicUsize::new(0),
         }
     }
 
@@ -447,7 +449,10 @@ impl PollStats {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
         let current = step(previous).unwrap_or(previous);
-        if previous & OVER == 0 && current & OVER != 0 && !self.quiet.load(Ordering::Relaxed) {
+        if previous & OVER == 0
+            && current & OVER != 0
+            && self.on_app_runtime.load(Ordering::Relaxed) > 0
+        {
             self.warn(current & !OVER);
         }
     }
@@ -475,6 +480,8 @@ pub(crate) struct PollSampler {
     /// Polls left until the next timed one. Pooled workers share it: a plain load and store, not
     /// a read-modify-write, so two workers that race skew which poll is timed, never the time.
     countdown: AtomicU32,
+    /// Whether this subscription has left the app runtime's count, so it leaves it once.
+    on_threads: AtomicBool,
 }
 
 impl PollSampler {
@@ -483,13 +490,16 @@ impl PollSampler {
             stats,
             every: every.get(),
             countdown: AtomicU32::new(every.get()),
+            on_threads: AtomicBool::new(false),
         }
     }
 
     /// Marks the subscription as declared on `threads(n)`, which the warning's advice already
-    /// describes: its crossings are no longer warned about.
+    /// describes: it leaves the count of subscriptions the warning is for.
     pub(crate) fn on_dedicated_threads(&self) {
-        self.stats.quiet.store(true, Ordering::Relaxed);
+        if !self.on_threads.swap(true, Ordering::Relaxed) {
+            self.stats.on_app_runtime.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     /// A sampler of the same statistics with a countdown of its own, for one dedicated thread.
@@ -498,6 +508,8 @@ impl PollSampler {
             stats: Arc::clone(&self.stats),
             every: self.every,
             countdown: AtomicU32::new(self.every),
+            // A thread's sampler measures a subscription that already left the count.
+            on_threads: AtomicBool::new(true),
         }
     }
 
