@@ -483,7 +483,9 @@ The suites are written against the traits, so they run unchanged in process (the
 behind an env gate. Run both: the in-process mode is what a service's whole test suite rides on,
 and the server is what the release runs against. `run_suite` covers the routing contract - ordering, ack and nack, headers,
 the publish log; the `capabilities::*` suites are yours to call, one per capability you implement,
-and they are not part of `run_suite`.
+and they are not part of `run_suite`. `settlement::matches_in_process` holds ack, nack, out-of-order
+settlement and an unsettled drop to their meaning live and in process, and fails when the two
+answer differently; `lifecycle` holds a `nack_after` delay as a floor.
 
 ```rust
 use ruststream::conformance::harness;

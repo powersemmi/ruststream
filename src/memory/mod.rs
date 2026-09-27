@@ -1248,6 +1248,23 @@ impl<Log> MemorySubscriber<Log> {
     }
 }
 
+#[cfg(feature = "testing")]
+impl<Log> Drop for MemorySubscriber<Log> {
+    /// What is still queued leaves with the subscription, so the harness stops counting it in
+    /// flight. A delivery handed back unsettled while the service tears down (a fail-fast panic)
+    /// lands here, and the reaction the test waits on is over once the subscription is gone.
+    fn drop(&mut self) {
+        let Some(coordinator) = self.coordinator() else {
+            return;
+        };
+        // Closed first, so a requeue racing the drop either lands before the drain or fails.
+        self.rx.close();
+        while self.rx.try_recv().is_ok() {
+            coordinator.consumed();
+        }
+    }
+}
+
 impl<Log> fmt::Debug for MemorySubscriber<Log> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemorySubscriber")
@@ -1447,7 +1464,8 @@ impl Publisher for MemoryPublisher {
 /// [`IncomingMessage::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
 /// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
 /// [`nack_after`](IncomingMessage::nack_after) pushes it back once the delay has elapsed, and at
-/// once for a zero delay.
+/// once for a zero delay. A delivery dropped without a settlement is pushed back too: only a
+/// settlement consumes it.
 pub struct MemoryMessage<Log = Discarding> {
     delivery: Option<MemoryDelivery>,
     /// The subscription this delivery came from, which a requeue goes back to and the seek
@@ -1462,12 +1480,21 @@ pub struct MemoryMessage<Log = Discarding> {
     mode: PhantomData<Log>,
 }
 
-#[cfg(feature = "testing")]
 impl<Log> Drop for MemoryMessage<Log> {
-    /// Counts this delivery consumed exactly once: on ack, nack, `into_raw`, or an unsettled drop (a
-    /// fail-fast panic). A requeue (`nack(true)` / `nack_after`) re-enqueues a fresh delivery first,
-    /// so the in-flight count stays balanced across redelivery.
+    /// Hands an unsettled delivery back to its subscription, the way a broker with
+    /// acknowledgement takes back what its consumer let go of: only a settlement consumes a
+    /// delivery. The redelivery counts as one more delivery, and it is a send on the
+    /// subscription's queue, so it runs on no runtime at all.
+    ///
+    /// Under the harness it also counts this delivery consumed exactly once: on ack, nack,
+    /// `into_raw`, or an unsettled drop. A requeue (`nack(true)`, `nack_after`, this drop)
+    /// re-enqueues a fresh delivery first, so the in-flight count stays balanced across
+    /// redelivery.
     fn drop(&mut self) {
+        if let Some(delivery) = self.delivery.take() {
+            self.requeue_now(delivery.redelivered());
+        }
+        #[cfg(feature = "testing")]
         if let Some(coordinator) = &self.coordinator {
             coordinator.consumed();
         }

@@ -73,7 +73,9 @@ alone.
   `orders`. A [pattern subscription](#patterns) reads every topic its pattern matches.
 - **Fan-out.** Every subscriber of a topic receives every message published to it after the
   subscription. The broker's `Routing` decides which patterns receive it as well.
-- **Ack is a no-op; `nack(requeue: true)` redelivers** the same payload to the same subscriber.
+- **Only a settlement consumes a delivery.** `ack` and `nack(requeue: false)` consume it;
+  `nack(requeue: true)` and a delivery dropped without a settlement redeliver the same payload to
+  the same subscriber.
 - **`retry_after` is the broker's own.** The delivery comes back to the same subscriber once the
   delay has elapsed, and nothing is republished in the meantime.
 - **Deliveries are counted.** Every delivery reports how many times the broker has handed that
