@@ -11,7 +11,7 @@
 
 | Брокер | Крейт | Транспорт | Документация |
 |---|---|---|---|
-| [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без внешнего сервиса | этот сайт |
+| [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без сервера и без зависимостей | этот сайт |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS и JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, кластер, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (очереди, обменники, подтверждения издателя, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
@@ -30,8 +30,9 @@
 
 ## Переключение брокеров {#switching-brokers}
 
-Любой брокер создаётся синхронно, а рантайм подключает его на старте приложения. В примерах ниже
-меняется только строка создания брокера.
+Чтобы перейти на другой брокер, замените импорт его типа и строку, которая его создаёт.
+Остальной код в примерах ниже одинаков. Любой брокер создаётся синхронно, а подключает его рантайм на старте
+приложения.
 
 === "Memory"
 
@@ -114,7 +115,8 @@
     }
     ```
 
-Параметры подключения каждый крейт брокера документирует сам. Если подписке нужны
-специфичные для брокера опции (группы консьюмеров, durable-имена), вы можете указать дескриптор
-этого брокера в атрибуте `#[subscriber(..)]`; см.
+Параметры подключения каждый крейт брокера документирует сам.
+
+Если подписке нужны опции конкретного брокера (группы консьюмеров, durable-имена), вы можете
+передать его дескриптор аргументом атрибута `#[subscriber(..)]`. Об этом рассказывает раздел
 [дескрипторы конкретных брокеров](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#the-subscription-source).
