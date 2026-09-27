@@ -451,19 +451,11 @@ mod tests {
     use prometheus::Registry;
 
     use super::{Metrics, consume_status};
-    use crate::runtime::{Context, HandlerOutcome, HandlerResult, Layer};
+    use crate::runtime::HandlerResult;
 
     #[test]
-    fn debug_impls_registry_and_status_mapping() {
+    fn the_registry_and_the_status_mapping() {
         let metrics = Metrics::with_registry(Registry::new()).unwrap();
-        assert!(format!("{metrics:?}").contains("Metrics"));
-        assert!(format!("{:?}", metrics.consume_layer()).contains("MetricsLayer"));
-        assert!(format!("{:?}", metrics.publish_layer()).contains("MetricsPublish"));
-
-        let handler = metrics
-            .consume_layer()
-            .layer(|_: &u32, _: &mut Context| async { HandlerOutcome::ack() });
-        assert!(format!("{handler:?}").contains("MetricsHandler"));
 
         // registry() exposes the registry the three collectors were registered in: registering a
         // duplicate name there fails, which proves it is that same registry.

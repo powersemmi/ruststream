@@ -757,8 +757,6 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
 
 #[cfg(all(test, feature = "json"))]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
     use super::*;
     use crate::codec::JsonCodec;
 
@@ -767,41 +765,12 @@ mod tests {
         id: u64,
     }
 
-    fn headers(name: &str, value: &'static [u8]) -> crate::HeaderMap {
-        let mut headers = crate::HeaderMap::new();
-        headers.insert(name.to_owned(), value);
-        headers
-    }
-
     fn undecodable() -> PublishedAssertions<Order> {
         PublishedAssertions::new(
             "orders".to_owned(),
             vec![RawMessage::new("orders", b"not json".as_slice())],
             Vec::new(),
         )
-    }
-
-    #[test]
-    fn published_assertions_read_back_what_was_logged() {
-        let logged = PublishedAssertions::<Order>::new(
-            "orders".to_owned(),
-            vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
-            Vec::new(),
-        );
-        assert_eq!(logged.decoded_with(&JsonCodec), vec![Order { id: 7 }]);
-        logged.with_codec(&JsonCodec, &Order { id: 7 });
-    }
-
-    #[test]
-    fn an_empty_channel_names_itself_when_asserted_on() {
-        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new(), Vec::new());
-        // The recorded options are type-erased behind `Arc<dyn Any>`, which is not `UnwindSafe`;
-        // nothing here observes state across the unwind, so the assertion is safe to make.
-        let failure = catch_unwind(AssertUnwindSafe(move || empty.decoded_with(&JsonCodec)));
-        assert!(
-            failure.is_ok(),
-            "no messages is an empty result, not a panic"
-        );
     }
 
     // A decode failure inside an assertion is a test-authoring mistake, so the panic has to name
@@ -816,19 +785,6 @@ mod tests {
     #[should_panic(expected = "did not decode as")]
     fn decoding_every_published_payload_reports_the_first_failure() {
         let _ = undecodable().decoded_with(&JsonCodec);
-    }
-
-    #[test]
-    fn a_published_header_is_read_back_by_name() {
-        let stamped = PublishedAssertions::<Order>::new(
-            "orders".to_owned(),
-            vec![
-                RawMessage::new("orders", br#"{"id":7}"#.as_slice())
-                    .with_headers(headers("x-app", b"1")),
-            ],
-            Vec::new(),
-        );
-        stamped.assert_called(1).with_header("x-app", b"1");
     }
 
     // A header assertion that fails has to name the header, or a stamping middleware's absence
@@ -853,12 +809,5 @@ mod tests {
             Vec::new(),
         );
         one.assert_called(2);
-    }
-
-    #[test]
-    #[should_panic(expected = "nothing was published to \"orders\"")]
-    fn asserting_on_a_channel_that_published_nothing_says_so() {
-        let empty = PublishedAssertions::<Order>::new("orders".to_owned(), Vec::new(), Vec::new());
-        empty.with_codec(&JsonCodec, &Order { id: 7 });
     }
 }

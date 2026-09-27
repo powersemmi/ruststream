@@ -5,6 +5,8 @@
 
 mod common;
 
+use std::convert::Infallible;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -15,12 +17,14 @@ use opentelemetry_sdk::metrics::data::{
 };
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use opentelemetry_sdk::trace::SdkTracerProvider;
-use ruststream::memory::{MemoryBroker, Retention};
+use ruststream::memory::{MemoryBroker, MemoryPublish, Retention};
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
-use ruststream::runtime::{AppInfo, HandlerOutcome, PublishExt, RustStream, SubscriberSettings};
+use ruststream::runtime::{
+    AppInfo, HandlerOutcome, PublishExt, Reply, RustStream, SubscriberSettings,
+};
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{ConnectedBroker, nonzero, subscriber};
-use tokio::sync::{Mutex, Notify};
+use ruststream::{Broker, ConnectedBroker, nonzero, subscriber};
+use tokio::sync::Mutex;
 
 use common::{Order, Wire, connected};
 
@@ -301,10 +305,6 @@ async fn init_installs_globals_and_shutdown_returns() {
         .attribute("deployment.environment", "test")
         .init()
         .expect("init failed");
-    assert!(format!("{bridged:?}").contains("Otel"));
-    let probe_layer = bridged.consume_layer();
-    assert!(format!("{probe_layer:?}").contains("OtelConsumeLayer"));
-    assert!(format!("{:?}", bridged.publish_layer()).contains("OtelPublishLayer"));
     let _ = bridged.shutdown();
 }
 
@@ -341,64 +341,58 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
     );
 }
 
-/// Signals when the failing handler holds its delivery, so the test can kill the bus first.
-static FAIL_ENTERED: Notify = Notify::const_new();
-static FAIL_PROCEED: Notify = Notify::const_new();
-static FAIL_ONCE: AtomicBool = AtomicBool::new(false);
-
-/// Replies once (the publish fails against the killed bus); redeliveries settle quietly.
+/// Replies once, on a broker of its own that the test shuts down before the request arrives; the
+/// redelivery the failed reply causes settles quietly.
 #[subscriber("otel.failing", publish("otel.nowhere"))]
-async fn confirm_once(order: &Order) -> Result<Order, HandlerOutcome> {
-    if FAIL_ONCE.swap(true, Ordering::SeqCst) {
+async fn confirm_once(
+    order: &Order,
+    ctx: &mut Context<'_, (), Arc<AtomicBool>>,
+) -> Result<Order, HandlerOutcome> {
+    if ctx.state().swap(true, Ordering::SeqCst) {
         return Err(HandlerOutcome::ack());
     }
-    FAIL_ENTERED.notify_one();
-    FAIL_PROCEED.notified().await;
     Ok(Order { id: order.id })
 }
 
-// The subject IS the running app: the bus has to die while the handler still holds its delivery,
-// which the harness's drive-to-quiescence publish leaves no window for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
-    let broker = MemoryBroker::new();
-    let publisher = broker.publisher();
-    // An aliased connected clone: shutting it down kills the shared bus mid-flight, which is
-    // the only way a memory publish fails.
-    let bus_killer = connected(&broker).await;
+    let egress = MemoryBroker::new();
+    // An aliased connected clone of the reply's broker: shutting it down kills the shared bus,
+    // which is the only way a memory publish fails.
+    let bus_killer = egress.clone();
+    let egress = egress.bindable();
+    let to_egress = egress.bind(MemoryPublish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(AtomicBool::new(false))))
         .publish_layer(otel.publish_layer())
-        .with_broker(broker, |b| {
-            b.include(confirm_once);
+        .with_broker_labeled("egress", egress, |_b| {})
+        .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
+            b.include(confirm_once).out(Reply, to_egress);
         });
+    let tb = TestApp::start(app).await.expect("harness start failed");
+    connected(&bus_killer)
+        .await
+        .shutdown()
+        .await
+        .expect("bus shutdown failed");
 
-    let running = app.start().await.expect("startup failed");
-    publisher
+    tb.broker_named("ingress")
         .message(&Order { id: 5 })
         .to("otel.failing")
         .publish()
         .await
         .expect("publish failed");
+    tb.broker_named("ingress")
+        .subscriber("otel.failing")
+        .assert_called(2);
 
-    // The handler holds the delivery while the bus dies under it; its reply publish then fails.
-    tokio::time::timeout(Duration::from_secs(5), FAIL_ENTERED.notified())
-        .await
-        .expect("the handler never received the request");
-    bus_killer.shutdown().await.expect("bus shutdown failed");
-    FAIL_PROCEED.notify_one();
-
-    common::wait_for(
-        || {
-            provider.force_flush().expect("flush failed");
-            !sum_attr_values(&exporter, "messaging.client.sent.messages", "error.type").is_empty()
-        },
-        Duration::from_secs(5),
-    )
-    .await;
-    running.shutdown().await.expect("graceful shutdown failed");
-
+    provider.force_flush().expect("flush failed");
     let errors = sum_attr_values(&exporter, "messaging.client.sent.messages", "error.type");
+    assert!(
+        !errors.is_empty(),
+        "the failed reply must be counted with its error class",
+    );
     assert!(
         errors.iter().all(|value| value == "_OTHER"),
         "error.type must be a bounded class, not the raw error text (a fresh time series per \

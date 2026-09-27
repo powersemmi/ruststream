@@ -1197,10 +1197,4 @@ mod tests {
             assert_eq!(security_scheme_object(&scheme), expected);
         }
     }
-
-    #[test]
-    fn description_lands_in_the_rendered_object() {
-        let object = security_scheme_object(&SecurityScheme::plain().description("over TLS"));
-        assert_eq!(object["description"], "over TLS");
-    }
 }

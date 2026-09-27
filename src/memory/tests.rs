@@ -2,24 +2,13 @@ use futures::{FutureExt, StreamExt};
 
 use super::*;
 
+/// A delivery reports the name it was published to, and `into_raw` consumes it without settling
+/// into a broker-agnostic message that keeps the name and the payload.
 #[tokio::test]
-async fn debug_formats_and_message_accessors() {
+async fn into_raw_keeps_the_name_and_the_payload() {
     let broker = MemoryBroker::new();
-    assert!(format!("{broker:?}").contains("MemoryBroker"));
-
-    let source = MemorySource::new("orders");
-    // The source serves either log mode, so the call names the broker it is read for.
-    assert_eq!(
-        SubscriptionSource::<ConnectedMemoryBroker>::name(&source),
-        "orders"
-    );
-
     let publisher = broker.publisher();
-    assert!(format!("{publisher:?}").contains("MemoryPublisher"));
-
     let mut sub = broker.subscribe("dbg");
-    assert!(format!("{sub:?}").contains("MemorySubscriber"));
-
     publisher
         .publish(OutgoingMessage::new("dbg", b"payload"), None)
         .await
@@ -27,10 +16,8 @@ async fn debug_formats_and_message_accessors() {
 
     let mut stream = std::pin::pin!(sub.stream());
     let msg = stream.next().await.unwrap().unwrap();
-    assert!(format!("{msg:?}").contains("MemoryMessage"));
     assert_eq!(msg.name(), "dbg");
 
-    // into_raw consumes the delivery without acking, yielding a broker-agnostic message.
     let raw = msg.into_raw();
     assert_eq!(raw.name(), "dbg");
     assert_eq!(raw.payload(), b"payload");
@@ -40,7 +27,6 @@ async fn debug_formats_and_message_accessors() {
 async fn a_reconnect_revives_a_bus_that_was_shut_down() {
     let broker = MemoryBroker::new();
     let connected = broker.clone().connect().await.unwrap();
-    assert!(format!("{connected:?}").contains("ConnectedMemoryBroker"));
     connected.shutdown().await.unwrap();
 
     // The lazy-connect contract lets the same configuration open a fresh bus afterwards.
@@ -85,9 +71,11 @@ async fn shutdown_after_a_sibling_shutdown_reports_nothing_dropped() {
 }
 
 // Paused time needs the current-thread runtime; the redelivery timer auto-advances instead
-// of sleeping for real.
+// of sleeping for real. The subject is the broker's own timer, which the harness replaces with
+// its coordinator's, so the test drives the broker without one.
 #[tokio::test(start_paused = true)]
 async fn nack_after_redelivers_after_the_delay() {
+    const DELAY: Duration = Duration::from_secs(5);
     let broker = MemoryBroker::new();
     let mut sub = MemoryBroker::subscribe(&broker, "delayed");
     let publisher = broker.publisher();
@@ -99,15 +87,20 @@ async fn nack_after_redelivers_after_the_delay() {
 
     let mut stream = std::pin::pin!(sub.stream());
     let msg = stream.next().await.unwrap().unwrap();
-    msg.nack_after(Duration::from_secs(5)).await.unwrap();
+    msg.nack_after(DELAY).await.unwrap();
 
-    // Nothing is redelivered while the delay has not elapsed.
+    // The timer task needs a turn to arm its timer, and one after each advance to act on it. One
+    // tick short of the delay nothing is redelivered; the tick that reaches it redelivers.
+    tokio::task::yield_now().await;
+    tokio::time::advance(DELAY.saturating_sub(Duration::from_millis(1))).await;
+    tokio::task::yield_now().await;
     assert!(futures::poll!(stream.next()).is_pending());
-    tokio::time::advance(Duration::from_secs(5)).await;
-    // The timer task needs a tick to run before the redelivery is visible.
+    tokio::time::advance(Duration::from_millis(1)).await;
     tokio::task::yield_now().await;
 
-    let redelivered = stream.next().await.unwrap().unwrap();
+    let Some(Some(Ok(redelivered))) = stream.next().now_or_never() else {
+        panic!("the redelivery must land on the tick that reaches the delay");
+    };
     assert_eq!(redelivered.payload(), b"later");
     redelivered.ack().await.unwrap();
 }
@@ -248,6 +241,58 @@ async fn a_byte_bound_keeps_the_newest_message_whatever_its_size() {
             .messages("frames")
     };
     assert_eq!(retained.len(), 1);
+}
+
+/// The payload of each name's log, oldest first, as the retention bound left it.
+fn retained(broker: &MemoryBroker<Retaining>, name: &str) -> Vec<Vec<u8>> {
+    let log = broker.state.log.lock().unwrap();
+    log.name(name)
+        .expect("the name was published to")
+        .messages(name)
+        .iter()
+        .map(|msg| msg.payload().to_vec())
+        .collect()
+}
+
+/// A byte bound evicts the oldest messages until what is left fits, whatever their count.
+#[tokio::test]
+async fn a_byte_bound_evicts_the_oldest_past_its_budget() {
+    let broker = MemoryBroker::retaining(Retention::Bytes(crate::nonzero!(4)));
+    let publisher = broker.publisher();
+    for i in 0..3u8 {
+        publisher
+            .publish(OutgoingMessage::new("frames", &[i, i]), None)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(retained(&broker, "frames"), [vec![1, 1], vec![2, 2]]);
+}
+
+/// Under both bounds at once the first one reached evicts: many small messages meet the count,
+/// a few wide ones meet the bytes.
+#[tokio::test]
+async fn a_combined_bound_evicts_at_whichever_bound_is_reached_first() {
+    let broker = MemoryBroker::retaining(Retention::MessagesAndBytes {
+        messages: crate::nonzero!(2),
+        bytes: crate::nonzero!(4),
+    });
+    let publisher = broker.publisher();
+    for i in 0..3u8 {
+        publisher
+            .publish(OutgoingMessage::new("small", &[i]), None)
+            .await
+            .unwrap();
+    }
+    for i in 0..2u8 {
+        publisher
+            .publish(OutgoingMessage::new("wide", &[i; 3]), None)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(retained(&broker, "small"), [vec![1], vec![2]]);
+    assert_eq!(retained(&broker, "wide"), [vec![1; 3]]);
 }
 
 #[tokio::test]

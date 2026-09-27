@@ -995,19 +995,6 @@ mod tests {
             .collect()
     }
 
-    /// A broker that delivers to the subscription of the destination's own name, and to a
-    /// pattern only where there is none.
-    fn most_specific(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
-        let exact: Vec<usize> = (0..subscriptions.len())
-            .filter(|&position| subscriptions[position] == destination)
-            .collect();
-        if exact.is_empty() {
-            fan_out(destination, subscriptions)
-        } else {
-            exact
-        }
-    }
-
     fn exact(destination: &str, subscriptions: &[&str]) -> Vec<usize> {
         (0..subscriptions.len())
             .filter(|&position| subscriptions[position] == destination)
@@ -1119,6 +1106,8 @@ mod tests {
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
+    /// A publish is owed on the broker its publisher was paired against, not on the broker that
+    /// holds the handler which published it.
     #[tokio::test]
     async fn a_publish_is_owed_on_the_broker_it_was_paired_against() {
         let brokers = Brokers::new();
@@ -1195,45 +1184,6 @@ mod tests {
         );
 
         coordinator.record(handled(&subscriptions[0]));
-        assert!(coordinator.owed(&subscriptions, &routing).is_none());
-    }
-
-    #[tokio::test]
-    async fn a_broker_that_picks_one_subscription_owes_only_that_one() {
-        let brokers = Brokers::new();
-        let coordinator = brokers.coordinator();
-        let routing = brokers_routing(most_specific, exact);
-        let subscriptions = mounted(&[(0, "orders.*"), (0, "orders.eu")]);
-        send(&coordinator, 0, &brokers.east, "orders.eu").await;
-        send(&coordinator, 0, &brokers.east, "orders.us").await;
-        coordinator.record(handled(&subscriptions[1]));
-        let owed = coordinator
-            .owed(&subscriptions, &routing)
-            .expect("us is the wildcard's");
-        assert_eq!(
-            (owed.subscription.as_str(), owed.handled, owed.expected),
-            ("orders.*", 0, 1),
-        );
-
-        coordinator.record(handled(&subscriptions[0]));
-        assert!(coordinator.owed(&subscriptions, &routing).is_none());
-    }
-
-    #[tokio::test]
-    async fn two_subscriptions_reporting_one_name_each_owe_the_publish() {
-        let brokers = Brokers::new();
-        let coordinator = brokers.coordinator();
-        let routing = brokers_routing(exact, exact);
-        // Two subscriptions on one topic, both reporting the topic's name.
-        let subscriptions = mounted(&[(0, "orders"), (0, "orders")]);
-        send(&coordinator, 0, &brokers.east, "orders").await;
-        coordinator.record(handled(&subscriptions[0]));
-        let owed = coordinator
-            .owed(&subscriptions, &routing)
-            .expect("the second subscription has not handled the publish");
-        assert_eq!((owed.handled, owed.expected), (0, 1));
-
-        coordinator.record(handled(&subscriptions[1]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 

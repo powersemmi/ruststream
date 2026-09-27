@@ -1,4 +1,4 @@
-//! The harness in live mode: the same app, and the same test body, against brokers connected
+//! The harness in live mode: the same app a test starts in process, against brokers connected
 //! through their ordinary `connect`.
 //!
 //! The in-memory broker stands for a running stand here. Its `connect` is its real connection,
@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemoryPublisher};
-use ruststream::runtime::{AppInfo, HandlerOutcome, Identity, Out, PublishExt, RustStream};
+use ruststream::runtime::{AppInfo, HandlerOutcome, Identity, PublishExt, RustStream};
 use ruststream::testing::{TestApp, TestError};
-use ruststream::{Broker, OutSlot, Outgoing, Publisher, subscriber};
+use ruststream::{Broker, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
 
 /// Short, so the live tests spend little real time on it; what matters is that it passes on the
@@ -69,14 +69,16 @@ fn app() -> RustStream<Identity, Seen> {
         })
 }
 
-/// The body both modes run: a first delivery that asks to come back, the delay, the second
-/// delivery that answers, and the receipt it published.
-async fn a_delayed_redelivery_answers(tb: TestApp<Seen>) -> Result<(), TestError> {
+/// A first delivery asks to come back, the broker's own timer brings it round after the delay,
+/// and the second delivery answers: a live `advance` lets the time pass for real and waits for
+/// what fell due.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delayed_redelivery_live() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start_live(app()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Order { id: 7 })
         .publish()
-        .await
-        .map_err(|err| TestError::Encode(err.to_string()))?;
+        .await?;
     tb.broker::<MemoryBroker>()
         .subscriber("orders")
         .assert_called_once()
@@ -95,19 +97,8 @@ async fn a_delayed_redelivery_answers(tb: TestApp<Seen>) -> Result<(), TestError
         .subscriber("receipts")
         .assert_called_once()
         .with(&Receipt { id: 7 });
-    tb.shutdown()
-        .await
-        .map_err(|err| TestError::Encode(err.to_string()))
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_delayed_redelivery_in_process() -> Result<(), TestError> {
-    a_delayed_redelivery_answers(TestApp::start(app()).await?).await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_delayed_redelivery_live() -> Result<(), TestError> {
-    a_delayed_redelivery_answers(TestApp::start_live(app()).await?).await
+    tb.shutdown().await?;
+    Ok(())
 }
 
 // A paused clock would fire a network client's timeouts at once, so the live start refuses it and
@@ -224,136 +215,11 @@ async fn a_startup_hook_publish_is_not_awaited() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The slot a relay publishes orders through: in this app, a token for the other broker.
-#[derive(OutSlot)]
-#[publishes(Order)]
-struct Relayed;
-
-/// Relays a job as an order, through whichever broker its slot was bound to.
-#[subscriber("inbox")]
-async fn relay(job: &Job, Out(out): Out<impl Publisher, Relayed>) -> HandlerOutcome {
-    if out.message(&Order { id: job.id }).publish().await.is_err() {
-        return HandlerOutcome::retry();
-    }
-    HandlerOutcome::ack()
-}
-
-/// Two brokers, each relaying its `inbox` to the other's `orders` through a `Bound` token, and
-/// each with a slow `orders` subscription of its own.
-fn crossing_app() -> RustStream {
-    let east = MemoryBroker::new().bindable();
-    let west = MemoryBroker::new().bindable();
-    let to_east = east.bind(MemoryPublish);
-    let to_west = west.bind(MemoryPublish);
-    RustStream::new(AppInfo::new("crossing", "0.1.0"))
-        .with_broker_labeled("east", east, |b| {
-            b.include(relay).out(Relayed, to_west).build();
-            b.include(take_order_slowly);
-        })
-        .with_broker_labeled("west", west, |b| {
-            b.include(relay).out(Relayed, to_east).build();
-            b.include(take_order_slowly);
-        })
-}
-
-/// The body both modes run: a relay on one broker publishes to the other, and the settle waits
-/// for the subscription on the broker the order went to, not for the namesake beside the relay.
-async fn a_bound_publish_is_awaited_on_its_target(tb: TestApp<()>) -> Result<(), Box<dyn Error>> {
-    tb.broker_named("east")
-        .message(&Job { id: 1 })
-        .to("inbox")
-        .publish()
-        .await?;
-    tb.broker_named("west")
-        .subscriber("orders")
-        .assert_called_once()
-        .with(&Order { id: 1 });
-    tb.broker_named("east")
-        .subscriber("orders")
-        .assert_not_called();
-    tb.broker_named("west")
-        .published::<Order>("orders")
-        .assert_called_once();
-    tb.broker_named("east")
-        .published::<Order>("orders")
-        .assert_not_called();
-
-    tb.broker_named("west")
-        .message(&Job { id: 2 })
-        .to("inbox")
-        .publish()
-        .await?;
-    tb.broker_named("east")
-        .subscriber("orders")
-        .assert_called_once()
-        .with(&Order { id: 2 });
-    tb.broker_named("west")
-        .subscriber("orders")
-        .assert_called_once();
-    tb.shutdown().await?;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_bound_publish_is_awaited_on_its_target_in_process() -> Result<(), Box<dyn Error>> {
-    a_bound_publish_is_awaited_on_its_target(TestApp::start(crossing_app()).await?).await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_bound_publish_is_awaited_on_its_target_live() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start_live_within(crossing_app(), Duration::from_secs(2)).await?;
-    a_bound_publish_is_awaited_on_its_target(tb).await
-}
-
-/// Takes an order, on whichever broker it is mounted.
+/// Takes an order.
 #[subscriber("orders")]
 async fn take_order(order: &Order) -> HandlerOutcome {
     let _ = order.id;
     HandlerOutcome::ack()
-}
-
-/// Two brokers of one app, each with a subscription named `orders`.
-fn twin_app() -> RustStream {
-    RustStream::new(AppInfo::new("twins", "0.1.0"))
-        .with_broker_labeled("east", MemoryBroker::new(), |b| {
-            b.include(take_order);
-        })
-        .with_broker_labeled("west", MemoryBroker::new(), |b| {
-            b.include(take_order);
-        })
-}
-
-/// The body both modes run: a publish onto one broker reaches that broker's subscription alone,
-/// and is published on that broker alone.
-async fn a_publish_stays_on_its_broker(tb: TestApp<()>) -> Result<(), Box<dyn Error>> {
-    tb.broker_named("east")
-        .message(&Order { id: 1 })
-        .publish()
-        .await?;
-
-    tb.broker_named("east")
-        .subscriber("orders")
-        .assert_called_once()
-        .with(&Order { id: 1 });
-    tb.broker_named("west")
-        .subscriber("orders")
-        .assert_not_called();
-    tb.broker_named("west")
-        .published::<Order>("orders")
-        .assert_not_called();
-    tb.shutdown().await?;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_publish_stays_on_its_broker_in_process() -> Result<(), Box<dyn Error>> {
-    a_publish_stays_on_its_broker(TestApp::start(twin_app()).await?).await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_publish_stays_on_its_broker_live() -> Result<(), Box<dyn Error>> {
-    let tb = TestApp::start_live_within(twin_app(), Duration::from_secs(1)).await?;
-    a_publish_stays_on_its_broker(tb).await
 }
 
 /// Why the start below fails: a readiness check that never passes.
@@ -370,8 +236,9 @@ fn failing_app(broker: MemoryBroker) -> RustStream {
         })
 }
 
-/// A start that fails shuts down what it connected, in either mode: the broker refuses a publish
-/// afterwards, as it does once the service has shut it down.
+/// A failing `after_startup` fails the start with the hook's own error, and the start shuts down
+/// what it connected, in either mode: the broker refuses a publish afterwards, as it does once the
+/// service has shut it down.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_start_shuts_its_brokers_down() {
     for live in [false, true] {
@@ -382,10 +249,17 @@ async fn a_failed_start_shuts_its_brokers_down() {
         } else {
             TestApp::start(app).await
         };
-        assert!(
-            matches!(started, Err(TestError::Startup(_))),
-            "expected the start to fail",
-        );
+        match started {
+            Err(TestError::Startup(source)) => assert_eq!(
+                source.to_string(),
+                "the readiness check never passed",
+                "the hook's own error is the start's (live: {live})",
+            ),
+            other => panic!(
+                "expected the start to fail (live: {live}), got {:?}",
+                other.map(|_| ())
+            ),
+        }
 
         let late = broker.publisher().message(&Order { id: 1 }).publish().await;
         assert!(

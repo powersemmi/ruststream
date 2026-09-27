@@ -301,8 +301,7 @@ mod tests {
     use super::{InjectSink, Target};
 
     /// The sink travels inside a publish builder, which never hands it back, so its `Debug` is
-    /// reachable only from here - and it still has to name the type rather than leak the broker
-    /// handle it borrows.
+    /// reachable only from here. It names the type and elides the broker handle it borrows.
     #[test]
     fn the_injection_sink_names_itself_without_its_broker() {
         let sink = InjectSink(Target::Ambiguous);
