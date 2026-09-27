@@ -132,6 +132,16 @@ async fn keyed(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn keyed_threads_keep_each_key_in_order() {
+    let app =
+        RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(keyed);
+        });
+    let tb = TestApp::start(app).await.expect("startup");
+    keys_stay_in_order(&tb, "keyed").await;
+}
+
+/// Publishes two interleaved keys to `subject` and asserts each key's deliveries keep their order.
+async fn keys_stay_in_order(tb: &TestApp<()>, subject: &'static str) {
     const PER_KEY: u32 = 10;
     const BETA_BAND: u32 = 100;
     let keyed_input = |key: &'static str, id: u32| {
@@ -147,22 +157,17 @@ async fn keyed_threads_keep_each_key_in_order() {
             ]
         })
         .collect();
-    let app =
-        RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(keyed);
-        });
-    let tb = TestApp::start(app).await.expect("startup");
     for result in join_all(inputs.iter().map(|(order, headers)| {
         tb.message(order)
             .with_headers(headers.clone())
-            .to("keyed")
+            .to(subject)
             .publish()
     }))
     .await
     {
         result.expect("publish");
     }
-    let seen: Vec<Order> = tb.broker::<MemoryBroker>().subscriber("keyed").received();
+    let seen: Vec<Order> = tb.broker::<MemoryBroker>().subscriber(subject).received();
     for band in [0, BETA_BAND] {
         let ids: Vec<u32> = seen
             .iter()
@@ -176,9 +181,68 @@ async fn keyed_threads_keep_each_key_in_order() {
         );
         assert!(
             ids.windows(2).all(|w| w[0] < w[1]),
-            "per-key order lost in band {band}: {ids:?}",
+            "per-key order lost in band {band} on {subject}: {ids:?}",
         );
     }
+}
+
+/// Passes the barrier only with three deliveries in flight at once. It names no threads of its
+/// own, so only the router chain can give it any.
+#[subscriber("routed")]
+async fn routed(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> HandlerOutcome {
+    ctx.state().wait().await;
+    HandlerOutcome::ack()
+}
+
+/// A router chain gives a subscription dedicated threads through `Workers::threads`; under the
+/// harness they run as that many workers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_chain_gives_threads_through_workers() {
+    let router = Router::<MemoryBroker>::new()
+        .include(routed)
+        .workers(Workers::threads(nonzero!(3)));
+    let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(3))))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup");
+    let jobs: Vec<Order> = (1..=3).map(|id| Order { id }).collect();
+    let published = tokio::time::timeout(
+        CONCURRENCY_DEADLINE,
+        join_all(
+            jobs.iter()
+                .map(|job| tb.message(job).to("routed").publish()),
+        ),
+    )
+    .await
+    .expect("the router's threads must hold three deliveries in flight at once");
+    for result in published {
+        result.expect("publish");
+    }
+    tb.broker::<MemoryBroker>()
+        .subscriber("routed")
+        .assert_called(3)
+        .settled(HandlerOutcome::ack());
+}
+
+/// Names no threads of its own; the router chain keys them.
+#[subscriber("routed.keyed")]
+async fn routed_keyed(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    tokio::task::yield_now().await;
+    HandlerOutcome::ack()
+}
+
+/// A router chain keys a subscription's threads through `Workers::threads_keyed`, so each key
+/// keeps its order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_router_chain_keys_threads_through_workers() {
+    let router = Router::<MemoryBroker>::new()
+        .include(routed_keyed)
+        .workers(Workers::threads_keyed(nonzero!(4)));
+    let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup");
+    keys_stay_in_order(&tb, "routed.keyed").await;
 }
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);

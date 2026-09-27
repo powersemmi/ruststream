@@ -263,11 +263,19 @@ fn keyless_deliveries_of_a_keyed_subscription_take_the_threads_in_turn() {
         running.shutdown().await.expect("shutdown");
         seen
     });
-    let threads: HashSet<&str> = seen.iter().map(|reply| reply.thread.as_str()).collect();
+    let mut by_id: Vec<&Placed> = seen.iter().collect();
+    by_id.sort_by_key(|reply| reply.id);
+    let threads: HashSet<&str> = by_id.iter().map(|reply| reply.thread.as_str()).collect();
     assert_eq!(
         threads.len(),
         2,
         "keyless deliveries piled on one lane: {seen:?}"
+    );
+    assert!(
+        by_id
+            .windows(2)
+            .all(|pair| pair[0].thread != pair[1].thread),
+        "keyless deliveries did not take the threads in turn: {by_id:?}"
     );
 }
 
@@ -282,6 +290,9 @@ struct Held {
     open: Mutex<bool>,
     opened: Condvar,
     others: AtomicU32,
+    /// Signalled once order 0 waits at the gate, so the others are published only while it holds
+    /// its thread.
+    holding: Notify,
 }
 
 /// The held delivery's answer: whether the others opened its gate, or its wait ran out.
@@ -291,22 +302,29 @@ struct Released {
     released: bool,
 }
 
+/// Stands at the gate until the others open it or [`DEADLINE`] runs out, and says which. The
+/// signal goes out under the gate's lock, so an order that opens the gate does so only after
+/// order 0 stands at it.
+fn wait_at_gate(shared: &Held) -> bool {
+    let guard = shared.open.lock().unwrap_or_else(PoisonError::into_inner);
+    shared.holding.notify_one();
+    let (open, _) = shared
+        .opened
+        .wait_timeout_while(guard, DEADLINE, |open| !*open)
+        .unwrap_or_else(PoisonError::into_inner);
+    *open
+}
+
 /// Order 0 holds its thread the way a computation does, until [`PAST_THE_HELD_RING`] other
 /// deliveries have finished.
 #[subscriber("held", threads(2), publish("held.done"))]
 async fn held(job: &Order, ctx: &mut Context<'_, (), Arc<Held>>) -> Released {
     let shared = ctx.state();
     if job.id == 0 {
-        let released = *shared
-            .opened
-            .wait_timeout_while(
-                shared.open.lock().unwrap_or_else(PoisonError::into_inner),
-                DEADLINE,
-                |open| !*open,
-            )
-            .unwrap_or_else(PoisonError::into_inner)
-            .0;
-        return Released { id: 0, released };
+        return Released {
+            id: 0,
+            released: wait_at_gate(shared),
+        };
     }
     if shared.others.fetch_add(1, Ordering::SeqCst) + 1 == PAST_THE_HELD_RING {
         *shared.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
@@ -324,17 +342,28 @@ async fn held(job: &Order, ctx: &mut Context<'_, (), Arc<Held>>) -> Released {
 fn a_held_thread_holds_up_none_of_the_others() {
     const OTHERS: u32 = 40;
     let broker = MemoryBroker::new();
+    let shared = Arc::new(Held::default());
     let seen: Vec<Released> = app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("held.done");
         let mut replies = pin!(subscriber.stream());
+        let state = Arc::clone(&shared);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
-            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Held::default())))
+            .on_startup(async move |()| Ok::<_, Infallible>(state))
             .with_broker(broker.clone(), |b| {
                 b.include(held).out_reply(Publish);
             });
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
-        for id in 0..=OTHERS {
+        publisher
+            .message(&Order { id: 0 })
+            .to("held")
+            .publish()
+            .await
+            .expect("publish");
+        timeout(DEADLINE, shared.holding.notified())
+            .await
+            .expect("order 0 reaches its gate");
+        for id in 1..=OTHERS {
             publisher
                 .message(&Order { id })
                 .to("held")
