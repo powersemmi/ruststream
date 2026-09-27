@@ -571,7 +571,7 @@ JetStream 的拉取消费者在协议层面就按批取消息，所以 `BatchSub
 给出。所以这里的策略是一个空结构体，`pair` 只复制连接句柄，不会返回错误。如果某个 Broker 创建发布者
 时可能返回错误（例如事务性的发布者），就用 `PairError::new` 包装该错误。既然简单的策略可以直接
 使用，已连接形态还实现了 `DefaultPublish`（参见[契约](index.md#publishpolicy)），于是没有显式指定
-发布者的 `publish(..)` 处理器也能通过编译。
+发布者的 `reply(..)` 处理器也能通过编译。
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust

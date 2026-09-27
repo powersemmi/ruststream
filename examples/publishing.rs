@@ -44,16 +44,16 @@ struct Receipt {
     id: u64,
 }
 
-#[subscriber("receipt-requests", publish)]
+#[subscriber("receipt-requests", reply)]
 async fn issue_receipt(req: &Request) -> Receipt {
     Receipt { id: req.id }
 }
 // --8<-- [end:reply_declared]
 
 // --8<-- [start:reply]
-// A `publish(..)` handler that does not read the app state omits the `Context` parameter entirely;
+// A `reply(..)` handler that does not read the app state omits the `Context` parameter entirely;
 // it stays generic over the state and mounts on an app with any state type.
-#[subscriber("requests", publish("responses"))]
+#[subscriber("requests", reply("responses"))]
 async fn respond(req: &Request) -> Response {
     println!("responding to request {}", req.id);
     Response { ok: true }
@@ -63,7 +63,7 @@ async fn respond(req: &Request) -> Response {
 // --8<-- [start:reply_result]
 // `Ok` publishes the reply and acks; `Err` publishes nothing and the dispatcher acts on the
 // returned HandlerOutcome (here: drop the malformed request instead of replying).
-#[subscriber("validated-requests", publish("responses"))]
+#[subscriber("validated-requests", reply("responses"))]
 async fn validate(req: &Request) -> Result<Response, HandlerOutcome> {
     if req.id == 0 {
         return Err(HandlerOutcome::drop());
@@ -128,7 +128,7 @@ async fn mirror(
 // --8<-- [start:publish_out]
 // A reply form and an injected publisher in one handler: the reply answers on the fixed
 // destination while an audit copy fans out through the Out parameter.
-#[subscriber("gateway-requests", publish("gateway-responses"))]
+#[subscriber("gateway-requests", reply("gateway-responses"))]
 async fn gateway(req: &Request, Out(out): Out<impl Publisher>) -> Result<Response, HandlerOutcome> {
     if out
         .message(&Event { id: req.id })
@@ -249,7 +249,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
 
 /// `Response` declares no destination, so this position offers the naming right; the clause's
 /// `"answers"` is the fallback and what the generated document reports.
-#[subscriber("asks", publish("answers"))]
+#[subscriber("asks", reply("answers"))]
 async fn answer(req: &Request) -> Response {
     println!("answering ask {}", req.id);
     Response { ok: true }
@@ -275,7 +275,7 @@ impl PublishLayer for AuditPublish {
 
 // --8<-- [start:batch_publishing]
 /// Confirms a whole batch of orders; the replies become visible atomically on commit.
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", reply("confirmations"))]
 async fn confirm(orders: &[Event]) -> Result<Vec<Event>, HandlerOutcome> {
     if orders.is_empty() {
         return Err(HandlerOutcome::drop()); // nothing published, whole batch settled

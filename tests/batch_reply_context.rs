@@ -1,7 +1,7 @@
 //! A batch that answers and reads the broker's subscription-scoped context in one body.
 //!
 //! The reply axis and the context axis are independent: naming the broker's batch context
-//! (`MemoryBatchContext` here) must leave the `publish(..)` clause intact, and the reposition
+//! (`MemoryBatchContext` here) must leave the `reply(..)` clause intact, and the reposition
 //! handle the context carries must be live while the replies are produced.
 #![cfg(all(
     feature = "memory",
@@ -40,7 +40,7 @@ struct Cursor {
 /// Answers every order with a digest, repositioning the subscription through the batch context
 /// before it answers: where to resume rides the elements' own header contract, since a batch
 /// context carries no per-delivery data.
-#[subscriber("replay.orders", publish("replay.digests"))]
+#[subscriber("replay.orders", reply("replay.digests"))]
 async fn replay_digest(
     batch: &[Message<Cursor, Order>],
     ctx: &mut Context<'_, MemoryBatchContext>,

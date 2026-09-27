@@ -34,7 +34,7 @@
 //! # struct Order { id: u64 }
 //! # #[derive(serde::Serialize, schemars::JsonSchema, ruststream::Outgoing)]
 //! # struct Confirmation { id: u64 }
-//! # #[subscriber("orders", publish("confirmations"))]
+//! # #[subscriber("orders", reply("confirmations"))]
 //! # async fn confirm(order: &Order) -> Confirmation { Confirmation { id: order.id } }
 //!
 //! fn app() -> RustStream {

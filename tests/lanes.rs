@@ -30,7 +30,7 @@ struct Wire(Vec<u8>);
 
 /// Raw in, encoded out: a `Deserialized` input composes with a `Serialize` reply - the input
 /// lane skips the codec, the reply still rides it.
-#[subscriber("lanes.measure", publish("lanes.measure.out"))]
+#[subscriber("lanes.measure", reply("lanes.measure.out"))]
 async fn measure(frame: &Frame<'_>) -> Report {
     Report { len: frame.0.len() }
 }

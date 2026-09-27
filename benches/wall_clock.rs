@@ -63,7 +63,7 @@ async fn threaded_one(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Handle
     HandlerOutcome::ack()
 }
 
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmation {
     ctx.state().arrived();
     Confirmation {

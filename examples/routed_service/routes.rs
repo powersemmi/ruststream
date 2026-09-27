@@ -21,7 +21,7 @@ use crate::{orders, payments};
 /// `confirm` needs a publisher for its reply; `.out_reply(Publish)` names the position and the
 /// policy, and `.transform(StampSource)` composes a static publish transform onto it that stamps a
 /// provenance header on every confirmation - reply settings live on this chain, not in the
-/// `publish("..")` decorator (which only names the destination).
+/// `reply("..")` decorator (which only names the destination).
 /// The reply wiring is a publish policy stack, pure declaration: the runtime pairs it with the
 /// connected broker at startup, so the router borrows no broker. `on_cancel` has no reply, so it
 /// is mounted with `include`. The router is a consuming builder, so the calls chain and each

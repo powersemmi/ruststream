@@ -1,5 +1,5 @@
 //! The order-confirmation handler of the routed-service example, written without the `macros`
-//! feature. `#[subscriber(MemorySource::new("orders"), publish("confirmations"))]` mints a reply
+//! feature. `#[subscriber(MemorySource::new("orders"), reply("confirmations"))]` mints a reply
 //! definition, and `subscriber(..).reply().to(..)` builds the same one from values: the same
 //! broker descriptor as the source, the same reply channel, and the body's
 //! `Result<Confirmation, HandlerOutcome>` return as the `Handle` method's own signature. `include`

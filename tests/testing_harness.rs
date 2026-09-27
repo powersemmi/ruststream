@@ -561,7 +561,7 @@ async fn with_state_injects_a_mirror_state() {
 
 // --- Raw inspection and the empty channel. ---
 
-#[subscriber("echo", publish("out"))]
+#[subscriber("echo", reply("out"))]
 async fn echo(order: &Order) -> Order {
     Order { id: order.id }
 }

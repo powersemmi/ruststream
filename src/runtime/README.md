@@ -475,8 +475,8 @@ Either way the handler never sees an unconnected publisher: the mount site names
 ## Replies
 
 Every reply type derives [`Outgoing`](macro@crate::Outgoing). `#[outgoing(name = "..")]` on
-the type is the destination, and the clause is then the bare `publish`; a type declaring no
-name takes one from the mount site, `publish("dest")`. A destination declared on the type wins
+the type is the destination, and the clause is then the bare `reply`; a type declaring no
+name takes one from the mount site, `reply("dest")`. A destination declared on the type wins
 over a mount-site name: replies go to the declared one, and startup logs a warning for each
 registration whose mount site names a different destination. `Result<Reply, HandlerOutcome>`
 keeps the acknowledgement in hand: `Ok` publishes and acks, `Err` publishes nothing and settles
@@ -512,7 +512,7 @@ struct Receipt {
     id: u64,
 }
 
-#[subscriber("requests", publish)]
+#[subscriber("requests", reply)]
 async fn issue(req: &Request) -> Result<Receipt, HandlerOutcome> {
     if req.id == 0 {
         return Err(HandlerOutcome::drop());
@@ -671,7 +671,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for Correlate {
 # struct Response {
 #     ok: bool,
 # }
-#[subscriber("requests", publish("responses"))]
+#[subscriber("requests", reply("responses"))]
 async fn respond(req: &Request) -> Response {
     Response { ok: req.id != 0 }
 }

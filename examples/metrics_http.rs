@@ -44,7 +44,7 @@ struct Confirmation {
 struct Ingest(Bytes);
 
 // --8<-- [start:handler]
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", reply("confirmations"))]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
         id: order.id,

@@ -96,7 +96,7 @@ async fn audit(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber("billing", publish("receipts"))]
+#[subscriber("billing", reply("receipts"))]
 async fn bill(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

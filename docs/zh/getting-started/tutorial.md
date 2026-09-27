@@ -73,7 +73,7 @@ cargo run -- run
 
 ## 4. 回复消息
 
-要发布一条回复，就返回回复值，并在订阅者上写 `publish`。目的地由回复类型上的 `Outgoing` derive
+要发布一条回复，就返回回复值，并在订阅者上写 `reply`。目的地由回复类型上的 `Outgoing` derive
 声明：
 
 === "宏"

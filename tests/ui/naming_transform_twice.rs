@@ -43,7 +43,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Inbox {
     }
 }
 
-#[subscriber("orders", publish("receipts"))]
+#[subscriber("orders", reply("receipts"))]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

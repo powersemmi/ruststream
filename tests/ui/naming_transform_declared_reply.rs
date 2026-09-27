@@ -31,7 +31,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     }
 }
 
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

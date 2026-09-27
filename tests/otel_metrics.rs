@@ -47,7 +47,7 @@ async fn implode(order: &Order) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber("otel.requests", publish("otel.confirmations"))]
+#[subscriber("otel.requests", reply("otel.confirmations"))]
 async fn confirm(order: &Order) -> Order {
     Order { id: order.id }
 }
@@ -343,7 +343,7 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
 
 /// Replies once, on a broker of its own that the test shuts down before the request arrives; the
 /// redelivery the failed reply causes settles quietly.
-#[subscriber("otel.failing", publish("otel.nowhere"))]
+#[subscriber("otel.failing", reply("otel.nowhere"))]
 async fn confirm_once(
     order: &Order,
     ctx: &mut Context<'_, (), Arc<AtomicBool>>,

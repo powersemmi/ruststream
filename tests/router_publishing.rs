@@ -26,7 +26,7 @@ use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
 
 #[cfg(feature = "cbor")]
-#[subscriber("rpc-in", publish("rpc-out"))]
+#[subscriber("rpc-in", reply("rpc-out"))]
 async fn rpc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
@@ -61,7 +61,7 @@ async fn a_chain_codec_decodes_the_request_and_leaves_the_reply_its_own() {
 }
 
 #[cfg(feature = "cbor")]
-#[subscriber("bpc-in", publish("bpc-out"))]
+#[subscriber("bpc-in", reply("bpc-out"))]
 async fn bpc_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -111,7 +111,7 @@ impl PublishLayer for StampApp {
     }
 }
 
-#[subscriber("rl-in", publish("rl-out"))]
+#[subscriber("rl-in", reply("rl-out"))]
 async fn rl_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
@@ -145,7 +145,7 @@ async fn app_publish_layer_reaches_router_publishing_handlers() {
         .with_header("x-app", b"1");
 }
 
-#[subscriber("bl-in", publish("bl-out"))]
+#[subscriber("bl-in", reply("bl-out"))]
 async fn bl_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -180,7 +180,7 @@ async fn app_publish_layer_reaches_router_batch_publishing_handlers() {
 
 /// A byte-for-byte reply: its bytes are the payload, so the router's route for it carries a
 /// policy and no codec.
-#[subscriber("raw-in", publish("raw-out"))]
+#[subscriber("raw-in", reply("raw-out"))]
 async fn raw_relay(o: &Order) -> Wire {
     Wire::of(o.id.to_be_bytes())
 }
@@ -254,7 +254,7 @@ impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrela
     }
 }
 
-#[subscriber("tc-in", publish("tc-out"))]
+#[subscriber("tc-in", reply("tc-out"))]
 async fn tc_relay(o: &Order, _ctx: &mut Context<'_, TraceCtx>) -> Receipt {
     Receipt { id: o.id }
 }

@@ -1,6 +1,6 @@
 //! Outgoing message and the publish middleware pipeline.
 //!
-//! Every publish a handler makes - the reply of a `#[subscriber(.., publish(..))]` form, and every
+//! Every publish a handler makes - the reply of a `#[subscriber(.., reply(..))]` form, and every
 //! message that leaves through an injected [`Out`](super::Out) slot - flows through a chain of
 //! [`PublishLayer`] before reaching the broker publisher. Middleware transform the
 //! payload (for example, wrap it in a Confluent / Avro envelope) and enrich the headers

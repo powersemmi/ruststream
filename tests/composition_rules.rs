@@ -24,7 +24,7 @@ use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 
 /// Each batch's replies go out in one transaction; the pool runs the batches concurrently.
-#[subscriber("tx-in", publish("tx-out"), workers(2))]
+#[subscriber("tx-in", reply("tx-out"), workers(2))]
 async fn tx_confirm(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -124,7 +124,7 @@ async fn buffered_sources_compose_with_a_batch_pool() {
 }
 
 /// Reply publishing under a pool: replies are produced concurrently.
-#[subscriber("pub-in", publish("pub-out"), workers(3))]
+#[subscriber("pub-in", reply("pub-out"), workers(3))]
 async fn pooled_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }

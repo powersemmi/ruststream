@@ -252,7 +252,7 @@ async fn a_router_mounts_a_seek_key_reader() {
 // The reply terminals: `.build()` takes the broker's default publish policy, on the encoded and
 // the byte-for-byte form alike.
 
-#[subscriber("rp.reply.in", publish("rp.reply.out"))]
+#[subscriber("rp.reply.in", reply("rp.reply.out"))]
 async fn relay(event: &Event) -> Event {
     Event { id: event.id + 1 }
 }
@@ -276,7 +276,7 @@ async fn a_router_defaults_the_reply_publisher_on_mount() {
         .with(&Event { id: 2 });
 }
 
-#[subscriber("rp.raw.in", publish("rp.raw.out"))]
+#[subscriber("rp.raw.in", reply("rp.raw.out"))]
 async fn echo_frame(frame: &Frame<'_>) -> Export {
     Export(frame.0.to_vec())
 }
@@ -305,7 +305,7 @@ async fn a_router_mounts_the_byte_reply_form() {
 
 // The two-attachment forms: a reply next to Out slots, single and batch.
 
-#[subscriber("rp.gate.in", publish("rp.gate.reply"))]
+#[subscriber("rp.gate.in", reply("rp.gate.reply"))]
 async fn gate(event: &Event, Out(out): Out<impl Publisher>) -> Result<Event, HandlerOutcome> {
     if out
         .message(event)
@@ -347,7 +347,7 @@ async fn a_router_composes_a_default_reply_with_out_slots() {
         .with(&Event { id: 8 });
 }
 
-#[subscriber("rp.audit.in", publish("rp.audit.out"))]
+#[subscriber("rp.audit.in", reply("rp.audit.out"))]
 async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
         .message(&Wire::of(frame.0))
@@ -387,7 +387,7 @@ async fn a_router_composes_a_byte_reply_with_out_slots() {
         .with_raw(b"frame");
 }
 
-#[subscriber("rp.ledger.in", publish("rp.ledger.receipts"))]
+#[subscriber("rp.ledger.in", reply("rp.ledger.receipts"))]
 async fn settle_batch(
     events: &[Event],
     Out(out): Out<impl Publisher>,
@@ -471,7 +471,7 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
 
 // The batch reply terminal, and the metadata every new route kind contributes.
 
-#[subscriber("rp.batch.in", publish("rp.batch.out"))]
+#[subscriber("rp.batch.in", reply("rp.batch.out"))]
 async fn bulk_relay(events: &[Event]) -> Vec<Event> {
     events
         .iter()

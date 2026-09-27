@@ -35,7 +35,7 @@ pub enum OutgoingKind {
     /// body publishes to. The default, because a bare declaration is exactly that.
     #[default]
     SlotEntry,
-    /// The reply of a `publish(..)` registration: the value the handler returns, answering the
+    /// The reply of a `reply(..)` registration: the value the handler returns, answering the
     /// delivery it was given.
     Answer,
     /// The destination a `dead_letter(..)` declaration names: a delivery out of attempts leaves
@@ -49,7 +49,7 @@ pub enum OutgoingKind {
 
 /// One message a handler publishes, as declared for the `AsyncAPI` document.
 ///
-/// The declaration is the reply of a `publish("dest")` form, one entry of an `Out` slot's
+/// The declaration is the reply of a `reply("dest")` form, one entry of an `Out` slot's
 /// `#[publishes(..)]` dictionary, or the destination of a `dead_letter(..)` declaration.
 ///
 /// Constructed by generated code through [`new`](Self::new) plus the builder-style setters;
@@ -295,7 +295,7 @@ pub struct HandlerMetadata {
     /// Feeds the `AsyncAPI` message description.
     pub message_description: Option<Cow<'static, str>>,
     /// The messages this handler publishes, when it declares them: the reply of a
-    /// `publish("dest")` form, and every entry of an `Out` slot's `#[publishes(..)]`
+    /// `reply("dest")` form, and every entry of an `Out` slot's `#[publishes(..)]`
     /// dictionary. Feeds the `AsyncAPI` `send` operations.
     pub outgoing: Vec<OutgoingMessageMetadata>,
     /// True when the input rides the self-deserializing lane

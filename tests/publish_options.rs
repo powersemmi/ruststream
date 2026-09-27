@@ -355,7 +355,7 @@ async fn a_bare_publisher_takes_the_same_steps() {
 
 /// A reply has no call site: the policy the mount site names for the `Reply` position holds the
 /// defaults, and only a transform adjusts them.
-#[subscriber("options.reply.in", publish("options.reply.out"))]
+#[subscriber("options.reply.in", reply("options.reply.out"))]
 async fn acknowledge(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -648,7 +648,7 @@ async fn a_reply_transform_sets_what_the_reply_has_no_call_site_for() {
         });
 }
 
-#[subscriber("options.batch.in", publish("options.batch.out"))]
+#[subscriber("options.batch.in", reply("options.batch.out"))]
 async fn confirm_all(orders: &[Order]) -> Vec<Receipt> {
     orders
         .iter()

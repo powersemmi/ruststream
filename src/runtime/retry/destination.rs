@@ -134,7 +134,7 @@ impl SettlesDestination<Reads> for Names {
     label = "`{Self}`: the destination was named already, or this position takes none",
     note = "`.to(name)` names where a registration's retry copies go, once, right after \
             `out_retry(policy)`; a reply's destination comes from its own type or from the mount \
-            site's `publish(\"dest\")`, and an `Out` slot's from the type it publishes"
+            site's `reply(\"dest\")`, and an `Out` slot's from the type it publishes"
 )]
 pub trait DestinationOpen {}
 

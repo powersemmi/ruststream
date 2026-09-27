@@ -44,16 +44,16 @@ use parse::{SubscriberArgs, doc_description};
 /// #[outgoing(name = "responses")]
 /// struct Response { /* ... */ }
 ///
-/// #[subscriber("requests", publish)]
+/// #[subscriber("requests", reply)]
 /// async fn reply(req: &Request) -> Response { /* ... */ }
 ///
 /// // a reply type declaring no name takes the clause's:
-/// #[subscriber("requests", publish("responses"))]
+/// #[subscriber("requests", reply("responses"))]
 /// async fn reply_elsewhere(req: &Request) -> Receipt { /* ... */ }
 ///
 /// // reply form with explicit ack control: `Ok` publishes the reply, `Err` skips it and the
 /// // dispatcher settles by the returned HandlerOutcome.
-/// #[subscriber("requests", publish("responses"))]
+/// #[subscriber("requests", reply("responses"))]
 /// async fn confirm(req: &Request) -> Result<Response, HandlerOutcome> { /* ... */ }
 ///
 /// // batch form: the slice parameter says the handler takes the whole decoded batch; the
@@ -84,26 +84,26 @@ use parse::{SubscriberArgs, doc_description};
 ///
 /// // raw reply: the reply type carries its own bytes, so they are published as they are -
 /// // no codec on the way out. `Serialize` means the framework's codec does it; `Serialized`
-/// // means it is already done by the user's own type. The same publish clause serves both
+/// // means it is already done by the user's own type. The same reply clause serves both
 /// // wires, and Result<Export, HandlerOutcome> gives the usual explicit ack control.
 /// #[derive(Outgoing, Serialized)]
 /// struct Export(Vec<u8>);
 ///
-/// #[subscriber("frames", publish("frames-out"))]
+/// #[subscriber("frames", reply("frames-out"))]
 /// async fn mirror(frame: &Frame<'_>) -> Export { Export(frame.0.to_vec()) }
 ///
 /// // the lanes mix freely (the gateway shape): the input decodes with the scope codec, the
 /// // returned bytes still go out unencoded - and the other diagonal (a Deserialized input
 /// // with an encoded serde reply) works the same way.
-/// #[subscriber("orders", publish("orders-wire"))]
+/// #[subscriber("orders", reply("orders-wire"))]
 /// async fn encode(order: &Order) -> Export { /* your wire format */ }
 /// ```
 ///
 /// A reply type derives `Outgoing`: `#[outgoing(name = "..")]` on it is the destination, and a
-/// derive without a name takes the clause's `publish("..")` as the destination instead. A declared
+/// derive without a name takes the clause's `reply("..")` as the destination instead. A declared
 /// name wins over the clause's, and startup logs a warning when the two differ.
 ///
-/// Without a `publish` clause the handler returns any accepted outcome shape (a `HandlerOutcome`,
+/// Without a `reply` clause the handler returns any accepted outcome shape (a `HandlerOutcome`,
 /// `()`, or `Result<_, E>`). Attach a post-settle continuation with
 /// `HandlerOutcome::ack().and_after` (any outcome works), which runs after the message is
 /// settled. With one it returns the reply value to publish, or
@@ -126,7 +126,7 @@ use parse::{SubscriberArgs, doc_description};
 /// batch context (`ctx: &mut Context<'_, MemoryBatchContext>`-style) to reach handles every
 /// delivery of the subscription shares, like a seeker.
 ///
-/// Combining a batch handler with `publish(..)` produces a batch reply definition: the handler
+/// Combining a batch handler with `reply(..)` produces a batch reply definition: the handler
 /// returns `Vec<Reply>` (or
 /// `Result<Vec<Reply>, HandlerOutcome>` for explicit ack control, all-or-nothing - selective
 /// outcomes do not compose with a transaction), every reply is published to the reply name, and
@@ -158,7 +158,7 @@ use parse::{SubscriberArgs, doc_description};
 ///
 /// Clause values need not be literals: `workers(..)` and `threads(..)` take any `usize` expression (a constant,
 /// a static, a function call - an integer literal keeps the compile-time zero rejection, a
-/// runtime value of zero panics at registration), `publish(..)` takes a `&'static str`
+/// runtime value of zero panics at registration), `reply(..)` takes a `&'static str`
 /// expression, and `on_failure(..)` keys accept a `FailurePolicy` expression next to the keyword
 /// vocabulary.
 ///
@@ -168,7 +168,7 @@ use parse::{SubscriberArgs, doc_description};
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
 /// the publish builder accepts on it, and the generated document reports that narrowed list as
 /// the handler's send operations. `Out` parameters combine freely in one handler: with each
-/// other, with a byte input, with a batch handler, and with every reply form (the two `publish`
+/// other, with a byte input, with a batch handler, and with every reply form (the two `reply`
 /// spellings and the batch publishing form). An `Out` parameter's attachment is
 /// required at the include site: one `.out(marker, policy)` per slot, next to the reply's own
 /// optional `.out(Reply, policy)`, and a `.build()` to commit. Repositioning a
@@ -446,8 +446,8 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 ///   setter per placeholder, and the publish appears once the last one is bound.
 /// * the derive alone declares nothing - the call site names it: `.to("orders.archived")`.
 ///
-/// The same declaration decides a reply's destination: `#[subscriber(.., publish)]` publishes the
-/// return value where its type says, and `publish("..")` supplies the destination of a reply type
+/// The same declaration decides a reply's destination: `#[subscriber(.., reply)]` publishes the
+/// return value where its type says, and `reply("..")` supplies the destination of a reply type
 /// that declares none. A reply type derives this in every case; a name template does not resolve
 /// there, because the runtime has nothing to bind its placeholders with.
 ///
@@ -795,7 +795,7 @@ pub fn derive_deserialized(item: TokenStream) -> TokenStream {
 /// #[derive(Serialized)]
 /// struct Export(Vec<u8>);
 ///
-/// #[subscriber("orders", publish("orders-wire"))]
+/// #[subscriber("orders", reply("orders-wire"))]
 /// async fn encode(order: &Order) -> Export { /* your wire format */ }
 ///
 /// // What a generator's config puts on every message it emits.

@@ -11,15 +11,15 @@ use syn::{
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
-/// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `publish` /
-/// `publish("topic")` (the return value is published; the reply type decides its wire and,
+/// descriptor constructor `Type::new(..)` / `Type { .. }`), plus optional `reply` /
+/// `reply("topic")` (the return value is published; the reply type decides its wire and,
 /// where it declares one, its destination), `workers(n[, by_key])` (the dispatch concurrency),
 /// and `start_at(<position>)` (the subscription opens at that position) clauses, in any order.
 /// The subscription form (single, batch) is never spelled here: it is inferred from the payload
 /// parameter's type.
 pub(crate) struct SubscriberArgs {
     pub(crate) source: SourceArg,
-    pub(crate) publish: Option<PublishArg>,
+    pub(crate) reply: Option<ReplyArg>,
     pub(crate) workers: Option<WorkersArg>,
     pub(crate) on_failure: Option<FailureArg>,
     /// The `start_at(<position>)` clause: a broker position constructor the subscription is
@@ -27,12 +27,12 @@ pub(crate) struct SubscriberArgs {
     pub(crate) start_at: Option<Expr>,
 }
 
-/// The `publish` clause: the reply is published either way, and the clause says where.
-pub(crate) enum PublishArg {
-    /// `publish`: the reply type's own `#[outgoing(name = "..")]` declaration is the
+/// The `reply` clause: the reply is published either way, and the clause says where.
+pub(crate) enum ReplyArg {
+    /// `reply`: the reply type's own `#[outgoing(name = "..")]` declaration is the
     /// destination.
     Declared,
-    /// `publish("topic")`: the default destination for a reply type that declares none. A
+    /// `reply("topic")`: the default destination for a reply type that declares none. A
     /// string literal, or a `&'static str` constant.
     Default(Expr),
 }
@@ -51,16 +51,7 @@ pub(crate) enum SourceArg {
 
 /// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
 /// expressions too (`workers(4)` is a call).
-// `publish_raw` stays in the peek list although the clause is retired, so a leading one still
-// reaches the curated error instead of parsing as a source expression.
-const CLAUSES: &[&str] = &[
-    "on_failure",
-    "publish",
-    "publish_raw",
-    "start_at",
-    "threads",
-    "workers",
-];
+const CLAUSES: &[&str] = &["on_failure", "reply", "start_at", "threads", "workers"];
 
 /// True when the next tokens open a clause rather than a source. A clause keyword stands alone,
 /// is followed by a comma, or opens a parenthesized argument list; anything else with the same
@@ -210,7 +201,7 @@ impl Parse for FailureArg {
 impl Parse for SubscriberArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let (source, named_here) = parse_source(input)?;
-        let mut publish = None;
+        let mut reply = None;
         let mut workers = None;
         let mut on_failure = None;
         let mut start_at = None;
@@ -231,19 +222,11 @@ impl Parse for SubscriberArgs {
                 let content;
                 parenthesized!(content in input);
                 on_failure = Some(content.parse()?);
-            } else if keyword == "publish" {
-                if publish.is_some() {
-                    return Err(Error::new(keyword.span(), "duplicate publish clause"));
+            } else if keyword == "reply" {
+                if reply.is_some() {
+                    return Err(Error::new(keyword.span(), "duplicate reply clause"));
                 }
-                publish = Some(parse_publish(input, &keyword)?);
-            } else if keyword == "publish_raw" {
-                // The clause is retired, not unknown: point straight at its replacement.
-                return Err(Error::new(
-                    keyword.span(),
-                    "publish_raw(..) is retired: the reply's wire follows the reply type - use \
-                     publish(\"dest\") and return a #[derive(Serialized)] type to publish its \
-                     bytes as they are",
-                ));
+                reply = Some(parse_reply(input, &keyword)?);
             } else if keyword == "start_at" {
                 if start_at.is_some() {
                     return Err(Error::new(keyword.span(), "duplicate start_at(..)"));
@@ -275,7 +258,7 @@ impl Parse for SubscriberArgs {
             } else {
                 return Err(Error::new(
                     keyword.span(),
-                    "expected `publish` / `publish(\"reply-topic\")`, `workers(n[, by_key])`, \
+                    "expected `reply` / `reply(\"reply-topic\")`, `workers(n[, by_key])`, \
                      `threads(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or \
                      `start_at(<position>)`",
                 ));
@@ -283,7 +266,7 @@ impl Parse for SubscriberArgs {
         }
         Ok(Self {
             source,
-            publish,
+            reply,
             workers,
             on_failure,
             start_at,
@@ -291,21 +274,21 @@ impl Parse for SubscriberArgs {
     }
 }
 
-/// Parses a `publish` clause: bare, or with the default destination in parentheses.
-fn parse_publish(input: ParseStream, keyword: &Ident) -> syn::Result<PublishArg> {
+/// Parses a `reply` clause: bare, or with the default destination in parentheses.
+fn parse_reply(input: ParseStream, keyword: &Ident) -> syn::Result<ReplyArg> {
     if !input.peek(token::Paren) {
-        return Ok(PublishArg::Declared);
+        return Ok(ReplyArg::Declared);
     }
     let content;
     parenthesized!(content in input);
     if content.is_empty() {
         return Err(Error::new(
             keyword.span(),
-            "publish() names nothing: write `publish` to send the reply where its type declares, \
-             or `publish(\"dest\")` to name the destination of a reply type that declares none",
+            "reply() names nothing: write `reply` to send the reply where its type declares, \
+             or `reply(\"dest\")` to name the destination of a reply type that declares none",
         ));
     }
-    Ok(PublishArg::Default(content.parse()?))
+    Ok(ReplyArg::Default(content.parse()?))
 }
 
 /// Parses the leading source argument, if the attribute opens on one. Reports the subscription

@@ -28,7 +28,7 @@ struct Order {
 }
 
 /// The reply, which the slot case below also publishes by hand: it declares no destination of its
-/// own, so the mount site's `publish("..")` names one and the slot's builder names the other.
+/// own, so the mount site's `reply("..")` names one and the slot's builder names the other.
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
 struct Receipt {
     id: u64,
@@ -46,7 +46,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
     }
 }
 
-#[subscriber("codec.in", publish("codec.out"))]
+#[subscriber("codec.in", reply("codec.out"))]
 async fn encode_reply(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -139,7 +139,7 @@ impl Publisher for Laned {
     }
 }
 
-#[subscriber("lane.in", publish("lane.out"))]
+#[subscriber("lane.in", reply("lane.out"))]
 async fn laned_reply(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -172,7 +172,7 @@ async fn a_publishers_base_headers_reach_the_reply() {
         .with_header("x-stamped", b"1");
 }
 
-#[subscriber("lane.batch.in", publish("lane.batch.out"))]
+#[subscriber("lane.batch.in", reply("lane.batch.out"))]
 async fn laned_batch(orders: &[Order]) -> Vec<Receipt> {
     orders
         .iter()
@@ -245,7 +245,7 @@ async fn a_publishers_base_headers_reach_a_slot_publish() {
         .with_header(LANE, "west");
 }
 
-#[subscriber("batch.in", publish("batch.out"))]
+#[subscriber("batch.in", reply("batch.out"))]
 async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
     orders
         .iter()
@@ -378,7 +378,7 @@ async fn a_batch_reply_commits_its_transaction() {
 #[publishes(Receipt)]
 struct Journal;
 
-#[subscriber("both.in", publish("both.out"))]
+#[subscriber("both.in", reply("both.out"))]
 async fn confirm_and_journal(
     orders: &[Order],
     Out(journal): Out<impl Publisher, Journal>,

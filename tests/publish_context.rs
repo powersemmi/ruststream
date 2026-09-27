@@ -68,7 +68,7 @@ impl<Options> PublishTransform<ForReply<TraceCtx>, Options> for PropagateCorrela
     }
 }
 
-#[subscriber("in", publish("out"))]
+#[subscriber("in", reply("out"))]
 async fn echo(req: &Req, _ctx: &mut Context<'_, TraceCtx>) -> Resp {
     Resp { n: req.n }
 }
@@ -100,7 +100,7 @@ async fn delivery_context_propagates_to_the_reply() {
 }
 
 /// Writes into the delivery's working copy of the headers before it answers.
-#[subscriber("working-in", publish("working-out"))]
+#[subscriber("working-in", reply("working-out"))]
 async fn enrich(req: &Req, ctx: &mut Context<'_>) -> Resp {
     ctx.headers_mut().insert("x-working", "1");
     Resp { n: req.n }
@@ -190,7 +190,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for AppendT {
     }
 }
 
-#[subscriber("ord-in", publish("ord-out"))]
+#[subscriber("ord-in", reply("ord-out"))]
 async fn ord_echo(req: &Req) -> Resp {
     Resp { n: req.n }
 }

@@ -17,10 +17,10 @@ use crate::domain::{Cancellation, Confirmation, Order, Repository};
 /// Returning `Result<Confirmation, HandlerOutcome>` keeps control of the acknowledgement: `Ok`
 /// publishes the reply and acks, while `Err` publishes nothing and hands the dispatcher a
 /// [`HandlerOutcome`] - here, retry on a transient store error and drop on a permanent one. The
-/// `publish("confirmations")` clause names the reply channel; its publisher is wired in
+/// `reply("confirmations")` clause names the reply channel; its publisher is wired in
 /// [`routes`](crate::routes).
 // --8<-- [start:descriptor]
-#[subscriber(MemorySource::new("orders"), publish("confirmations"))]
+#[subscriber(MemorySource::new("orders"), reply("confirmations"))]
 pub(crate) async fn confirm(
     order: &Order,
     ctx: &mut Context<'_, (), Repository>,

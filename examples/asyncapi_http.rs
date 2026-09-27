@@ -43,7 +43,7 @@ struct Confirmed {
 }
 
 /// Answers every request on `requests` with a confirmation on `responses`.
-#[subscriber("requests", publish("responses"))]
+#[subscriber("requests", reply("responses"))]
 async fn confirm(order: &Order) -> Confirmed {
     Confirmed { id: order.id }
 }

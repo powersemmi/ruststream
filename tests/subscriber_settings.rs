@@ -152,7 +152,7 @@ async fn the_builder_supplies_the_batch_size() {
 }
 
 /// A batch that answers: one call per delivered batch, with that batch's own reply vector.
-#[subscriber(publish("batch-cap-confirmed"))]
+#[subscriber(reply("batch-cap-confirmed"))]
 async fn confirm_batches(orders: &[Order]) -> Vec<Event> {
     orders
         .iter()
@@ -383,7 +383,7 @@ mod codec_override {
 
     /// A self-deserializing body with a reply, which is the shape that resolves a codec for a
     /// byte input: the plain self-deserializing mount reads none at all.
-    #[subscriber(publish("codec-provided-out"))]
+    #[subscriber(reply("codec-provided-out"))]
     async fn provided(frame: &Frame<'_>) -> Order {
         Order {
             id: u32::try_from(frame.0.len()).unwrap_or(u32::MAX),

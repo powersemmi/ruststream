@@ -281,7 +281,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
 
     /// Adds an outgoing publish middleware, run on every publish a handler makes before it
     /// reaches the broker (a Confluent / Avro envelope, publish metrics, dead-letter): a
-    /// `publish(..)` form's reply and every message that leaves through an injected
+    /// `reply(..)` form's reply and every message that leaves through an injected
     /// [`Out`](crate::runtime::Out) slot alike, each under the transforms its own mount site
     /// named. It composes into the
     /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the

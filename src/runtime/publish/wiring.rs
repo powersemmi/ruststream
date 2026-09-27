@@ -257,7 +257,7 @@ impl<Policy, Enc, PL, BL, Tx, N> AddReplyTransform<N> for ReplyWiring<Policy, En
     message = "`{Self}` does not take a batch publish transform",
     label = "this reply has no batch transform stack",
     note = "`.batch_transform(..)` composes a `BatchPublishTransform` onto an encoded batch reply \
-            (`&[T]` plus `publish(..)`), right after `.out(Reply, ..)`"
+            (`&[T]` plus `reply(..)`), right after `.out(Reply, ..)`"
 )]
 pub trait AddBatchReplyTransform<N> {
     /// The wiring with the transform on top of its batch stack.

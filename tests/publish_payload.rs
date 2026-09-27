@@ -536,12 +536,12 @@ mod pool {
         id: u64,
     }
 
-    #[subscriber("orders.pooled", workers(2), publish)]
+    #[subscriber("orders.pooled", workers(2), reply)]
     async fn confirm_pooled(order: &Order) -> Confirmation {
         Confirmation { id: order.id }
     }
 
-    #[subscriber("orders.sequential", publish)]
+    #[subscriber("orders.sequential", reply)]
     async fn confirm_sequential(order: &Order) -> Confirmation {
         Confirmation { id: order.id }
     }

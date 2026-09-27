@@ -119,7 +119,7 @@ struct StatusRequest {
     task_id: u64,
 }
 
-// The reply is sent where the `publish(..)` clause says, so the type declares no name of its
+// The reply is sent where the `reply(..)` clause says, so the type declares no name of its
 // own - only the contract that travels with it.
 #[derive(Outgoing, Serialize, JsonSchema)]
 #[outgoing(headers = DoneMeta)]
@@ -127,7 +127,7 @@ struct StatusReply {
     done: bool,
 }
 
-#[subscriber("jobs.status-requests", publish("jobs.status"))]
+#[subscriber("jobs.status-requests", reply("jobs.status"))]
 async fn status(req: &StatusRequest) -> StatusReply {
     StatusReply {
         done: req.task_id.is_multiple_of(2),

@@ -79,13 +79,13 @@ impl PublishPolicy<ConnectedMemoryBroker> for FailsOncePolicy {
 struct Acked(u32);
 
 /// A publishing handler whose decode failure is declared fatal.
-#[subscriber("pubff", publish("pubff.out"), on_failure(decode = fail_fast))]
+#[subscriber("pubff", reply("pubff.out"), on_failure(decode = fail_fast))]
 async fn pubff(order: &Order) -> Acked {
     Acked(order.id)
 }
 
 /// A publishing handler whose reply leaves through the publisher that fails once.
-#[subscriber("flaky", publish("flaky.out"))]
+#[subscriber("flaky", reply("flaky.out"))]
 async fn flaky(order: &Order) -> Acked {
     Acked(order.id)
 }

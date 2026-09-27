@@ -30,12 +30,12 @@ async fn batch(orders: &[Order]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-#[subscriber("sc-pin", publish("sc-pout"))]
+#[subscriber("sc-pin", reply("sc-pout"))]
 async fn relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("sc-bpin", publish("sc-bpout"))]
+#[subscriber("sc-bpin", reply("sc-bpout"))]
 async fn batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }

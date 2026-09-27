@@ -415,7 +415,7 @@ fn server_security_lands_in_components_and_refs() {
 }
 
 /// Typed headers and declared outgoing messages: the macro lifts a `Headers` contract into
-/// the receive message's headers schema, and `publish(..)` / `#[publishes(..)]` declarations
+/// the receive message's headers schema, and `reply(..)` / `#[publishes(..)]` declarations
 /// become `send` operations with payload and headers schemas.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod typed_headers_spec {
@@ -479,7 +479,7 @@ mod typed_headers_spec {
         HandlerOutcome::ack()
     }
 
-    #[subscriber("requests", publish("responses"))]
+    #[subscriber("requests", reply("responses"))]
     async fn respond(_req: &Request) -> Response {
         Response { ok: true }
     }
@@ -875,7 +875,7 @@ mod document_surface {
         id: u64,
     }
 
-    #[subscriber("orders", publish("orders.confirmed"))]
+    #[subscriber("orders", reply("orders.confirmed"))]
     async fn confirm(order: &Order) -> Confirmed {
         Confirmed { id: order.id }
     }
@@ -901,7 +901,7 @@ mod document_surface {
         let reply = spec.operations["receive_orders"]
             .reply
             .as_ref()
-            .expect("a publish(..) registration reports what answers it");
+            .expect("a reply(..) registration reports what answers it");
         assert_eq!(reply.channel.reference, "#/channels/orders.confirmed");
         assert_eq!(
             reply.messages[0].reference,
@@ -1699,7 +1699,7 @@ mod publish_bindings {
         }
     }
 
-    #[subscriber("requests", publish("responses"))]
+    #[subscriber("requests", reply("responses"))]
     async fn respond(
         _req: &Request,
         Out(_events): Out<impl Publisher, Events, (Progress,)>,
@@ -1728,7 +1728,7 @@ mod publish_bindings {
     /// the reply's policy describes the reply's: one mount site, two positions, two vocabularies.
     ///
     /// Each position hands its policy the destination the mount site resolved - the slot entry's
-    /// own name, the `publish("dest")` clause of the registration - so a binding whose required
+    /// own name, the `reply("dest")` clause of the registration - so a binding whose required
     /// field is that name can be filled.
     #[test]
     fn each_position_is_described_by_the_policy_bound_on_it() {
@@ -1765,7 +1765,7 @@ mod publish_bindings {
     }
 
     /// One policy on all three publish positions, each handing it the destination the mount site
-    /// resolved: the registration's `publish("dest")` clause, the slot entry's own name, the
+    /// resolved: the registration's `reply("dest")` clause, the slot entry's own name, the
     /// `dead_letter(..)` declaration. A binding whose required field is that name (an SNS topic,
     /// an SQS queue) is fillable from any of them.
     #[test]

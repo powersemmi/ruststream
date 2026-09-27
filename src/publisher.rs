@@ -347,7 +347,7 @@ pub trait Publisher: Send + Sync {
     /// adjusts.
     ///
     /// Every message the runtime sends through this publisher starts from that base: a publish
-    /// through the builder, and the reply a `publish("dest")` handler returns (whose
+    /// through the builder, and the reply a `reply("dest")` handler returns (whose
     /// [`PublishTransform`](crate::runtime::PublishTransform) stack then writes over it, like any
     /// other call site). A publish a handler body issues on a value it obtained outside the
     /// framework is that body's own call and reaches nothing here.
@@ -468,7 +468,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
     /// binding for goes in [`Binding::extension`](crate::asyncapi::Binding::extension).
     ///
-    /// The policy answers for every position it is bound on: the reply of a `publish(..)`
+    /// The policy answers for every position it is bound on: the reply of a `reply(..)`
     /// registration, an [`Out`](crate::runtime::Out) slot, and the publisher a dead-lettered
     /// delivery leaves through. A [`Bound`](crate::runtime::Bound) token answers with the policy
     /// it carries, so a cross-broker publish is described by the broker it reaches. The channel's
@@ -476,7 +476,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// was registered under, which is the only broker the runtime can name for a channel.
     ///
     /// `channel` is the destination the mount site resolved for that position - the reply type's
-    /// own name or the `publish("dest")` clause, the slot entry's name, the `dead_letter("dlq")`
+    /// own name or the `reply("dest")` clause, the slot entry's name, the `dead_letter("dlq")`
     /// declaration - and it is what the document reports as the channel's `address`. An SNS topic
     /// and an SQS queue are named by their binding's required `name` field, and this is where
     /// that name comes from: a policy declares a broker's settings and never a destination. Where
@@ -674,7 +674,7 @@ impl PairError {
 }
 
 /// A connected broker that names its plain publish policy, so the runtime can build a default
-/// reply publisher when a `publish("dest")` handler is included without an explicit one.
+/// reply publisher when a `reply("dest")` handler is included without an explicit one.
 ///
 /// Implement it alongside [`ConnectedBroker`](crate::ConnectedBroker) when the broker has a
 /// publish policy whose default configuration is usable as-is (most are). Brokers whose

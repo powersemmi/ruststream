@@ -31,9 +31,9 @@ pub struct Confirmation {
 
 /// Confirms an incoming order and publishes a `Confirmation` to `confirmations`.
 ///
-/// The return value is the reply: the `publish` clause makes the runtime encode it and send it
+/// The return value is the reply: the `reply` clause makes the runtime encode it and send it
 /// through the publisher wired in `routes`.
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 pub async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
         id: order.id,

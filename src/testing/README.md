@@ -49,7 +49,7 @@ struct Confirmation {
     accepted: bool,
 }
 
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
         id: order.id,

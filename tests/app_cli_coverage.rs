@@ -665,7 +665,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     }
 }
 
-#[subscriber("cov.audit.in", publish("cov.audit.out"))]
+#[subscriber("cov.audit.in", reply("cov.audit.out"))]
 async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Export {
     audit
         .message(&Wire::of(frame.0))
@@ -702,7 +702,7 @@ async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
     replies.assert_called_once().with_raw(b"frame");
 }
 
-#[subscriber("cov.gate.in", publish("cov.gate.out"))]
+#[subscriber("cov.gate.in", reply("cov.gate.out"))]
 async fn gate(order: &Order, Out(audit): Out<impl Publisher>) -> Receipt {
     audit
         .message(order)

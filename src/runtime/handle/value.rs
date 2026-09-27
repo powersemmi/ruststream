@@ -161,7 +161,7 @@ pub fn probed_def<A, R, O, C, H>(
 pub type ProbedReplyDef<A, R, O, C, H> =
     Sealed<ReplyValue<HandleValue<A, R, O, C, H, Probed>, ResolvedDest>>;
 
-/// The sealed reply definition [`probed_declared_reply_def`] builds, for a `publish` clause
+/// The sealed reply definition [`probed_declared_reply_def`] builds, for a `reply` clause
 /// naming nothing.
 #[doc(hidden)]
 pub type ProbedDeclaredReplyDef<A, R, O, C, H> =
@@ -183,7 +183,7 @@ pub fn probed_reply_def<A, R, O, C, H>(
     Sealed(ReplyValue { value, dest })
 }
 
-/// Builds a `#[subscriber]` expansion's sealed reply definition for a bare `publish` clause:
+/// Builds a `#[subscriber]` expansion's sealed reply definition for a bare `reply` clause:
 /// the destination is the reply type's own declaration. Machinery behind the macro expansion;
 /// not part of the public API.
 #[doc(hidden)]

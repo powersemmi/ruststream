@@ -28,7 +28,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     }
 }
 
-#[subscriber("orders", publish("receipts"))]
+#[subscriber("orders", reply("receipts"))]
 async fn confirm(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }

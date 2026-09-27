@@ -38,13 +38,13 @@ alwaysApply: false
   use it.
 - The return type drives acknowledgement: `HandlerOutcome`, `()` (always acks), `Result<_, E>` (an
   `Err` drops - a nack with no requeue), `Result<HandlerOutcome, E>`, or `Vec<HandlerOutcome>` on a
-  batch to settle entry by entry. For a reply handler, add a `publish` clause and return the reply
+  batch to settle entry by entry. For a reply handler, add a `reply` clause and return the reply
   value, or `Result<Reply, HandlerOutcome>` for explicit ack control (`Vec<Reply>` and
   `Result<Vec<Reply>, HandlerOutcome>` are the batch counterparts).
 - Where a reply goes is a property of the reply type, not of the mount site. Every reply type
   derives `Outgoing`, and a type without it is a compile error at the handler naming the derive.
   `#[outgoing(name = "dest")]` on the type is the destination and the clause stays bare
-  (`publish`); a derive naming nothing takes the clause's name (`publish("dest")`). A declared name
+  (`reply`); a derive naming nothing takes the clause's name (`reply("dest")`). A declared name
   wins over a mount-site one, and startup logs a warning when the two differ. A name template
   does not resolve on the reply path - nothing binds its placeholders there. The generated AsyncAPI
   document reports the resolved destination, so a declaration cannot document one channel and
@@ -230,7 +230,7 @@ b.include(audit.name("orders").start_at(MemoryPosition::start()));
 `workers(n)`, `threads(n)`, `on_failure(..)` and `start_at(..)` can also be written as attribute
 clauses (`#[subscriber("orders", workers(16, by_key))]`, `#[subscriber("images", threads(8))]`,
 `#[subscriber("orders", on_failure(decode = retry))]`,
-`#[subscriber("audit", start_at(MemoryPosition::start()))]`); those five (`publish` is the fifth)
+`#[subscriber("audit", start_at(MemoryPosition::start()))]`); those five (`reply` is the fifth)
 are the only clauses, and `batch(n)` is mount-site only. `workers(n)` is concurrency for I/O on
 the app's runtime; a handler that computes takes `threads(n)` (or `threads(n, by_key)`): `n`
 dedicated threads of the subscription's own, each a current-thread runtime, where the handler
@@ -258,7 +258,7 @@ retention bound already evicted reports `MemoryError::PositionEvicted`.
 
 ## Replying (request/response)
 
-Return the reply value and write `publish` on the subscriber. The reply type derives `Outgoing`,
+Return the reply value and write `reply` on the subscriber. The reply type derives `Outgoing`,
 and its declaration decides where the answer goes: a type fixing its own name is published there
 and the clause names nothing, a type naming nothing takes the clause's name. The reply publisher is
 the broker's default policy unless the mount names one with `.out_reply(..)`.
@@ -274,7 +274,7 @@ struct Receipt {
     id: u64,
 }
 
-#[subscriber("receipt-requests", publish)]
+#[subscriber("receipt-requests", reply)]
 async fn issue_receipt(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -286,7 +286,7 @@ struct Confirmation {
     accepted: bool,
 }
 
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", reply("confirmations"))]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation { id: order.id, accepted: true }
 }
@@ -309,7 +309,7 @@ Return `Result<Reply, HandlerOutcome>` to control acknowledgement: `Ok(reply)` p
 `Result` out in the signature (a type alias is treated as a plain reply type). A failed reply
 publish nacks the incoming message with `requeue = true`.
 
-The `publish(..)` clause takes a string literal, and a name template does not resolve here.
+The `reply(..)` clause takes a string literal, and a name template does not resolve here.
 Answering somewhere else per delivery (a direct `reply-to`, a `ROUTER` peer identity) is a
 transform; see [naming a destination from a transform](#naming-a-destination-from-a-transform).
 
@@ -347,7 +347,7 @@ a codec decode failure lands on. Extractors, `&mut Context`, `workers(..)`,
 `on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the single-delivery
 shape; a batch of frames does not take `Out` yet.
 
-There is one `publish("dest")` clause, and the reply *type* picks the wire: a `serde::Serialize`
+There is one `reply("dest")` clause, and the reply *type* picks the wire: a `serde::Serialize`
 reply encodes through the reply codec, a `#[derive(Serialized)]` newtype leaves byte-for-byte. The
 two lanes are independent, so raw in / encoded out and decoded in / raw out (the gateway shape)
 both compile. A `Vec<u8>` reply is not a byte reply - it encodes like any `Serialize` value - and a
@@ -357,7 +357,7 @@ both compile. A `Vec<u8>` reply is not a byte reply - it encodes like any `Seria
 #[derive(Outgoing, Serialized)]
 struct Export(Vec<u8>);
 
-#[subscriber("relay-in", publish("relay-out"))]
+#[subscriber("relay-in", reply("relay-out"))]
 async fn relay(frame: &Frame<'_>) -> Export {
     Export(frame.0.to_vec())
 }
@@ -837,7 +837,7 @@ right after the payload (`C` = broker context type, `S` = application state):
   hook selected by how the delivery settles.
 
 There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`State<T>` /
-`ctx.state()`), and publishing goes through a `publish` reply or an `Out` parameter.
+`ctx.state()`), and publishing goes through a `reply` clause or an `Out` parameter.
 
 On a batch handler `C` is the broker's *subscription-scoped* context, not its per-delivery one:
 name it (`ctx: &mut Context<'_, MemoryBatchContext>`) to read what the whole subscription shares -

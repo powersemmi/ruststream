@@ -38,7 +38,7 @@ impl<C> PublishTransform<ForReply<C>, Priority> for Urgent {
     }
 }
 
-#[subscriber("orders", publish("receipts"))]
+#[subscriber("orders", reply("receipts"))]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
