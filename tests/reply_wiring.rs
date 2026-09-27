@@ -11,11 +11,12 @@
 ))]
 
 use std::future::{Future, ready};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPosition, MemoryPublisher};
 use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads, for_batch};
 use ruststream::testing::TestApp;
 use ruststream::{BytesMut, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Take};
@@ -258,6 +259,8 @@ async fn confirm_batch(orders: &[Order]) -> Vec<Receipt> {
 struct Journaled {
     inner: MemoryPublisher,
     open: AtomicBool,
+    /// How many transactions it began, shared with the test through its policy.
+    begins: Arc<AtomicUsize>,
 }
 
 impl Publisher for Journaled {
@@ -285,6 +288,7 @@ impl Publisher for Journaled {
 impl TransactionalPublisher for Journaled {
     async fn begin_transaction(&self) -> Result<(), Self::Error> {
         self.inner.begin_transaction().await?;
+        self.begins.fetch_add(1, Ordering::SeqCst);
         self.open.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -301,47 +305,73 @@ impl TransactionalPublisher for Journaled {
 }
 
 /// The policy half of [`Journaled`].
-struct JournaledPublish;
+#[derive(Default)]
+struct JournaledPublish {
+    begins: Arc<AtomicUsize>,
+}
 
-impl PublishPolicy<ConnectedMemoryBroker> for JournaledPublish {
+impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for JournaledPublish {
     type Live = Journaled;
 
     fn pair(
         self,
-        connected: &ConnectedMemoryBroker,
+        connected: &ConnectedMemoryBroker<Log>,
     ) -> impl Future<Output = Result<Journaled, PairError>> {
         ready(Ok(Journaled {
             inner: connected.publisher(),
             open: AtomicBool::new(false),
+            begins: self.begins,
         }))
     }
 }
 
 /// `.transactional()` publishes a batch's replies inside one broker transaction, committed once
-/// they are all sent.
+/// they are all sent: a batch of three replies opens one transaction, and every reply leaves
+/// inside it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_reply_commits_its_transaction() {
-    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm_batch.batch(nonzero!(8)))
-                .out(Reply, JournaledPublish)
-                .transactional();
-        },
-    );
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    let publisher = broker.publisher();
+    for id in [11u64, 12, 13] {
+        publisher
+            .message(&Order { id })
+            .to("batch.in")
+            .publish()
+            .await
+            .expect("publish");
+    }
+    let policy = JournaledPublish::default();
+    let begins = Arc::clone(&policy.begins);
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(broker, |b| {
+        b.include(
+            confirm_batch
+                .batch(nonzero!(8))
+                .start_at(MemoryPosition::start()),
+        )
+        .out(Reply, policy)
+        .transactional();
+    });
     let tb = TestApp::start(app).await.expect("harness start");
+    tb.settle().await.expect("the replayed batch settles");
 
-    tb.message(&Order { id: 11 })
-        .to("batch.in")
-        .publish()
-        .await
-        .expect("publish");
-
-    tb.broker::<MemoryBroker>()
+    let replies = tb
+        .broker::<MemoryBroker<Retaining>>()
         .published::<Receipt>("batch.out")
-        .assert_called_once()
-        .with(&Receipt { id: 11 })
-        .with_header("x-transaction", "open");
+        .assert_called(3);
+    let ids: Vec<u64> = replies.decoded().iter().map(|reply| reply.id).collect();
+    assert_eq!(ids, vec![11, 12, 13]);
+    assert!(
+        replies
+            .messages()
+            .iter()
+            .all(|reply| reply.headers().get_str("x-transaction") == Some("open")),
+        "every reply must leave inside the batch's transaction"
+    );
+    assert_eq!(
+        begins.load(Ordering::SeqCst),
+        1,
+        "the batch's replies must share one transaction"
+    );
 }
 
 #[derive(OutSlot)]
