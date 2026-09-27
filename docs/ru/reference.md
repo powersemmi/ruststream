@@ -1,23 +1,28 @@
 # Справочник API
 
-Полный справочник по Rust API генерирует rustdoc, а публикует его docs.rs. Этот сайт описывает
-установку, учебник, брокеры и контракт для авторов брокеров; каждый модуль с фичей
-документирует себя на docs.rs.
+Справочник по Rust API находится на [docs.rs](https://docs.rs/ruststream). Его генерирует rustdoc.
+Каждый модуль с фичей описывает в нём себя сам.
 
-- **[ruststream на docs.rs](https://docs.rs/ruststream)** - сам крейт. Модули AsyncAPI, метрик и
-  conformance видны только в сборке с их фичами:
-  [docs.rs/ruststream (все фичи)](https://docs.rs/crate/ruststream/latest/features).
+Модуль с фичей виден только в сборке с этой фичей. docs.rs собирает крейт со всеми фичами, их
+список - на странице [docs.rs/ruststream (все фичи)](https://docs.rs/crate/ruststream/latest/features).
 
-Командная утилита `ruststream` поставляется в том же крейте за фичей `cli`. См.
+Командная утилита `ruststream` входит в тот же крейт, за фичей `cli`. Её описывает модуль
 [`runtime::cli`](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).
 
+Этот сайт охватывает остальное: установку, учебник, брокеры и контракт для авторов адаптаций
+библиотек брокеров.
+
 ## Локальная сборка справочника
+
+Справочник можно собрать и открыть локально, со всеми фичами:
 
 ```bash
 cargo doc --all-features --open
 ```
 
 ## Ключевые точки входа
+
+С этих типов удобно начинать чтение справочника:
 
 | Элемент | Модуль | Назначение |
 |---|---|---|
@@ -31,6 +36,6 @@ cargo doc --all-features --open
 | `JsonCodec`, `MsgpackCodec`, `CborCodec` | `ruststream::codec` | кодеки формата передачи |
 | `build_spec` | `ruststream::asyncapi` | генерация документа AsyncAPI |
 | `Metrics` | `ruststream::metrics` | метрики Prometheus |
-| `TestApp` | `ruststream::testing` | внутрипроцессная обвязка для юнит-тестов приложения |
+| `TestApp` | `ruststream::testing` | обвязка для тестов приложения внутри процесса |
 | `TestableBroker` | `ruststream::testing` | контракт, который реализует внутрипроцессный транспорт брокера |
-| `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов брокеров |
+| `harness::run_suite` | `ruststream::conformance` | набор проверок для авторов адаптаций библиотек брокеров |

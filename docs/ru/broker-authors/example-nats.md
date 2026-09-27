@@ -1,17 +1,16 @@
-# Разбор примера: брокер NATS
+# Разбор примера: адаптация библиотеки брокера NATS
 
-Эта страница разбирает, как настоящий крейт
-[`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) реализует контракт поверх клиента
-[`async-nats`](https://docs.rs/async-nats). Это полноценный брокер в миниатюре: переходы
-`Broker` -> `ConnectedBroker` -> `Closed`, один тип подписки на Core NATS и JetStream за единым
-дескриптором `SubscribeOptions`, издатель, передающий заголовки, и те трейт-совместимости, которые
-есть у транспорта.
+Крейт [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) выполняет
+[контракт](index.md) поверх клиентской библиотеки [`async-nats`](https://docs.rs/async-nats).
+Это полноценная адаптация библиотеки брокера в миниатюре. Страница разбирает её по частям:
 
-Читайте страницу как иллюстрацию контракта, а не как исходный код крейта: код ниже урезан до того,
-что требует каждое правило [контракта](index.md), а в самом крейте есть опции, тонкая настройка и
-типизированный контекст доставки, которые появляются у настоящего брокера. Имена элементов взяты из
-API `async-nats`, а он меняется от релиза к релизу. Версию клиента выбирает сам крейт брокера, и она
-указана в его документации.
+- переходы `Broker` -> `ConnectedBroker` -> `Closed`;
+- одна подписка на Core NATS и JetStream с общим дескриптором `SubscribeOptions`;
+- издатель с заголовками;
+- те трейт-совместимости, которые есть у транспорта.
+
+Код урезан до того, что требует контракт. В самом крейте есть ещё опции, тонкая настройка и
+типизированный контекст доставки.
 
 ```toml title="Cargo.toml"
 [features]
@@ -24,14 +23,14 @@ testing = ["ruststream/testing"]
 ruststream = { version = "0.7", default-features = false }
 ```
 
-Всё остальное - это клиент и его окружение: `async-nats`, а также `bytes`, `futures`, `thiserror`,
-`tokio` и `tracing`.
+Остальные зависимости - клиентская библиотека и её окружение: `async-nats`, `bytes`, `futures`,
+`thiserror`, `tokio` и `tracing`. Имена в коде взяты из API `async-nats`, а оно меняется от релиза к
+релизу. Версию `async-nats` выбирает сама адаптация библиотеки брокера и указывает её в своей
+документации.
 
 ## Ошибки
 
-Один enum на весь крейт, варианты по источникам, `#[non_exhaustive]` - чтобы новые варианты не были
-ломающим изменением. Источники хранятся как ошибки `std` в `Box`, поэтому в публичный API не
-попадают типы ошибок `async-nats`.
+У крейта одно перечисление ошибок с вариантами по источникам:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -60,20 +59,21 @@ pub enum NatsError {
 }
 ```
 
-`Closed` указывает субъект, а не только сам факт, что соединения больше нет: ошибка, которую сервис
-читает в три часа ночи, называет то, чего он не смог достичь.
+`#[non_exhaustive]` делает новый вариант неломающим изменением. Источники хранятся как ошибки
+`std` в `Box`, поэтому типы ошибок `async-nats` в публичный API не попадают. `Closed` называет
+субъект, а не только факт, что соединения больше нет: ошибка, которую сервис читает в три часа
+ночи, говорит, чего он не смог достичь.
 
 ## Жизненный цикл брокера
 
-`new` синхронный и только записывает адрес. `connect` поглощает `self`, устанавливает соединение и
-возвращает подключённую форму: она хранит живой клиент напрямую, и состояния «может быть,
-подключён» для её собственных операций не существует. Издателей выдаёт подключённая форма и только
-она, поэтому издатель без соединения непредставим.
+Брокер проходит через три состояния, и у каждого свой тип:
 
-Издатель может пережить само соединение, и типы этого не исключают: дело не в порядке вызовов, а в
-том, что на одно соединение ссылаются несколько дескрипторов. Поэтому в соединении есть флаг
-закрытия: `shutdown` выставляет его до вызова `drain`, и каждый такой дескриптор читает клиента
-через него.
+- `NatsBroker` только записывает адрес. `new` синхронный и не выполняет ввода-вывода.
+- `connect` поглощает `self`, устанавливает соединение и возвращает `ConnectedNatsBroker` с живым
+  клиентом внутри. Его операциям не нужно проверять, подключены ли они. Издателей выдаёт только
+  он, поэтому издатель без соединения непредставим.
+- `shutdown` поглощает подключённую форму и возвращает свидетеля `ClosedNatsBroker`. `shutdown`
+  выполняет всё завершение, которое может вернуть ошибку, и никогда не паникует.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -179,19 +179,21 @@ pub struct ClosedNatsBroker {
 }
 ```
 
-Со стороны владельца поглощение `self` исключает и второй `connect`, и публикацию или подписку после
-остановки. `shutdown` выполняет всё завершение работы, которое может вернуть ошибку, возвращает
-свидетеля и никогда не паникует. Созданный раньше издатель после остановки возвращает `Closed`, а не
-публикует успешно в закрытое соединение: это и есть контракт для таких дескрипторов, который
-проверяет `lifecycle`.
+**Что запрещают типы.** Поглощение `self` запрещает владельцу второй `connect`, а также публикацию
+и подписку после остановки.
+
+**Что проверяется во время выполнения.** Издатель может пережить соединение: его делят несколько
+дескрипторов, и порядок вызовов здесь ни при чём. Поэтому у соединения есть флаг закрытия.
+`shutdown` выставляет его до `drain`, а каждый дескриптор проверяет флаг, прежде чем взять
+клиента. Созданный раньше издатель после остановки возвращает `Closed` и не публикует в закрытое
+соединение. Это контракт разделяемых дескрипторов, и `lifecycle` его проверяет.
 
 ## Одна подписка на Core и JetStream
 
-Core NATS отправляет сообщения без подтверждений, JetStream их сохраняет и требует
-подтверждения доставки. Оба режима описывает один дескриптор `SubscribeOptions` и один
-`NatsSubscriber`. `SubscribeOptions` и есть `SubscriptionSource`, а брокер выбирает ветку по тому,
-вызывали ли `jetstream(..)`. Каждый метод билдера соответствует одному именованному параметру
-атрибута `#[subscriber(..)]`.
+У NATS два режима доставки. Core NATS отправляет сообщения без подтверждений. JetStream их хранит и
+требует подтверждать доставку. Крейт описывает оба одним дескриптором `SubscribeOptions`, а отдаёт
+одним подписчиком `NatsSubscriber`. Дескриптор реализует `SubscriptionSource`. JetStream включает
+вызов `jetstream(..)`:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -267,8 +269,8 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 }
 ```
 
-Макрос `#[subscriber(..)]` принимает цепочку вызовов билдера, поэтому весь дескриптор помещается
-прямо в атрибут:
+**Дескриптор в атрибуте.** Каждый метод билдера - один именованный аргумент атрибута
+`#[subscriber(..)]`. Атрибут принимает цепочку вызовов целиком:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -278,8 +280,8 @@ async fn handle(order: &Order) -> HandlerOutcome {
 }
 ```
 
-Подписки по имени субъекта используют тот же путь: вы можете реализовать `Subscribe`, делегируя в
-`SubscribeOptions::new(name)`, и тогда заработает форма `#[subscriber("orders")]`.
+**Подписка по имени.** `Subscribe` строит `SubscribeOptions::new(name)`, поэтому форма
+`#[subscriber("orders")]` идёт тем же путём:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -294,9 +296,9 @@ impl Subscribe for ConnectedNatsBroker {
 }
 ```
 
-Собственный `subscribe_with` подключённой формы проверяет опции и разветвляется ровно один раз
-(`queue_group_ref`, `stream_ref` и `durable_ref` - маленькие геттеры `pub(crate)`, возвращающие
-`Option<&str>`); клиента он берёт из соединения, где и выполняется проверка на закрытие:
+**Одна точка ветвления.** Обе формы приходят в `subscribe_with` подключённой формы. Метод проверяет
+опции и ветвится ровно один раз. Клиента он берёт из соединения, а соединение проверяет, не
+закрыто ли оно:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -350,12 +352,13 @@ impl ConnectedNatsBroker {
 }
 ```
 
+`queue_group_ref`, `stream_ref` и `durable_ref` здесь - маленькие геттеры `pub(crate)`, они
+возвращают `Option<&str>`.
+
 ## Подписчик
 
-`NatsSubscriber` оборачивает либо core-подписку `async-nats`, либо pull-поток JetStream, скрывая оба
-за одним типом `Message`. `stream` разветвляется через `futures::future::Either` и забирает
-внутренний поток при первом же опросе, поэтому он одноразовый: контракт разрешает ровно один вызов
-`stream`.
+`NatsSubscriber` оборачивает либо core-подписку `async-nats`, либо pull-поток JetStream. Для
+рантайма оба выглядят одинаково: поток сообщений типа `Message`.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -396,13 +399,14 @@ impl Subscriber for NatsSubscriber {
 }
 ```
 
+`stream` ветвится через `futures::future::Either` и забирает внутренний поток при первом опросе.
+Второй раз забрать его нельзя, поэтому подписчик одноразовый. Контракт это разрешает: `stream`
+вызывают ровно один раз.
+
 ## Сообщение
 
-`NatsMessage` - это enum: доставка Core (без ack) или доставка JetStream (с настоящим ack). Оба
-варианта упакованы в `Box`, потому что обёрнутые сообщения `async-nats` большие. `ack` и `nack` на
-доставке Core возвращают `AckError::Unsupported` - это не ошибка, и рантайм такой ответ принимает.
-На JetStream они подтверждают доставку, а `nack` отображается в `nak` (повторная доставка), когда
-обработчик об этом просит, и в `term` (отбросить poison-сообщение), когда не просит.
+`NatsMessage` - перечисление из двух вариантов: доставка Core без ack и доставка JetStream с
+настоящим ack. Сообщения `async-nats` большие, поэтому оба варианта лежат в `Box`.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -448,9 +452,14 @@ impl IncomingMessage for NatsMessage {
 }
 ```
 
-Проверка `lifecycle` из conformance принимает `AckError::Unsupported`, поэтому Core NATS её проходит.
-Каждое сообщение преобразует свои заголовки один раз, при создании; эти две функции - единственное
-место, которое зависит от версии `async-nats`:
+**Core.** `ack` и `nack` возвращают `AckError::Unsupported`. Это не ошибка: такой ответ принимает
+рантайм и проверка `lifecycle` из conformance, поэтому Core NATS её проходит.
+
+**JetStream.** `ack` подтверждает доставку. `nack` становится `nak`, если обработчик просит
+повторную доставку, и `term`, если не просит. Во втором случае poison-сообщение отбрасывается.
+
+Заголовки сообщение преобразует один раз, при создании. От версии `async-nats` зависят только эти
+две функции:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -484,9 +493,7 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 ## Публикация
 
-Издатель и подключённый брокер, на котором его инстанцировала политика, владеют соединением
-совместно. При каждой публикации издатель читает клиента через проверку на закрытие и передаёт
-заголовки, если они есть.
+Издатель делит соединение с подключённым брокером, на котором политика его инстанцировала:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -530,11 +537,51 @@ impl Publisher for NatsPublisher {
 }
 ```
 
+Перед каждой публикацией издатель проверяет, не закрыто ли соединение, и берёт из него клиента.
+Клиент владеет нагрузкой, пока не запишет её. Поэтому издатель объявляет `Take`: он передаёт
+буфер клиенту и замораживает его, а не копирует байты. Заголовки он передаёт, если они
+есть. `Options` - это `()`: клиент Core NATS задаёт сообщение только субъектом, заголовками и
+нагрузкой.
+
+## Политика публикации
+
+`NatsPublish` - политика, которая конструирует издателя `NatsPublisher`. Вы указываете её при
+регистрации обработчика, а издателя она инстанцирует при старте на подключённом брокере.
+
+<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+```rust
+use ruststream::{DefaultPublish, PairError, PublishPolicy};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[must_use]
+pub struct NatsPublish;
+
+impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
+    type Live = NatsPublisher;
+
+    async fn pair(self, connected: &ConnectedNatsBroker) -> Result<Self::Live, PairError> {
+        Ok(NatsPublisher { connection: Arc::clone(connected.connection()) })
+    }
+}
+```
+
+**Пустая политика.** Субъект и заголовки задаются в каждом сообщении, поэтому у публикации в Core
+NATS настроек издателя нет. Политика - пустая структура. `pair` только копирует дескриптор
+соединения и не может вернуть ошибку. Брокер, у которого создание издателя может вернуть ошибку
+(например, транзакционный продюсер), оборачивает её в `PairError::new`.
+
+**Политика по умолчанию.** Подключённая форма реализует ещё и `DefaultPublish`
+(см. [контракт](index.md#publishpolicy)): простая политика годится как есть. Тогда обработчик в
+reply-форме, с аргументом `publish(..)` атрибута `#[subscriber]`, компилируется без явно
+указанного издателя.
+
 ## Совместимости
 
-В NATS request-reply есть на уровне транспорта, поэтому `RequestReply` вы можете реализовать на
-издателе. Ожидание ограничено таймаутом вызывающей стороны, а сработавший таймер отображается в
-`RequestTimeout`.
+Крейт реализует совместимости, которые есть у самого транспорта NATS.
+
+**Запрос и ответ.** Request-reply встроен в NATS, поэтому `RequestReply` реализован на издателе.
+Запрос ждёт ответа не дольше таймаута вызывающей стороны. Когда таймер срабатывает, запрос
+возвращает `RequestTimeout`.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -567,58 +614,25 @@ impl RequestReply for NatsPublisher {
 }
 ```
 
-Pull-консьюмер JetStream забирает сообщения пакетами на уровне протокола, поэтому `BatchSubscriber`
-отдаёт пакеты транспорта, а не эмулирует их. Один элемент потока - это одна выборка, ограниченная
-размером пакета и сроком ожидания, а пустая выборка повторяется, поэтому пакет никогда не приходит
-пустым. У core-ветки того же подписчика пакетов на уровне протокола нет, поэтому пакет там - это то,
-что клиент уже сложил в локальный буфер, и ограничен он только размером. Брокер, у которого нет ни
-того, ни другого, оставляет трейт-совместимость нереализованной, а пользователи берут клиентский
-адаптер [`buffered`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#batches).
+**Пакеты.** Pull-консьюмер JetStream забирает сообщения пакетами прямо в протоколе, поэтому
+`BatchSubscriber` отдаёт пакеты самого транспорта. Одна выборка - один элемент потока. Её
+ограничивают размер пакета и срок ожидания. Пустая выборка повторяется, так что пакет никогда не
+приходит пустым. В core-ветке того же подписчика пакет - это то, что клиент уже сложил в локальный
+буфер, и его ограничивает только размер. Для брокера без пакетов есть адаптер
+[`buffered`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#batches), который
+собирает пакеты на стороне сервиса.
 
-`DescribeServer` помещает брокера в сгенерированный AsyncAPI-документ. Он реализуется на
-**неподключённом** брокере, потому что документ генерируется из сервиса, который никуда не
-подключался: трейт сообщает сконфигурированный адрес. Координаты, которые объявляет сам сервер
-(маршрут кластера, обнаруженный узел), известны только после подключения, поэтому им место в
-геттере подключённой формы, а не в этом трейте.
+**Описание сервера.** `DescribeServer` добавляет брокер очереди в AsyncAPI-документ. Документ
+генерирует сервис, который никуда не подключался, поэтому трейт реализован на **неподключённом**
+брокере и сообщает адрес из конфигурации. Координаты, которые объявляет сам сервер (маршрут
+кластера, обнаруженный узел), известны только после подключения. Их отдаёт геттер подключённой
+формы.
 
-Всё остальное не реализовано, потому что этого нет у транспорта. В NATS нет транзакций, поэтому нет
-`TransactionalPublisher` и `OwnedTransactions`. Нет и `Seekable`: NATS-вариант `Seekable` строился
-бы на консьюмере JetStream, поток которого и есть воспроизводимый лог.
-
-## Политика публикации
-
-`NatsPublish` - политика, которая конструирует издателя `NatsPublisher`. Политику вы указываете при
-регистрации обработчика, а издателя она инстанцирует при старте, на подключённом брокере. У
-публикации в Core NATS нет опций на уровне издателя, потому что субъект и заголовки задают в каждом
-сообщении. Поэтому политика здесь - пустая структура, а `pair` только копирует дескриптор соединения
-и не может вернуть ошибку. Брокер, у которого создание издателя может вернуть ошибку (например,
-транзакционный продюсер), оборачивает её через `PairError::new`. Раз простая политика годится как
-есть, подключённая форма реализует ещё и `DefaultPublish`
-(см. [контракт](index.md#publishpolicy)), и тогда обработчик с `publish(..)` компилируется без явно
-указанного издателя.
-
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
-```rust
-use ruststream::{DefaultPublish, PairError, PublishPolicy};
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[must_use]
-pub struct NatsPublish;
-
-impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
-    type Live = NatsPublisher;
-
-    async fn pair(self, connected: &ConnectedNatsBroker) -> Result<Self::Live, PairError> {
-        Ok(NatsPublisher { connection: Arc::clone(connected.connection()) })
-    }
-}
-```
+Основой для `Seekable` мог бы стать консьюмер JetStream: его поток и есть воспроизводимый журнал.
 
 ## Прелюдия
 
-Прелюдию крейта точка монтирования подключает целиком: прелюдия ядра, затем брокер и его
-дескриптор, затем политики под едиными именами
-([контракт](index.md#broker-prelude)).
+Точка монтирования подключает крейт одним glob-импортом:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -631,10 +645,12 @@ pub use crate::NatsPublish as Publish;
 pub use ruststream::RequestReply;
 ```
 
+Прелюдия собирает всё, что там нужно: прелюдию ядра, брокер и его дескриптор, затем политики под
+общими именами ([контракт](index.md#broker-prelude)).
+
 ## Связывание с приложением
 
-Когда брокер готов, приложение выглядит так же, как любое другое: ни в обработчиках, ни в кодеках
-нет ничего специфичного для NATS.
+Готовый брокер подключается к приложению так же, как любой другой:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -647,12 +663,17 @@ let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
     });
 ```
 
+Обработчики и кодеки не знают, что работают с NATS.
+
 ## Как это доказать
 
-Поставьте под фичей `testing` режим работы внутри процесса: `InProcess` на `NatsBroker`, где
-`connect_in_process` даёт подключённой форме вместо клиента сопоставление субъектов, при котором
-опубликованное сообщение доставляется всем подписчикам субъекта разом. Подключённая форма реализует
-`TestableBroker`, а `register_testable_broker!(NatsBroker)` регистрирует рабочий тип. Прогоните на
-нём наборы conformance - и внутри процесса, и против сервера. Курсоры JetStream, таймеры повторной
-доставки и срок хранения принадлежат серверу, и те же тесты идут против настоящего `nats-server`
-через `TestApp::start_live`. См. [Conformance](conformance.md).
+Сервису нужны тесты без сервера NATS. Для них крейт поставляет под фичей `testing` режим работы
+внутри процесса. `InProcess` на `NatsBroker` даёт метод `connect_in_process`. Он возвращает
+подключённую форму, у которой вместо клиента брокера - сопоставление субъектов. Сообщение,
+опубликованное в субъект, получают все его подписчики разом. Подключённая форма реализует
+`TestableBroker`, а `register_testable_broker!(NatsBroker)` регистрирует рабочий тип.
+
+Наборы conformance прогоняются и внутри процесса, и против сервера. Часть поведения есть только у
+сервера: курсоры JetStream, таймеры повторной доставки, срок хранения. Поэтому те же тесты идут и
+против настоящего `nats-server`, через `TestApp::start_live`. Подробнее - в разделе
+[Conformance](conformance.md).

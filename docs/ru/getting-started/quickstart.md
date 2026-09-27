@@ -11,10 +11,10 @@ cd my-service
 ```
 
 Для генерации нужен только `cargo generate`. `templates/memory` - стартовый шаблон на in-memory
-брокере. Крейт брокера, у которого шаблон есть, разворачивается так же: указывают его репозиторий
-и путь к шаблону (например,
+брокере. Шаблон из адаптации библиотеки брокера разворачивается так же: указывают репозиторий
+адаптации и путь к шаблону (например,
 `--git https://github.com/powersemmi/ruststream-nats templates/nats`); какие шаблоны есть у
-брокера, сказано в его собственной документации. `cargo generate` создаёт идиоматичный проект из
+адаптации, сказано в её собственной документации. `cargo generate` создаёт идиоматичный проект из
 нескольких файлов:
 
 ```
@@ -35,7 +35,7 @@ cargo run -- run                # или: ruststream run, если устано�
 ```
 
 `cargo run -- run` запускает рантайм tokio. Сервис работает, пока вы не нажмёте ++ctrl+c++.
-Внешний брокер для запуска не нужен.
+Брокер очереди для запуска не нужен.
 
 ## Генерация AsyncAPI-документа
 
@@ -47,6 +47,9 @@ cargo run -- asyncapi gen
 разобраны в [модуле `asyncapi`](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html).
 
 ## Как выглядит точка входа
+
+Точка входа - это функция, которая собирает сервис: подключает брокер и монтирует на нём роутер.
+`#[ruststream::app]` превращает её в `main`.
 
 === "Макросы"
 
@@ -60,10 +63,8 @@ cargo run -- asyncapi gen
     --8<-- "examples/manual/tutorial/main.rs:main"
     ```
 
-Вы пишете функцию, которая собирает сервис, а `#[ruststream::app]` превращает её в `main`.
-
 ## Что дальше
 
-- Разобраться в каждой части по [учебнику](tutorial.md).
-- Изучить формы обработчиков в разделе [Подписчики](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers).
-- Управлять сервисом из [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html).
+- [Учебник](tutorial.md) разбирает каждую часть сервиса.
+- [Подписчики](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers) описывают все формы обработчиков.
+- [CLI](https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html) управляет сервисом из командной строки.

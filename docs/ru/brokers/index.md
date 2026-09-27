@@ -4,34 +4,36 @@
 вы можете, изменив одну строку в `with_broker`.
 
 В составе фреймворка идёт полноценный in-memory брокер для очередей внутри одного приложения.
-Брокеры поверх внешнего сервиса - отдельные крейты, которые вы добавляете в зависимости.
+Для внешнего брокера очереди вы добавляете в зависимости отдельный крейт - адаптацию его
+клиентской библиотеки.
 
-У каждого крейта брокера свой сайт документации: ссылки собраны в столбце «Документация» и в меню
+У каждой адаптации библиотеки брокера свой сайт документации: ссылки собраны в столбце «Документация» и в меню
 **Брокеры**.
 
 | Брокер | Крейт | Транспорт | Документация |
 |---|---|---|---|
-| [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без внешнего сервиса | этот сайт |
+| [Memory](memory.md) | `ruststream` (фича `memory`) | очередь внутри процесса, без сервера и без зависимостей | этот сайт |
 | NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) | Core NATS и JetStream | [powersemmi.github.io/ruststream-nats](https://powersemmi.github.io/ruststream-nats/) |
 | Redis | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) | Redis Streams (standalone, кластер, sentinel) | [powersemmi.github.io/ruststream-fred](https://powersemmi.github.io/ruststream-fred/) |
 | RabbitMQ | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) | AMQP 0.9.1 (очереди, обменники, подтверждения издателя, direct reply-to) | [powersemmi.github.io/ruststream-lapin](https://powersemmi.github.io/ruststream-lapin/) |
 | Kafka | [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka) | Apache Kafka (группы консьюмеров, отслеживаемая фиксация смещений, транзакции, конвейеры exactly-once) | [powersemmi.github.io/ruststream-rdkafka](https://powersemmi.github.io/ruststream-rdkafka/) |
 | AMQP 1.0 | [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp) | ActiveMQ Artemis, RabbitMQ 4.x, Azure Service Bus и остальное семейство AMQP 1.0 (request-reply, транзакции) | [powersemmi.github.io/ruststream-amqp](https://powersemmi.github.io/ruststream-amqp/) |
-| Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) | Pub/Sub через официальный клиент (ключи упорядочивания, подтверждение exactly-once, политики dead-letter) | [powersemmi.github.io/ruststream-gcp-pubsub](https://powersemmi.github.io/ruststream-gcp-pubsub/) |
+| Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) | Pub/Sub через официальную клиентскую библиотеку (ключи упорядочивания, подтверждение exactly-once, политики DLQ) | [powersemmi.github.io/ruststream-gcp-pubsub](https://powersemmi.github.io/ruststream-gcp-pubsub/) |
 | AWS SQS / SNS | [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns) | Очереди SQS с доставкой через SNS всем подписчикам разом (FIFO-группы, управление видимостью, встроенная отложенная повторная доставка) | [powersemmi.github.io/ruststream-sqs-sns](https://powersemmi.github.io/ruststream-sqs-sns/) |
-| Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) | Темы и шаблоны Pulsar (режимы подписки, политики dead-letter, перемотка) | [powersemmi.github.io/ruststream-pulsar](https://powersemmi.github.io/ruststream-pulsar/) |
+| Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) | Темы и шаблоны Pulsar (режимы подписки, политики DLQ, перемотка) | [powersemmi.github.io/ruststream-pulsar](https://powersemmi.github.io/ruststream-pulsar/) |
 | MQTT 5 | [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc) | MQTT v5 (уровни QoS, shared-группы, retained-сообщения) | [powersemmi.github.io/ruststream-rumqttc](https://powersemmi.github.io/ruststream-rumqttc/) |
-| ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Без брокера: PUSH/PULL, PUB/SUB и request-reply на DEALER/ROUTER поверх TCP и IPC | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
+| ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Без брокера очереди: PUSH/PULL, PUB/SUB и request-reply на DEALER/ROUTER поверх TCP и IPC | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
 | Файлы потоков / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | Долговечные воспроизводимые файлы потоков и конвейеры оболочки; нулевая инфраструктура, перемотка на любую позицию | [powersemmi.github.io/ruststream-sea-file](https://powersemmi.github.io/ruststream-sea-file/) |
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Потоки данных Kinesis (аренда шардов, контрольные точки, перемотка) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
 
-Как реализовать брокер для другого транспорта, объясняет раздел
+Как написать адаптацию библиотеки брокера для другого транспорта, объясняет раздел
 [Авторам брокеров](../broker-authors/index.md).
 
 ## Переключение брокеров {#switching-brokers}
 
-Любой брокер создаётся синхронно, а рантайм подключает его на старте приложения. В примерах ниже
-меняется только строка создания брокера.
+Чтобы перейти на другой брокер, замените импорт его типа и строку, которая его создаёт.
+Остальной код в примерах ниже одинаков. Любой брокер создаётся синхронно, а подключает его рантайм на старте
+приложения.
 
 === "Memory"
 
@@ -114,7 +116,8 @@
     }
     ```
 
-Параметры подключения каждый крейт брокера документирует сам. Если подписке нужны
-специфичные для брокера опции (группы консьюмеров, durable-имена), вы можете указать дескриптор
-этого брокера в атрибуте `#[subscriber(..)]`; см.
+Параметры подключения каждая адаптация библиотеки брокера документирует сама.
+
+Если подписке нужны опции конкретного брокера очереди (группы консьюмеров, durable-имена), вы можете
+передать его дескриптор аргументом атрибута `#[subscriber(..)]`. Об этом рассказывает раздел
 [дескрипторы конкретных брокеров](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#the-subscription-source).
