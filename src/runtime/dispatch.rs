@@ -685,6 +685,11 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
+    // Before the harness maps the placement away: the declaration is what the warning advises.
+    #[cfg(feature = "poll-diagnostics")]
+    if matches!(workers.placement, Placement::Threads) {
+        delivery.poll.on_dedicated_threads();
+    }
     // The harness drives every subscription on the test's own runtime, so a timer the handler
     // arms is one `advance` reaches; it does not reproduce the thread topology.
     #[cfg(feature = "testing")]
@@ -814,7 +819,12 @@ where
     C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    // See `spawn_dispatch_workers`: the harness runs every subscription on the test's runtime.
+    // See `spawn_dispatch_workers`: the declaration is what the warning advises, and the harness
+    // runs every subscription on the test's runtime.
+    #[cfg(feature = "poll-diagnostics")]
+    if matches!(workers.placement, Placement::Threads) {
+        delivery.poll.on_dedicated_threads();
+    }
     #[cfg(feature = "testing")]
     let workers = if delivery.hooks.coordinator().is_some() {
         workers.on_runtime()

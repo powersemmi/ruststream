@@ -5,7 +5,7 @@ use std::fmt;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
@@ -229,6 +229,7 @@ impl PollDiagnostics {
             stats
         });
         drop(subscriptions);
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
         PollSampler::new(stats, self.sample_every)
     }
 
@@ -356,6 +357,10 @@ pub(crate) struct PollStats {
     /// many workers record at the same time.
     average_ns: AtomicU64,
     buckets: [AtomicU64; BUCKETS],
+    /// How many subscriptions measured here run on the app's runtime. A subscription declared on
+    /// `threads(n)` holds up none of its threads, so its crossing is measured and reported but
+    /// warned about only while a subscription sharing its name still runs there.
+    on_app_runtime: AtomicUsize,
 }
 
 impl PollStats {
@@ -368,6 +373,7 @@ impl PollStats {
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
             buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+            on_app_runtime: AtomicUsize::new(0),
         }
     }
 
@@ -420,6 +426,9 @@ impl PollStats {
         self.buckets[bucket_of(ns)].fetch_add(1, Ordering::Relaxed);
         let weight = taken.min(WINDOW);
         let ns = ns.min(!OVER);
+        // A crossing is held only while a subscription of the name runs on the app runtime: one
+        // held with nobody to warn would keep a later app-runtime subscription from its warning.
+        let warnable = self.on_app_runtime.load(Ordering::Relaxed) > 0;
         let step = |state: u64| {
             let average = state & !OVER;
             let average = if ns >= average {
@@ -427,7 +436,7 @@ impl PollStats {
             } else {
                 average - (average - ns) / weight
             };
-            let over = if average <= self.threshold_ns {
+            let over = if average <= self.threshold_ns || !warnable {
                 0
             } else if taken >= WINDOW {
                 OVER
@@ -471,6 +480,8 @@ pub(crate) struct PollSampler {
     /// Polls left until the next timed one. Pooled workers share it: a plain load and store, not
     /// a read-modify-write, so two workers that race skew which poll is timed, never the time.
     countdown: AtomicU32,
+    /// Whether this subscription has left the app runtime's count, so it leaves it once.
+    on_threads: AtomicBool,
 }
 
 impl PollSampler {
@@ -479,6 +490,15 @@ impl PollSampler {
             stats,
             every: every.get(),
             countdown: AtomicU32::new(every.get()),
+            on_threads: AtomicBool::new(false),
+        }
+    }
+
+    /// Marks the subscription as declared on `threads(n)`, which the warning's advice already
+    /// describes: it leaves the count of subscriptions the warning is for.
+    pub(crate) fn on_dedicated_threads(&self) {
+        if !self.on_threads.swap(true, Ordering::Relaxed) {
+            self.stats.on_app_runtime.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -488,6 +508,8 @@ impl PollSampler {
             stats: Arc::clone(&self.stats),
             every: self.every,
             countdown: AtomicU32::new(self.every),
+            // A thread's sampler measures a subscription that already left the count.
+            on_threads: AtomicBool::new(true),
         }
     }
 
@@ -645,9 +667,28 @@ mod tests {
         assert_eq!(stats.report().average(), Duration::from_nanos(9_361));
     }
 
+    /// A crossing no app-runtime subscription is there to hear is not held: once one registers
+    /// and stays slow, it is warned about.
+    #[test]
+    fn a_crossing_with_nobody_to_warn_leaves_the_next_one_warnable() {
+        let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
+        for _ in 0..WINDOW {
+            stats.record(1_000);
+        }
+        assert!(!over(), "a crossing with nobody to warn was held");
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
+        stats.record(1_000);
+        assert!(
+            over(),
+            "the app-runtime subscription's crossing was not held"
+        );
+    }
+
     #[test]
     fn a_crossing_is_held_in_the_average_word_and_hidden_from_the_report() {
         let stats = PollStats::new("s", Duration::from_nanos(500), Clock::new());
+        stats.on_app_runtime.fetch_add(1, Ordering::Relaxed);
         let over = || stats.average_ns.load(Ordering::Relaxed) & OVER != 0;
         for _ in 1..WINDOW {
             stats.record(1_000);

@@ -212,6 +212,69 @@ async fn a_fast_handler_is_sampled_without_a_warning() {
     assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
 }
 
+/// The slow body, declared on dedicated threads.
+#[subscriber("slow.threads", threads(2))]
+async fn slow_on_threads(order: &Order) -> HandlerOutcome {
+    black_box(spin(SLOW_ROUNDS + u64::from(order.id)));
+    HandlerOutcome::ack()
+}
+
+/// A subscription already on `threads(n)` is measured, and the warning that advises it is not
+/// written for it. The harness runs its threads as workers of the test's runtime, which is what
+/// lets the log be captured here; the placement is the declared one either way.
+#[tokio::test]
+async fn a_slow_handler_on_threads_is_measured_without_a_warning() {
+    let logs = Captured::default();
+    let _guard = logs.install();
+    let diagnostics = every_poll().threshold(LOW_THRESHOLD);
+    let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .poll_diagnostics(diagnostics.clone())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(slow_on_threads);
+        });
+    let tb = TestApp::start(app).await.expect("startup");
+    publish(&tb, "slow.threads", 2 * WARM_UP).await;
+
+    let report = diagnostics
+        .report("slow.threads")
+        .expect("the subscription is sampled");
+    assert!(report.average() > LOW_THRESHOLD, "{:?}", report.average());
+    assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
+}
+
+/// The slow body on the app runtime, under a name a `threads(n)` subscription shares.
+#[subscriber("slow.shared")]
+async fn slow_shared_on_the_app(order: &Order) -> HandlerOutcome {
+    black_box(spin(SLOW_ROUNDS + u64::from(order.id)));
+    HandlerOutcome::ack()
+}
+
+/// The same slow body under the same name, on dedicated threads.
+#[subscriber("slow.shared", threads(2))]
+async fn slow_shared_on_threads(order: &Order) -> HandlerOutcome {
+    black_box(spin(SLOW_ROUNDS + u64::from(order.id)));
+    HandlerOutcome::ack()
+}
+
+/// A name shared with a `threads(n)` subscription keeps its warning while a subscription of that
+/// name still runs on the app runtime: that one is the subscription the advice is for.
+#[tokio::test]
+async fn a_name_shared_with_threads_still_warns_for_the_app_runtime() {
+    let logs = Captured::default();
+    let _guard = logs.install();
+    let diagnostics = every_poll().threshold(LOW_THRESHOLD);
+    let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
+        .poll_diagnostics(diagnostics.clone())
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(slow_shared_on_threads);
+            b.include(slow_shared_on_the_app);
+        });
+    let tb = TestApp::start(app).await.expect("startup");
+    publish(&tb, "slow.shared", 2 * WARM_UP).await;
+
+    assert!(logs.text().contains("threads(n)"), "{}", logs.text());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_nth_poll_is_sampled() {
     let diagnostics = PollDiagnostics::new().sample_every(nonzero!(4u32));
