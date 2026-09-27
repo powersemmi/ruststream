@@ -1,7 +1,7 @@
 //! The edges of the [`TestApp`](ruststream::testing::TestApp) harness that the happy-path suite in
 //! `tests/testing_harness.rs` never reaches: an app carrying a broker with no in-process mode,
-//! addressing a broker that is not there (or is there twice), the post-settle drain, and the
-//! report of a service that tore itself down.
+//! addressing a broker that is not there (or is there twice), the post-settle drain, a shutdown
+//! timeout that is never reached, and the report of a service that tore itself down.
 //!
 //! The mistakes a test author makes while addressing brokers are panics, not errors, so the cases
 //! that name them are `should_panic` and assert on the message the author reads.
@@ -15,6 +15,7 @@
 use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, Retaining};
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
@@ -22,6 +23,7 @@ use ruststream::testing::{TestApp, TestError};
 use ruststream::{Broker, ConnectedBroker, Deserialized, subscriber};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, schemars::JsonSchema)]
 struct Order {
@@ -222,6 +224,31 @@ async fn drain_waits_for_a_still_pending_post_settle_continuation() {
 }
 
 // --- Teardown. ---
+
+/// A shutdown timeout the dispatch loops stay inside bounds nothing: the loops end on their own and
+/// the shutdown returns without waiting the timeout out. On the paused clock, a shutdown that
+/// waited would move the clock by the whole timeout.
+#[tokio::test(start_paused = true)]
+async fn a_shutdown_timeout_the_loops_stay_inside_is_not_waited_out() {
+    const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .shutdown_timeout(SHUTDOWN_TIMEOUT)
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(handle_orders);
+        });
+    let tb = TestApp::start(app).await.expect("start");
+    tb.publish("orders", &Order { id: 1 })
+        .await
+        .expect("publish");
+
+    let before = Instant::now();
+    tb.shutdown().await.expect("shutdown");
+    assert!(
+        before.elapsed() < SHUTDOWN_TIMEOUT,
+        "the shutdown waited out its timeout: {:?}",
+        before.elapsed(),
+    );
+}
 
 /// `assert_running` on a torn-down service reports the failure that tore it down, so the test
 /// author sees the cause rather than a bare assertion.
