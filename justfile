@@ -3,6 +3,11 @@ set dotenv-load := false
 
 export PATH := env("HOME") + "/.cargo/bin:" + env("HOME") + "/.local/bin:" + env("PATH")
 
+# The gates build once and run, so the incremental cache buys them nothing, and it is most of a
+# build directory: one cache per test target. An edit-and-rerun loop keeps it with
+# `CARGO_INCREMENTAL=1 just test`.
+export CARGO_INCREMENTAL := env("CARGO_INCREMENTAL", "0")
+
 # What the benchmarks are built with: the production surface of a service that consumes JSON over
 # the in-memory broker, and nothing else. `testing` in particular is a compile error in the
 # benchmarks - it compiles a recording branch into every delivery.
