@@ -7,8 +7,8 @@
 
 Фреймворк определяют два архитектурных обязательства:
 
-1. **Полноценный интерфейс для сторонних брокеров.** Ядро содержит только трейты и типы, ни одной
-   зависимости от брокера. Каждый брокер - самостоятельный крейт. Соблюдение контракта проверяет
+1. **Полноценный интерфейс для сторонних брокеров.** Контракт ядра - трейты и типы, и ядро не
+   зависит ни от одного клиента брокера. Каждый брокер - самостоятельный крейт. Соблюдение контракта проверяет
    набор `conformance`.
 2. **Конфигурация брокера остаётся в его крейте.** В ядре нет ни настроек, ни умолчаний,
    привязанных к конкретному брокеру. Каждый крейт брокера объявляет свой `Config`. Поэтому
@@ -46,12 +46,12 @@
 <div class="grid cards" markdown>
 
 - :material-download: **[Установка](getting-started/installation.md)** - подключение крейта и выбор фич.
-- :material-rocket-launch: **[Быстрый старт](getting-started/quickstart.md)** - сервис из шаблона за одну команду `cargo generate`.
+- :material-rocket-launch: **[Быстрый старт](getting-started/quickstart.md)** - сервис из шаблона одной командой `cargo generate`.
 - :material-school: **[Учебник](getting-started/tutorial.md)** - первый сервис шаг за шагом.
 - :material-test-tube: **[Тестирование](https://docs.rs/ruststream/latest/ruststream/testing/index.html)** - тесты обработчиков внутри процесса, без сервера.
 - :material-web: **[HTTP-фреймворки](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server)** - сервис рядом с axum и транзакционный outbox.
 - :material-transit-connection-variant: **[Брокеры](brokers/index.md)** - in-memory брокер и крейты остальных брокеров.
-- :material-server-network: **[Авторам брокеров](broker-authors/index.md)** - свой брокер: контракт и проверки `conformance`.
+- :material-server-network: **[Авторам брокеров](broker-authors/index.md)** - как написать свой брокер: контракт и проверки `conformance`.
 
 </div>
 
