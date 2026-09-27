@@ -309,6 +309,8 @@ async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
+/// A raw batch body is handed the payloads byte for byte, and the harness reports them grouped by
+/// the call that carried them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_batch_handler_borrows_the_payloads() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -326,10 +328,11 @@ async fn a_raw_batch_handler_borrows_the_payloads() {
 
     let subscriber = tb.broker::<MemoryBroker>();
     let subscriber = subscriber.subscriber("frames");
-    // The bytes reach the body as they were published: nothing decodes a self-deserializing view.
+    // The bytes reach the body as they were published: nothing decodes a self-deserializing view,
+    // so what each call carried is read at the byte level, one batch per settled injection.
     assert_eq!(
-        subscriber.received_raw(),
-        [b"one".as_slice(), b"two".as_slice()],
+        subscriber.batches_raw(),
+        [[b"one".as_slice()], [b"two".as_slice()]],
     );
     subscriber.settled(HandlerOutcome::ack());
 }

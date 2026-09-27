@@ -13,6 +13,7 @@
 mod common;
 
 use std::{
+    convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -40,7 +41,7 @@ async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> Handle
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pool_processes_deliveries_concurrently() {
     let app = RustStream::new(AppInfo::new("jobs", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(4))))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(4))))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(crunch);
         });
@@ -62,6 +63,50 @@ async fn pool_processes_deliveries_concurrently() {
     tb.broker::<MemoryBroker>()
         .subscriber("jobs")
         .assert_called(4)
+        .settled(HandlerOutcome::ack());
+}
+
+/// Names no pool of its own, so only the router chain can give it one. Two batches must be in
+/// flight at once to pass the barrier.
+#[subscriber("routed.batches")]
+async fn routed_batch(
+    _orders: &[Order],
+    ctx: &mut Context<'_, (), Arc<Barrier>>,
+) -> HandlerOutcome {
+    ctx.state().wait().await;
+    HandlerOutcome::ack()
+}
+
+/// A router chain gives a batch registration its pool through `workers(..)`. Batches of one make
+/// the cut deterministic: two injections are two batches, and a sequential batch loop would park
+/// the first on the barrier until the deadline expires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_chain_gives_a_batch_registration_its_pool() {
+    let router = Router::<MemoryBroker>::new()
+        .include(routed_batch.batch(nonzero!(1)))
+        .workers(Workers::pool(nonzero!(2)));
+    let app = RustStream::new(AppInfo::new("batches", "0.1.0"))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(2))))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(router));
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    let jobs: Vec<Order> = (1..=2u32).map(|id| Order { id }).collect();
+    let published = tokio::time::timeout(
+        CONCURRENCY_DEADLINE,
+        join_all(
+            jobs.iter()
+                .map(|job| tb.message(job).to("routed.batches").publish()),
+        ),
+    )
+    .await
+    .expect("the router's pool must hold two batches in flight at once");
+    for result in published {
+        result.expect("publish");
+    }
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("routed.batches")
+        .assert_batch_sizes(&[1, 1])
         .settled(HandlerOutcome::ack());
 }
 
@@ -217,7 +262,7 @@ async fn deferred_redeliveries_follow_the_harness_clock(tb: &TestApp<Arc<Seen>>)
 #[tokio::test(start_paused = true)]
 async fn a_pool_arms_its_redeliveries_on_the_harness_clock() {
     let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Seen::default())))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Seen::default())))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(defer_pooled);
         });
@@ -228,7 +273,7 @@ async fn a_pool_arms_its_redeliveries_on_the_harness_clock() {
 #[tokio::test(start_paused = true)]
 async fn keyed_lanes_arm_their_redeliveries_on_the_harness_clock() {
     let app = RustStream::new(AppInfo::new("deferred", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Seen::default())))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Seen::default())))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(defer_laned);
         });
