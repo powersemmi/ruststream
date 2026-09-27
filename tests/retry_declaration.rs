@@ -124,6 +124,150 @@ impl<M: IncomingMessage> IncomingMessage for ShapedMessage<M> {
     }
 }
 
+/// The header a [`CountedQueue`] delivery reports its broker-side delivery count from, so a test
+/// can hand a delivery the count a real transport would have given it.
+const DELIVERY_COUNT: &str = "x-delivery-count";
+
+/// The same count as a header contract, for the harness publish that plants it.
+#[derive(Debug, Serialize)]
+struct Delivered {
+    #[serde(rename = "x-delivery-count")]
+    count: u64,
+}
+
+/// A subscription of a broker that counts its own deliveries but cannot hold one back for a delay:
+/// the runtime still publishes the copies, and the cap reads the broker's count.
+#[derive(Debug, Clone)]
+struct CountedQueue {
+    name: &'static str,
+}
+
+impl<C: Subscribe> SubscriptionSource<C> for CountedQueue {
+    type Subscriber = CountedSubscriber<C::Subscriber>;
+    type Copies = AddressedCopies;
+
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+        Ok(CountedSubscriber(connected.subscribe(self.name).await?))
+    }
+}
+
+impl<C: Subscribe> RedeliveryAddressed<C> for CountedQueue {
+    // One subject is both ends of the bus, so no lookup stands between the descriptor and the
+    // answer.
+    fn redelivery_address(
+        &self,
+        _connected: &C,
+    ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
+        ready(Ok(RedeliveryAddress::new(self.name)))
+    }
+}
+
+/// The broker's subscriber, with its deliveries reporting the count planted in their headers.
+struct CountedSubscriber<S>(S);
+
+impl<S: Subscriber> Subscriber for CountedSubscriber<S> {
+    type Message = CountedMessage<S::Message>;
+    type Error = S::Error;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        self.0.stream().map(|item| item.map(CountedMessage))
+    }
+}
+
+/// A delivery that reports the broker's own count and keeps the default, unsupported delayed
+/// redelivery.
+struct CountedMessage<M>(M);
+
+impl<M: IncomingMessage> IncomingMessage for CountedMessage<M> {
+    fn payload(&self) -> &[u8] {
+        self.0.payload()
+    }
+
+    fn headers(&self) -> &HeaderMap {
+        self.0.headers()
+    }
+
+    fn redelivery_count(&self) -> Option<u64> {
+        self.0
+            .headers()
+            .get_str(DELIVERY_COUNT)
+            .and_then(|value| value.parse().ok())
+    }
+
+    async fn ack(self) -> Result<(), AckError> {
+        self.0.ack().await
+    }
+
+    async fn nack(self, requeue: bool) -> Result<(), AckError> {
+        self.0.nack(requeue).await
+    }
+}
+
+/// Never settles successfully, on a subscription whose broker counts its own deliveries.
+#[subscriber(CountedQueue { name: "shipments" })]
+async fn never_ready_counted(order: &Order) -> HandlerOutcome {
+    let _ = order.id;
+    HandlerOutcome::retry_after(RETRY_DELAY)
+}
+
+/// Where the transport counts its own deliveries, that count is what the cap reads: a delivery
+/// that arrives already at the cap is carried away on its first sighting, with the framework's
+/// own header absent.
+#[tokio::test(start_paused = true)]
+async fn the_brokers_own_delivery_count_drives_the_cap() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_counted)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("shipments.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("shipments", &Order { id: 7 }, &Delivered { count: 3 })
+        .await
+        .expect("publish");
+    tb.settle().await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("shipments")
+        .assert_called_once();
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("shipments.dead")
+        .assert_called_once()
+        .with(&Order { id: 7 });
+}
+
+/// A delivery the transport counts as its first is below the same cap, so the copy the runtime
+/// publishes goes back to the subscription: the count is read, not assumed.
+#[tokio::test(start_paused = true)]
+async fn a_first_delivery_the_broker_counts_stays_below_the_cap() {
+    let app =
+        RustStream::new(AppInfo::new("declared", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(never_ready_counted)
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("shipments.dead");
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.broker::<MemoryBroker>()
+        .publish_with_headers("shipments", &Order { id: 8 }, &Delivered { count: 1 })
+        .await
+        .expect("publish");
+    tb.advance(RETRY_DELAY).await.expect("settle");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("shipments")
+        .assert_called(2);
+    tb.broker::<MemoryBroker>()
+        .published::<Order>("shipments.dead")
+        .assert_not_called();
+}
+
 /// Never settles successfully: every delivery asks to come back later, so the cap is what ends
 /// the sequence.
 #[subscriber(Queue { name: "orders" })]

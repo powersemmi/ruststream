@@ -1106,6 +1106,31 @@ mod tests {
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
     }
 
+    /// A publish is owed on the broker its publisher was paired against, not on the broker that
+    /// holds the handler which published it.
+    #[tokio::test]
+    async fn a_publish_is_owed_on_the_broker_it_was_paired_against() {
+        let brokers = Brokers::new();
+        let coordinator = brokers.coordinator();
+        let routing = brokers_routing(exact, exact);
+        let subscriptions = mounted(&[(0, "orders"), (1, "orders")]);
+        // A handler on east holding a publisher paired against west publishes to west.
+        send(&coordinator, 0, &brokers.west, "orders").await;
+        let owed = coordinator
+            .owed(&subscriptions, &routing)
+            .expect("west's subscription is owed the publish");
+        assert_eq!((owed.handled, owed.expected), (0, 1));
+
+        // A delivery on east, the broker that holds the publisher, is not the one it owes.
+        coordinator.record(handled(&subscriptions[0]));
+        assert!(coordinator.owed(&subscriptions, &routing).is_some());
+
+        coordinator.record(handled(&subscriptions[1]));
+        assert!(coordinator.owed(&subscriptions, &routing).is_none());
+        assert_eq!(coordinator.published(1, "orders").len(), 1);
+        assert!(coordinator.published(0, "orders").is_empty());
+    }
+
     #[tokio::test]
     async fn a_wildcard_and_exact_names_on_two_brokers_are_owed_apart() {
         const EACH: usize = 200;
