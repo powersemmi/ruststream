@@ -71,8 +71,8 @@ pub enum NatsError {
 - `connect` поглощает `self`, устанавливает соединение и возвращает `ConnectedNatsBroker` с живым
   клиентом внутри. Его операциям не нужно проверять, подключены ли они. Издателей выдаёт только
   он, поэтому издатель без соединения непредставим.
-- `shutdown` поглощает подключённую форму и возвращает свидетеля `ClosedNatsBroker`. `shutdown` выполняет
-  всё завершение, которое может вернуть ошибку, и никогда не паникует.
+- `shutdown` поглощает подключённую форму и возвращает свидетеля `ClosedNatsBroker`. `shutdown`
+  выполняет всё завершение, которое может вернуть ошибку, и никогда не паникует.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
@@ -189,9 +189,10 @@ pub struct ClosedNatsBroker {
 
 ## Одна подписка на Core и JetStream
 
-У NATS два режима доставки. Core NATS отправляет сообщения без подтверждений. JetStream их хранит
-и требует подтверждать доставку. Крейт описывает оба одним дескриптором `SubscribeOptions`, а
-отдаёт одним подписчиком `NatsSubscriber`. Дескриптор реализует `SubscriptionSource`. JetStream включает вызов `jetstream(..)`:
+У NATS два режима доставки. Core NATS отправляет сообщения без подтверждений. JetStream их хранит и
+требует подтверждать доставку. Крейт описывает оба одним дескриптором `SubscribeOptions`, а отдаёт
+одним подписчиком `NatsSubscriber`. Дескриптор реализует `SubscriptionSource`. JetStream включает
+вызов `jetstream(..)`:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
 ```rust
