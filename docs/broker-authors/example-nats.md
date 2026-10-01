@@ -592,7 +592,7 @@ set on every message. The policy here is an empty structure, and `pair` only cop
 handle, so it cannot return an error. A broker whose publisher creation can return an error (a
 transactional producer) wraps that error with `PairError::new`. Because the plain policy is usable
 as is, the connected form also implements `DefaultPublish` (see
-[the contract](index.md#publishpolicy)), and a handler with `publish(..)` then compiles without an
+[the contract](index.md#publishpolicy)), and a handler with `reply(..)` then compiles without an
 explicit publisher.
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->

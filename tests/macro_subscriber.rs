@@ -140,7 +140,7 @@ struct Ping {
     n: u32,
 }
 
-#[subscriber("ping-in", publish("ping-out"))]
+#[subscriber("ping-in", reply("ping-out"))]
 async fn relay(p: &Ping) -> Ping {
     Ping { n: p.n }
 }
@@ -199,7 +199,7 @@ impl PublishLayer for Tagger {
     }
 }
 
-#[subscriber("requests", publish("responses"))]
+#[subscriber("requests", reply("responses"))]
 async fn reply(req: &Request) -> Response {
     Response { doubled: req.n * 2 }
 }
@@ -237,7 +237,7 @@ struct Confirmation {
     accepted: bool,
 }
 
-#[subscriber("confirm-in", publish("confirm-out"))]
+#[subscriber("confirm-in", reply("confirm-out"))]
 async fn confirm(order: &Order) -> Result<Confirmation, HandlerOutcome> {
     if order.id == 0 {
         return Err(HandlerOutcome::drop());
@@ -290,7 +290,7 @@ async fn publishing_result_form_controls_ack_and_publish() {
 #[derive(Clone, Copy)]
 struct Bump(u32);
 
-#[subscriber("ctx-in", publish("ctx-out"))]
+#[subscriber("ctx-in", reply("ctx-out"))]
 async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
     let bump = ctx.state().0;
     Response {

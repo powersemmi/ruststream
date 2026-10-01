@@ -63,7 +63,7 @@ struct Trace {
     spawned_on_main_handle: String,
 }
 
-#[subscriber("jobs", threads(2), publish("traces"))]
+#[subscriber("jobs", threads(2), reply("traces"))]
 async fn traced(job: &Order, Ctx(main): Ctx<MainRuntime>) -> Trace {
     let start = here();
     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -174,7 +174,7 @@ struct Placed {
     thread: String,
 }
 
-#[subscriber("keyed", threads(3, by_key), publish("placed"))]
+#[subscriber("keyed", threads(3, by_key), reply("placed"))]
 async fn placed(job: &Order) -> Placed {
     // Enough of a pause for the lanes to interleave.
     tokio::task::yield_now().await;
@@ -241,7 +241,7 @@ fn a_key_stays_on_one_thread_and_in_order() {
 }
 
 /// Deliveries with no partition key on a keyed subscription.
-#[subscriber("unkeyed", threads(2, by_key), publish("unkeyed.done"))]
+#[subscriber("unkeyed", threads(2, by_key), reply("unkeyed.done"))]
 async fn unkeyed(job: &Order) -> Placed {
     Placed {
         id: job.id,
@@ -329,7 +329,7 @@ fn wait_at_gate(shared: &Held) -> bool {
 
 /// Order 0 holds its thread the way a computation does, until [`PAST_THE_HELD_RING`] other
 /// deliveries have finished.
-#[subscriber("held", threads(2), publish("held.done"))]
+#[subscriber("held", threads(2), reply("held.done"))]
 async fn held(job: &Order, ctx: &mut Context<'_, (), Arc<Held>>) -> Released {
     let shared = ctx.state();
     if job.id == 0 {
@@ -782,7 +782,7 @@ fn a_batch_is_handled_on_a_dedicated_thread() {
 
 /// Replies at once, in the one poll it takes.
 #[cfg(feature = "poll-diagnostics")]
-#[subscriber("sampled", threads(2), publish("sampled.done"))]
+#[subscriber("sampled", threads(2), reply("sampled.done"))]
 async fn sampled(job: &Order) -> Placed {
     Placed {
         id: job.id,

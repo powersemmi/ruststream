@@ -179,7 +179,7 @@ async fn refund(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 /// a deferred retry.
 #[subscriber(
     BoundSubscription::new("invoices-workers", "invoices"),
-    publish("receipts")
+    reply("receipts")
 )]
 async fn settle(order: &Order, ctx: &mut Context) -> Result<Receipt, HandlerOutcome> {
     let attempt = ctx
@@ -666,7 +666,7 @@ async fn settle_later(order: &Order, ctx: &mut Context) -> HandlerOutcome {
 /// declaration beside them.
 #[subscriber(
     BoundSubscription::new("ledger-workers", "ledger"),
-    publish("ledger.out")
+    reply("ledger.out")
 )]
 async fn ledger(
     order: &Order,

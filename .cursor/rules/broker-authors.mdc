@@ -397,7 +397,7 @@ where the position slot reads `Fixed` by construction, so the two never overlap;
 stays one line.
 
 The publish side mirrors it. A mount site names a publish policy with `.out(marker, policy)` -
-`Reply` for what a `publish("dest")` handler returns, an `Out` slot's marker for a slot - and
+`Reply` for what a `reply("dest")` handler returns, an `Out` slot's marker for a slot - and
 `MapPublisher` is the hook over the policy that position carries. Bind the extension trait to the
 policy, not to the chain, so one impl covers the reply, every slot, a router and a broker scope:
 

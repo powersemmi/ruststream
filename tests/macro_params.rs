@@ -44,7 +44,7 @@ struct Wire(Vec<u8>);
 
 #[subscriber(
     "params.pings",
-    publish(REPLY_TOPIC),
+    reply(REPLY_TOPIC),
     workers(WORKERS),
     on_failure(decode = ON_DECODE)
 )]

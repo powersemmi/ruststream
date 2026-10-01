@@ -470,7 +470,7 @@ where
     }
 }
 
-/// A static publish transform that runs only on a batch publishing (`&[T]` + `publish(..)`)
+/// A static publish transform that runs only on a batch publishing (`&[T]` + `reply(..)`)
 /// handler's replies, not on single-message replies.
 ///
 /// The batch counterpart of [`PublishTransform`], kept a distinct trait so a transform that belongs to
@@ -583,7 +583,7 @@ impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransfor
 /// # struct Order { id: u64 }
 /// # #[derive(serde::Serialize, schemars::JsonSchema, ruststream::Outgoing)]
 /// # struct Confirmation { id: u64 }
-/// # #[subscriber("orders", publish("confirmations"))]
+/// # #[subscriber("orders", reply("confirmations"))]
 /// # async fn confirm(orders: &[Order]) -> Vec<Confirmation> {
 /// #     orders.iter().map(|o| Confirmation { id: o.id }).collect()
 /// # }

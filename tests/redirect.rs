@@ -58,7 +58,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
     }
 }
 
-#[subscriber("redirect.requests", publish("redirect.receipts"))]
+#[subscriber("redirect.requests", reply("redirect.receipts"))]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -208,7 +208,7 @@ async fn a_slot_publishes_where_its_naming_transform_says() {
 
 /// The reply position of a handler that also carries a slot: the chain reads the reply type
 /// through the definition, so the offer is known and the naming transform mounts.
-#[subscriber("redirect.mixed", publish("redirect.mixed.receipts"))]
+#[subscriber("redirect.mixed", reply("redirect.mixed.receipts"))]
 async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Receipt {
     let _ = audit.message(order).to("redirect.audit").publish().await;
     Receipt { id: order.id }

@@ -33,7 +33,7 @@ struct Confirmation {
     id: u64,
 }
 
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 async fn confirm(order: &Order, ctx: &mut Context<'_, (), Latch>) -> Confirmation {
     ctx.state().arrived();
     Confirmation {

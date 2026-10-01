@@ -19,7 +19,7 @@ use ruststream::memory::prelude::*;
 use ruststream::otel::OpenTelemetry;
 use ruststream::testing::TestApp;
 
-#[subscriber("in", publish("out"))]
+#[subscriber("in", reply("out"))]
 async fn echo(req: &Req) -> Resp {
     Resp { n: req.n }
 }

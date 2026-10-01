@@ -180,7 +180,7 @@ eager_mount! {
 impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
     /// Mounts a definition of any form on this broker.
     ///
-    /// A plain or batch handler and a `publish("dest")` one register when the statement ends, so
+    /// A plain or batch handler and a `reply("dest")` one register when the statement ends, so
     /// `b.include(handle);` and `b.include(respond).out_reply(Publish);` are both complete; a
     /// handler carrying [`Out`](crate::runtime::Out) slots binds each with `.out(marker, policy)`
     /// and finishes with `.build()`. Every form takes `.out_retry(policy)`, the deferred

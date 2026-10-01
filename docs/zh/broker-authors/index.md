@@ -311,7 +311,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 合编解码器和变换。
 
 如果普通策略用自己的默认值就够用（几乎总是如此），就在已连接形态上再实现 `DefaultPublish`，在那里指
-名这个策略。这样，带 `publish("dest")` 的处理器在没有显式 `.out_reply(..)` 的情况下挂载，运行时自己
+名这个策略。这样，带 `reply("dest")` 的处理器在没有显式 `.out_reply(..)` 的情况下挂载，运行时自己
 就把回复用的发布者实例化出来，只写 `b.include(def)` 也能编译。发布者总是需要显式选项的 Broker 不实现
 `DefaultPublish`，它们的用户在每次注册处理器时指定策略。
 
@@ -522,7 +522,7 @@ where
 ### 用你自己的词汇表达发布者配置
 
 发布这一侧是对称的。挂载点用 `.out(marker, policy)` 指定发布策略：标记 `Reply` 对应带
-`publish("dest")` 的处理器返回的值，槽位的标记对应 `Out` 槽位。`MapPublisher` 就是作用在这个位置所持
+`reply("dest")` 的处理器返回的值，槽位的标记对应 `Out` 槽位。`MapPublisher` 就是作用在这个位置所持
 策略之上的钩子：
 
 <!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
@@ -869,7 +869,7 @@ SQS 队列的 ARN，都不可能从这里报出来。
 ```
 
 每个方法拿到的，是挂载点解析出来的目的地。回复拿到的是回复类型自己的名字，或者注册上的
-`publish("dest")` 子句；槽位条目拿到的是它自己的名字；死信投递拿到的是 `dead_letter("dlq")` 声明。
+`reply("dest")` 子句；槽位条目拿到的是它自己的名字；死信投递拿到的是 `dead_letter("dlq")` 声明。
 SNS 主题和 SQS 队列由各自绑定里必填的 `name` 指名，这个名字就从这里来：策略持有的是你的 Broker 的
 设置，从来不是目的地。转换逐条投递指定目的地时，通道报不出地址，方法拿到的是挂载点的后备名字。
 

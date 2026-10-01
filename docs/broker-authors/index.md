@@ -350,7 +350,7 @@ transforms over your policy before it constructs the publisher.
 
 When the plain policy is usable with its defaults (most are), also implement `DefaultPublish` on
 the connected form and name the policy there. The runtime then instantiates the reply publisher
-itself when a `publish("dest")` handler is mounted without an explicit `.out_reply(..)`, and
+itself when a `reply("dest")` handler is mounted without an explicit `.out_reply(..)`, and
 `b.include(def)` compiles on its own. Brokers whose publishers always need explicit options do not
 implement it, and their users specify the policy at every handler registration.
 
@@ -580,7 +580,7 @@ where
 ### Publisher settings in your own vocabulary
 
 The publish side is built the same way. The mount site names a policy with `.out(marker, policy)`:
-the `Reply` marker for what a `publish("dest")` handler returns, a slot's marker for an `Out` slot.
+the `Reply` marker for what a `reply("dest")` handler returns, a slot's marker for an `Out` slot.
 `MapPublisher` is the hook over the policy in that position:
 
 <!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
@@ -974,7 +974,7 @@ the channel it publishes to.
 ```
 
 Each hook is handed the destination the mount site resolved. For a reply that is the reply type's
-own name or the registration's `publish("dest")` clause, for a slot entry its own name, for a
+own name or the registration's `reply("dest")` clause, for a slot entry its own name, for a
 dead-lettered delivery the `dead_letter("dlq")` declaration. An SNS topic and an SQS queue are
 named by the required `name` of their binding, and that name comes from here: a policy holds your
 broker's settings and never a destination. Where a transform names the destination per delivery

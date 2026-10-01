@@ -33,7 +33,7 @@ struct Ledger {
     seen: Arc<AtomicU64>,
 }
 
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", reply("confirmations"))]
 async fn confirm(order: &Order, State(seen): State<Arc<AtomicU64>>) -> Confirmation {
     seen.fetch_add(order.id, Ordering::SeqCst);
     Confirmation { id: order.id }

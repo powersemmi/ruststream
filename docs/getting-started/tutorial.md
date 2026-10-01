@@ -75,7 +75,7 @@ cargo run -- run
 
 ## 4. Reply to messages
 
-To publish a reply, return the reply value and write `publish` on the subscriber. The `Outgoing`
+To publish a reply, return the reply value and write `reply` on the subscriber. The `Outgoing`
 derive on the reply type says where it goes:
 
 === "Macros"

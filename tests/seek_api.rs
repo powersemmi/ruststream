@@ -263,7 +263,7 @@ static GATE_PUBLISHED: Notify = Notify::const_new();
 /// A publishing handler with the seek key: the reply form composes with a broker context
 /// field. The poison marker skips its own reply and repositions the subscription instead;
 /// only the post-seek event is answered.
-#[subscriber("seek.gate", publish("seek.gate.out"))]
+#[subscriber("seek.gate", reply("seek.gate.out"))]
 async fn gate(event: &Event, Ctx(seeker): Ctx<SeekHandle>) -> Result<Event, HandlerOutcome> {
     if event.id == 0 {
         // The poison marker: resume from the third message once the whole run is in the

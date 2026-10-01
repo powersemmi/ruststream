@@ -4,7 +4,7 @@
   "rules": [
     "Import `ruststream::prelude::*` in a service, or the broker crate's own prelude, which re-exports it; the broker and the codec stay explicit choices.",
     "Declare a handler as an `async fn` under `#[subscriber(..)]` whose first parameter is `&T` for one message or `&[T]` for a batch; mount it with `b.include(handler)` inside `with_broker`, and a batch handler with `.batch(n)`.",
-    "A reply type derives `Outgoing`: `#[outgoing(name = \"..\")]` fixes its destination and the subscriber writes the bare `publish`; a type without a name takes `publish(\"dest\")` at the mount site, never both (a declared name wins, and startup warns about the ignored mount-site one).",
+    "A reply type derives `Outgoing`: `#[outgoing(name = \"..\")]` fixes its destination and the subscriber writes the bare `reply`; a type without a name takes `reply(\"dest\")` at the mount site, never both (a declared name wins, and startup warns about the ignored mount-site one).",
     "Publish from inside a handler through an `Out(out): Out<impl Publisher>` parameter bound at the mount site with `.out(marker, policy).build()`; a handler signature never names a broker's publisher type.",
     "The codec is chosen at the mount site (`with_broker_codec`, `Router::with_codec`, `.out_reply(policy).codec(..)`), never per message type; a type that is its own encoding derives `Serialized` or `Deserialized` and needs no codec.",
     "Cap redeliveries at the mount site with `.max_attempts(n)` and `.dead_letter(name)` right after `include`; `.out_retry(policy)` only replaces the publisher the retry copy leaves through.",

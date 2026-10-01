@@ -263,7 +263,7 @@ struct Confirmation {
 }
 
 /// The plain reply form: every batch is confirmed.
-#[subscriber("requests", publish("audit"))]
+#[subscriber("requests", reply("audit"))]
 async fn audit(orders: &[Order]) -> Vec<Confirmation> {
     orders
         .iter()
@@ -321,7 +321,7 @@ struct Tally {
 
 /// Scales each order by the multiplier it read off application state and republishes it, so what
 /// the state contributed is visible on the wire.
-#[subscriber("scale", publish("scaled"))]
+#[subscriber("scale", reply("scaled"))]
 async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> Vec<Order> {
     let multiplier = ctx.state().multiplier;
     orders

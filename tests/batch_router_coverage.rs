@@ -24,12 +24,12 @@ use ruststream::{
     AddressedCopies, PairError, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
 };
 
-#[subscriber("brc-in", publish("brc-out"))]
+#[subscriber("brc-in", reply("brc-out"))]
 async fn brc_relay(o: &Order) -> Receipt {
     Receipt { id: o.id }
 }
 
-#[subscriber("brc-batch-in", publish("brc-out"))]
+#[subscriber("brc-batch-in", reply("brc-out"))]
 async fn brc_batch_relay(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
@@ -174,7 +174,7 @@ impl RedeliveryAddressed<ConnectedMemoryBroker> for ClosedSource {
 }
 
 /// The definition carries the source that never opens, so the failure is the source's own.
-#[subscriber(ClosedSource {}, publish("brc-out"))]
+#[subscriber(ClosedSource {}, reply("brc-out"))]
 async fn brc_closed_relay(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

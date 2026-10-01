@@ -22,7 +22,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Mounts a `#[subscriber]` definition of any form, on the source the definition names: a
-    /// plain or batch handler grows the router directly, a `publish("dest")` or `Out`-taking one
+    /// plain or batch handler grows the router directly, a `reply("dest")` or `Out`-taking one
     /// hands back a mount chain to finish with `.build()`, naming a publish policy per position
     /// with `.out(Reply, policy)` / `.out(marker, policy)` first.
     ///

@@ -226,7 +226,7 @@ impl<E: StdError + Send + Sync + 'static> EncodeOutcome for Result<(), E> {
 /// A `Serialized` value leaves the service byte-for-byte with no codec anywhere on the path,
 /// selected purely by the type, on every typed surface: the `message(&value)` entry of a
 /// publish builder (an [`Out`](crate::runtime::Out) slot, a transaction scope, any publisher),
-/// and the reply position (the same `.reply()` chain and `publish("dest")` clause an encoded
+/// and the reply position (the same `.reply()` chain and `reply("dest")` clause an encoded
 /// reply uses).
 ///
 /// The two shapes it covers are one method apart. A byte bag lends what it holds; a generated

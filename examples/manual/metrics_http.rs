@@ -74,7 +74,7 @@ impl MessageHeaders for Ingest {
     type Contract = NoHeaders;
 }
 
-/// The body `#[subscriber("orders", publish("confirmations"))]` generates. A reply-publishing
+/// The body `#[subscriber("orders", reply("confirmations"))]` generates. A reply-publishing
 /// handler returns the value rather than publishing it, so the runtime encodes and sends it -
 /// which is what puts it through the app's publish pipeline.
 struct Confirm;

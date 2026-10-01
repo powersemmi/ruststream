@@ -16,7 +16,7 @@ struct Confirmation {
 
 // The reply type fixes its destination and the clause names another one. The combination is
 // legal: replies go to the type's destination, and startup reports the ignored name.
-#[subscriber("orders", publish("audit"))]
+#[subscriber("orders", reply("audit"))]
 async fn confirm(order: &Order) -> Confirmation {
     Confirmation { id: order.id }
 }

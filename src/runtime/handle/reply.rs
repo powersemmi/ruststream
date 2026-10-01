@@ -167,7 +167,7 @@ impl<R: OutgoingDestination<Form = CallerName>> ResolveDestination<CallerName> f
     message = "`{Self}` does not declare where it is published",
     note = "derive `Outgoing` on the reply type: `#[outgoing(name = \"orders.done\")]` fixes the \
             destination, and a derive without a name is published where the mount site says \
-            (`publish(\"..\")` on the attribute, `.to(\"..\")` on the chain). A name template has \
+            (`reply(\"..\")` on the attribute, `.to(\"..\")` on the chain). A name template has \
             no placeholders to bind on the reply path."
 )]
 pub trait ReplyDestination {
@@ -219,14 +219,14 @@ impl<A, R, O, C, H, Doc, Dest> DeclaresReply
 /// the generated document says so; letting a transform move it would put the two back out of
 /// step, which is the whole reason the destination lives on the type. So a transform that
 /// declares `Destination = Names` mounts only on a reply type that leaves the destination open -
-/// the mount site's `publish("dest")` name is then the declared fallback, and the transform names
+/// the mount site's `reply("dest")` name is then the declared fallback, and the transform names
 /// where each answer actually goes.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(
     message = "`{Self}` declares where it is published, so a transform cannot name its destination",
     label = "this reply's destination is its type's own",
     note = "drop `#[outgoing(name = \"..\")]` from the reply type and name the fallback at the \
-            mount site (`publish(\"dest\")` on the attribute, `.to(\"dest\")` on the chain), or \
+            mount site (`reply(\"dest\")` on the attribute, `.to(\"dest\")` on the chain), or \
             publish the reply where its declaration says and mount a transform that declares \
             `Destination = Reads`"
 )]

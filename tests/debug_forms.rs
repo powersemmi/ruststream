@@ -29,7 +29,7 @@ use ruststream::runtime::Layer;
 use ruststream::testing::TestApp;
 use ruststream::{Broker, ConnectedBroker, IncomingMessage, Subscriber};
 
-#[subscriber("debug.reply", publish("debug.reply.out"))]
+#[subscriber("debug.reply", reply("debug.reply.out"))]
 async fn answer(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

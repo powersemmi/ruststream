@@ -11,12 +11,12 @@ pub struct Subscribing;
 /// [`Deserialized`](crate::runtime::Deserialized) input): no decode, no codec.
 #[derive(Debug, Clone, Copy)]
 pub struct RawSubscribing;
-/// A byte-reply subscriber (a `publish("out")` handler whose reply type is
+/// A byte-reply subscriber (a `reply("out")` handler whose reply type is
 /// [`Serialized`](crate::runtime::Serialized), on any input): the reply bytes go out as-is
 /// through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReply;
-/// A reply-publishing subscriber (`#[subscriber("in", publish("out"))]`).
+/// A reply-publishing subscriber (`#[subscriber("in", reply("out"))]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Publishing;
 /// A subscriber whose startup injections need publisher attachments.
@@ -40,7 +40,7 @@ pub struct Batch;
 /// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
-/// A batch reply-publishing subscriber (a `&[T]` handler with `publish("out")`).
+/// A batch reply-publishing subscriber (a `&[T]` handler with `reply("out")`).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishing;
 /// A batch subscriber whose startup injections need a publisher attachment (an `Out`

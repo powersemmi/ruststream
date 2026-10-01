@@ -45,7 +45,7 @@ struct Receipt {
 struct Seen(AtomicU32);
 
 /// Asks for the first order again after a delay, and answers every later one with a receipt.
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 async fn accept(order: &Order, ctx: &mut Context<'_, (), Seen>) -> Result<Receipt, HandlerOutcome> {
     if ctx.state().0.fetch_add(1, Ordering::SeqCst) == 0 {
         return Err(HandlerOutcome::retry_after(RETRY_DELAY));

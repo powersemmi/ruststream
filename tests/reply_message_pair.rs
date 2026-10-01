@@ -30,7 +30,7 @@ struct Receipt {
     total: u32,
 }
 
-#[subscriber("pair.orders", publish("pair.receipts"))]
+#[subscriber("pair.orders", reply("pair.receipts"))]
 async fn confirm(order: &Order) -> Message<ReceiptMeta, Receipt> {
     Message::new(
         ReceiptMeta {

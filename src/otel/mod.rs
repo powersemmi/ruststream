@@ -37,7 +37,7 @@
 //! # struct Response {
 //! #     ok: bool,
 //! # }
-//! #[subscriber("requests", publish("responses"))]
+//! #[subscriber("requests", reply("responses"))]
 //! async fn respond(req: &Request) -> Response {
 //!     Response { ok: req.id != 0 }
 //! }

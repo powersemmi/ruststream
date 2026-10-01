@@ -1,7 +1,7 @@
 //! The one mount chain: the attachments a form needs before it becomes a route.
 //!
 //! Every publish policy a registration names is attached with one verb,
-//! [`out`](RouterWith::out): [`Reply`] names the policy the value a `publish("dest")` handler
+//! [`out`](RouterWith::out): [`Reply`] names the policy the value a `reply("dest")` handler
 //! returns leaves through, a slot marker names one [`Out`](crate::runtime::Out) slot's, and
 //! [`Retry`] names the one a deferred `retry_after` copy leaves through.
 //! [`out_reply`](RouterWith::out_reply) and [`out_retry`](RouterWith::out_retry) are the same
@@ -80,7 +80,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         }
     }
 
-    /// Names the publish policy of one position: [`Reply`] for the value a `publish("dest")`
+    /// Names the publish policy of one position: [`Reply`] for the value a `reply("dest")`
     /// handler returns, an [`Out`](crate::runtime::Out) slot's own marker for a slot, [`Retry`]
     /// for the deferred `retry_after` copy.
     ///
@@ -392,7 +392,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
-    /// reply of a batch (`&[T]` plus `publish(..)`), after the per-message stack. Wrap a
+    /// reply of a batch (`&[T]` plus `reply(..)`), after the per-message stack. Wrap a
     /// per-message transform with [`for_batch`](crate::runtime::for_batch) to reuse it here.
     ///
     /// Reply-only: a slot publish is one message with no batch to run a batch transform over.

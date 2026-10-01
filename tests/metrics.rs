@@ -118,7 +118,7 @@ mod publish {
     use ruststream::metrics::Metrics;
     use ruststream::testing::TestApp;
 
-    #[subscriber("requests", publish("responses"))]
+    #[subscriber("requests", reply("responses"))]
     async fn reply(req: &Req) -> Resp {
         Resp { n: req.n }
     }

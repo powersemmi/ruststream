@@ -29,7 +29,7 @@ pub(crate) struct Confirmation {
     pub(crate) accepted: bool,
 }
 
-#[subscriber("orders", publish)]
+#[subscriber("orders", reply)]
 pub(crate) async fn confirm(order: &Order) -> Confirmation {
     Confirmation {
         id: order.id,

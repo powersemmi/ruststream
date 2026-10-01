@@ -79,7 +79,7 @@ async fn raw_handler_receives_exact_bytes() {
 // --- the byte reply form: a Serialized reply republishes the returned bytes as-is ---
 
 // --8<-- [start:raw_reply]
-#[subscriber("relay-in", publish("relay-out"))]
+#[subscriber("relay-in", reply("relay-out"))]
 async fn relay(frame: &Frame<'_>) -> Export {
     let mut reply = frame.0.to_vec();
     reply.reverse();
@@ -123,7 +123,7 @@ async fn raw_reply_round_trips_exact_bytes() {
 
 // --- without .out_reply(..) the reply commits with the broker's default publish policy ---
 
-#[subscriber("relay-default-in", publish("relay-default-out"))]
+#[subscriber("relay-default-in", reply("relay-default-out"))]
 async fn relay_default(frame: &Frame<'_>) -> Export {
     Export(frame.0.to_vec())
 }
@@ -157,7 +157,7 @@ async fn raw_reply_defaults_to_the_brokers_publish_policy() {
 
 // --- the Result form: Err skips the publish and settles by the returned HandlerOutcome ---
 
-#[subscriber("relay-checked-in", publish("relay-checked-out"))]
+#[subscriber("relay-checked-in", reply("relay-checked-out"))]
 async fn relay_checked(frame: &Frame<'_>) -> Result<Export, HandlerOutcome> {
     if frame.0.is_empty() {
         return Err(HandlerOutcome::drop());
@@ -254,7 +254,7 @@ impl PublishPolicy<ConnectedMemoryBroker> for FlakyPublish {
     }
 }
 
-#[subscriber("relay-flaky-in", publish("relay-flaky-out"))]
+#[subscriber("relay-flaky-in", reply("relay-flaky-out"))]
 async fn relay_flaky(frame: &Frame<'_>) -> Export {
     Export(frame.0.to_vec())
 }
@@ -313,7 +313,7 @@ mod typed_in {
 
     // --8<-- [start:raw_reply_typed]
     /// The gateway shape: a structured message in, a self-produced wire format out.
-    #[subscriber("gateway-in", publish("gateway-out"))]
+    #[subscriber("gateway-in", reply("gateway-out"))]
     async fn gateway(wrap: &Wrap) -> Export {
         Export(wrap.id.to_be_bytes().to_vec())
     }
@@ -462,7 +462,7 @@ async fn router_mounts_raw_definitions() {
         .settled(HandlerOutcome::ack());
 }
 
-#[subscriber("routed-relay-in", publish("routed-relay-out"))]
+#[subscriber("routed-relay-in", reply("routed-relay-out"))]
 async fn routed_relay(frame: &Frame<'_>) -> Export {
     Export(frame.0.to_vec())
 }

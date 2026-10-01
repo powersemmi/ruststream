@@ -114,7 +114,7 @@ impl OutSlot for DefaultSlot {
 }
 
 /// The marker of a handler's reply position: `.out(Reply, policy)` names the publish policy the
-/// value a `publish("dest")` handler returns leaves through.
+/// value a `reply("dest")` handler returns leaves through.
 ///
 /// A mount site attaches every publish policy with one verb, and this is the marker of the one
 /// position that is not an [`Out`](super::Out) slot. It carries no dictionary: what a reply may be
@@ -136,7 +136,7 @@ impl OutSlot for DefaultSlot {
 /// # #[derive(serde::Serialize, schemars::JsonSchema, ruststream::Outgoing)]
 /// # struct Confirmation { id: u64 }
 ///
-/// #[subscriber("orders", publish("confirmations"))]
+/// #[subscriber("orders", reply("confirmations"))]
 /// async fn confirm(order: &Order) -> Confirmation {
 ///     Confirmation { id: order.id }
 /// }
@@ -779,7 +779,7 @@ impl NamedStep for ReplyLast {}
     message = "this registration has no unbound publish position marked `{Self}`",
     label = "`.out({Self}, ..)` has no position to bind here",
     note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
-            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            `reply(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
             for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
             and that it was not bound twice"
 )]
@@ -828,7 +828,7 @@ where
     message = "this registration has no unbound publish position marked `{M}`",
     label = "`.out({M}, ..)` has no position to bind here",
     note = "`.out(marker, policy)` binds one position: `Reply` for the value a \
-            `publish(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
+            `reply(\"dest\")` handler returns, an `Out` slot's own marker for a slot, `Retry` \
             for the deferred `retry_after` copy. Check the marker, that the handler declares it, \
             and that it was not bound twice"
 )]
@@ -849,7 +849,7 @@ pub trait BindAt<Mount, M, Policy, Index> {
 #[diagnostic::on_unimplemented(
     message = "this registration has no open reply position",
     label = "`.out(Reply, ..)` has nothing to bind here",
-    note = "`.out(Reply, policy)` names the publish policy of a `publish(\"dest\")` handler's \
+    note = "`.out(Reply, policy)` names the publish policy of a `reply(\"dest\")` handler's \
             returned value, once: a handler that declares no reply has no `Reply` position at \
             all, and one whose policy is already named has none left open"
 )]

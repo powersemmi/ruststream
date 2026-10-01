@@ -269,7 +269,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 }
 ```
 
-**Дескриптор в атрибуте.** Каждый метод билдера - один именованный аргумент атрибута
+**Дескриптор в атрибуте.** Каждый метод билдера - один именованный аргумент макроса
 `#[subscriber(..)]`. Атрибут принимает цепочку вызовов целиком:
 
 <!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
@@ -572,7 +572,7 @@ NATS настроек издателя нет. Политика - пустая �
 
 **Политика по умолчанию.** Подключённая форма реализует ещё и `DefaultPublish`
 (см. [контракт](index.md#publishpolicy)): простая политика годится как есть. Тогда обработчик в
-reply-форме, с аргументом `publish(..)` атрибута `#[subscriber]`, компилируется без явно
+reply-форме, с аргументом `reply(..)` макроса `#[subscriber]`, компилируется без явно
 указанного издателя.
 
 ## Совместимости

@@ -41,7 +41,7 @@ struct Audit;
 
 /// A batch handler that answers: the reply's publisher is the mount site's to name, on a scope
 /// and on a router alike.
-#[subscriber("mount.orders", publish("mount.receipts"))]
+#[subscriber("mount.orders", reply("mount.receipts"))]
 async fn confirm_batch(orders: &[Order]) -> Vec<Order> {
     orders.iter().map(|order| Order { id: order.id }).collect()
 }
@@ -230,7 +230,7 @@ async fn a_broker_settings_trait_reaches_a_slot_policy() {
 
 /// The byte-for-byte reply: its bytes are the payload, so the wiring carries the publish policy
 /// and nothing else.
-#[subscriber("mount.raw", publish("mount.raw.receipts"))]
+#[subscriber("mount.raw", reply("mount.raw.receipts"))]
 async fn echo_raw(order: &Order) -> Wire {
     Wire::of(order.id.to_be_bytes())
 }

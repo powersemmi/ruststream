@@ -42,18 +42,18 @@ struct Receipt {
     id: u64,
 }
 
-#[subscriber("dest.bare", publish)]
+#[subscriber("dest.bare", reply)]
 async fn bare(order: &Order) -> Confirmation {
     Confirmation { id: order.id }
 }
 
 /// The clause names a subject the reply type contradicts, which the declaration wins.
-#[subscriber("dest.contradicted", publish("dest.unused"))]
+#[subscriber("dest.contradicted", reply("dest.unused"))]
 async fn contradicted(order: &Order) -> Confirmation {
     Confirmation { id: order.id }
 }
 
-#[subscriber("dest.named", publish("dest.receipts"))]
+#[subscriber("dest.named", reply("dest.receipts"))]
 async fn named(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }
@@ -337,7 +337,7 @@ async fn a_chain_name_the_type_overrides_is_reported_at_startup() {
     );
 }
 
-#[subscriber("batch.contradicted", publish("batch.unused"))]
+#[subscriber("batch.contradicted", reply("batch.unused"))]
 async fn confirm_all(orders: &[Order]) -> Vec<Confirmation> {
     orders
         .iter()
@@ -373,7 +373,7 @@ async fn a_batch_reply_name_the_type_overrides_is_reported_at_startup() {
 #[outgoing(name = "dest.frames")]
 struct Frame(Vec<u8>);
 
-#[subscriber("raw.contradicted", publish("raw.unused"))]
+#[subscriber("raw.contradicted", reply("raw.unused"))]
 async fn frame(order: &Order) -> Frame {
     Frame(order.id.to_be_bytes().to_vec())
 }
@@ -402,7 +402,7 @@ async fn a_serialized_reply_name_the_type_overrides_is_reported_at_startup() {
 }
 
 /// The clause repeats the type's own destination.
-#[subscriber("dest.agreed", publish("dest.declared"))]
+#[subscriber("dest.agreed", reply("dest.declared"))]
 async fn agreed(order: &Order) -> Confirmation {
     Confirmation { id: order.id }
 }
@@ -463,7 +463,7 @@ async fn a_name_a_type_declaring_none_takes_is_not_reported() {
 #[publishes(Order)]
 struct Audit;
 
-#[subscriber("slots.contradicted", publish("slots.unused"))]
+#[subscriber("slots.contradicted", reply("slots.unused"))]
 async fn confirm_and_audit(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Confirmation {
     let _ = audit.message(order).to("slots.audit").publish().await;
     Confirmation { id: order.id }
@@ -493,7 +493,7 @@ async fn a_slot_carrying_handler_reports_an_overridden_name_at_startup() {
     );
 }
 
-#[subscriber("slots.batch", publish("slots.batch.unused"))]
+#[subscriber("slots.batch", reply("slots.batch.unused"))]
 async fn confirm_and_audit_all(
     orders: &[Order],
     Out(audit): Out<impl Publisher, Audit>,

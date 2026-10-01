@@ -1,0 +1,5 @@
+error: duplicate reply clause
+ --> tests/ui/subscriber_duplicate_reply.rs:4:36
+  |
+4 | #[subscriber("orders", reply("a"), reply("b"))]
+  |                                    ^^^^^

@@ -58,7 +58,7 @@ async fn batch_boom(orders: &[Order]) -> HandlerOutcome {
 struct Acked(u32);
 
 /// A publishing handler: exercises the single-message decode-failure path (default `decode = drop`).
-#[subscriber("rpcd", publish("rpcd.out"))]
+#[subscriber("rpcd", reply("rpcd.out"))]
 async fn rpcd(order: &Order) -> Acked {
     Acked(order.id)
 }
@@ -71,7 +71,7 @@ async fn bd(orders: &[Order]) -> HandlerOutcome {
 }
 
 /// A batch publishing handler: exercises the batch-publishing decode-failure path.
-#[subscriber("bpd", publish("bpd.out"))]
+#[subscriber("bpd", reply("bpd.out"))]
 async fn bpd(orders: &[Order]) -> Vec<Acked> {
     orders.iter().map(|o| Acked(o.id)).collect()
 }

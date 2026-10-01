@@ -59,7 +59,7 @@ impl<C, Options> PublishTransform<ForReply<C>, Options> for ReplyTo {
     }
 }
 
-#[subscriber("orders", publish("confirmations"))]
+#[subscriber("orders", reply("confirmations"))]
 async fn answer(order: &Order) -> Answer {
     Answer {
         id: black_box(order.id),

@@ -17,7 +17,7 @@ use crate::{HeaderMap, Lend, OutgoingMessage, PayloadForm, Take};
 /// The destination as the message that leaves reads it, kept in the spent stage's own slot
 /// where the stage owns it.
 ///
-/// A name the mount site borrowed - the literal every `#[subscriber(.., publish("dest"))]`
+/// A name the mount site borrowed - the literal every `#[subscriber(.., reply("dest"))]`
 /// carries - is already valid for the publish and is kept nowhere.
 #[inline]
 fn kept<'a>(name: OutgoingName<'a>, slot: &'a mut Option<OutgoingName<'static>>) -> &'a str {

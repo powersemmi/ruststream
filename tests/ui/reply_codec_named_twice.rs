@@ -14,7 +14,7 @@ struct Receipt {
     id: u32,
 }
 
-#[subscriber("orders", publish("receipts"))]
+#[subscriber("orders", reply("receipts"))]
 async fn confirm(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

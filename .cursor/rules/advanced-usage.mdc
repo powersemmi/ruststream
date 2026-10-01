@@ -371,7 +371,7 @@ an `R` implementing `Serialized` (the impls above; `ReplyShape` with `type Wire 
 covers the reply position) leaves byte-for-byte, so those steps do not compile on it. There is one
 `.reply()` and one `.out_reply(..)` for both wires. A batch reply always publishes through the
 reply codec; the `Serialized` wire covers single replies. A reply type that declares its own
-destination takes the bare `.reply()`, exactly as the attribute's bare `publish` clause does.
+destination takes the bare `.reply()`, exactly as the attribute's bare `reply` clause does.
 
 The `Out` slot parameter becomes the `O` axis: `Outs<(E,)>` with one type parameter per marker,
 each bounded `E: OutEntry<Marker, Wire: Capability>`. The body states the marker and the broker

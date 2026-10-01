@@ -141,7 +141,7 @@ async fn each_slot_keeps_its_own_transform_stack() {
 
 /// A handler that both replies and publishes through a slot: the reply's transform and the
 /// slot's stay on their own message, while the app-wide layer stamps both.
-#[subscriber("out.requests", publish("out.receipts"))]
+#[subscriber("out.requests", reply("out.receipts"))]
 async fn confirm(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Order {
     let _ = audit.message(order).to("out.audit").publish().await;
     Order { id: order.id }

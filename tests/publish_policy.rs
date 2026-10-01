@@ -74,7 +74,7 @@ async fn a_request_policy_pairs_into_a_requester() {
     assert!(unanswered.is_err(), "{unanswered:?}");
 }
 
-#[subscriber("policy.requests", publish("policy.replies"))]
+#[subscriber("policy.requests", reply("policy.replies"))]
 async fn respond(order: &Order) -> Receipt {
     Receipt { id: order.id }
 }

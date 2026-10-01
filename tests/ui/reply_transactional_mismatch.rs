@@ -13,7 +13,7 @@ struct Receipt {
     id: u32,
 }
 
-#[subscriber("orders", publish("receipts"))]
+#[subscriber("orders", reply("receipts"))]
 async fn confirm(orders: &[Order]) -> Vec<Receipt> {
     orders.iter().map(|o| Receipt { id: o.id }).collect()
 }
