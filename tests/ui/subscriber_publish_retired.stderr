@@ -1,0 +1,5 @@
+error: expected `reply` / `reply("reply-topic")`, `workers(n[, by_key])`, `threads(n[, by_key])`, `on_failure(panic = .., decode = ..)`, or `start_at(<position>)`
+ --> tests/ui/subscriber_publish_retired.rs:5:14
+  |
+5 | #[subscriber(publish("confirmations"))]
+  |              ^^^^^^^

@@ -51,7 +51,17 @@ pub(crate) enum SourceArg {
 
 /// The clause keywords, so a leading one is not mistaken for a source expression: they parse as
 /// expressions too (`workers(4)` is a call).
-const CLAUSES: &[&str] = &["on_failure", "reply", "start_at", "threads", "workers"];
+// The retired `publish` and `publish_raw` stay in the peek list, so a leading one meets the list
+// of accepted clauses instead of parsing as a source expression.
+const CLAUSES: &[&str] = &[
+    "on_failure",
+    "publish",
+    "publish_raw",
+    "reply",
+    "start_at",
+    "threads",
+    "workers",
+];
 
 /// True when the next tokens open a clause rather than a source. A clause keyword stands alone,
 /// is followed by a comma, or opens a parenthesized argument list; anything else with the same
