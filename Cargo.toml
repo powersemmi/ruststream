@@ -100,6 +100,7 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_failure_policy"
 path = "examples/manual/failure_policy.rs"
+required-features = ["memory", "json"]
 
 [[example]]
 name = "manual_post_settle"
