@@ -634,7 +634,7 @@ trybuild = "1"
 prost = "0.14"
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio", "testing"] }
-gungraun = "=0.19.4"
+gungraun = "=0.20.0"
 divan = "0.1.21"
 # The poll-diagnostics suite reads the warning the way an operator does: as a formatted log line.
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std"] }
