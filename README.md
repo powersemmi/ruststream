@@ -26,50 +26,21 @@
 ---
 
 RustStream connects your service to a message broker through a small set of generic traits, then
-gives you a router, middleware, codecs, and tooling on top. The core depends on no broker, so each
-broker is an independent crate held to one contract; broker-specific configuration never leaks into
-the framework.
-
-The core is 100% safe Rust: every crate carries `#![forbid(unsafe_code)]` and CI rejects any `unsafe`
-block, so the guarantee cannot regress.
+gives you a router, middleware, codecs, and tooling on top. The core depends on no broker: each
+broker is an independent crate held to one contract. The core is 100% safe Rust.
 
 ## Features
 
-- **Broker-agnostic core.** Traits and types only, zero broker dependencies. Brokers are separate
-  crates, and the contract is checked by a conformance harness.
-- **Fully async on tokio.** No blocking APIs in the public surface.
-- **Subscribers are `Stream`s, not callbacks.** Back-pressure comes for free.
-- **Misuse does not compile.** Ack consumes `self` (no double-ack); the broker lifecycle is a
-  ladder of consuming transitions (`connect(self)` yields the connected form, `shutdown(self)`
-  a terminal witness), so out-of-order lifecycle calls are compile errors; transactions settle
-  by consuming their scope.
-- **Publishers pair at startup.** Reply wiring and the `Out(..)` handler parameter attach a
-  publish policy where the handler is included; the runtime pairs it against the connected
-  broker, so a handler never sees a "not connected" publisher. The parameter states a
-  capability (`Out<impl Publisher>`), never a broker type, so the same handler mounts on a
-  production broker and its in-process test transport unchanged.
-- **One typed publish entry.** Every publish starts with `message(&value)` and ends in
-  `publish()`. The value's type declares where it goes and which typed header contract it
-  carries (`#[derive(Outgoing)]`), so an under-specified publish - a forgotten headers
-  contract, an unbound address segment - is a compile error, not a runtime surprise.
-- **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features - or none at all:
-  a `#[derive(Deserialized)]` input and a `#[derive(Serialized)]` reply move payload bytes
-  untouched (`Deserialize`/`Serialize` mean the framework's codec does it; `Deserialized`/
-  `Serialized` mean the user's own type already did). The byte lanes never touch a codec,
-  and a publish that would need one with none in reach fails to compile, naming the fix.
-- **The macro is sugar, not a layer.** `#[subscriber]` expands onto the same public rails the
-  macro-free path uses: a handler is an `impl Handle` bound to its subscription with
-  `subscriber("orders", body)`, and both spellings mix freely in one application.
-- **Zero-boilerplate binaries.** `#[ruststream::app]` generates `main`; the `ruststream` CLI
-  scaffolds projects, runs them, and generates the AsyncAPI document. Console logging ships
-  behind the `logging` feature, installed on `run` with verbosity driven by `RUST_LOG`.
-- **AsyncAPI 3.1, Prometheus metrics, and a health probe,** served from your own HTTP stack.
-- **OpenTelemetry** behind the `otel` feature: OTLP export for traces and metrics, per-handler
-  dispatch metrics following the messaging semantic conventions, and W3C trace-context
-  propagation across the consume-transform-produce chain.
-- **Capability traits** for optional features (batch subscribe, borrowed and owned transactions,
-  request-reply, partitioning, repositioning a live subscription in a replayable log); a broker
-  implements only what it supports.
+- **Broker-agnostic core.** Brokers are separate crates, checked by a conformance harness.
+- **Misuse does not compile.** Double acks, out-of-order lifecycle calls and under-specified
+  publishes are compile errors that name the fix.
+- **Pluggable codecs:** JSON, MessagePack, and CBOR behind cargo features, or raw bytes with none.
+- **Zero-boilerplate binaries.** `#[subscriber]` and `#[ruststream::app]` macros, and a CLI that
+  scaffolds, runs and documents a service.
+- **Observability:** AsyncAPI 3.1, Prometheus metrics, a health probe, and OpenTelemetry.
+- **Tests without a broker.** The service's own app runs in process under a test harness.
+- **Capability traits** for batches, transactions, request-reply, partitioning and repositioning;
+  a broker implements only what it supports.
 
 ## Install
 
@@ -111,30 +82,6 @@ fn app() -> RustStream {
 
 `#[ruststream::app]` generates `main`, so there is no runtime boilerplate.
 
-## Injecting dependencies
-
-Declare app state, derive `FromRef`, and take a dependency as a `State<T>` handler argument instead of
-reaching through `ctx.state()`. The state is built once in `on_startup`; `#[derive(FromRef)]` makes
-each field injectable, so no extractor is written by hand.
-
-```rust
-use ruststream::runtime::State;
-use ruststream::FromRef;
-
-#[derive(FromRef)]
-struct AppState {
-    create_order: CreateOrder,
-}
-
-#[subscriber("orders")]
-async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerOutcome {
-    create_order.execute(order);
-    HandlerOutcome::ack()
-}
-```
-
-Full compiling example: `examples/from_context.rs`.
-
 ## Run it
 
 ```bash
@@ -146,14 +93,9 @@ Scaffold a fresh project with `cargo generate --git https://github.com/powersemm
 templates/memory --name my-service` (each broker crate ships its own template). See the
 [quick start](https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/).
 
-## Testing the service
+## Test it
 
-Test the app the service ships, with no external service. `TestApp::start` takes the builder
-`main` runs and connects every broker of it in process, whichever broker the service is built on,
-and drives it through the same dispatch path the production runtime uses, so you assert on handler
-behaviour, middleware, and decoding exactly as in production. `TestApp::start_live` runs the same
-test against a running broker. The in-memory broker is described on
-[its own page](https://powersemmi.github.io/ruststream/latest/brokers/memory/).
+`TestApp` runs the service's own app in process, with no external broker.
 
 ```rust
 use ruststream::testing::TestApp;
@@ -173,93 +115,44 @@ tb.broker::<MemoryBroker>()
     .assert_called_once()
     .with(&Order { id: 42 })
     .settled(HandlerOutcome::ack());
-
-// It published the matching receipt downstream.
-tb.broker::<MemoryBroker>()
-    .published::<Receipt>("receipts")
-    .assert_called_once()
-    .with(&Receipt { order_id: 42 });
 ```
 
-Full compiling example: `examples/testing.rs`. See the
-[`testing` module](https://docs.rs/ruststream/latest/ruststream/testing/index.html).
+Full compiling example: `examples/testing.rs`.
 
-## Project documentation
+## Brokers
 
-Build the AsyncAPI spec and the interactive viewer HTML programmatically from a built service, then
-serve them from your own HTTP stack. The CLI `ruststream asyncapi gen` (see `Run it` above) prints the
-same document to stdout; this is the in-process path.
+| Broker | Crate |
+|---|---|
+| NATS | [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats) |
+| Redis / Valkey | [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred) |
+| RabbitMQ (AMQP 0.9.1) | [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin) |
+| Apache Kafka | [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka) |
+| AMQP 1.0 | [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp) |
+| Google Cloud Pub/Sub | [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub) |
+| Amazon SQS / SNS | [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns) |
+| Apache Pulsar | [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar) |
+| MQTT 5 | [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc) |
+| ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) |
+| Files and stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) |
+| Amazon Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) |
 
-```rust
-use ruststream::asyncapi::{build_spec, render_viewer_html, ViewerOptions};
+What each broker supports is on the
+[broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, see
+the [broker-authors guide](https://powersemmi.github.io/ruststream/latest/broker-authors/).
 
-let spec = build_spec(&service()).to_json()?;
-let viewer = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
-// serve `viewer` at `/` and `spec` at `/asyncapi.json` from your own HTTP stack
-```
+## Documentation
 
-Full compiling example: `examples/asyncapi_http.rs`.
-
-- Guide and tutorials: <https://powersemmi.github.io/ruststream/latest>
-- API reference: <https://docs.rs/ruststream>
-- Writing a broker: <https://powersemmi.github.io/ruststream/latest/broker-authors/>
-
-## Ecosystem
-
-- [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats): the NATS broker (Core NATS and
-  JetStream).
-- [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred): the Redis broker (Redis Streams
-  with consumer groups; standalone, cluster, and sentinel topologies) via the `fred` client.
-- [`ruststream-lapin`](https://github.com/powersemmi/ruststream-lapin): the RabbitMQ broker (AMQP
-  0.9.1: topology descriptors, native dead-letter and delayed retry, keyed worker lanes, publisher
-  confirms and server-side transactions) via the `lapin` client.
-- [`ruststream-rdkafka`](https://github.com/powersemmi/ruststream-rdkafka): the Apache Kafka broker
-  (consumer groups, tracked and transactional commits, retry and dead-letter topics, partition-scoped
-  transactions and exactly-once pipelines, a service template) via the `rdkafka` client.
-- [`ruststream-amqp`](https://github.com/powersemmi/ruststream-amqp): the AMQP 1.0 broker (ActiveMQ
-  Artemis, RabbitMQ 4.x, Azure Service Bus, and the wider AMQP 1.0 family; request/reply and
-  transactions) via the `fe2o3-amqp` client.
-- [`ruststream-gcp-pubsub`](https://github.com/powersemmi/ruststream-gcp-pubsub): the Google Cloud
-  Pub/Sub broker (ordering keys, exactly-once acknowledgement, dead-letter policies) via the
-  official `google-cloud-pubsub` client.
-- [`ruststream-sqs-sns`](https://github.com/powersemmi/ruststream-sqs-sns): the Amazon SQS broker
-  with SNS fan-out (FIFO groups, visibility management, native deferred retry) via the AWS SDK.
-- [`ruststream-pulsar`](https://github.com/powersemmi/ruststream-pulsar): the Apache Pulsar broker
-  (subscription modes, patterns, dead-letter policies, repositioning) via the `pulsar` client.
-- [`ruststream-rumqttc`](https://github.com/powersemmi/ruststream-rumqttc): the MQTT 5 broker (QoS
-  levels, shared groups, retained messages) via the `rumqttc` client.
-- [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq): the brokerless ZeroMQ
-  transport (PUSH/PULL, PUB/SUB, and DEALER/ROUTER request/reply over TCP and IPC) via the
-  pure-Rust `zeromq` client.
-- [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file): the file and stdio
-  transport (persistent replayable stream files, shell pipelines, repositioning) via the
-  `sea-streamer` clients.
-- [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis): the Amazon Kinesis
-  broker (shard leasing, checkpointing, repositioning) via the AWS SDK.
-
-Concrete brokers live in their own crates and pull `ruststream` from crates.io.
+- Site: <https://powersemmi.github.io/ruststream/latest>
+- API reference and topic overviews: <https://docs.rs/ruststream>
 
 ## Minimum supported Rust version
 
-The MSRV is **1.88**, edition 2024. CI builds and tests the crate on the floor and on current
-stable, and builds it on beta; Rust's stability guarantee carries the releases in between, so any
-floor at or above 1.88 works.
-
-The policy:
-
-- The published `rust-version` stays at the floor. Raising it is a breaking change (a minor
-  version bump pre-1.0) and is reviewed against the broker crates' client requirements at each
-  minor release.
-- Broker crates (`ruststream-nats`, ...) may require a newer toolchain than the core when their
-  underlying clients do; cargo allows a dependent crate to have a stricter floor than its
-  dependency. Check the broker crate's own `rust-version` for its floor.
+The MSRV is **1.88**, edition 2024. Raising it is a breaking change. A broker crate may require a
+newer toolchain when its client does.
 
 ## Contributing
 
-```bash
-just check    # fmt, clippy, and feature checks
-just test     # the test suite
-```
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
