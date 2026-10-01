@@ -38,8 +38,8 @@ done
 ## Environment
 
 - **Rust** through rustup. `rust-toolchain.toml` selects stable with rustfmt and clippy. The
-  minimum supported version is 1.88: `rustup toolchain install 1.88` builds against it with
-  `cargo +1.88 check --workspace --all-features`.
+  minimum supported version is 1.95: `rustup toolchain install 1.95` builds against it with
+  `cargo +1.95 check --workspace --all-features`.
 - **just**, which runs every recipe below.
 - Per task:
 
