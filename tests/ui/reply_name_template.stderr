@@ -13,5 +13,5 @@ help: the trait `ruststream::runtime::ReplyDestination` is not implemented for `
 note: required by a bound in `ruststream::runtime::reply_destination`
   --> src/runtime/handle/reply.rs
    |
-   | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> &'static str {
+   | pub fn reply_destination<R: ReplyDestination>(default: &'static str) -> ResolvedDest {
    |                             ^^^^^^^^^^^^^^^^ required by this bound in `reply_destination`

@@ -64,6 +64,13 @@ pub trait BatchPublishingDef: Send + Sync {
     /// The name (subject / channel) the replies are published to.
     fn reply_name(&self) -> &str;
 
+    /// The name the mount site wrote for the reply when the reply type's own
+    /// `#[outgoing(name = "..")]` declaration overrode it, so startup can report it. `None` where
+    /// the two agree or the mount site named nothing.
+    fn ignored_reply_name(&self) -> Option<&str> {
+        None
+    }
+
     /// The concurrency policy for this subscriber's dispatch loop (how many batches are in
     /// flight at once). The macro fills this in from the `workers(..)` argument; the default is
     /// sequential dispatch.

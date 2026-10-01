@@ -44,7 +44,8 @@ alwaysApply: false
 - Where a reply goes is a property of the reply type, not of the mount site. Every reply type
   derives `Outgoing`, and a type without it is a compile error at the handler naming the derive.
   `#[outgoing(name = "dest")]` on the type is the destination and the clause stays bare
-  (`publish`); a derive naming nothing takes the clause's name (`publish("dest")`). A name template
+  (`publish`); a derive naming nothing takes the clause's name (`publish("dest")`). A declared name
+  wins over a mount-site one, and startup logs a warning when the two differ. A name template
   does not resolve on the reply path - nothing binds its placeholders there. The generated AsyncAPI
   document reports the resolved destination, so a declaration cannot document one channel and
   publish to another.

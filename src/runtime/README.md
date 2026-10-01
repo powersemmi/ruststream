@@ -476,9 +476,11 @@ Either way the handler never sees an unconnected publisher: the mount site names
 
 Every reply type derives [`Outgoing`](macro@crate::Outgoing). `#[outgoing(name = "..")]` on
 the type is the destination, and the clause is then the bare `publish`; a type declaring no
-name takes one from the mount site, `publish("dest")`. `Result<Reply, HandlerOutcome>` keeps
-the acknowledgement in hand: `Ok` publishes and acks, `Err` publishes nothing and settles by
-the outcome. A reply publish that fails nacks the delivery with requeue, so a replying
+name takes one from the mount site, `publish("dest")`. A destination declared on the type wins
+over a mount-site name: replies go to the declared one, and startup logs a warning for each
+registration whose mount site names a different destination. `Result<Reply, HandlerOutcome>`
+keeps the acknowledgement in hand: `Ok` publishes and acks, `Err` publishes nothing and settles
+by the outcome. A reply publish that fails nacks the delivery with requeue, so a replying
 handler is idempotent under redelivery.
 
 With nothing else said the reply leaves through the broker's default policy under the

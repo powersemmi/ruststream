@@ -241,6 +241,13 @@ pub trait PublishingDef: Send + Sync {
     /// The name (subject / channel) the reply is published to.
     fn reply_name(&self) -> &str;
 
+    /// The name the mount site wrote for the reply when the reply type's own
+    /// `#[outgoing(name = "..")]` declaration overrode it, so startup can report it. `None` where
+    /// the two agree or the mount site named nothing.
+    fn ignored_reply_name(&self) -> Option<&str> {
+        None
+    }
+
     /// The concurrency policy for this subscriber's dispatch loop. The macro fills this in from
     /// the `workers(..)` argument; the default is sequential dispatch.
     fn workers(&self) -> Workers {
@@ -312,6 +319,28 @@ pub(crate) trait PublishingCall<S>: PublishingDef {
         injections: &Self::Injections,
         ctx: &mut Context<'_, Self::Context, S>,
     ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + Send;
+}
+
+/// Reports a registration whose reply type's own `#[outgoing(name = "..")]` declaration overrode
+/// the name its mount site wrote. The reply still goes to the declared destination; the warning
+/// only tells the author that the mount-site name they read has no effect. Called once per
+/// registration at startup, never on the delivery path.
+pub(crate) fn warn_ignored_reply_name(
+    subscription: &str,
+    reply_type: &str,
+    destination: &str,
+    ignored: Option<&str>,
+) {
+    if let Some(ignored) = ignored {
+        warn!(
+            target: "ruststream::lifecycle",
+            subscription = %subscription,
+            reply_type,
+            destination = %destination,
+            ignored = %ignored,
+            "the mount-site reply name is ignored: the reply type's `#[outgoing(name = ..)]` wins",
+        );
+    }
 }
 
 /// Builds the registration metadata for a publishing definition mounted under `name`.

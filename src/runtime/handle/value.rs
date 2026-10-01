@@ -177,13 +177,10 @@ pub type ProbedDeclaredReplyDef<A, R, O, C, H> =
 pub fn probed_reply_def<A, R, O, C, H>(
     body: H,
     docs: ProbedDocs,
-    dest: &'static str,
+    dest: ResolvedDest,
 ) -> ProbedReplyDef<A, R, O, C, H> {
     let Sealed(value) = probed_def(body, docs);
-    Sealed(ReplyValue {
-        value,
-        dest: ResolvedDest(dest),
-    })
+    Sealed(ReplyValue { value, dest })
 }
 
 /// Builds a `#[subscriber]` expansion's sealed reply definition for a bare `publish` clause:
@@ -208,7 +205,22 @@ pub fn probed_declared_reply_def<A, R, O, C, H>(
 /// carries it. The manual path resolves at [`to`](SubscriberBuilder::to) instead, where the name
 /// is supplied.
 #[derive(Debug, Clone, Copy)]
-pub struct ResolvedDest(pub(super) &'static str);
+pub struct ResolvedDest {
+    /// Where the reply is published.
+    pub(super) name: &'static str,
+    /// The clause's name when the reply type's own declaration overrode it, reported at startup.
+    pub(super) ignored: Option<&'static str>,
+}
+
+impl ResolvedDest {
+    /// Where the reply is published: what the generated document reports for the reply.
+    /// Machinery behind the macro expansion; not part of the public API.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+}
 
 /// The reply destination still unnamed: it resolves from the reply type's own
 /// `#[outgoing(name = "..")]` declaration, and a type declaring none takes a mandatory
@@ -365,7 +377,8 @@ impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, Stat
     /// The reply type's `#[outgoing(name = "..")]` declaration is the destination wherever
     /// there is one, so this name is the default rather than an override: it applies to a
     /// `#[derive(Outgoing)]` reply type that fixes no name, and a reply type that fixes one is
-    /// published there whether or not this call is written.
+    /// published there whether or not this call is written. Startup logs a warning when this
+    /// name differs from the one the reply type fixes.
     #[must_use]
     pub fn to(
         self,
