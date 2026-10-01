@@ -94,8 +94,9 @@ pub trait Publisher: Send + Sync {
 
 ## Public item with a doctest
 
-Every `pub` item carries a compiling example. A fallible call in it is written with `?`, never
-`unwrap()`; an example with nothing fallible in it, like the one below, has nothing to propagate.
+Every `pub` item outside `#[doc(hidden)]` carries a compiling example. A fallible call in it is
+written with `?`, never `unwrap()`; an example with nothing fallible in it, like the one below,
+has nothing to propagate.
 
 ```rust
 /// Creates a name source bound to `name`.
