@@ -214,6 +214,8 @@ pub struct ResolvedDest {
 
 impl ResolvedDest {
     /// Where the reply is published: what the generated document reports for the reply.
+    /// Machinery behind the macro expansion; not part of the public API.
+    #[doc(hidden)]
     #[must_use]
     pub const fn name(self) -> &'static str {
         self.name
