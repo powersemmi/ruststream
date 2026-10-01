@@ -147,8 +147,9 @@ the [broker-authors guide](https://powersemmi.github.io/ruststream/latest/broker
 
 ## Minimum supported Rust version
 
-The MSRV is **1.95**, edition 2024. Raising it is a breaking change. A broker crate may require a
-newer toolchain when its client does.
+The MSRV is **1.95**, edition 2024. The policy is a rolling one, as in tower: the MSRV rises only
+to a Rust release at least six months old, and only in a minor release. A broker crate may require
+a newer toolchain when its client does.
 
 ## Contributing
 
