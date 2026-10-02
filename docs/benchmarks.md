@@ -194,18 +194,17 @@ run, while the published document stays at the default.
 ## Publishing results
 
 A broker crate runs its own harness with `just bench` against the broker in its compose file. It
-publishes the outcome on its documentation site: a page a reader can follow, and one JSON document
-this page reads.
+commits the outcome to its repository: a page a reader can follow, and one JSON document this page
+reads.
 
 ### The stable path
 
 ```text
-https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
+https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/results.json
 ```
 
-The file lives at `docs/benchmarks/results.json` in the broker repository. The docs build copies it
-verbatim, and publishing the site puts it under the `latest` alias next to the page that explains
-it. The broker sites share this site's origin, so this page reads them directly.
+The file lives at `docs/benchmarks/results.json` in the broker repository, next to the page that
+explains it. This page reads it from `main`, so a measurement shows as soon as it is merged.
 
 ### The document
 
