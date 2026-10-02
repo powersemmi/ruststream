@@ -81,10 +81,27 @@ const SENTINEL: &[u8] = b"conformance-sentinel";
 ///
 /// # Examples
 ///
-/// ```
-/// use ruststream::conformance::settlement::Answer;
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
+/// use std::time::Duration;
 ///
-/// assert_ne!(Answer::Settled, Answer::Unsupported);
+/// use ruststream::conformance::settlement::{self, Answer};
+/// use ruststream::memory::{MemoryBroker, MemorySource};
+///
+/// let broker = MemoryBroker::new();
+/// let answers = settlement::suite(
+///     || broker.clone(),
+///     |name| MemorySource::new(name),
+///     |connected| connected.publisher(),
+///     Duration::ZERO,
+/// )
+/// .await;
+/// // The suite records what the transport cannot do instead of failing on it, and the broker
+/// // crate pins the answers, so a change in the transport shows up in its test.
+/// assert_eq!(answers.requeue, Answer::Settled);
+/// assert_eq!(answers.reject, Answer::Settled);
+/// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Answer {

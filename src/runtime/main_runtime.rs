@@ -138,7 +138,13 @@ impl MainRuntime {
     /// use ruststream::runtime::{Context, HandlerOutcome};
     ///
     /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
-    ///     let _workers = ctx.main_runtime().as_handle().metrics().num_workers();
+    ///     // The app's runtime metrics, read from a handler on a thread of its own.
+    ///     let metrics = ctx.main_runtime().as_handle().metrics();
+    ///     tracing::info!(
+    ///         workers = metrics.num_workers(),
+    ///         alive = metrics.num_alive_tasks(),
+    ///         "app runtime"
+    ///     );
     ///     HandlerOutcome::ack()
     /// }
     /// ```

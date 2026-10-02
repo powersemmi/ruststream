@@ -7,13 +7,40 @@
 //! # Examples
 //!
 //! ```
-//! use ruststream::IncomingMessage;
-//! use ruststream::runtime::{Context, Handler, HandlerExt, HandlerOutcome, layers::TracingLayer};
+//! # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+//! # mod demo {
+//! use ruststream::memory::prelude::*;
+//! use ruststream::runtime::layers::TracingLayer;
+//! use serde::Deserialize;
 //!
-//! fn build<M: IncomingMessage + 'static>() -> impl Handler<M> {
-//!     let base = |_msg: &M, _ctx: &mut Context| async { HandlerOutcome::ack() };
-//!     base.with(TracingLayer::default())
+//! #[derive(Deserialize)]
+//! struct Order {
+//!     id: u64,
 //! }
+//!
+//! #[subscriber("orders")]
+//! async fn accept(order: &Order) -> HandlerOutcome {
+//!     tracing::info!(order.id, "accepted");
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! #[subscriber("audit")]
+//! async fn audit(order: &Order) -> HandlerOutcome {
+//!     tracing::info!(order.id, "audited");
+//!     HandlerOutcome::ack()
+//! }
+//!
+//! fn app() -> impl App {
+//!     // Every handler of the app runs inside the tracing layer's span.
+//!     RustStream::new(AppInfo::new("orders", "0.1.0"))
+//!         .layer(TracingLayer::default())
+//!         .with_broker(MemoryBroker::new(), |b| {
+//!             b.include(accept);
+//!             b.include(audit);
+//!         })
+//! }
+//! # }
+//! # fn main() {}
 //! ```
 
 use std::future::Future;

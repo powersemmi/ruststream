@@ -36,14 +36,40 @@ use super::Coordinator;
 ///
 /// ```
 /// # #[cfg(feature = "memory")]
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::testing::{InProcess, TestableBroker};
+/// # mod demo {
+/// use std::future::Future;
 ///
-/// let connected = MemoryBroker::new().connect_in_process().await?;
-/// assert!(connected.published("orders").is_empty());
-/// # Ok(())
+/// use ruststream::Broker;
+/// use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
+/// use ruststream::testing::InProcess;
+///
+/// /// A broker crate built over the in-memory bus: its connected form is the bus's own, so its
+/// /// in-process transition is the bus's too.
+/// pub struct EdgeBroker(MemoryBroker);
+///
+/// impl Broker for EdgeBroker {
+///     type Error = MemoryError;
+///     type Connected = ConnectedMemoryBroker;
+///
+///     fn connect(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect()
+///     }
+/// }
+///
+/// impl InProcess for EdgeBroker {
+///     fn connect_in_process(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect_in_process()
+///     }
+/// }
+///
+/// // Under the crate's `testing` feature: `TestApp::start` now runs an app on `EdgeBroker`.
+/// ruststream::register_testable_broker!(EdgeBroker);
 /// # }
+/// # fn main() {}
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no in-process mode, so the test harness cannot run it",
@@ -94,19 +120,15 @@ pub trait InProcess: Broker<Connected: TestableBroker> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// # #[cfg(feature = "memory")]
-/// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
+/// # async fn run() {
+/// use ruststream::conformance::harness;
 /// use ruststream::memory::MemoryBroker;
-/// use ruststream::testing::{InProcess, TestableBroker};
 ///
-/// fn published<B: TestableBroker>(broker: &B, name: &str) -> usize {
-///     broker.published(name).len()
-/// }
-///
-/// let connected = MemoryBroker::new().connect_in_process().await?;
-/// assert_eq!(published(&connected, "orders"), 0);
-/// # Ok(())
+/// // A broker crate's conformance test: the suite drives the connected form through this view
+/// // and checks its answers against what the transport does.
+/// harness::run_suite(MemoryBroker::new).await;
 /// # }
 /// ```
 #[diagnostic::on_unimplemented(
@@ -148,15 +170,21 @@ pub trait TestableBroker: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::testing::{InProcess, TestableBroker};
-    ///
-    /// let connected = MemoryBroker::new().connect_in_process().await?;
-    /// let subscriptions = ["orders", "orders.eu", "orders"];
-    /// assert_eq!(connected.routes("orders", &subscriptions), [0, 2]);
-    /// # Ok(())
+    /// # struct SubjectBus;
+    /// # impl SubjectBus {
+    /// /// A subject broker fans a publish out to every subscription whose pattern matches it.
+    /// fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
+    ///     subscriptions
+    ///         .iter()
+    ///         .enumerate()
+    ///         .filter(|(_, pattern)| matches(pattern, destination))
+    ///         .map(|(position, _)| position)
+    ///         .collect()
+    /// }
+    /// # }
+    /// # fn matches(pattern: &str, subject: &str) -> bool {
+    /// #     pattern == subject
+    /// #         || pattern.strip_suffix(".>").is_some_and(|prefix| subject.starts_with(prefix))
     /// # }
     /// ```
     fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
@@ -181,14 +209,15 @@ pub trait TestableBroker: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::testing::{Backlog, InProcess, TestableBroker};
+    /// use ruststream::testing::Backlog;
     ///
-    /// let connected = MemoryBroker::new().connect_in_process().await?;
-    /// assert_eq!(connected.backlog(), Backlog::Missed);
-    /// # Ok(())
+    /// # struct LogBus { from_earliest: bool }
+    /// # impl LogBus {
+    /// /// A consumer group that starts from the earliest offset reads what was published before it
+    /// /// joined; one that starts from the latest does not.
+    /// fn backlog(&self) -> Backlog {
+    ///     if self.from_earliest { Backlog::Delivered } else { Backlog::Missed }
+    /// }
     /// # }
     /// ```
     fn backlog(&self) -> Backlog {
@@ -383,12 +412,39 @@ inventory::collect!(TestableRegistration);
 ///
 /// ```
 /// # #[cfg(feature = "memory")]
-/// # {
-/// use ruststream::memory::MemoryBroker;
-/// // The in-tree `MemoryBroker` is already registered; a broker crate registers its own type:
-/// // ruststream::register_testable_broker!(MyBroker);
-/// # let _ = MemoryBroker::new();
+/// # mod demo {
+/// use std::future::Future;
+///
+/// use ruststream::Broker;
+/// use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
+/// use ruststream::testing::InProcess;
+///
+/// /// A broker crate built over the in-memory bus: its connected form is the bus's own, so its
+/// /// in-process transition is the bus's too.
+/// pub struct EdgeBroker(MemoryBroker);
+///
+/// impl Broker for EdgeBroker {
+///     type Error = MemoryError;
+///     type Connected = ConnectedMemoryBroker;
+///
+///     fn connect(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect()
+///     }
+/// }
+///
+/// impl InProcess for EdgeBroker {
+///     fn connect_in_process(
+///         self,
+///     ) -> impl Future<Output = Result<ConnectedMemoryBroker, MemoryError>> + Send {
+///         self.0.connect_in_process()
+///     }
+/// }
+///
+/// ruststream::register_testable_broker!(EdgeBroker);
 /// # }
+/// # fn main() {}
 /// ```
 #[macro_export]
 macro_rules! register_testable_broker {

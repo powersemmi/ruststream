@@ -29,12 +29,27 @@ impl RawMessage {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{RawMessage, Str};
+    /// use ruststream::{Bytes, RawMessage, Str};
     ///
-    /// let message = RawMessage::new(Str::from_static("orders.created"), br#"{"id":7}"#.as_slice());
+    /// /// A broker crate's in-process transport: what it delivers is also what it reports to the
+    /// /// test harness as published, with the name buffer shared rather than copied.
+    /// struct PublishLog {
+    ///     entries: Vec<RawMessage>,
+    /// }
     ///
-    /// assert_eq!(message.name(), "orders.created");
-    /// assert_eq!(message.clone(), message);
+    /// impl PublishLog {
+    ///     fn record(&mut self, name: Str, payload: Bytes) {
+    ///         self.entries.push(RawMessage::new(name, payload));
+    ///     }
+    ///
+    ///     fn published(&self, name: &str) -> Vec<RawMessage> {
+    ///         self.entries
+    ///             .iter()
+    ///             .filter(|entry| entry.name() == name)
+    ///             .cloned()
+    ///             .collect()
+    ///     }
+    /// }
     /// ```
     pub fn new(name: impl Into<Str>, payload: impl Into<Bytes>) -> Self {
         Self {
@@ -100,28 +115,41 @@ impl RawMessage {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{HeaderMap, OutgoingMessage};
+/// use std::io;
 ///
-/// let payload = b"{\"hello\":\"world\"}";
-/// let mut headers = HeaderMap::new();
-/// headers.insert("Content-Type", "application/json");
+/// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+/// # struct Client;
+/// # impl Client {
+/// #     async fn send(
+/// #         &self,
+/// #         _topic: &str,
+/// #         _payload: Bytes,
+/// #         _headers: HeaderMap,
+/// #     ) -> io::Result<()> {
+/// #         Ok(())
+/// #     }
+/// # }
 ///
-/// // A publish names the form through the publisher it goes to; on its own, the message names
-/// // it here, and the lending form is the default.
-/// let msg: OutgoingMessage<'_> =
-///     OutgoingMessage::new("orders.created", payload).with_headers(headers);
-/// assert_eq!(msg.name(), "orders.created");
-/// assert_eq!(msg.payload(), payload);
+/// /// A transport whose client keeps the message: it takes the buffer, so the framework hands it
+/// /// over instead of lending it.
+/// struct ClientPublisher {
+///     client: Client,
+/// }
 ///
-/// // What a transport that keeps the message takes, in the one call that ends it.
-/// let (name, body, headers) = msg.into_parts();
-/// assert_eq!(name, "orders.created");
-/// assert_eq!(body, payload);
-/// assert_eq!(
-///     headers.content_type().ok_or("the publish named no content type")?,
-///     "application/json",
-/// );
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// impl Publisher for ClientPublisher {
+///     type Payload = Take;
+///     type Error = io::Error;
+///     type Options = ();
+///
+///     async fn publish(
+///         &self,
+///         msg: OutgoingMessage<'_, BytesMut>,
+///         _options: Option<&()>,
+///     ) -> io::Result<()> {
+///         let (topic, payload, headers) = msg.into_parts();
+///         self.client.send(topic, payload.freeze(), headers).await
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutgoingMessage<'a, Payload = &'a [u8]> {
@@ -151,11 +179,31 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::OutgoingMessage;
+    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take};
     ///
-    /// let carried: &[u8] = OutgoingMessage::new("orders.created", b"{}").into_payload();
-    /// let msg = OutgoingMessage::with_payload("orders.rebuilt", carried);
-    /// assert_eq!(msg.payload(), b"{}");
+    /// /// A publisher that files every message under the tenant's namespace. The buffer the
+    /// /// publish handed over moves across as it is, never downgraded to a borrow.
+    /// struct Namespaced<P> {
+    ///     inner: P,
+    ///     tenant: String,
+    /// }
+    ///
+    /// impl<P: Publisher<Payload = Take>> Publisher for Namespaced<P> {
+    ///     type Payload = Take;
+    ///     type Error = P::Error;
+    ///     type Options = P::Options;
+    ///
+    ///     async fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> Result<(), Self::Error> {
+    ///         let name = format!("{}.{}", self.tenant, msg.name());
+    ///         let (_, payload, headers) = msg.into_parts();
+    ///         let renamed = OutgoingMessage::with_payload(&name, payload).with_headers(headers);
+    ///         self.inner.publish(renamed, options).await
+    ///     }
+    /// }
     /// ```
     #[inline]
     #[must_use]
@@ -194,18 +242,55 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::OutgoingMessage;
-    /// use serde::Serialize;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use std::time::Duration;
     ///
-    /// #[derive(Serialize)]
-    /// struct ChunkMeta {
-    ///     task_id: u64,
+    /// use ruststream::OutgoingMessage;
+    /// use ruststream::memory::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    ///     tenant: String,
     /// }
     ///
-    /// let msg: OutgoingMessage<'_> = OutgoingMessage::new("chunks.done", b"{}")
-    ///     .with_typed_headers(&ChunkMeta { task_id: 7 })?;
-    /// assert_eq!(msg.headers().get_str("task_id"), Some("7"));
-    /// # Ok::<(), ruststream::SerializeHeadersError>(())
+    /// /// The header contract the pricing service reads off every ask.
+    /// #[derive(Serialize)]
+    /// struct AskMeta<'a> {
+    ///     tenant: &'a str,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// struct Pricing;
+    ///
+    /// #[subscriber("orders")]
+    /// async fn price(
+    ///     order: &Order,
+    ///     Out(pricing): Out<impl RequestReply, Pricing>,
+    /// ) -> HandlerOutcome {
+    ///     let id = order.id.to_string();
+    ///     let Ok(ask) =
+    ///         OutgoingMessage::new("quotes.ask", id.as_bytes()).with_typed_headers(&AskMeta {
+    ///             tenant: &order.tenant,
+    ///         })
+    ///     else {
+    ///         return HandlerOutcome::drop();
+    ///     };
+    ///     match pricing.request(ask, Duration::from_secs(2)).await {
+    ///         Ok(_quote) => HandlerOutcome::ack(),
+    ///         Err(_) => HandlerOutcome::retry(),
+    ///     }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(price).out(Pricing, Request).build();
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn with_typed_headers<T: serde::Serialize + ?Sized>(
         mut self,
@@ -234,11 +319,35 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{BytesMut, OutgoingMessage};
+    /// use std::io;
     ///
-    /// let msg = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]));
-    /// let buffer: BytesMut = msg.into_payload();
-    /// assert_eq!(Vec::from(buffer), b"{}".to_vec());
+    /// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+    /// # struct Client;
+    /// # impl Client {
+    /// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    ///
+    /// /// A transport that carries no headers: it takes the payload buffer and nothing else.
+    /// struct BarePublisher {
+    ///     client: Client,
+    /// }
+    ///
+    /// impl Publisher for BarePublisher {
+    ///     type Payload = Take;
+    ///     type Error = io::Error;
+    ///     type Options = ();
+    ///
+    ///     async fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         _options: Option<&()>,
+    ///     ) -> io::Result<()> {
+    ///         let topic = msg.name();
+    ///         self.client.send(topic, msg.into_payload().freeze()).await
+    ///     }
+    /// }
     /// ```
     #[inline]
     #[must_use]
@@ -267,21 +376,40 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{BytesMut, HeaderMap, OutgoingMessage};
+    /// use std::io;
     ///
-    /// let mut headers = HeaderMap::new();
-    /// headers.insert("Content-Type", "application/json");
-    /// let msg = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]))
-    ///     .with_headers(headers);
+    /// use ruststream::{Bytes, BytesMut, HeaderMap, OutgoingMessage, Publisher, Take};
+    /// # struct Client;
+    /// # impl Client {
+    /// #     async fn send(
+    /// #         &self,
+    /// #         _topic: &str,
+    /// #         _payload: Bytes,
+    /// #         _headers: HeaderMap,
+    /// #     ) -> io::Result<()> {
+    /// #         Ok(())
+    /// #     }
+    /// # }
     ///
-    /// let (name, payload, headers) = msg.into_parts();
-    /// assert_eq!(name, "orders.created");
-    /// assert_eq!(Vec::from(payload), b"{}".to_vec());
-    /// assert_eq!(
-    ///     headers.content_type().ok_or("the publish named no content type")?,
-    ///     "application/json",
-    /// );
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// struct ClientPublisher {
+    ///     client: Client,
+    /// }
+    ///
+    /// impl Publisher for ClientPublisher {
+    ///     type Payload = Take;
+    ///     type Error = io::Error;
+    ///     type Options = ();
+    ///
+    ///     async fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         _options: Option<&()>,
+    ///     ) -> io::Result<()> {
+    ///         // The destination, the buffer and the map the transforms filled, in one move.
+    ///         let (topic, payload, headers) = msg.into_parts();
+    ///         self.client.send(topic, payload.freeze(), headers).await
+    ///     }
+    /// }
     /// ```
     #[inline]
     #[must_use]
@@ -313,10 +441,35 @@ impl<'a> OutgoingMessage<'a, BytesMut> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{BytesMut, OutgoingMessage};
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use std::error::Error;
     ///
-    /// let msg = OutgoingMessage::produced("orders.created", BytesMut::from(&b"{}"[..]));
-    /// assert_eq!(msg.payload(), b"{}");
+    /// use ruststream::codec::{Codec, JsonCodec};
+    /// use ruststream::{BytesMut, OutgoingMessage, Publisher, Take};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// A broker crate's outbox relay: it encodes each row itself, and the buffer it wrote is
+    /// /// the buffer the transport keeps.
+    /// pub async fn relay<P>(publisher: &P, order: &Order) -> Result<(), Box<dyn Error>>
+    /// where
+    ///     P: Publisher<Payload = Take>,
+    ///     P::Error: Error + 'static,
+    /// {
+    ///     let mut buf = BytesMut::new();
+    ///     JsonCodec.encode_into(order, &mut buf)?;
+    ///     publisher
+    ///         .publish(OutgoingMessage::produced("orders", buf), None)
+    ///         .await?;
+    ///     Ok(())
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[inline]
     #[must_use]
@@ -414,9 +567,6 @@ pub trait IncomingMessage: Send + Sync {
     ///         Ok(())
     ///     }
     /// }
-    ///
-    /// let msg = Delivered { payload: Vec::new(), headers: HeaderMap::new(), delivered: 3 };
-    /// assert_eq!(msg.redelivery_count(), Some(3));
     /// ```
     fn redelivery_count(&self) -> Option<u64> {
         None
@@ -477,9 +627,6 @@ pub trait IncomingMessage: Send + Sync {
     ///     }
     ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
     /// }
-    ///
-    /// let msg = CoreMessage { payload: Vec::new(), headers: HeaderMap::new() };
-    /// assert!(!msg.supports_nack_after());
     /// ```
     fn supports_nack_after(&self) -> bool {
         false

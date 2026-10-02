@@ -118,23 +118,53 @@ pub trait FromRef<S>: Sized {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "macros")]
-/// # {
-/// use ruststream::runtime::State;
-/// use ruststream::FromRef;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use std::convert::Infallible;
 ///
-/// #[derive(Clone)]
-/// struct Orders;
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // Deriving `FromRef` lets handlers take `State<Orders>` (and `State<T>` for any other field).
-/// #[derive(FromRef)]
-/// struct AppState {
-///     orders: Orders,
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
 /// }
 ///
-/// // In a handler: `async fn handle(msg: &M, State(orders): State<Orders>) -> HandlerResult`.
-/// let _ = State(Orders);
+/// #[derive(Clone)]
+/// struct Pricing {
+///     currency: &'static str,
+/// }
+///
+/// #[derive(Clone)]
+/// struct Region(&'static str);
+///
+/// /// Each field is a component a handler takes with `State<T>`.
+/// #[derive(FromRef)]
+/// struct AppState {
+///     pricing: Pricing,
+///     region: Region,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn price(order: &Order, State(pricing): State<Pricing>) -> HandlerOutcome {
+///     tracing::info!(order.id, pricing.currency, "priced");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("pricing", "0.1.0"))
+///         .on_startup(async move |()| {
+///             Ok::<_, Infallible>(AppState {
+///                 pricing: Pricing { currency: "EUR" },
+///                 region: Region("eu"),
+///             })
+///         })
+///         .with_broker(MemoryBroker::new(), |b| {
+///             b.include(price);
+///         })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct State<T>(pub T);
@@ -169,9 +199,13 @@ where
 /// # Examples
 ///
 /// ```
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
 /// use ruststream::ContextField;
-/// use ruststream::runtime::Ctx;
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
+/// /// A broker's per-delivery context, and its key for the offset a delivery sits at.
 /// struct Delivery {
 ///     offset: u64,
 /// }
@@ -187,9 +221,18 @@ where
 ///     }
 /// }
 ///
-/// // In a handler: `async fn handle(msg: &M, Ctx(offset): Ctx<Offset>) -> HandlerOutcome`.
-/// let extracted = Ctx::<Offset>(42);
-/// assert_eq!(extracted.0, 42);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn audit(order: &Order, Ctx(offset): Ctx<Offset>) -> HandlerOutcome {
+///     tracing::info!(order.id, offset, "audited");
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub struct Ctx<K: CtxKey>(pub K::Value);
 
@@ -201,10 +244,26 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{CtxKey, MainRuntime};
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
-/// fn binds_itself<K: CtxKey<Value = K>>() {}
-/// binds_itself::<MainRuntime>();
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// async fn notify(_id: u64) {}
+///
+/// /// `MainRuntime` is a key of its own: the value it extracts is the handle itself.
+/// #[subscriber("orders", threads(2))]
+/// async fn handle(order: &Order, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
+///     main.spawn(notify(order.id));
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub trait CtxKey: sealed::Sealed {
     /// The owned value the extractor binds.
@@ -284,19 +343,31 @@ where
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{Headers, HandlerOutcome};
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
 /// use serde::Deserialize;
 ///
+/// /// The header contract of a chunk: `task_id` and `chunk_no` parse into their fields, and an
+/// /// absent `trace` reads as `None`.
 /// #[derive(Deserialize)]
 /// struct ChunkMeta {
 ///     task_id: u64,
 ///     chunk_no: u32,
+///     trace: Option<String>,
 /// }
 ///
-/// // In a handler:
-/// // async fn handle(chunk: &Chunk<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome
-/// let Headers(meta) = Headers(ChunkMeta { task_id: 7, chunk_no: 3 });
-/// assert_eq!(meta.chunk_no, 3);
+/// #[derive(Deserialized)]
+/// struct Chunk<'a>(&'a [u8]);
+///
+/// #[subscriber("chunks")]
+/// async fn store(chunk: &Chunk<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
+///     let bytes = chunk.0.len();
+///     tracing::info!(meta.task_id, meta.chunk_no, trace = ?meta.trace, bytes, "stored");
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Headers<T>(pub T);

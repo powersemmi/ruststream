@@ -145,17 +145,24 @@ impl<B> InProcessBroker<B> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # #[cfg(feature = "memory")]
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::Broker;
-    /// use ruststream::conformance::harness::InProcessBroker;
-    /// use ruststream::memory::MemoryBroker;
+    /// # async fn run() {
+    /// use std::time::Duration;
     ///
-    /// // `connect` runs the broker's in-process transition: no server behind it.
-    /// let connected = InProcessBroker::new(MemoryBroker::new()).connect().await?;
-    /// # let _ = connected;
-    /// # Ok(())
+    /// use ruststream::conformance::harness::InProcessBroker;
+    /// use ruststream::conformance::settlement;
+    /// use ruststream::memory::{MemoryBroker, MemorySource};
+    ///
+    /// // The settlement suite again, on the production broker's in-process transport.
+    /// let broker = MemoryBroker::new();
+    /// settlement::suite(
+    ///     || InProcessBroker::new(broker.clone()),
+    ///     |name| MemorySource::new(name),
+    ///     |connected| connected.publisher(),
+    ///     Duration::ZERO,
+    /// )
+    /// .await;
     /// # }
     /// ```
     #[must_use]

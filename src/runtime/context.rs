@@ -260,10 +260,24 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::runtime::{Context, FailurePolicy};
+    /// use std::str;
     ///
-    /// fn policy(ctx: &Context<'_>) -> FailurePolicy {
-    ///     ctx.decode_policy()
+    /// use ruststream::IncomingMessage;
+    /// use ruststream::runtime::{Context, FailurePolicy, HandlerOutcome};
+    ///
+    /// /// A hand-written handler reads the payload as text itself, and settles one that is not the
+    /// /// way the registration's decode policy says.
+    /// async fn handle<M: IncomingMessage>(msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     let Ok(line) = str::from_utf8(msg.payload()) else {
+    ///         return match ctx.decode_policy() {
+    ///             FailurePolicy::Retry => HandlerOutcome::retry(),
+    ///             FailurePolicy::RetryAfter(delay) => HandlerOutcome::retry_after(delay),
+    ///             FailurePolicy::Skip => HandlerOutcome::ack(),
+    ///             _ => HandlerOutcome::drop(),
+    ///         };
+    ///     };
+    ///     tracing::info!(line, "handled");
+    ///     HandlerOutcome::ack()
     /// }
     /// ```
     #[must_use]
@@ -349,20 +363,28 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// struct AppState {
-    ///     prefix: String,
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
     /// }
     ///
-    /// async fn handle<M: IncomingMessage>(
-    ///     _msg: &M,
-    ///     ctx: &mut Context<'_, (), AppState>,
-    /// ) -> HandlerOutcome {
-    ///     let _prefix = &ctx.state().prefix;
+    /// /// What `on_startup` produced, shared by every delivery.
+    /// struct Config {
+    ///     region: String,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order, ctx: &mut Context<'_, (), Config>) -> HandlerOutcome {
+    ///     tracing::info!(order.id, region = ctx.state().region, "accepted");
     ///     HandlerOutcome::ack()
     /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn state(&self) -> &S {
@@ -379,15 +401,17 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Field, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// use ruststream::{Field, IncomingMessage};
     ///
-    /// // A broker context with one field and the key that reads it.
+    /// /// A broker's per-delivery context with one field, and the key that reads it.
     /// struct Delivery {
     ///     offset: u64,
     /// }
+    ///
     /// #[derive(Clone, Copy)]
     /// struct Offset;
+    ///
     /// impl Field<Delivery> for Offset {
     ///     type Value<'a> = u64;
     ///     fn get(self, d: &Delivery) -> u64 {
@@ -395,8 +419,11 @@ impl<'a, C, S> Context<'a, C, S> {
     ///     }
     /// }
     ///
-    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Delivery>) -> HandlerOutcome {
-    ///     let _offset = ctx.context(Offset);
+    /// async fn handle<M: IncomingMessage>(
+    ///     _msg: &M,
+    ///     ctx: &mut Context<'_, Delivery>,
+    /// ) -> HandlerOutcome {
+    ///     tracing::info!(offset = ctx.context(Offset), "handled");
     ///     HandlerOutcome::ack()
     /// }
     /// ```
@@ -422,21 +449,25 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Field, FieldMut, IncomingMessage};
     /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// use ruststream::{Field, FieldMut, IncomingMessage};
     ///
+    /// /// A broker's per-delivery context, with a slot for the authenticated user.
     /// #[derive(Default)]
     /// struct Scratch {
     ///     user: Option<u64>,
     /// }
+    ///
     /// #[derive(Clone, Copy)]
     /// struct User;
+    ///
     /// impl Field<Scratch> for User {
     ///     type Value<'a> = Option<&'a u64>;
     ///     fn get(self, s: &Scratch) -> Option<&u64> {
     ///         s.user.as_ref()
     ///     }
     /// }
+    ///
     /// impl FieldMut<Scratch> for User {
     ///     type Owned = u64;
     ///     fn set(self, s: &mut Scratch, value: u64) {
@@ -444,9 +475,25 @@ impl<'a, C, S> Context<'a, C, S> {
     ///     }
     /// }
     ///
-    /// async fn handle<M: IncomingMessage>(_m: &M, ctx: &mut Context<'_, Scratch>) -> HandlerOutcome {
-    ///     ctx.set(User, 7);
-    ///     assert_eq!(ctx.context(User), Some(&7));
+    /// # /// The identity provider's check: the user a valid token was issued to.
+    /// # fn verify_token(_token: &str) -> Option<u64> {
+    /// #     None
+    /// # }
+    /// /// Verifies the delivery's bearer token and records whose it is, for every later stage
+    /// /// that reads `User`.
+    /// async fn authenticate<M: IncomingMessage>(
+    ///     _msg: &M,
+    ///     ctx: &mut Context<'_, Scratch>,
+    /// ) -> HandlerOutcome {
+    ///     let Some(user) = ctx
+    ///         .headers()
+    ///         .get_str("authorization")
+    ///         .and_then(|value| value.strip_prefix("Bearer "))
+    ///         .and_then(verify_token)
+    ///     else {
+    ///         return HandlerOutcome::drop();
+    ///     };
+    ///     ctx.set(User, user);
     ///     HandlerOutcome::ack()
     /// }
     /// ```
@@ -481,16 +528,28 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, Handler, HandlerOutcome};
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// fn use_after<M: IncomingMessage + 'static>() {
-    ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after(HandlerOutcome::ack())
-    ///             .then(async move { /* runs only after this message is acked */ });
-    ///         async { HandlerOutcome::ack() }
-    ///     };
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
     /// }
+    ///
+    /// async fn notify_shipping(_id: u64) {}
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     let id = order.id;
+    ///     // Shipping hears of the order only once it is acked, never for one that comes back.
+    ///     ctx.after(HandlerOutcome::ack())
+    ///         .then(async move { notify_shipping(id).await });
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     // The gate is a just-built outcome token (`after(HandlerOutcome::ack())`); a reference
     // parameter would force `&` noise at every call site.
@@ -515,15 +574,26 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// fn use_after_ack<M: IncomingMessage + 'static>() {
-    ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after_ack(async move { /* fire-and-forget once acked */ });
-    ///         async { HandlerOutcome::ack() }
-    ///     };
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
     /// }
+    ///
+    /// async fn warm_cache(_id: u64) {}
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     let id = order.id;
+    ///     ctx.after_ack(async move { warm_cache(id).await });
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn after_ack(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
         self.after.push(AfterHook {
@@ -546,15 +616,32 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use std::time::Instant;
     ///
-    /// fn use_after_settle<M: IncomingMessage + 'static>() {
-    ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after_settle(async move { /* runs once the message is settled, any outcome */ });
-    ///         async { HandlerOutcome::retry() }
-    ///     };
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
     /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     let started = Instant::now();
+    ///     // Recorded whatever the outcome: an ack, a drop or a retry.
+    ///     ctx.after_settle(async move {
+    ///         tracing::info!(elapsed = ?started.elapsed(), "settled");
+    ///     });
+    ///     if order.id == 0 {
+    ///         return HandlerOutcome::drop();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn after_settle(&mut self, fut: impl Future<Output = ()> + Send + 'static) {
         self.after.push(AfterHook {
@@ -648,16 +735,31 @@ impl<C, S> After<'_, '_, C, S> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::IncomingMessage;
-    /// use ruststream::runtime::{Context, HandlerOutcome};
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// fn use_then<M: IncomingMessage + 'static>() {
-    ///     let _handler = |_msg: &M, ctx: &mut Context| {
-    ///         ctx.after(HandlerOutcome::drop())
-    ///             .then(async move { /* runs only if the message is dropped (nack, no requeue) */ });
-    ///         async { HandlerOutcome::drop() }
-    ///     };
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
     /// }
+    ///
+    /// async fn alert(_id: u64) {}
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     let id = order.id;
+    ///     // Someone hears of an order that was dropped for good, and only of that one.
+    ///     ctx.after(HandlerOutcome::drop())
+    ///         .then(async move { alert(id).await });
+    ///     if id == 0 {
+    ///         return HandlerOutcome::drop();
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn then(self, fut: impl Future<Output = ()> + Send + 'static) {
         self.ctx.after.push(AfterHook {

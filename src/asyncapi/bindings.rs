@@ -47,21 +47,49 @@ const PROTOCOLS: &[&str] = &[
 /// # Examples
 ///
 /// ```
-/// use ruststream::asyncapi::Binding;
+/// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+/// use ruststream::{DescribeServer, ServerSpec};
 /// use serde::Serialize;
+/// # use ruststream::{Broker, ConnectedBroker};
+/// # struct ConnectedKafka;
+/// # impl Broker for KafkaBroker {
+/// #     type Error = std::io::Error;
+/// #     type Connected = ConnectedKafka;
+/// #     async fn connect(self) -> Result<ConnectedKafka, Self::Error> { Ok(ConnectedKafka) }
+/// # }
+/// # impl ConnectedBroker for ConnectedKafka {
+/// #     type Error = std::io::Error;
+/// #     type Closed = ();
+/// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+/// # }
 ///
-/// #[derive(Serialize)]
-/// struct KafkaOperation {
-///     #[serde(rename = "groupId")]
-///     group_id: String,
+/// struct KafkaBroker {
+///     url: String,
+///     bindings: Bindings,
 /// }
 ///
-/// let binding = Binding::new("kafka", "0.5.0", &KafkaOperation { group_id: "billing".into() })?;
-/// assert_eq!(binding.protocol(), "kafka");
+/// #[derive(Serialize)]
+/// struct KafkaServer<'a> {
+///     #[serde(rename = "schemaRegistryUrl")]
+///     schema_registry_url: &'a str,
+/// }
 ///
-/// // A protocol the specification does not list is refused here, not in the document.
-/// assert!(Binding::new("kinesis", "0.1.0", &()).is_err());
-/// # Ok::<_, ruststream::asyncapi::BindingError>(())
+/// impl KafkaBroker {
+///     /// The binding is built with the broker, so a bad one fails construction.
+///     fn new(url: &str, registry: &str) -> Result<Self, BindingError> {
+///         let body = KafkaServer { schema_registry_url: registry };
+///         let binding = Binding::new("kafka", "0.5.0", &body)?;
+///         Ok(Self { url: url.to_owned(), bindings: Bindings::new().with(binding) })
+///     }
+/// }
+///
+/// impl DescribeServer for KafkaBroker {
+///     fn describe_server(&self) -> ServerSpec {
+///         ServerSpec::from_url(&self.url, "kafka").bindings(self.bindings.clone())
+///     }
+/// }
+/// # KafkaBroker::new("kafka://broker:9092", "http://registry:8081")?;
+/// # Ok::<_, BindingError>(())
 /// ```
 ///
 /// # Errors
@@ -88,17 +116,20 @@ impl Binding {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::Binding;
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
-    /// struct NatsOperation {
-    ///     queue: &'static str,
+    /// struct MqttServer<'a> {
+    ///     #[serde(rename = "clientId")]
+    ///     client_id: &'a str,
     /// }
     ///
-    /// let binding = Binding::new("nats", "0.1.0", &NatsOperation { queue: "workers" })?;
-    /// assert_eq!(binding.protocol(), "nats");
-    /// # Ok::<_, ruststream::asyncapi::BindingError>(())
+    /// /// The server bindings an MQTT broker crate describes its connection with.
+    /// fn server_bindings(client_id: &str) -> Result<Bindings, BindingError> {
+    ///     let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id })?;
+    ///     Ok(Bindings::new().with(binding))
+    /// }
     /// ```
     pub fn new<T: Serialize>(
         protocol: &'static str,
@@ -140,19 +171,48 @@ impl Binding {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::Binding;
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+    /// use ruststream::{DescribeServer, ServerSpec};
     /// use serde::Serialize;
+    /// # use ruststream::{Broker, ConnectedBroker};
+    /// # struct ConnectedZmq;
+    /// # impl Broker for ZmqBroker {
+    /// #     type Error = std::io::Error;
+    /// #     type Connected = ConnectedZmq;
+    /// #     async fn connect(self) -> Result<ConnectedZmq, Self::Error> { Ok(ConnectedZmq) }
+    /// # }
+    /// # impl ConnectedBroker for ConnectedZmq {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
+    ///
+    /// struct ZmqBroker {
+    ///     endpoint: String,
+    ///     bindings: Bindings,
+    /// }
     ///
     /// #[derive(Serialize)]
-    /// struct Zmq {
+    /// struct ZmqSocket {
     ///     socket: &'static str,
     /// }
     ///
-    /// let binding = Binding::extension("x-zeromq", &Zmq { socket: "PULL" })?;
-    /// assert_eq!(binding.protocol(), "x-zeromq");
+    /// impl ZmqBroker {
+    ///     fn new(endpoint: &str) -> Result<Self, BindingError> {
+    ///         // ZeroMQ has no binding object, so its socket type rides an extension.
+    ///         let extension = Binding::extension("x-zeromq", &ZmqSocket { socket: "PULL" })?;
+    ///         Ok(Self { endpoint: endpoint.to_owned(), bindings: Bindings::new().with(extension) })
+    ///     }
+    /// }
     ///
-    /// assert!(Binding::extension("zeromq", &Zmq { socket: "PULL" }).is_err());
-    /// # Ok::<_, ruststream::asyncapi::BindingError>(())
+    /// impl DescribeServer for ZmqBroker {
+    ///     fn describe_server(&self) -> ServerSpec {
+    ///         ServerSpec::new(ServerSpec::host_from_url(&self.endpoint), "zmq")
+    ///             .bindings(self.bindings.clone())
+    ///     }
+    /// }
+    /// # ZmqBroker::new("tcp://feed:5555")?;
+    /// # Ok::<_, BindingError>(())
     /// ```
     pub fn extension<T: Serialize>(name: &'static str, body: &T) -> Result<Self, BindingError> {
         let legal = name.starts_with("x-")
@@ -199,19 +259,53 @@ impl Binding {
 /// # Examples
 ///
 /// ```
-/// use ruststream::asyncapi::{Binding, Bindings};
+/// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+/// use ruststream::{DescribeServer, ServerSpec};
 /// use serde::Serialize;
+/// # use ruststream::{Broker, ConnectedBroker};
+/// # struct ConnectedKafka;
+/// # impl Broker for KafkaBroker {
+/// #     type Error = std::io::Error;
+/// #     type Connected = ConnectedKafka;
+/// #     async fn connect(self) -> Result<ConnectedKafka, Self::Error> { Ok(ConnectedKafka) }
+/// # }
+/// # impl ConnectedBroker for ConnectedKafka {
+/// #     type Error = std::io::Error;
+/// #     type Closed = ();
+/// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+/// # }
 ///
-/// #[derive(Serialize)]
-/// struct Queue {
-///     name: &'static str,
+/// struct KafkaBroker {
+///     url: String,
+///     bindings: Bindings,
 /// }
 ///
-/// let bindings = Bindings::new().with(Binding::new("sqs", "0.3.0", &Queue { name: "orders" })?);
+/// #[derive(Serialize)]
+/// struct KafkaServer<'a> {
+///     #[serde(rename = "schemaRegistryUrl")]
+///     schema_registry_url: &'a str,
+/// }
 ///
-/// assert!(!bindings.is_empty());
-/// assert!(Bindings::new().is_empty());
-/// # Ok::<_, ruststream::asyncapi::BindingError>(())
+/// impl KafkaBroker {
+///     fn new(url: &str, registry: Option<&str>) -> Result<Self, BindingError> {
+///         // Without a schema registry there is nothing to say, and the empty set leaves the
+///         // server's bindings out of the document.
+///         let mut bindings = Bindings::new();
+///         if let Some(registry) = registry {
+///             let body = KafkaServer { schema_registry_url: registry };
+///             bindings = bindings.with(Binding::new("kafka", "0.5.0", &body)?);
+///         }
+///         Ok(Self { url: url.to_owned(), bindings })
+///     }
+/// }
+///
+/// impl DescribeServer for KafkaBroker {
+///     fn describe_server(&self) -> ServerSpec {
+///         ServerSpec::from_url(&self.url, "kafka").bindings(self.bindings.clone())
+///     }
+/// }
+/// # KafkaBroker::new("kafka://broker:9092", None)?;
+/// # Ok::<_, BindingError>(())
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bindings(BTreeMap<&'static str, String>);
@@ -222,9 +316,21 @@ impl Bindings {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::Bindings;
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+    /// use serde::Serialize;
     ///
-    /// assert!(Bindings::new().is_empty());
+    /// #[derive(Serialize)]
+    /// struct SqsQueue<'a> {
+    ///     name: &'a str,
+    /// }
+    ///
+    /// /// What an SQS queue descriptor says about its channel: the queue name, or nothing at all.
+    /// fn channel_bindings(queue: Option<&str>) -> Result<Bindings, BindingError> {
+    ///     let Some(name) = queue else {
+    ///         return Ok(Bindings::new());
+    ///     };
+    ///     Ok(Bindings::new().with(Binding::new("sqs", "0.3.0", &SqsQueue { name })?))
+    /// }
     /// ```
     #[must_use]
     pub const fn new() -> Self {
@@ -236,14 +342,32 @@ impl Bindings {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::{Binding, Bindings};
-    /// use std::collections::BTreeMap;
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+    /// use serde::Serialize;
     ///
-    /// let bindings = Bindings::new()
-    ///     .with(Binding::new("mqtt", "0.2.0", &BTreeMap::<String, u8>::new())?);
+    /// #[derive(Serialize)]
+    /// struct KafkaMessage {
+    ///     #[serde(rename = "schemaIdLocation")]
+    ///     schema_id_location: &'static str,
+    /// }
     ///
-    /// assert!(!bindings.is_empty());
-    /// # Ok::<_, ruststream::asyncapi::BindingError>(())
+    /// #[derive(Serialize)]
+    /// struct XRetention {
+    ///     days: u32,
+    /// }
+    ///
+    /// /// A topic descriptor's message bindings: the Kafka object, plus what no binding covers.
+    /// fn message_bindings() -> Result<Bindings, BindingError> {
+    ///     Ok(Bindings::new()
+    ///         .with(Binding::new(
+    ///             "kafka",
+    ///             "0.5.0",
+    ///             &KafkaMessage {
+    ///                 schema_id_location: "payload",
+    ///             },
+    ///         )?)
+    ///         .with(Binding::extension("x-retention", &XRetention { days: 7 })?))
+    /// }
     /// ```
     #[must_use]
     pub fn with(mut self, binding: Binding) -> Self {
@@ -267,9 +391,44 @@ impl Bindings {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::Bindings;
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+    /// use ruststream::{DescribeServer, ServerSpec};
+    /// use serde::Serialize;
+    /// # use ruststream::{Broker, ConnectedBroker};
+    /// # struct ConnectedKafka;
+    /// # impl Broker for KafkaBroker {
+    /// #     type Error = std::io::Error;
+    /// #     type Connected = ConnectedKafka;
+    /// #     async fn connect(self) -> Result<ConnectedKafka, Self::Error> { Ok(ConnectedKafka) }
+    /// # }
+    /// # impl ConnectedBroker for ConnectedKafka {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
+    /// # #[derive(Serialize)]
+    /// # struct KafkaServer<'a> {
+    /// #     #[serde(rename = "schemaRegistryUrl")]
+    /// #     schema_registry_url: &'a str,
+    /// # }
+    /// # struct KafkaBroker { url: String, bindings: Bindings }
+    /// # impl KafkaBroker {
+    /// #     fn new(url: &str) -> Result<Self, BindingError> {
+    /// #         let body = KafkaServer { schema_registry_url: "http://registry:8081" };
+    /// #         let binding = Binding::new("kafka", "0.5.0", &body)?;
+    /// #         Ok(Self { url: url.to_owned(), bindings: Bindings::new().with(binding) })
+    /// #     }
+    /// # }
+    /// # impl DescribeServer for KafkaBroker {
+    /// #     fn describe_server(&self) -> ServerSpec {
+    /// #         ServerSpec::from_url(&self.url, "kafka").bindings(self.bindings.clone())
+    /// #     }
+    /// # }
     ///
-    /// assert!(Bindings::new().is_empty());
+    /// // A broker crate's check that its server description reaches the document.
+    /// let broker = KafkaBroker::new("kafka://broker:9092")?;
+    /// assert!(!broker.describe_server().bindings.is_empty());
+    /// # Ok::<_, BindingError>(())
     /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {

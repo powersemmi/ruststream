@@ -190,22 +190,31 @@ impl OtelBuilder {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
+    /// use std::error::Error;
+    ///
     /// use opentelemetry_sdk::metrics::{Aggregation, Instrument, Stream};
     /// use ruststream::otel::Otel;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let builder = Otel::builder().view(|instrument: &Instrument| {
-    ///     (instrument.name() == "ruststream.message.queue_time").then(|| {
-    ///         Stream::builder()
-    ///             .with_aggregation(Aggregation::ExplicitBucketHistogram {
-    ///                 boundaries: vec![0.001, 0.01, 0.1, 1.0, 10.0, 60.0],
-    ///                 record_min_max: true,
-    ///             })
-    ///             .build()
-    ///             .ok()
-    ///     })?
-    /// });
-    /// # let _ = builder;
+    /// fn app() -> Result<impl App, Box<dyn Error>> {
+    ///     // Queue time in this service runs to minutes, past the advised boundaries.
+    ///     let otel = Otel::builder()
+    ///         .service_name("orders-svc")
+    ///         .view(|instrument: &Instrument| {
+    ///             (instrument.name() == "ruststream.message.queue_time").then(|| {
+    ///                 Stream::builder()
+    ///                     .with_aggregation(Aggregation::ExplicitBucketHistogram {
+    ///                         boundaries: vec![0.001, 0.01, 0.1, 1.0, 10.0, 60.0],
+    ///                         record_min_max: true,
+    ///                     })
+    ///                     .build()
+    ///                     .ok()
+    ///             })?
+    ///         })
+    ///         .init()?;
+    ///     Ok(RustStream::new(AppInfo::new("orders-svc", "0.1.0")).layer(otel.consume_layer()))
+    /// }
     /// ```
     pub fn view<V>(mut self, view: V) -> Self
     where
@@ -398,19 +407,19 @@ impl Otel {
     /// # Examples
     ///
     /// ```no_run
-    /// use ruststream::otel::Otel;
-    /// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+    /// use std::error::Error;
     ///
-    /// # fn build() -> Result<(), Box<dyn std::error::Error>> {
-    /// let otel = Otel::builder().init()?;
-    /// let diagnostics = PollDiagnostics::new();
-    /// otel.observe_poll_diagnostics(&diagnostics);
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .layer(otel.consume_layer())
-    ///     .poll_diagnostics(diagnostics);
-    /// # let _ = app;
-    /// # Ok(())
-    /// # }
+    /// use ruststream::otel::Otel;
+    /// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
+    ///
+    /// fn app() -> Result<impl App, Box<dyn Error>> {
+    ///     let otel = Otel::builder().init()?;
+    ///     let diagnostics = PollDiagnostics::new();
+    ///     otel.observe_poll_diagnostics(&diagnostics);
+    ///     Ok(RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///         .layer(otel.consume_layer())
+    ///         .poll_diagnostics(diagnostics))
+    /// }
     /// ```
     #[cfg(feature = "poll-diagnostics")]
     pub fn observe_poll_diagnostics(&self, diagnostics: &PollDiagnostics) {

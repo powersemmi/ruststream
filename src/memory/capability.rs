@@ -69,47 +69,58 @@ pub enum RequestError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "macros")]
-/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
 /// use std::time::Duration;
 ///
-/// use futures::StreamExt;
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::PublishExt;
-/// use ruststream::{
-///     IncomingMessage, Outgoing, OutgoingMessage, RequestReply, Serialized, Subscriber,
-/// };
+/// use ruststream::OutgoingMessage;
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// // The reply echoes the request's bytes, so they are already the payload; the inbox to
-/// // send them to is only known per request, which is what `to(..)` names.
-/// #[derive(Outgoing, Serialized)]
-/// struct Pong(Vec<u8>);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
 ///
-/// let broker = MemoryBroker::new();
-/// let mut service = broker.subscribe("svc.echo");
-/// let publisher = broker.publisher();
-/// let requester = broker.requester();
+/// #[derive(Serialize)]
+/// struct Ask {
+///     id: u64,
+/// }
 ///
-/// let respond = async {
-///     let mut stream = std::pin::pin!(service.stream());
-///     if let Some(Ok(msg)) = stream.next().await {
-///         let reply_to = msg.headers().reply_to().ok_or("request must carry reply-to")?.to_owned();
-///         let pong = Pong(msg.payload().to_vec());
-///         publisher.message(&pong).to(reply_to).publish().await?;
-///         msg.ack().await?;
+/// #[derive(Deserialize)]
+/// struct Quote {
+///     price: u64,
+/// }
+///
+/// #[derive(OutSlot)]
+/// struct Pricing;
+///
+/// #[subscriber("orders")]
+/// async fn price(order: &Order, Out(pricing): Out<impl RequestReply, Pricing>) -> HandlerOutcome {
+///     let Ok(ask) = serde_json::to_vec(&Ask { id: order.id }) else {
+///         return HandlerOutcome::drop();
+///     };
+///     // The reply comes back on an inbox the request names in its `reply-to` header.
+///     let request = OutgoingMessage::new("quotes.ask", ask.as_slice());
+///     let Ok(reply) = pricing.request(request, Duration::from_secs(2)).await else {
+///         return HandlerOutcome::retry();
+///     };
+///     match serde_json::from_slice::<Quote>(reply.payload()) {
+///         Ok(quote) => {
+///             tracing::info!(order.id, quote.price, "priced");
+///             HandlerOutcome::ack()
+///         }
+///         Err(_) => HandlerOutcome::drop(),
 ///     }
-///     Ok::<_, Box<dyn std::error::Error>>(())
-/// };
-/// let request = requester.request(
-///     OutgoingMessage::new("svc.echo", b"ping"),
-///     Duration::from_secs(1),
-/// );
+/// }
 ///
-/// let (reply, responded) = futures::join!(request, respond);
-/// responded?;
-/// assert_eq!(reply?.payload(), b"ping");
-/// # Ok(())
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(price).out(Pricing, Request).build();
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Clone)]
 pub struct MemoryRequester {
@@ -342,16 +353,54 @@ impl TransactionalPublisher for MemoryPublisher {
 /// # Examples
 ///
 /// ```
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::{OutgoingMessage, OwnedTransactions, Transaction};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-/// let publisher = MemoryBroker::new().publisher();
-/// let mut txn = publisher.transaction().await?;
-/// txn.publish(OutgoingMessage::new("orders", b"{}".as_slice()), None).await?;
-/// txn.commit().await?;
-/// # Ok(())
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "ledger.settled")]
+/// struct Settled {
+///     id: u64,
+/// }
+///
+/// #[derive(OutSlot)]
+/// #[publishes(Settled)]
+/// struct Ledger;
+///
+/// #[subscriber("orders")]
+/// async fn settle(
+///     order: &Order,
+///     Out(ledger): Out<impl OwnedTransactions, Ledger, Settled>,
+/// ) -> HandlerOutcome {
+///     // Nothing reaches `ledger.settled` until the commit, and an abort discards it all.
+///     let Ok(mut txn) = ledger.transaction().await else {
+///         return HandlerOutcome::retry();
+///     };
+///     if txn
+///         .message(&Settled { id: order.id })
+///         .publish()
+///         .await
+///         .is_err()
+///         || txn.commit().await.is_err()
+///     {
+///         return HandlerOutcome::retry();
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(settle).out(Ledger, Publish).build();
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[must_use = "a transaction does nothing until settled with commit() or abort()"]
 pub struct MemoryTransaction {
@@ -492,9 +541,32 @@ impl SeekControl {
 /// # Examples
 ///
 /// ```
-/// use ruststream::memory::MemoryPosition;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// assert_eq!(MemoryPosition::sequence(7), MemoryPosition::Sequence(7));
+/// #[derive(Deserialize)]
+/// struct Entry {
+///     id: u64,
+/// }
+///
+/// /// Rebuilds its view from everything the broker still holds, on every start.
+/// #[subscriber("audit", start_at(MemoryPosition::start()))]
+/// async fn rebuild(entry: &Entry) -> HandlerOutcome {
+///     tracing::info!(entry.id, "replayed");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     // The last 1024 messages of every name stay replayable.
+///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+///         b.include(rebuild);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[must_use]
@@ -536,38 +608,42 @@ impl MemoryPosition {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "macros")]
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-/// use futures::StreamExt;
-/// use ruststream::memory::{MemoryBroker, MemoryPosition, Retention};
-/// use ruststream::runtime::PublishExt;
-/// use ruststream::{IncomingMessage, Outgoing, Seekable, Seeker, Serialized, Subscriber};
-/// use ruststream::nonzero;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::Seeker;
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
-/// // runs on it.
-/// #[derive(Outgoing, Serialized)]
-/// struct Entry(Vec<u8>);
-///
-/// let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
-/// let mut subscriber = broker.subscribe("audit");
-/// let seeker = subscriber.seeker();
-/// let publisher = broker.publisher();
-///
-/// publisher.message(&Entry(b"one".to_vec())).to("audit").publish().await?;
-/// {
-///     let mut stream = std::pin::pin!(subscriber.stream());
-///     stream.next().await.expect("delivered")?.ack().await?;
+/// #[derive(Deserialize)]
+/// struct Job {
+///     id: u64,
+///     poisoned_until: Option<usize>,
 /// }
 ///
-/// // Replay the log from the start: "one" is delivered again.
-/// seeker.seek(MemoryPosition::start()).await?;
-/// let mut stream = std::pin::pin!(subscriber.stream());
-/// let replayed = stream.next().await.expect("replayed")?;
-/// assert_eq!(replayed.payload(), b"one");
-/// replayed.ack().await?;
-/// # Ok(())
+/// /// Skips forward past a region the producer marked poisoned.
+/// #[subscriber("jobs")]
+/// async fn work(job: &Job, Ctx(seeker): Ctx<SeekHandle>) -> HandlerOutcome {
+///     if let Some(resume_at) = job.poisoned_until {
+///         if seeker
+///             .seek(MemoryPosition::sequence(resume_at))
+///             .await
+///             .is_err()
+///         {
+///             return HandlerOutcome::retry();
+///         }
+///     }
+///     tracing::info!(job.id, "done");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
+///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
+///         b.include(work);
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Clone)]
 pub struct MemorySeeker {

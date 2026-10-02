@@ -262,21 +262,54 @@ pub enum CodecError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "json")]
-/// # fn main() -> Result<(), ruststream::codec::CodecError> {
-/// use ruststream::codec::{Codec, JsonCodec};
-/// # use serde::{Serialize, Deserialize};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::BytesMut;
+/// use ruststream::codec::{Codec, CodecError};
+/// use ruststream::memory::prelude::*;
+/// use serde::de::DeserializeOwned;
+/// use serde::{Deserialize, Serialize};
 ///
-/// #[derive(Serialize, Deserialize, PartialEq, Debug)]
-/// struct Order { id: u32, total: f64 }
+/// /// JSON under the vendor media type the order contract was published with.
+/// #[derive(Debug, Clone, Copy, Default)]
+/// struct OrdersJson;
 ///
-/// let codec = JsonCodec;
-/// let bytes = codec.encode(&Order { id: 1, total: 9.99 })?;
-/// let back: Order = codec.decode(&bytes)?;
-/// assert_eq!(back, Order { id: 1, total: 9.99 });
-/// # Ok(())
+/// impl Codec for OrdersJson {
+///     const CONTENT_TYPE: &'static str = "application/vnd.orders.v1+json";
+///
+///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+///         let bytes =
+///             serde_json::to_vec(value).map_err(|error| CodecError::Encode(Box::new(error)))?;
+///         Ok(BytesMut::from(bytes.as_slice()))
+///     }
+///
+///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+///         serde_json::from_slice(bytes).map_err(|error| CodecError::Decode(Box::new(error)))
+///     }
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     // The scope decodes with the codec, and the document reports its media type.
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_codec(
+///         MemoryBroker::new(),
+///         OrdersJson,
+///         |b| {
+///             b.include(accept);
+///         },
+///     )
+/// }
 /// # }
-/// # #[cfg(not(feature = "json"))]
 /// # fn main() {}
 /// ```
 pub trait Codec: Send + Sync {
@@ -293,13 +326,55 @@ pub trait Codec: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "json")]
-    /// # fn main() {
-    /// use ruststream::codec::{Codec, JsonCodec};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::BytesMut;
+    /// use ruststream::codec::{Codec, CodecError};
+    /// use ruststream::memory::prelude::*;
+    /// use serde::de::DeserializeOwned;
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// assert_eq!(JsonCodec::CONTENT_TYPE, "application/json");
+    /// /// JSON under the vendor media type the order contract was published with: the generated
+    /// /// document reports it as the `contentType` of every message this codec carries.
+    /// #[derive(Debug, Clone, Copy, Default)]
+    /// struct OrdersJson;
+    ///
+    /// impl Codec for OrdersJson {
+    ///     const CONTENT_TYPE: &'static str = "application/vnd.orders.v1+json";
+    ///
+    ///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+    ///         let bytes = serde_json::to_vec(value)
+    ///             .map_err(|error| CodecError::Encode(Box::new(error)))?;
+    ///         Ok(BytesMut::from(bytes.as_slice()))
+    ///     }
+    ///
+    ///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+    ///         serde_json::from_slice(bytes).map_err(|error| CodecError::Decode(Box::new(error)))
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "accepted");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     // The scope decodes with the codec, and the document reports its media type.
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_codec(
+    ///         MemoryBroker::new(),
+    ///         OrdersJson,
+    ///         |b| {
+    ///             b.include(accept);
+    ///         },
+    ///     )
+    /// }
     /// # }
-    /// # #[cfg(not(feature = "json"))]
     /// # fn main() {}
     /// ```
     const CONTENT_TYPE: &'static str = "application/octet-stream";
@@ -333,16 +408,31 @@ pub trait Codec: Send + Sync {
     ///
     /// ```
     /// # #[cfg(feature = "json")]
-    /// # fn main() -> Result<(), ruststream::codec::CodecError> {
+    /// # mod demo {
     /// use ruststream::BytesMut;
-    /// use ruststream::codec::{Codec, JsonCodec};
+    /// use ruststream::codec::{Codec, CodecError, JsonCodec};
+    /// use ruststream::runtime::{Serialized, WireBytes};
+    /// use serde::Serialize;
     ///
-    /// let mut buf = BytesMut::new();
-    /// JsonCodec.encode_into(&7u8, &mut buf)?;
-    /// assert_eq!(&buf[..], b"7");
-    /// # Ok(())
+    /// #[derive(Serialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// A value that brings its own wire format: a one-byte schema tag, then the JSON body, both
+    /// /// written straight into the buffer the publish lends it.
+    /// struct Tagged(Order);
+    ///
+    /// impl Serialized for Tagged {
+    ///     type Error = CodecError;
+    ///
+    ///     fn wire_bytes(&self, buf: &mut BytesMut) -> Result<WireBytes<'_>, CodecError> {
+    ///         buf.extend_from_slice(&[1]);
+    ///         JsonCodec.encode_into(&self.0, buf)?;
+    ///         Ok(WireBytes::InBuffer)
+    ///     }
+    /// }
     /// # }
-    /// # #[cfg(not(feature = "json"))]
     /// # fn main() {}
     /// ```
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {

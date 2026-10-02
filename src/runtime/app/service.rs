@@ -54,25 +54,34 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 ///
 /// # Examples
 ///
-/// ```no_run
-/// # #[cfg(feature = "memory")]
-/// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerOutcome, RustStream};
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::layers::TracingLayer;
+/// use serde::Deserialize;
 ///
-/// let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-///     .layer(TracingLayer::default())
-///     .with_broker(MemoryBroker::new(), |b| {
-///         let subscriber = b.broker().subscribe("orders");
-///         b.handle(
-///             subscriber,
-///             |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
-///             HandlerMetadata::raw("orders"),
-///         );
-///     });
-/// app.run().await
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// /// What `#[ruststream::app]` runs: a span around every delivery, one broker, one handler.
+/// pub fn app() -> impl App {
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .layer(TracingLayer::default())
+///         .with_broker(MemoryBroker::new(), |b| {
+///             b.include(accept);
+///         })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity, Phase = Wired> {
     pub(super) info: AppInfo,
@@ -339,13 +348,35 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
     /// use std::time::Duration;
     ///
-    /// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::PollDiagnostics;
+    /// use serde::Deserialize;
     ///
-    /// let diagnostics = PollDiagnostics::new().threshold(Duration::from_micros(500));
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics.clone());
-    /// # let _ = app;
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "accepted");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// /// The caller keeps a clone of `diagnostics` to read the reports while the app runs.
+    /// pub fn app(diagnostics: &PollDiagnostics) -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .poll_diagnostics(diagnostics.clone().threshold(Duration::from_micros(500)))
+    ///         .with_broker(MemoryBroker::new(), |b| {
+    ///             b.include(accept);
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[cfg(feature = "poll-diagnostics")]
     #[must_use]

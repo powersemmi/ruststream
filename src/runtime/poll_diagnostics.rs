@@ -84,14 +84,26 @@ const BUCKETS: usize = BUCKET_BOUNDS_NS.len() + 1;
 /// use std::time::Duration;
 ///
 /// use ruststream::nonzero;
-/// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+/// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
 ///
-/// let diagnostics = PollDiagnostics::new()
-///     .threshold(Duration::from_micros(250))
-///     .sample_every(nonzero!(16u32));
-/// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics.clone());
-/// # let _ = app;
-/// assert!(diagnostics.reports().is_empty());
+/// /// The app gets the settings, and the caller keeps a clone that reads the same reports.
+/// fn app(diagnostics: &PollDiagnostics) -> impl App {
+///     let diagnostics = diagnostics
+///         .clone()
+///         .threshold(Duration::from_micros(250))
+///         .sample_every(nonzero!(16u32));
+///     RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics)
+/// }
+///
+/// /// A periodic task the service runs next to the app: the handlers that belong on `threads(n)`.
+/// fn log_slow(diagnostics: &PollDiagnostics) {
+///     for report in diagnostics.reports() {
+///         if report.average() > Duration::from_micros(250) {
+///             let subscription = report.subscription();
+///             tracing::warn!(subscription, average = ?report.average(), "slow handler");
+///         }
+///     }
+/// }
 /// ```
 #[derive(Clone)]
 pub struct PollDiagnostics {
@@ -118,10 +130,16 @@ impl PollDiagnostics {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::runtime::PollDiagnostics;
+    /// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
     ///
-    /// let diagnostics = PollDiagnostics::new();
-    /// assert_eq!(diagnostics.report("orders"), None);
+    /// /// The app under the defaults (a 100 microsecond threshold, one poll in 64 timed), and
+    /// /// the handle the caller keeps to read the reports.
+    /// fn app() -> (impl App, PollDiagnostics) {
+    ///     let diagnostics = PollDiagnostics::new();
+    ///     let app =
+    ///         RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics.clone());
+    ///     (app, diagnostics)
+    /// }
     /// ```
     #[must_use]
     pub fn new() -> Self {
@@ -142,10 +160,13 @@ impl PollDiagnostics {
     /// ```
     /// use std::time::Duration;
     ///
-    /// use ruststream::runtime::PollDiagnostics;
+    /// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
     ///
-    /// let diagnostics = PollDiagnostics::new().threshold(Duration::from_millis(1));
-    /// # let _ = diagnostics;
+    /// fn app() -> impl App {
+    ///     // A handler that holds a poll for a millisecond belongs on threads of its own.
+    ///     let diagnostics = PollDiagnostics::new().threshold(Duration::from_millis(1));
+    ///     RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics)
+    /// }
     /// ```
     #[must_use]
     pub const fn threshold(mut self, threshold: Duration) -> Self {
@@ -159,10 +180,13 @@ impl PollDiagnostics {
     ///
     /// ```
     /// use ruststream::nonzero;
-    /// use ruststream::runtime::PollDiagnostics;
+    /// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
     ///
-    /// let diagnostics = PollDiagnostics::new().sample_every(nonzero!(8u32));
-    /// # let _ = diagnostics;
+    /// fn app() -> impl App {
+    ///     // A hot subscription times one poll in eight for a finer average.
+    ///     let diagnostics = PollDiagnostics::new().sample_every(nonzero!(8u32));
+    ///     RustStream::new(AppInfo::new("svc", "0.1.0")).poll_diagnostics(diagnostics)
+    /// }
     /// ```
     #[must_use]
     pub const fn sample_every(mut self, every: NonZeroU32) -> Self {
@@ -178,8 +202,15 @@ impl PollDiagnostics {
     /// ```
     /// use ruststream::runtime::PollDiagnostics;
     ///
-    /// let diagnostics = PollDiagnostics::new();
-    /// assert!(diagnostics.report("orders").is_none());
+    /// /// The `/debug/poll` route: the moving average of one subscription, once it was sampled.
+    /// fn orders_average(diagnostics: &PollDiagnostics) -> Option<String> {
+    ///     let report = diagnostics.report("orders")?;
+    ///     Some(format!(
+    ///         "{:?} over {} polls",
+    ///         report.average(),
+    ///         report.samples()
+    ///     ))
+    /// }
     /// ```
     #[must_use]
     pub fn report(&self, subscription: &str) -> Option<PollReport> {
@@ -196,8 +227,12 @@ impl PollDiagnostics {
     /// ```
     /// use ruststream::runtime::PollDiagnostics;
     ///
-    /// for report in PollDiagnostics::new().reports() {
-    ///     println!("{}: {:?} on average", report.subscription(), report.average());
+    /// /// Logged at shutdown: every subscription the app sampled, in the order they opened.
+    /// fn log_reports(diagnostics: &PollDiagnostics) {
+    ///     for report in diagnostics.reports() {
+    ///         let subscription = report.subscription();
+    ///         tracing::info!(subscription, average = ?report.average(), "poll time");
+    ///     }
     /// }
     /// ```
     #[must_use]
@@ -266,9 +301,16 @@ impl fmt::Debug for PollDiagnostics {
 /// ```
 /// use ruststream::runtime::PollDiagnostics;
 ///
-/// let diagnostics = PollDiagnostics::new();
-/// if let Some(report) = diagnostics.report("orders") {
-///     assert!(report.p99() >= report.average() || report.samples() < 100);
+/// /// A report the operators read: the tail next to the average, and how many polls they rest on.
+/// fn describe(diagnostics: &PollDiagnostics, subscription: &str) -> Option<String> {
+///     let report = diagnostics.report(subscription)?;
+///     Some(format!(
+///         "{}: average {:?}, p99 {:?}, {} polls",
+///         report.subscription(),
+///         report.average(),
+///         report.p99(),
+///         report.samples(),
+///     ))
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -285,9 +327,13 @@ impl PollReport {
     /// # Examples
     ///
     /// ```
-    /// # use ruststream::runtime::PollDiagnostics;
-    /// for report in PollDiagnostics::new().reports() {
-    ///     println!("{}", report.subscription());
+    /// use ruststream::runtime::PollDiagnostics;
+    ///
+    /// fn log_reports(diagnostics: &PollDiagnostics) {
+    ///     for report in diagnostics.reports() {
+    ///         let subscription = report.subscription();
+    ///         tracing::info!(subscription, average = ?report.average(), "poll time");
+    ///     }
     /// }
     /// ```
     #[must_use]
@@ -300,9 +346,16 @@ impl PollReport {
     /// # Examples
     ///
     /// ```
-    /// # use ruststream::runtime::PollDiagnostics;
-    /// let timed: u64 = PollDiagnostics::new().reports().iter().map(|r| r.samples()).sum();
-    /// assert_eq!(timed, 0);
+    /// use ruststream::runtime::PollDiagnostics;
+    ///
+    /// /// How many polls the whole app has timed so far.
+    /// fn timed(diagnostics: &PollDiagnostics) -> u64 {
+    ///     diagnostics
+    ///         .reports()
+    ///         .iter()
+    ///         .map(|report| report.samples())
+    ///         .sum()
+    /// }
     /// ```
     #[must_use]
     pub const fn samples(&self) -> u64 {
@@ -315,13 +368,19 @@ impl PollReport {
     /// # Examples
     ///
     /// ```
-    /// # use std::time::Duration;
-    /// # use ruststream::runtime::PollDiagnostics;
-    /// let slow = PollDiagnostics::new()
-    ///     .reports()
-    ///     .into_iter()
-    ///     .filter(|r| r.average() > Duration::from_micros(100));
-    /// assert_eq!(slow.count(), 0);
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::runtime::PollDiagnostics;
+    ///
+    /// /// The subscriptions whose handler averages over a budget: candidates for `threads(n)`.
+    /// fn over_budget(diagnostics: &PollDiagnostics, budget: Duration) -> Vec<String> {
+    ///     diagnostics
+    ///         .reports()
+    ///         .into_iter()
+    ///         .filter(|report| report.average() > budget)
+    ///         .map(|report| report.subscription().to_owned())
+    ///         .collect()
+    /// }
     /// ```
     #[must_use]
     pub const fn average(&self) -> Duration {
@@ -333,9 +392,14 @@ impl PollReport {
     /// # Examples
     ///
     /// ```
-    /// # use ruststream::runtime::PollDiagnostics;
-    /// for report in PollDiagnostics::new().reports() {
-    ///     println!("{}: p99 {:?}", report.subscription(), report.p99());
+    /// use ruststream::runtime::PollDiagnostics;
+    ///
+    /// /// The tail, which an average hides: one slow poll in a hundred is still a stalled runtime.
+    /// fn log_tails(diagnostics: &PollDiagnostics) {
+    ///     for report in diagnostics.reports() {
+    ///         let subscription = report.subscription();
+    ///         tracing::info!(subscription, p99 = ?report.p99(), "poll tail");
+    ///     }
     /// }
     /// ```
     #[must_use]

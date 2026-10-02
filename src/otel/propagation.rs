@@ -108,11 +108,41 @@ impl Injector for HeaderInjector<'_> {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
 /// use ruststream::otel::OpenTelemetry;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let otel = OpenTelemetry::new();
-/// let _consume = otel.consume_layer();
-/// let _publish = otel.propagation();
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "confirmations")]
+/// struct Confirmation {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders", reply)]
+/// async fn confirm(order: &Order) -> Confirmation {
+///     Confirmation { id: order.id }
+/// }
+///
+/// fn app() -> impl App {
+///     let otel = OpenTelemetry::new();
+///     // A span per delivery, and the delivery's trace context on every reply.
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .layer(otel.consume_layer())
+///         .with_broker(MemoryBroker::new(), |b| {
+///             b.include(confirm)
+///                 .out_reply(Publish)
+///                 .transform(otel.propagation());
+///         })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenTelemetry;
@@ -123,9 +153,41 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let _otel = OpenTelemetry::new();
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "confirmations")]
+    /// struct Confirmation {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn confirm(order: &Order) -> Confirmation {
+    ///     Confirmation { id: order.id }
+    /// }
+    ///
+    /// fn app() -> impl App {
+    ///     let otel = OpenTelemetry::new();
+    ///     // A span per delivery, and the delivery's trace context on every reply.
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .layer(otel.consume_layer())
+    ///         .with_broker(MemoryBroker::new(), |b| {
+    ///             b.include(confirm)
+    ///                 .out_reply(Publish)
+    ///                 .transform(otel.propagation());
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub const fn new() -> Self {
@@ -139,9 +201,37 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let _layer = OpenTelemetry::new().consume_layer();
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "confirmations")]
+    /// struct Confirmation {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn confirm(order: &Order) -> Confirmation {
+    ///     Confirmation { id: order.id }
+    /// }
+    ///
+    /// fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .layer(OpenTelemetry::new().consume_layer())
+    ///         .with_broker(MemoryBroker::new(), |b| {
+    ///             b.include(confirm).out_reply(Publish);
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub const fn consume_layer(&self) -> OpenTelemetryLayer {
@@ -156,9 +246,38 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let _propagation = OpenTelemetry::new().propagation();
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "confirmations")]
+    /// struct Confirmation {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn confirm(order: &Order) -> Confirmation {
+    ///     Confirmation { id: order.id }
+    /// }
+    ///
+    /// fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         // The confirmation carries the order's `traceparent`.
+    ///         b.include(confirm)
+    ///             .out_reply(Publish)
+    ///             .transform(OpenTelemetry::new().propagation());
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub const fn propagation(&self) -> TracePropagation {

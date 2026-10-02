@@ -24,33 +24,42 @@ use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::PublishExt;
-/// use ruststream::{Outgoing, Serialized};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
 /// use serde::Serialize;
 ///
-/// #[derive(Outgoing, Serialize)]
-/// #[outgoing(name = "orders.done")]
-/// struct OrderDone {
-///     id: u64,
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "services.started")]
+/// struct Started {
+///     service: &'static str,
 /// }
 ///
-/// // Bytes that are already the payload, under a name of their own. It declares no
-/// // destination, so the call site names one.
-/// #[derive(Outgoing, Serialized)]
-/// struct Audit(Vec<u8>);
+/// /// Declares no destination, so the call site names one.
+/// #[derive(Serialize, Outgoing)]
+/// struct Seeded {
+///     rows: u64,
+/// }
 ///
-/// let publisher = MemoryBroker::new().publisher();
-/// publisher.message(&OrderDone { id: 7 }).publish().await?;
-/// publisher
-///     .message(&Audit(b"{}".to_vec()))
-///     .to("orders.audit")
-///     .publish()
-///     .await?;
-/// # Ok(())
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("catalog", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // The hook is handed the live publisher; `message(..)` is the same builder an `Out`
+///         // slot offers, encoding with the default codec.
+///         b.after_startup(Publish, async move |publisher| {
+///             publisher
+///                 .message(&Seeded { rows: 1200 })
+///                 .to("catalog.seeded")
+///                 .publish()
+///                 .await?;
+///             publisher
+///                 .message(&Started { service: "catalog" })
+///                 .publish()
+///                 .await
+///         });
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 pub trait PublishExt: Publisher {
     /// Starts a typed publish of a `#[derive(Outgoing)]` value, encoded with the crate's

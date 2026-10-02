@@ -22,19 +22,37 @@ use bytes_utils::Str;
 /// # Examples
 ///
 /// ```
-/// use ruststream::HeaderMap;
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let mut h = HeaderMap::new();
-/// h.insert("Content-Type", "application/json");
-/// h.insert("X-Tenant-Id", "acme");
+/// /// The tenant a delivery belongs to. Header names compare without regard to case, so the
+/// /// producer may have written `X-Tenant-Id`.
+/// struct Tenant(String);
 ///
-/// assert_eq!(h.content_type(), Some("application/json"));
-/// assert_eq!(h.get("x-tenant-id"), Some(b"acme".as_slice()));
+/// impl<C: Send, S: Sync> FromContext<C, S> for Tenant {
+///     type Rejection = HandlerOutcome;
+///     async fn from_context(ctx: &mut Context<'_, C, S>) -> Result<Self, HandlerOutcome> {
+///         match ctx.headers().get_str("x-tenant-id") {
+///             Some(tenant) => Ok(Tenant(tenant.to_owned())),
+///             None => Err(HandlerOutcome::drop()),
+///         }
+///     }
+/// }
 ///
-/// let mut same = HeaderMap::new();
-/// same.insert("x-tenant-id", "acme");
-/// same.insert("content-type", "application/json");
-/// assert_eq!(h, same);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn bill(order: &Order, Tenant(tenant): Tenant) -> HandlerOutcome {
+///     tracing::info!(order.id, tenant, "billed");
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 // A list rather than a hash table: an empty map allocates nothing, the first insert allocates one
 // block instead of a table, and a lookup with capitals in the name compares without lowercasing a
@@ -92,14 +110,62 @@ impl HeaderMap {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HeaderMap, Str};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Outgoing, SlotContext};
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let mut headers = HeaderMap::new();
-    /// headers.insert(Str::from_static("content-type"), "application/json");
-    /// headers.insert(format!("x-tenant-{}", 7), "acme");
+    /// /// Stamps everything a slot sends with the region this instance runs in.
+    /// struct Region(&'static str);
     ///
-    /// assert_eq!(headers.content_type(), Some("application/json"));
-    /// assert_eq!(headers.get_str("x-tenant-7"), Some("acme"));
+    /// impl<Options> PublishTransform<ForSlot, Options> for Region {
+    ///     type Destination = Reads;
+    ///
+    ///     fn apply(
+    ///         &self,
+    ///         out: &mut Outgoing<'_>,
+    ///         _options: &mut Option<Options>,
+    ///         _cx: &SlotContext<'_>,
+    ///     ) {
+    ///         out.headers_mut()
+    ///             .insert(Str::from_static("x-region"), self.0);
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "orders.accepted")]
+    /// struct Accepted {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(Accepted)]
+    /// struct Events;
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, Out(events): Out<impl Publisher, Events>) -> HandlerOutcome {
+    ///     match events.message(&Accepted { id: order.id }).publish().await {
+    ///         Ok(()) => HandlerOutcome::ack(),
+    ///         Err(_) => HandlerOutcome::retry(),
+    ///     }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(accept)
+    ///             .out(Events, Publish)
+    ///             .transform(Region("eu-west"))
+    ///             .build();
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn insert(&mut self, name: impl Into<Str>, value: impl Into<Bytes>) -> Option<Bytes> {
         let key = normalize_owned(name.into());
@@ -146,15 +212,58 @@ impl HeaderMap {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HeaderMap, Str};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Outgoing, PublishContext};
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let mut headers = HeaderMap::new();
-    /// headers.insert("Reply-To", "replies.inbox");
+    /// /// Sends each reply to the inbox its request named. The header's bytes become the
+    /// /// destination as they are: one check that they are UTF-8, no copy.
+    /// struct ToInbox;
     ///
-    /// let shared = headers.get_shared("reply-to").ok_or("no reply address")?;
-    /// let destination = Str::try_from(shared)?;
-    /// assert_eq!(&*destination, "replies.inbox");
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {
+    ///     type Destination = Names;
+    ///
+    ///     fn apply(
+    ///         &self,
+    ///         out: &mut Outgoing<'_>,
+    ///         _options: &mut Option<Options>,
+    ///         cx: &PublishContext<'_, C>,
+    ///     ) {
+    ///         if let Some(inbox) = cx.headers().get_shared("reply-to") {
+    ///             if let Ok(name) = Str::try_from(inbox) {
+    ///                 out.set_name(name);
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Request {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// struct Answer {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("requests", reply("answers"))]
+    /// async fn answer(request: &Request) -> Answer {
+    ///     Answer { id: request.id }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(
+    ///         MemoryBroker::new(),
+    ///         |b| {
+    ///             b.include(answer).out_reply(Publish).transform(ToInbox);
+    ///         },
+    ///     )
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn get_shared(&self, name: &str) -> Option<Bytes> {

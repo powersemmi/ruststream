@@ -52,18 +52,42 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use ruststream::prelude::*;
-/// use ruststream::runtime::Reads;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// #[derive(Clone, Copy, Debug)]
-/// struct Encoded;
-///
-/// impl OutSlot for Encoded {
-///     const NAME: &'static str = "Encoded";
-///     type Destination = Reads;
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
 /// }
 ///
-/// assert_eq!(<Encoded as OutSlot>::NAME, "Encoded");
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "audit")]
+/// struct Audited {
+///     id: u64,
+/// }
+///
+/// /// The slot the handler names; `Audit` is how startup errors and `tb.out::<Audit>()` call it.
+/// #[derive(OutSlot)]
+/// #[publishes(Audited)]
+/// struct Audit;
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> HandlerOutcome {
+///     match audit.message(&Audited { id: order.id }).publish().await {
+///         Ok(()) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept).out(Audit, Publish).build();
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub trait OutSlot: 'static {
     /// The human-readable slot name, used by diagnostics and test assertions.
@@ -99,9 +123,38 @@ pub trait OutSlot: 'static {
 /// # Examples
 ///
 /// ```
-/// use ruststream::prelude::*;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// assert_eq!(<DefaultSlot as OutSlot>::NAME, "default");
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "orders.accepted")]
+/// struct Accepted {
+///     id: u64,
+/// }
+///
+/// /// One `Out` parameter and no marker: it binds to `DefaultSlot`.
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
+///     match out.message(&Accepted { id: order.id }).publish().await {
+///         Ok(()) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept).out(DefaultSlot, Publish).build();
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct DefaultSlot;
@@ -172,22 +225,87 @@ pub struct NoReply;
 /// # Examples
 ///
 /// ```
-/// use ruststream::prelude::*;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// struct Progress;
-///
-/// struct Events;
-///
-/// impl OutSlot for Events {
-///     const NAME: &'static str = "Events";
-///     type Destination = Reads;
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
 /// }
 ///
-/// // What `#[derive(OutSlot)]` + `#[publishes(Progress)]` generates:
-/// impl PublishedThrough<Events> for Progress {}
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "chunks.progress")]
+/// struct Progress {
+///     percent: u8,
+/// }
 ///
-/// fn admits<T: PublishedThrough<Slot>, Slot>() {}
-/// admits::<Progress, Events>();
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "billing.invoices")]
+/// struct Invoice {
+///     id: u64,
+/// }
+///
+/// /// `Progress: PublishedThrough<Events>`, and nothing else is.
+/// #[derive(OutSlot)]
+/// #[publishes(Progress)]
+/// struct Events;
+///
+/// #[subscriber("orders")]
+/// async fn track(order: &Order, Out(events): Out<impl Publisher, Events>) -> HandlerOutcome {
+///     tracing::info!(order.id, "tracking");
+///     match events.message(&Progress { percent: 100 }).publish().await {
+///         Ok(()) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+///
+/// A message outside the dictionary does not compile:
+///
+/// ```compile_fail
+/// # #[cfg(not(all(feature = "macros", feature = "memory", feature = "json")))]
+/// # compile_error!("the example needs the macros, memory and json features");
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "chunks.progress")]
+/// struct Progress {
+///     percent: u8,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "billing.invoices")]
+/// struct Invoice {
+///     id: u64,
+/// }
+///
+/// /// `Progress: PublishedThrough<Events>`, and nothing else is.
+/// #[derive(OutSlot)]
+/// #[publishes(Progress)]
+/// struct Events;
+///
+/// #[subscriber("orders")]
+/// async fn track(order: &Order, Out(events): Out<impl Publisher, Events>) -> HandlerOutcome {
+///     // An invoice is not in the slot's dictionary: the publish names it in the error.
+///     match events.message(&Invoice { id: order.id }).publish().await {
+///         Ok(()) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[diagnostic::on_unimplemented(
     message = "the `{Slot}` slot does not publish `{Self}`",
@@ -284,9 +402,6 @@ impl<Rhs> Both<Rhs> for Reads {
 ///     const NAME: &'static str = "Events";
 ///     type Destination = <(ChunkDone, (Progress, ())) as ListOffer>::Offer;
 /// }
-///
-/// fn offers_reads<T: OutSlot<Destination = Reads>>() {}
-/// # fn check() { offers_reads::<Events>(); }
 /// # }
 /// ```
 pub trait ListOffer {
@@ -502,31 +617,67 @@ impl_contains_message! {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
-/// use ruststream::prelude::*;
-/// use serde::Serialize;
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// #[derive(Outgoing, Serialize)]
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
 /// #[outgoing(name = "chunks.progress")]
 /// struct Progress {
 ///     percent: u8,
 /// }
 ///
-/// #[derive(Outgoing, Serialize)]
+/// #[derive(Serialize, Outgoing)]
 /// #[outgoing(name = "chunks.done")]
 /// struct ChunkDone {
 ///     output_key: String,
 /// }
 ///
-/// // A reusable named set: the variants' models are what a handler naming `ConvertSends` as
-/// // its third Out argument publishes. The enum is never constructed.
+/// /// A reusable named set: the variants' models are what a handler naming `ConvertSends` as
+/// /// its third `Out` argument publishes. The enum is never constructed.
 /// #[derive(OutMessages)]
 /// enum ConvertSends {
 ///     Progress(Progress),
 ///     Done(ChunkDone),
 /// }
+///
+/// #[derive(OutSlot)]
+/// #[publishes(Progress, ChunkDone)]
+/// struct Events;
+///
+/// #[subscriber("orders")]
+/// async fn convert(
+///     order: &Order,
+///     Out(events): Out<impl Publisher, Events, ConvertSends>,
+/// ) -> HandlerOutcome {
+///     let done = ChunkDone {
+///         output_key: format!("out/{}", order.id),
+///     };
+///     if events
+///         .message(&Progress { percent: 100 })
+///         .publish()
+///         .await
+///         .is_err()
+///         || events.message(&done).publish().await.is_err()
+///     {
+///         return HandlerOutcome::retry();
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("convert", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(convert).out(Events, Publish).build();
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not define a message set for the `{M}` slot",

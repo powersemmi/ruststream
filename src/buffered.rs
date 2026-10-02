@@ -41,13 +41,55 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// # Examples
 ///
 /// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
 /// use std::time::Duration;
 ///
-/// use ruststream::{Buffered, Name};
+/// use ruststream::Buffered;
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{Declared, SubscriberBuilder};
+/// use serde::Deserialize;
 ///
-/// // What a broker crate wraps its own source in, so its subscriber batches on the client.
-/// let source = Buffered::new(Name::new("orders")).max_wait(Duration::from_millis(20));
-/// # let _ = source;
+/// /// A broker crate's mount-site step for a transport that delivers one message at a time: the
+/// /// batches are assembled on the client, and a partial one closes `wait` after it opened.
+/// pub trait Linger {
+///     type Out;
+///     fn linger(self, wait: Duration) -> Self::Out;
+/// }
+///
+/// impl<Def: Declared, State, DefCodec> Linger
+///     for SubscriberBuilder<Def, MemorySource, State, DefCodec>
+/// {
+///     type Out = SubscriberBuilder<Def, Buffered<MemorySource>, State, DefCodec>;
+///
+///     fn linger(self, wait: Duration) -> Self::Out {
+///         self.map_source(|source| Buffered::new(source).max_wait(wait))
+///     }
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber(MemorySource)]
+/// async fn settle(orders: &[Order]) -> HandlerOutcome {
+///     tracing::info!(count = orders.len(), "settled a batch");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(
+///             settle
+///                 .name("orders")
+///                 .batch(nonzero!(64))
+///                 .linger(Duration::from_millis(20)),
+///         );
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone)]
 pub struct Buffered<S> {

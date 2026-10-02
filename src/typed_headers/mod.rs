@@ -118,14 +118,17 @@ impl HeaderMap {
     ///
     /// # Examples
     ///
-    /// The method is crate-internal; user code reaches this parse through the
-    /// [`Message<H, P>`](crate::runtime::Message) input or the
-    /// [`Headers`](crate::runtime::Headers) extractor, against a contract like this one:
+    /// The method is crate-internal; a handler reaches this parse through the
+    /// [`Headers`](crate::runtime::Headers) extractor or the
+    /// [`Message<H, P>`](crate::runtime::Message) input:
     ///
     /// ```
-    /// use ruststream::HeaderMap;
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
     /// use serde::Deserialize;
     ///
+    /// /// `task_id` and `chunk_no` parse into their fields, and an absent `trace` reads as `None`.
     /// #[derive(Deserialize)]
     /// struct ChunkMeta {
     ///     task_id: u64,
@@ -133,11 +136,17 @@ impl HeaderMap {
     ///     trace: Option<String>,
     /// }
     ///
-    /// let mut headers = HeaderMap::new();
-    /// headers.insert("task_id", "7");
-    /// headers.insert("chunk_no", "3");
-    /// // `task_id` and `chunk_no` parse into their fields; the absent `trace` reads as `None`.
-    /// # let _ = headers;
+    /// #[derive(Deserialized)]
+    /// struct Chunk<'a>(&'a [u8]);
+    ///
+    /// #[subscriber("chunks")]
+    /// async fn store(chunk: &Chunk<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
+    ///     let bytes = chunk.0.len();
+    ///     tracing::info!(meta.task_id, meta.chunk_no, trace = ?meta.trace, bytes, "stored");
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub(crate) fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
         T::deserialize(de::HeadersDeserializer::new(self))
@@ -161,21 +170,74 @@ impl HeaderMap {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::HeaderMap;
-    /// use serde::Serialize;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Outgoing, SlotContext};
+    /// use serde::{Deserialize, Serialize};
     ///
+    /// /// The deployment every message of the slot came from, as a header contract.
     /// #[derive(Serialize)]
-    /// struct ChunkMeta {
-    ///     task_id: u64,
-    ///     done: bool,
+    /// struct Origin {
+    ///     region: &'static str,
+    ///     canary: bool,
     /// }
     ///
-    /// let mut headers = HeaderMap::new();
-    /// headers.insert_typed(&ChunkMeta { task_id: 7, done: true })?;
+    /// /// Stamps the contract onto everything the slot sends.
+    /// struct Stamp(Origin);
     ///
-    /// assert_eq!(headers.get_str("task_id"), Some("7"));
-    /// assert_eq!(headers.get_str("done"), Some("true"));
-    /// # Ok::<(), ruststream::SerializeHeadersError>(())
+    /// impl<Options> PublishTransform<ForSlot, Options> for Stamp {
+    ///     type Destination = Reads;
+    ///
+    ///     fn apply(
+    ///         &self,
+    ///         out: &mut Outgoing<'_>,
+    ///         _options: &mut Option<Options>,
+    ///         _cx: &SlotContext<'_>,
+    ///     ) {
+    ///         if let Err(error) = out.headers_mut().insert_typed(&self.0) {
+    ///             tracing::warn!(%error, "origin headers left out");
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "orders.accepted")]
+    /// struct Accepted {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(Accepted)]
+    /// struct Events;
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order, Out(events): Out<impl Publisher, Events>) -> HandlerOutcome {
+    ///     match events.message(&Accepted { id: order.id }).publish().await {
+    ///         Ok(()) => HandlerOutcome::ack(),
+    ///         Err(_) => HandlerOutcome::retry(),
+    ///     }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     let origin = Origin {
+    ///         region: "eu-west",
+    ///         canary: false,
+    ///     };
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(accept)
+    ///             .out(Events, Publish)
+    ///             .transform(Stamp(origin))
+    ///             .build();
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn insert_typed<T: Serialize + ?Sized>(
         &mut self,

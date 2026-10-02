@@ -446,10 +446,29 @@ pub mod __private {
 /// # Examples
 ///
 /// ```
-/// use ruststream::nonzero;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let batch: core::num::NonZeroUsize = nonzero!(128);
-/// # let _ = batch;
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn settle(orders: &[Order]) -> HandlerOutcome {
+///     tracing::info!(count = orders.len(), "settled a batch");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(settle.batch(nonzero!(128)).workers(nonzero!(4)));
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 ///
 /// Zero does not compile:

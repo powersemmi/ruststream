@@ -614,14 +614,44 @@ impl MemoryState {
 /// # Examples
 ///
 /// ```
-/// use ruststream::memory::{MemoryBroker, Retention};
-/// use ruststream::nonzero;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // A service that only routes messages keeps none of them.
-/// let bus = MemoryBroker::new();
-/// // A service that replays keeps the last 128 messages of every name.
-/// let replayable = MemoryBroker::retaining(Retention::Messages(nonzero!(128)));
-/// # let _ = (bus, replayable);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// #[subscriber("orders", start_at(MemoryPosition::start()))]
+/// async fn rebuild(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "replayed");
+///     HandlerOutcome::ack()
+/// }
+///
+/// /// A service that only routes messages keeps none of them.
+/// fn router() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept);
+///     })
+/// }
+///
+/// /// A service that replays keeps the last 128 messages of every name.
+/// fn projection() -> RustStream {
+///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(128)));
+///     RustStream::new(AppInfo::new("projection", "0.1.0")).with_broker(broker, |b| {
+///         b.include(rebuild);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub struct MemoryBroker<Log = Discarding> {
     state: Arc<MemoryState>,
@@ -670,26 +700,31 @@ impl MemoryBroker<Retaining> {
     /// # Examples
     ///
     /// ```
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::memory::{MemoryBroker, MemoryPosition, Retention};
-    /// use ruststream::{Broker, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber};
-    /// use ruststream::{IncomingMessage, nonzero};
-    /// use futures::StreamExt;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
-    /// let mut subscriber = broker.subscribe("audit");
-    /// let seeker = subscriber.seeker();
-    /// broker
-    ///     .publisher()
-    ///     .publish(OutgoingMessage::new("audit", b"entry"), None)
-    ///     .await?;
+    /// #[derive(Deserialize)]
+    /// struct Entry {
+    ///     id: u64,
+    /// }
     ///
-    /// seeker.seek(MemoryPosition::start()).await?;
-    /// let mut stream = std::pin::pin!(subscriber.stream());
-    /// let replayed = stream.next().await.expect("replayed")?;
-    /// assert_eq!(replayed.payload(), b"entry");
-    /// # Ok(())
+    /// /// Opens at the oldest retained message, so a restart rebuilds from what the broker kept.
+    /// #[subscriber("audit", start_at(MemoryPosition::start()))]
+    /// async fn rebuild(entry: &Entry) -> HandlerOutcome {
+    ///     tracing::info!(entry.id, "replayed");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+    ///         b.include(rebuild);
+    ///     })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn retaining(retention: Retention) -> Self {
@@ -928,15 +963,36 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// use ruststream::memory::{MemoryBroker, MemoryPublish};
-/// use ruststream::{Broker, PublishPolicy};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::MemoryPublish;
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let connected = MemoryBroker::new().connect().await?;
-/// let publisher = MemoryPublish.pair(&connected).await?;
-/// # let _ = publisher;
-/// # Ok(())
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "orders.confirmed")]
+/// struct Confirmed {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders", reply)]
+/// async fn confirm(order: &Order) -> Confirmed {
+///     Confirmed { id: order.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // The prelude also names this policy `Publish`.
+///         b.include(confirm).out_reply(MemoryPublish);
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[must_use]
@@ -965,15 +1021,58 @@ impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
 /// # Examples
 ///
 /// ```
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// use ruststream::memory::{MemoryBroker, MemoryRequest};
-/// use ruststream::{Broker, PublishPolicy};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use std::time::Duration;
 ///
-/// let connected = MemoryBroker::new().connect().await?;
-/// let requester = MemoryRequest.pair(&connected).await?;
-/// # let _ = requester;
-/// # Ok(())
+/// use ruststream::OutgoingMessage;
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize)]
+/// struct Ask {
+///     id: u64,
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Quote {
+///     price: u64,
+/// }
+///
+/// #[derive(OutSlot)]
+/// struct Pricing;
+///
+/// #[subscriber("orders")]
+/// async fn price(order: &Order, Out(pricing): Out<impl RequestReply, Pricing>) -> HandlerOutcome {
+///     let Ok(ask) = serde_json::to_vec(&Ask { id: order.id }) else {
+///         return HandlerOutcome::drop();
+///     };
+///     // The reply comes back on an inbox the request names in its `reply-to` header.
+///     let request = OutgoingMessage::new("quotes.ask", ask.as_slice());
+///     let Ok(reply) = pricing.request(request, Duration::from_secs(2)).await else {
+///         return HandlerOutcome::retry();
+///     };
+///     match serde_json::from_slice::<Quote>(reply.payload()) {
+///         Ok(quote) => {
+///             tracing::info!(order.id, quote.price, "priced");
+///             HandlerOutcome::ack()
+///         }
+///         Err(_) => HandlerOutcome::drop(),
+///     }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(price).out(Pricing, Request).build();
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[must_use]

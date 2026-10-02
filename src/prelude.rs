@@ -28,12 +28,23 @@
 //! # Examples
 //!
 //! ```
+//! # #[cfg(all(feature = "macros", feature = "json"))]
+//! # mod demo {
 //! use ruststream::prelude::*;
+//! use serde::Deserialize;
 //!
-//! async fn handle(order: &str, ctx: &mut Context<'_>) -> HandlerOutcome {
-//!     let _ = (order.len(), ctx.name());
+//! #[derive(Deserialize)]
+//! struct Order {
+//!     id: u64,
+//! }
+//!
+//! #[subscriber("orders")]
+//! async fn handle(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+//!     tracing::info!(order.id, subscription = ctx.name(), "handled");
 //!     HandlerOutcome::ack()
 //! }
+//! # }
+//! # fn main() {}
 //! ```
 
 pub use crate::runtime::{
