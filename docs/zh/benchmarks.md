@@ -153,16 +153,16 @@ Broker 会在自己的页面上说明。
 ## 如何公布结果 { #publishing-results }
 
 Broker crate 用 `just bench` 对着自己 compose 文件里的 Broker 运行自己的基准程序。它把结果
-公布在自己的文档站点上：一个供人阅读的页面，和一份供本页读取的 JSON 文档。
+提交到自己的仓库：一个供人阅读的页面，和一份供本页读取的 JSON 文档。
 
 ### 稳定路径 { #the-stable-path }
 
 ```text
-https://powersemmi.github.io/<crate>/latest/benchmarks/results.json
+https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/results.json
 ```
 
-该文件位于 Broker 仓库的 `docs/benchmarks/results.json`。文档构建原样拷贝它，部署把它放到
-`latest` 别名下，紧挨着解释它的页面。各 Broker 站点与本站点同源，因此本页直接读取它们。
+该文件位于 Broker 仓库的 `docs/benchmarks/results.json`，紧挨着解释它的页面。本页从 `main`
+分支读取它，所以新的测量结果合并后立即可见。
 
 ### 文档 { #the-document }
 

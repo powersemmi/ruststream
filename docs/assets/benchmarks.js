@@ -5,9 +5,9 @@
  *
  * The numbers are fetched in the reader's browser instead of being copied into this repository:
  * a broker remeasures on its own schedule, and a copy here would be stale from the moment it
- * landed. Every broker site is served from the same origin as this one, so this is a same-origin
- * request; a preview served from localhost is not, and falls back to the "not published yet"
- * line like a broker that has published nothing.
+ * landed. Each document is read from its repository's `main` branch, so a measurement shows as
+ * soon as it is merged rather than at the crate's next release; GitHub serves those files to any
+ * origin.
  *
  * Prose is never written here. The page carries every label as JSON on the container, so the
  * translated pages control their own wording.
@@ -37,11 +37,10 @@
   // The core measures no broker of its own, so it appears in the second table only.
   const CORE = { name: "RustStream", repo: "ruststream" };
 
-  const SITE = "https://powersemmi.github.io/";
-  // `mike set-default latest` makes the site root a redirect page, so the versioned alias is
-  // part of the stable path rather than an implementation detail of the deploy.
-  const RESULTS = "/latest/benchmarks/results.json";
-  const PAGE = "/latest/benchmarks/";
+  const RAW = "https://raw.githubusercontent.com/powersemmi/";
+  const REPO = "https://github.com/powersemmi/";
+  const RESULTS = "/main/docs/benchmarks/results.json";
+  const PAGE = "/blob/main/docs/benchmarks.md";
   // Schema 2 added the `code` section and schema 3 reports each loop as three rounds: its best,
   // its median and its worst. A schema 1 document still renders in the first table.
   const SCHEMAS = [1, 2, 3];
@@ -65,7 +64,7 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const response = await fetch(SITE + broker.repo + RESULTS, { signal: controller.signal });
+      const response = await fetch(RAW + broker.repo + RESULTS, { signal: controller.signal });
       if (!response.ok) {
         return null;
       }
@@ -249,7 +248,7 @@ function provenance(published, labels) {
       const item = document.createElement("li");
       item.appendChild(text("strong", broker.name));
       item.appendChild(document.createTextNode(" - " + parts.join(", ") + ". "));
-      item.appendChild(link(SITE + broker.repo + PAGE, labels.details));
+      item.appendChild(link(REPO + broker.repo + PAGE, labels.details));
       list.appendChild(item);
     }
     return list;
