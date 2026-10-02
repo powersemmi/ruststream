@@ -1,0 +1,2163 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Async messaging framework for Rust - broker-agnostic traits, router, codecs, and a conformance harness for broker authors.">
+      
+      
+      
+        <link rel="canonical" href="https://powersemmi.github.io/ruststream/0.7/zh/broker-authors/conformance/">
+      
+      
+        <link rel="prev" href="../example-nats/">
+      
+      
+        <link rel="next" href="../templates/">
+      
+      
+        
+          <link rel="alternate" href="../../../broker-authors/conformance/" hreflang="en">
+        
+          <link rel="alternate" href="../../../ru/broker-authors/conformance/" hreflang="ru">
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Conformance - RustStream</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#conformance" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../../" title="RustStream" class="md-header__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RustStream
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Conformance
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../broker-authors/conformance/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../../ru/broker-authors/conformance/" hreflang="ru" class="md-select__link">
+              Russian
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              Chinese
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/powersemmi/ruststream" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../" title="RustStream" class="md-nav__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    RustStream
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/powersemmi/ruststream" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速开始
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    快速开始
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    安装
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速上手
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    教程：构建你的第一个服务
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../brokers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Broker
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../brokers/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    内存 Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-fred/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Redis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-lapin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RabbitMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rdkafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-amqp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AMQP 1.0
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-gcp-pubsub/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google Cloud Pub/Sub
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sqs-sns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS SQS / SNS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-pulsar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Pulsar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rumqttc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MQTT 5
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-zeromq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ZeroMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sea-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stream files / stdio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-kinesis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Kinesis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    基准测试
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker 作者
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Broker 作者
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../example-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    实例讲解：一个 NATS Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#路由套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路由套件
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路由套件">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#它检查什么" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        它检查什么
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#生命周期检查" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生命周期检查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#关闭与共享句柄" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        关闭与共享句柄
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#在进程内跑同样的套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在进程内跑同样的套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#结算套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        结算套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retry-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        重试检查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#进程内传输对照服务器" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        进程内传输对照服务器
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#消息携带的内容" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        消息携带的内容
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-suites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        能力套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#作者检查清单" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        作者检查清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    模板契约
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#路由套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路由套件
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路由套件">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#它检查什么" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        它检查什么
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#生命周期检查" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        生命周期检查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#关闭与共享句柄" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        关闭与共享句柄
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#在进程内跑同样的套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在进程内跑同样的套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#结算套件" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        结算套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retry-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        重试检查
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#进程内传输对照服务器" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        进程内传输对照服务器
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#消息携带的内容" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        消息携带的内容
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-suites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        能力套件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#作者检查清单" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        作者检查清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/powersemmi/ruststream/edit/main/docs/zh/broker-authors/conformance.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="conformance">Conformance<a class="headerlink" href="#conformance" title="Permanent link">&para;</a></h1>
+<div class="admonition info i18n-banner">
+<p class="admonition-title">英文版本为准</p>
+<p>本页译自英文，由模型翻译。若与<a href="../../../broker-authors/conformance/">英文原文</a>存在差异，以英文原文为准。</p>
+</div>
+
+<p>conformance 校验会证明 Broker 遵守核心契约。它有两个入口。两者都在第一次违反契约时 panic，
+并说清楚问题出在哪里：</p>
+<ul>
+<li><code>harness::run_suite</code> 检查 Broker <a href="../#test-support">进程内模式</a>的<strong>路由接口</strong>：它构造你的
+  生产 Broker，并通过 <code>InProcess::connect_in_process</code> 连接它。</li>
+<li><code>harness::lifecycle</code> 在真实的 Broker 上端到端地检查<strong>生命周期阶梯</strong>。</li>
+</ul>
+<p>两个都要跑。<code>run_suite</code> 检查分发方面的保证。<code>lifecycle</code> 证明 <code>new</code> -&gt; <code>connect(self)</code> -&gt; 订阅 -&gt;
+发布 -&gt; ack -&gt; <code>shutdown(self)</code> 在真实传输上确实走得通。</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[dev-dependencies]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">ruststream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"0.7"</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"conformance"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p><code>conformance</code> feature 会连带引入 <code>testing</code>。因此你的 crate 只提供一个进程内模式，它既用于这里的
+<code>run_suite</code>，也用于用户编写的 <a href="https://docs.rs/ruststream/latest/ruststream/testing/index.html"><code>TestApp</code></a> 测试。</p>
+<h2 id="路由套件">路由套件<a class="headerlink" href="#路由套件" title="Permanent link">&para;</a></h2>
+<p><code>harness::run_suite</code> 接收一个同步工厂（<code>Fn() -&gt; B</code>）。工厂为每个场景构造全新的生产 Broker，因此
+场景之间看不到彼此的状态。每个场景通过 <code>connect_in_process</code> 连接它，再驱动已连接形态；这个形态
+实现了 <code>TestableBroker</code> 和 <code>Subscribe</code>。下面是内存参考 Broker 自己的套件运行，一字未改。把工厂里的
+构造函数换成你自己 Broker 的构造函数，配置与服务里的一致：</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_self.rs">tests/conformance_self.rs</a></span><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="sd">/// The suites that read a broker's publish log back - the routing contract's log check and the</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="sd">/// seeking capability - need a broker that keeps one.</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">fn</span><span class="w"> </span><span class="nf">replaying</span><span class="p">()</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">MemoryBroker</span><span class="o">&lt;</span><span class="n">Retaining</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">retaining</span><span class="p">(</span><span class="n">Retention</span><span class="p">::</span><span class="n">Messages</span><span class="p">(</span><span class="n">nonzero</span><span class="o">!</span><span class="p">(</span><span class="mi">64</span><span class="p">)))</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">}</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_passes_conformance_suite</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">run_suite</span><span class="p">(</span><span class="n">replaying</span><span class="p">).</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="它检查什么">它检查什么<a class="headerlink" href="#它检查什么" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>断言内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>投递顺序</td>
+<td>消息按发布顺序投递</td>
+</tr>
+<tr>
+<td>订阅之前先发布</td>
+<td>订阅打开之前发布的消息：Broker 声明 <code>Backlog::Delivered</code> 时它最先到达，声明 <code>Backlog::Missed</code>（默认）时它不会到达；订阅之后发布的消息两种情况下都会到达</td>
+</tr>
+<tr>
+<td>ack 消费掉投递</td>
+<td>已 ack 的消息不会重新投递</td>
+</tr>
+<tr>
+<td>带重新入队的 nack 会重新投递</td>
+<td><code>nack(requeue = true)</code> 会再投递一次这条消息</td>
+</tr>
+<tr>
+<td>不重新入队的 nack 丢弃消息</td>
+<td><code>nack(requeue = false)</code> 之后没有重新投递</td>
+</tr>
+<tr>
+<td>消息头会传递</td>
+<td>消息头原样到达订阅者</td>
+</tr>
+<tr>
+<td>发布日志记录发布</td>
+<td><code>published(name)</code> 记录每一条已发布的消息</td>
+</tr>
+<tr>
+<td>发布日志记录你自己的发布者</td>
+<td>默认发布者发出的消息出现在 <code>published(name)</code> 里，和测试注入的消息按发布顺序排在一起，并带着消息头（适用于用 <code>register_testable_broker!</code> 注册过的 Broker）</td>
+</tr>
+<tr>
+<td>同名的两个订阅</td>
+<td>每条消息恰好到达 <code>TestableBroker::routes</code> 指明的那些订阅，每个订阅各一次：Broker 扇出时是每个订阅，订阅互相竞争时是 Broker 选中的那一个</td>
+</tr>
+<tr>
+<td>harness 的计数保持平衡</td>
+<td>在暂停的时钟上，按 <code>TestApp</code> 驱动的方式：发布返回之前投递已计入在途，结算时恰好释放一次，重新入队再次计入，没有订阅收到的发布不计入，延迟的重新投递在定时器到期时计入</td>
+</tr>
+</tbody>
+</table>
+<p>无法确认的传输（ZeroMQ、MQTT <code>QoS 0</code>、Redis pub/sub 和 Core NATS）从 <code>ack</code> 和 <code>nack</code> 返回
+<code>AckError::Unsupported</code>。套件在每一处结算投递的地方都接受这个答复。你的进程内传输务必答得和
+真实传输一模一样，不要声称生产中根本不会发生的结算。只有重新投递那个场景例外：
+<code>nack(requeue = true)</code> 答 <code>Unsupported</code>，场景就到此结束，因为一个什么都不收回的传输没有重新
+投递可看。其余断言照旧，丢弃场景也在内：没人能结算的投递，同样不该再回来。</p>
+<p>套件从投递读取这个答复，而不是从 Broker 读取。因此答复可以按订阅、按消息而不同，正如你的传输
+本身那样：重新入队在一种提交模式下只是建议，在另一种下会回拨位点；确认在一个服务质量等级上
+能给，在另一个上给不了。不变的是成功的含义：<code>nack(requeue = true)</code> 返回 <code>Ok(())</code>，就承诺这条
+消息会回来，运行时的重试路径也照这个含义来读。</p>
+<p>这些是核心路由方面的保证，是每个 Broker 都必须满足的契约。Broker 专有的语义（持久化续传、
+超时重新投递和分区分配）不属于这份契约，由你自己针对真实服务器的端到端测试集来验证。</p>
+<p>每项能力在下面都有自己的套件。你的 crate 实现了哪几项能力，就调用哪几个套件。其中
+<code>capabilities::batches</code> 是唯一一处检查：收到的批不会大于开启时给定的尺寸。只跑了
+<code>run_suite</code> 的 crate，还没有检查过自己的批。</p>
+<h2 id="生命周期检查">生命周期检查<a class="headerlink" href="#生命周期检查" title="Permanent link">&para;</a></h2>
+<p><code>harness::lifecycle</code> 在真实的 <code>Broker</code> 上走完<strong>生命周期阶梯</strong>。先是不做任何 I/O 的同步构造。
+接着是消费 <code>self</code> 的 <code>connect</code>，它产出类型化的已连接形态。然后通过 Broker 自己的
+<code>SubscriptionSource</code> 建立一个订阅，发布一条消息，由该订阅收到并 ack。最后是消费 <code>self</code> 的
+<code>shutdown</code>，它产出终态见证值。</p>
+<p>每一步都从服务实际调用 Broker 的地方发出：</p>
+<ul>
+<li>构造函数在一个没有 Tokio 运行时的普通线程上调用，必须在一秒内返回。构造函数里 spawn 任务、
+  调用 <code>Handle::current</code> 或等待网络，都通不过检查。永不返回的构造函数在这一秒过后让检查失败，它所在的
+  线程留在后台继续运行。</li>
+<li>订阅的建立、第一条消息的发布以及每一次确认，都在另一个线程上的单线程运行时里执行，这个运行时
+  在检查继续之前就停止。订阅必须继续收到消息。发布第一条消息的发布者再发布两次，一次在 Broker 的
+  运行时里，一次在新的运行时里，两条消息都必须到达。返回 <code>Ok</code> 的 <code>nack(requeue = true)</code> 必须让
+  消息回来，<code>nack(requeue = false)</code> 则不能。检查以此要求 Broker 的内部任务运行在它连接时所在的
+  运行时上（见<a href="../">编写一个 Broker</a>）。</li>
+<li>投递支持 <code>nack_after</code> 时，检查以 1.5 秒的延迟确认。消息回来的时间不能早于这个延迟，也不能晚于
+  延迟之后十秒。忽略延迟、把延迟向下取整，或者在确认线程的运行时里计时，都通不过检查。</li>
+<li><code>connect</code> 和 <code>shutdown</code> 各自必须在十秒内返回，打开订阅、发布和确认必须在两秒内完成。</li>
+</ul>
+<p>在走阶梯之前，检查会在一条单独的连接上核对你的发布者能把消息的哪些内容送到。一个接一个发布的
+三十二条消息，必须全部到达同一个订阅，顺序不限：分区的传输会把不带键的记录分散到不同分区，
+顺序由 <code>keyed_order</code> 检查。另外四条消息带有头部：大量条目、空值、非 UTF-8 的值，以及框架自己的
+重试计数和追踪上下文。每个头部都必须逐字节原样回来，否则携带它的那次发布必须失败。发布失败的
+消息绝不能到达，排在其余消息之后也不行；途中被丢掉或被改写的头部会让检查失败。这里的连接、订阅
+和每一次发布都有时限，卡住的 Broker 会让检查失败，而不是让它挂起。</p>
+<p>已连接形态的持有者在关闭之后再用它，代码在编译期就通不过。留在运行时的规则是<strong>别名句柄契约</strong>。
+关闭之后，通过以下发布者发布都必须返回错误：关闭之前创建、从未用过的发布者，只在 Broker 运行时
+里用过的发布者，以及在已停止的运行时里用过的发布者。关闭之前收到、关闭之后重新入队的投递，必须
+返回错误，或者再次到达。</p>
+<p>订阅描述符、订阅者、发布者和投递都会移到其他线程，所以它们都是 <code>'static</code>。</p>
+<p>这项检查接收三个工厂，因此与具体 Broker 无关：</p>
+<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">};</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">passes_lifecycle</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">(</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span><span class="w"> </span><span class="c1">// sync construction (no I/O)</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="o">|</span><span class="n">subject</span><span class="o">|</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">subject</span><span class="p">),</span><span class="w"> </span><span class="c1">// the broker's SubscriptionSource</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// a publisher from the connected form</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>make_broker</code></strong> 是<strong>同步的</strong>（<code>Fn() -&gt; B</code>），并且是 <code>Send + Sync + 'static</code>：检查在一个可以放弃的
+  线程上调用它，所以永不返回的构造函数会让检查失败，而不是把检查卡住。捕获局部变量（例如服务器地址）
+  的闭包要写成 <code>move</code>。只能异步构造的 Broker 满足不了它。构造要廉价，连接放到 <code>Broker::connect</code> 里做。</li>
+<li><strong><code>make_source</code></strong> 为某个 subject 构造订阅描述符（宏订阅者那条路径）。</li>
+<li><strong><code>make_publisher</code></strong> 从已连接形态产出一个发布者。</li>
+</ul>
+<p>没有 ack 语义的 Broker（Core NATS）从 <code>ack</code> 返回 <code>AckError::Unsupported</code> 就算通过：这项检查既
+接受这个结果，也接受一次成功的 ack。<code>lifecycle</code> 会执行一次真实的 <code>connect</code>，所以要针对正在运行
+的服务器跑它，并且只在设置了 <code>NATS_TEST_URL</code> 这类环境变量时才运行。</p>
+<h2 id="关闭与共享句柄">关闭与共享句柄<a class="headerlink" href="#关闭与共享句柄" title="Permanent link">&para;</a></h2>
+<p>另外两项生命周期检查需要只有你的 Broker 才知道的答案，所以由你的 crate 自己调用，在进程内和针对
+真实服务器各跑一遍：</p>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>接收</th>
+<th>断言</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lifecycle::shutdown_flushes</code></td>
+<td>Broker 的 <code>Backlog</code> 答案</td>
+<td><code>shutdown</code> 之前刚做的确认和发布由关闭过程完成：已确认的消息不会在新连接上回来，已发布的消息会到达另一个连接（<code>Backlog::Delivered</code> 时是新连接，<code>Backlog::Missed</code> 时是事先订阅好的连接）；关闭之后返回 <code>Ok</code> 的确认同样必须生效；<code>shutdown</code> 在十秒内返回</td>
+</tr>
+<tr>
+<td><code>lifecycle::shared_handle_closes</code></td>
+<td>实现了 <code>Clone</code> 的已连接形态</td>
+<td>原件关闭之后，通过副本的每一次使用都返回错误：关闭前后从副本创建的发布者，以及副本建立的订阅（被拒绝，或立即结束）</td>
+</tr>
+</tbody>
+</table>
+<p><code>shutdown_flushes</code> 会连接不止一次，所以 <code>make_broker</code> 每次都必须通向同一个 Broker：一台服务器，
+或者在进程内由它构造的所有 Broker 共享的同一个世界。内存 Broker 自己的这次运行让各个副本共享一条
+总线：</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_self.rs">tests/conformance_self.rs</a></span><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">testing</span><span class="p">::</span><span class="n">Backlog</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1">// Every broker the factory builds is a clone of one bus, so the second connection reaches what the</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1">// first one published, the way two connections reach one server.</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_flushes_at_shutdown</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">bus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">lifecycle</span><span class="p">::</span><span class="n">shutdown_flushes</span><span class="p">(</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">bus</span><span class="p">.</span><span class="n">clone</span><span class="p">(),</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">        </span><span class="o">|</span><span class="n">broker</span><span class="o">|</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="n">Backlog</span><span class="p">::</span><span class="n">Missed</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="p">}</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="c1">// The connected form is a cheap, cloneable handle on the bus.</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_clones_close_with_the_original</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="w">    </span><span class="n">lifecycle</span><span class="p">::</span><span class="n">shared_handle_closes</span><span class="p">(</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="w">        </span><span class="o">|</span><span class="n">broker</span><span class="o">|</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="在进程内跑同样的套件">在进程内跑同样的套件<a class="headerlink" href="#在进程内跑同样的套件" title="Permanent link">&para;</a></h2>
+<p><code>lifecycle</code>、<code>redelivery_address</code> 和各个能力套件都用 <code>Broker::connect</code> 连接交给它们的 Broker。把
+生产 Broker 包进 <code>harness::InProcessBroker</code>，它们就改用 <code>connect_in_process</code> 连接，于是每个套件
+在没有服务器的情况下再跑一遍，用的仍是你自己的描述符和发布策略。两遍都要跑：进程内这一遍让进程内
+模式保持诚实，针对服务器那一遍证明真实传输。下面这个 Broker 的 <code>connect</code> 会去连服务器，它在进程内
+通过了路由套件和生命周期检查：</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/in_process.rs">tests/in_process.rs</a></span><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">// The routing suite connects the production broker in process.</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_routing_suite_connects_the_broker_in_process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">run_suite</span><span class="p">(</span><span class="n">Dialling</span><span class="p">::</span><span class="n">default</span><span class="p">).</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1">// The suites that connect with `connect` run in process through the adapter, over the production</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1">// broker's own descriptor and publisher.</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_ladder_suite_runs_in_process_through_the_adapter</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">(</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">InProcessBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">Dialling</span><span class="p">::</span><span class="n">default</span><span class="p">()),</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="结算套件">结算套件<a class="headerlink" href="#结算套件" title="Permanent link">&para;</a></h2>
+<p><code>settlement::suite</code> 在 Broker 所连接的传输上检查每一种结算是否兑现它的含义，包括真实的服务器：</p>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>断言内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ack 消费投递</td>
+<td>已 ack 的消息不会回来，在重投超时之内不会，在同一订阅的新连接上也不会</td>
+</tr>
+<tr>
+<td>不重新入队的 nack 丢弃投递</td>
+<td><code>nack(requeue = false)</code> 之后同样如此</td>
+</tr>
+<tr>
+<td>重新入队的 nack 退回投递</td>
+<td><code>nack(requeue = true)</code> 返回 <code>Ok(())</code>，消息就会回来</td>
+</tr>
+<tr>
+<td>乱序结算</td>
+<td>三条消息同时在处理中，ack 第三条、前两条不结算就放掉，前两条会回来：回到原订阅、重新打开的同一订阅，或者同一订阅的新连接上</td>
+</tr>
+<tr>
+<td>未结算就放掉</td>
+<td>在一个随即停止的运行时里不结算就放掉的消息会回来</td>
+</tr>
+</tbody>
+</table>
+<p>回答 <code>AckError::Unsupported</code> 的结算不受任何语义约束：传输什么也没做，消息可能在原来的订阅上或者新连接上回来。最后两项检查在 <code>nack(requeue = true)</code> 返回 <code>AckError::Unsupported</code> 时结束：什么都不收回的传输没有
+可供观察的重投。只提交连续前缀的日志可能把已 ack 的第三条和前两条一起再投递一次；重复可以通过，
+丢失不行。</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/src/conformance/settlement/tests.rs">src/conformance/settlement/tests.rs</a></span><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1">// `make_source` stays a closure: its bound is higher-ranked, so a bare constructor path would bind</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1">// one concrete lifetime and fail to type-check.</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="cp">#[allow(clippy::redundant_closure)]</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_broker_answers_alike_in_process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c1">// Clones of one broker: the second connection of a check reaches what the first one left.</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">broker</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="n">matches_in_process</span><span class="p">(</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">clone</span><span class="p">(),</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="n">ConnectedMemoryBroker</span><span class="p">::</span><span class="n">publisher</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="c1">// The bus hands an unsettled delivery back at once.</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">        </span><span class="n">Duration</span><span class="p">::</span><span class="n">ZERO</span><span class="p">,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>make_broker</code></strong> 每建一个连接就调用一次，而检查会连接两次，所以它返回的每个 Broker 都要到达
+  同一个服务器：真实运行时是同一个地址，进程内是同一个 Broker 的克隆。</li>
+<li><strong><code>make_source</code></strong> 在两个连接上打开同一个订阅：Broker 有持久消费者、队列或消费者组时，就用它们。
+  它必须允许三条投递同时在处理中。</li>
+<li><strong>重投超时</strong>是 Broker 退回无人结算的投递所需的时间，即描述符配置的 ack wait、visibility
+  timeout 或 ack deadline。只在连接关闭时才退回这种投递的 Broker 传 <code>Duration::ZERO</code>。</li>
+</ul>
+<p><code>settlement::suite</code> 返回每一种结算的回答。<code>settlement::matches_in_process</code> 分别针对服务器和通过
+<code>harness::InProcessBroker</code> 运行它，两边回答不同就失败：声称做到了服务器拒绝的结算的进程内传输，
+会让处理器的重试在测试里通过，却在生产环境丢掉消息。</p>
+<h2 id="retry-checks">重试检查<a class="headerlink" href="#retry-checks" title="Permanent link">&para;</a></h2>
+<p>描述符的 <code>type Copies</code> 说明一条注册怎样重试，<code>conformance::retry</code> 逐一检查那些对服务有所承诺的
+答案。</p>
+<p><code>harness::redelivery_address</code> 接收声明 <code>AddressedCopies</code> 的描述符。它用这个描述符打开两个订阅，就
+像服务的两个副本读同一个订阅，然后向描述符报出的地址发布一份副本。副本从一个单线程运行时发出，该
+运行时随即停止：专用线程上的处理器正是从这里发布 <code>retry_after</code> 的副本。副本必须恰好到达组内的一个
+订阅（如果你的传输把一切交给每个订阅，就是每一个），并且消息头和 <code>RETRY_COUNT_HEADER</code> 原样到达。
+随后检查把它放回队列两次。每次重新投递都保留这两个消息头，报出 <code>redelivery_count</code> 的投递必须依次数到
+1、2、3。如果你的已连接形态
+答的是 <code>Subscribe::Copies = AddressedCopies</code>，再用光名字的 <code>Name</code> 源跑一遍：这个答案就是每条
+<code>#[subscriber("orders")]</code> 注册的地址。</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/src/conformance/retry/tests.rs">src/conformance/retry/tests.rs</a></span><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="cp">#[allow(clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_descriptor_passes</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="n">redelivery_address</span><span class="p">(</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="p">}</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="cp">#[allow(clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_bare_name_passes</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">    </span><span class="n">redelivery_address</span><span class="p">(</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">Name</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">.</span><span class="n">to_owned</span><span class="p">()),</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>retry::broker_moves</code> 接收声明 <code>BrokerMoves</code> 的描述符。它声明 <code>max_attempts(n)</code> 和一个死信地址，把
+消息一次次放回队列直到上限用完，然后期望它恰好在 <code>n</code> 次投递之后、只一次出现在死信地址。放回队列答复
+<code>AckError::Unsupported</code> 时检查到此结束：这样的传输不会重新投递，也就没有可数的次数。只声明其中一半
+时，Broker 必须在启动时拒绝。传入你的 Broker 接受的 <code>n</code>。<code>make_source(name)</code> 也用来打开死信地
+址，所以它要创建发布到 <code>name</code> 所需的一切。</p>
+<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">::</span><span class="n">InProcessBroker</span><span class="p">;</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">retry</span><span class="p">;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">nonzero</span><span class="p">;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_lapin</span><span class="p">::{</span><span class="n">LapinBroker</span><span class="p">,</span><span class="w"> </span><span class="n">LapinPublish</span><span class="p">,</span><span class="w"> </span><span class="n">RabbitQuorumQueue</span><span class="p">};</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">a_quorum_queue_dead_letters_at_the_cap</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="n">retry</span><span class="p">::</span><span class="n">broker_moves</span><span class="p">(</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">InProcessBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">LapinBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">"amqp://localhost:5672"</span><span class="p">).</span><span class="n">declare_topology</span><span class="p">(</span><span class="kc">true</span><span class="p">)),</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">RabbitQuorumQueue</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">LapinPublish</span><span class="p">::</span><span class="n">default</span><span class="p">()),</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">        </span><span class="n">nonzero</span><span class="o">!</span><span class="p">(</span><span class="mi">2</span><span class="k">u32</span><span class="p">),</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="进程内传输对照服务器">进程内传输对照服务器<a class="headerlink" href="#进程内传输对照服务器" title="Permanent link">&para;</a></h2>
+<p><code>conformance::in_process</code> 把进程内传输声明的行为和服务器的实际行为对照起来。两个套件每个探测都
+连接 Broker 两次，一次用 <code>Broker::connect</code>，一次用 <code>connect_in_process</code>，所以要在跑针对服务器的
+套件的地方运行它们：</p>
+<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">in_process</span><span class="p">::{</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">Refusal</span><span class="p">};</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">CoreSubject</span><span class="p">,</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">NatsPublish</span><span class="p">};</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">in_process_matches_the_server</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="n">in_process</span><span class="p">::</span><span class="n">backlog_matches_server</span><span class="p">(</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">NatsPublish</span><span class="p">),</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="n">in_process</span><span class="p">::</span><span class="n">refuses_like_the_server</span><span class="p">(</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">NatsPublish</span><span class="p">),</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">        </span><span class="p">[</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">PayloadOver</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">"conformance.payload"</span><span class="p">.</span><span class="n">to_owned</span><span class="p">(),</span><span class="w"> </span><span class="n">limit</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">Publish</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">"conformance.bad subject"</span><span class="p">.</span><span class="n">to_owned</span><span class="p">()</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">Subscription</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">source</span><span class="p">:</span><span class="w"> </span><span class="nc">CoreSubject</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">"conformance..empty"</span><span class="p">)</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>backlog_matches_server</code></strong> 在两种传输上各做一遍：向一个新名字发布一条消息，按名字打开订阅，
+  再发布一条。<code>TestableBroker::backlog</code> 声明 <code>Backlog::Delivered</code> 时第一条最先到达，声明
+  <code>Backlog::Missed</code> 时它不会到达。服务器拒绝第一次发布时（没有人声明过的队列或主题），进程内传输
+  也必须拒绝，并且在两种传输上订阅仍须打开，并收到后一条消息。</li>
+<li><strong><code>refuses_like_the_server</code></strong> 接收你知道的拒绝情形，每个都是一个 <code>Refusal</code>：超出上限一个字节的
+  负载、被拒绝的目的地、被拒绝的订阅、在另一个订阅旁边被拒绝的订阅。两种传输都必须拒绝每一个。
+  服务器接受的探测会以失败告终：它什么也证明不了。随后在每种传输上对同一个名称打开两个订阅，
+  再对另一个名称打开一个，进程内传输接受的订阅必须和服务器接受的完全一致。</li>
+</ul>
+<h2 id="消息携带的内容">消息携带的内容<a class="headerlink" href="#消息携带的内容" title="Permanent link">&para;</a></h2>
+<p><code>conformance::message_shape</code> 中的四项检查需要只有你的 Broker 才能给出的输入，所以由你的 crate
+自己调用，和其他套件一样针对服务器跑一遍、在进程内再跑一遍：</p>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>你提供的输入</th>
+<th>断言</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>keyed_order</code></td>
+<td>一个主题，以及键放在哪里：头部或发布参数的字段</td>
+<td>每次投递都从 <code>partition_key</code> 报告它发布时的键，同一个键的消息按发布顺序到达</td>
+</tr>
+<tr>
+<td><code>publish_options</code></td>
+<td>一个主题、发布策略、用例，以及从投递上读出设置的方式</td>
+<td>不带参数的发布呈现策略的设置；调用的参数只对这一次调用覆盖策略；传输无法兑现的值让发布失败，消息也不会到达，在下一次发布之后也不会</td>
+</tr>
+<tr>
+<td><code>publishes_without_credentials</code></td>
+<td>一个配置了密码的发布策略</td>
+<td>策略加入文档的任何绑定都不含该密码</td>
+</tr>
+<tr>
+<td><code>describes_addresses_without_credentials</code></td>
+<td>由多个带用户名和密码的地址构建的 Broker</td>
+<td>服务器描述中不含这些凭据</td>
+</tr>
+</tbody>
+</table>
+<p>没有键的传输不调用 <code>keyed_order</code>：<code>None</code> 就是它诚实的回答。传给 <code>publish_options</code> 的策略要配置成
+不同于传输默认值的设置，这样忘了策略的发布者不会因为恰好落在默认值上而通过检查。</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_message_shape.rs">tests/conformance_message_shape.rs</a></span><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1">// `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked, so a bare</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="c1">// method path, which binds one concrete lifetime, would not type-check.</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_keeps_keys_and_their_order</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="n">message_shape</span><span class="p">::</span><span class="n">keyed_order</span><span class="p">(</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">        </span><span class="o">&amp;</span><span class="n">unique_subject</span><span class="p">(</span><span class="s">"conformance.keyed"</span><span class="p">),</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">        </span><span class="c1">// Where a key goes on this broker: a header here, a field of the options elsewhere.</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">        </span><span class="o">|</span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">headers</span><span class="o">|</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">            </span><span class="n">headers</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">PARTITION_KEY_HEADER</span><span class="p">,</span><span class="w"> </span><span class="n">Bytes</span><span class="p">::</span><span class="n">copy_from_slice</span><span class="p">(</span><span class="n">key</span><span class="p">));</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">            </span><span class="nb">None</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">        </span><span class="p">},</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="capability-suites">能力套件<a class="headerlink" href="#capability-suites" title="Permanent link">&para;</a></h2>
+<p>如果你的 Broker 实现了某个能力 trait，就从 <code>conformance::capabilities</code> 跑对应的套件，它证明这份
+实现遵守该 trait 的契约。不具备该能力的 Broker 不调用它。每个套件的工厂形状与 <code>lifecycle</code> 相同，
+也会执行一次真实的 <code>connect</code>，所以用同样的环境变量控制它是否运行。套件发出的每一次调用都有时限，
+卡住的 Broker 会让套件失败，而不是让它挂起：</p>
+<table>
+<thead>
+<tr>
+<th>套件</th>
+<th>要求</th>
+<th>断言内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>capabilities::request_reply</code></td>
+<td><code>RequestReply</code></td>
+<td>请求带着一个可用的 <code>reply-to</code> 消息头到达响应方，相互关联的回复了结这次请求，无人应答的请求在超时之后返回错误；在前一个请求来自一个已经停止的运行时之后，新的请求仍然得到回复；同时在途的两个请求各自得到自己的回复，在请求超时之后才到达的回复不会了结下一个请求，Broker 关闭之后发出的请求立即返回错误</td>
+</tr>
+<tr>
+<td><code>capabilities::batches</code></td>
+<td><code>BatchSubscriber</code></td>
+<td>每一条已发布的消息都按发布顺序到达，并分布在若干非空的批里；读取流时已经在等待的消息如果在五轮之内有一次落进同一批，这一批里的元素逐条结算（带重新入队的 <code>nack</code> 只让这一条回来）；从不把它们合进一批的订阅也能通过，逐条结算对它不做检查；在一个已经停止的运行时里结算的批同样照常结算</td>
+</tr>
+<tr>
+<td><code>capabilities::batch_seeking</code></td>
+<td><code>BatchSubscriber</code> 和 <code>Seekable</code>，且消息实现 <code>Positioned</code></td>
+<td>回退到从批内某条消息上取得的位置之后，接下来的批从这条消息开始，并按顺序带上它之后的后缀</td>
+</tr>
+<tr>
+<td><code>capabilities::transactions</code></td>
+<td><code>TransactionalPublisher</code></td>
+<td>事务里的任何内容在 <code>commit</code> 之前都不可见，<code>commit</code> 按顺序发布整个缓冲区，<code>abort</code> 把它丢弃；误用会返回错误：没有打开事务就 <code>commit</code> / <code>abort</code>，或者已有事务打开时再次 <code>begin_transaction</code>（这必须让原事务保持不变）；在一个已经停止的运行时里 <code>commit</code> 仍然会发布，Broker 关闭之后，提交仍打开着的事务和普通发布都返回错误</td>
+</tr>
+<tr>
+<td><code>capabilities::owned_transactions</code></td>
+<td><code>OwnedTransactions</code> 及其 <code>Transaction</code></td>
+<td>发布进一个打开着的事务里的内容在 <code>commit</code> 之前不可见，<code>commit</code> 按发布顺序投递整个缓冲区，<code>abort</code> 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布；在一个已经停止的运行时里 <code>commit</code> 仍然会发布，Broker 关闭之后，<code>commit</code>、直接发布以及此时打开的事务都返回错误</td>
+</tr>
+<tr>
+<td><code>capabilities::seeking</code></td>
+<td><code>Seekable</code>，且消息实现 <code>Positioned</code></td>
+<td>回退到从某条已投递消息上取得的位置，会重新投递恰好那一条消息以及它之后按顺序排列的后缀；向前跳转会略过目标之前排队的投递；重新定位之后，订阅继续投递新的发布；新订阅在第一次投递之前跳转到之前的订阅取得的位置，就从这条消息开始；在一个已经停止的运行时里发起的跳转仍然生效；Broker 关闭之后的跳转返回错误</td>
+</tr>
+<tr>
+<td><code>capabilities::seeking_unknown_position</code></td>
+<td><code>Seekable</code>，以及由 Broker 构造的位置</td>
+<td>跳转到订阅日志里不存在的位置（已被保留策略淘汰，或者从未存在）返回错误，订阅不会移动，也不会从别处读取；流上的错误不会结束检查，检查会继续读下一次投递</td>
+</tr>
+</tbody>
+</table>
+<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">capabilities</span><span class="p">;</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">};</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">passes_request_reply</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="n">capabilities</span><span class="p">::</span><span class="n">request_reply</span><span class="p">(</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">        </span><span class="o">|</span><span class="n">subject</span><span class="o">|</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">subject</span><span class="p">),</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// the RequestReply publisher under test</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// the plain publisher the responder replies through</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>每个套件在每次运行时重新取一个 subject，而不是固定一个，因此一次运行只读到自己发布的东西。
+固定的 subject 在全新服务器上能过一次，第二次就会在任何保留前一次残留的 Broker 上通不过：留存的
+日志会把两次运行一起重放进同一个订阅，持久队列里还压着早先的消息，键空间里还留着早先的类型。
+套件为此调用 <code>conformance::helpers::unique_subject</code>。你自己的端到端测试集有同样的问题，也有
+同样的解法。</p>
+<p>内存 Broker 原生实现了每一项能力，七个套件都在进程内通过（见
+<a href="../../brokers/memory/#capabilities">内存 Broker</a>）。它就是可执行的参考，说明每个套件究竟期望什么。</p>
+<h2 id="作者检查清单">作者检查清单<a class="headerlink" href="#作者检查清单" title="Permanent link">&para;</a></h2>
+<p>发布一个 Broker crate 之前：</p>
+<ul>
+<li>[ ] 已实现 <code>Broker</code>、<code>ConnectedBroker</code>、<code>Subscribe</code>（或一个 <code>SubscriptionSource</code>）、<code>Subscriber</code>、
+      <code>IncomingMessage</code>、<code>Publisher</code>，以及构造它的 <code>PublishPolicy</code>。</li>
+<li>[ ] <code>shutdown</code> 完成所有可能返回错误的清理，并且绝不阻塞、绝不 panic。</li>
+<li>[ ] ack 消费 <code>self</code>；nack 遵守 <code>requeue</code> 标志。</li>
+<li>[ ] crate 自己拥有它的 <code>Config</code>；没有合理默认值的字段不实现 <code>Default</code>。</li>
+<li>[ ] 只有 Broker 确实支持的能力才实现对应的能力 trait，并且每一项已实现的能力都通过了
+      <code>conformance::capabilities</code> 里对应的套件。</li>
+<li>[ ] 在 <code>testing</code> feature 之下提供进程内模式：Broker 上的 <code>InProcess</code>、已连接形态上的
+      <code>TestableBroker</code>，以及 <code>register_testable_broker!(YourBroker)</code>。进程内传输的每项设置都取自
+      生产 Broker，并且真实 Broker 会失败的地方，它绝不成功。</li>
+<li>[ ] <code>harness::run_suite</code> 通过（路由接口），其余套件既通过 <code>harness::InProcessBroker</code> 在进程内
+      通过，也针对真实服务器通过。</li>
+<li>[ ] <code>harness::lifecycle</code> 针对真实服务器通过，并由一个环境变量控制是否运行（就是那条阶梯：
+      同步的 <code>new</code>、消费 <code>self</code> 的 <code>connect</code>、订阅、ack、消费 <code>self</code> 的 <code>shutdown</code>，以及在此
+      之后别名句柄返回的错误）。</li>
+<li>[ ] <code>lifecycle::shutdown_flushes</code> 以 Broker 的 <code>Backlog</code> 答案通过；已连接形态实现了 <code>Clone</code>
+      时，<code>lifecycle::shared_handle_closes</code> 也通过。</li>
+<li>[ ] <code>settlement::matches_in_process</code> 针对真实服务器通过，同样由该环境变量控制（ack、nack、乱序
+      结算和未结算就放掉，在服务器上和进程内含义相同）。</li>
+<li>[ ] <code>harness::redelivery_address</code> 对每个声明 <code>AddressedCopies</code> 的描述符通过；<code>Subscribe::Copies</code>
+      为 <code>AddressedCopies</code> 时对光名字的 <code>Name</code> 也通过；<code>retry::broker_moves</code> 对每个声明
+      <code>BrokerMoves</code> 的描述符通过。</li>
+<li>[ ] 传输有键或单条消息的设置时，<code>message_shape::keyed_order</code> 和 <code>message_shape::publish_options</code>
+      在进程内和针对真实服务器都通过。</li>
+<li>[ ] 有一个端到端测试集覆盖 Broker 专有的语义，同样由该环境变量控制。</li>
+<li>[ ] <code>Cargo.toml</code> 元数据完整（<code>description</code>、<code>license</code>、<code>repository</code>、<code>keywords</code>、
+      <code>categories</code>），并且 CI 检查 <code>--no-default-features</code> 和 <code>--all-features</code>。</li>
+</ul>
+<p>trait 契约见<a href="../">编写一个 Broker</a>。</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/powersemmi/ruststream" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.action.edit", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
+    
+    
+  
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../assets/benchmarks.js"></script>
+      
+    
+  
+  <script src="https://context7.com/widget.js" data-library="/powersemmi/ruststream"></script>
+
+  </body>
+</html>

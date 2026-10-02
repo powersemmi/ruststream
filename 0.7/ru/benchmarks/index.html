@@ -1,0 +1,1972 @@
+
+<!doctype html>
+<html lang="ru" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Async messaging framework for Rust - broker-agnostic traits, router, codecs, and a conformance harness for broker authors.">
+      
+      
+      
+        <link rel="canonical" href="https://powersemmi.github.io/ruststream/0.7/ru/benchmarks/">
+      
+      
+        <link rel="prev" href="../brokers/memory/">
+      
+      
+        <link rel="next" href="../broker-authors/">
+      
+      
+        
+          <link rel="alternate" href="../../benchmarks/" hreflang="en">
+        
+          <link rel="alternate" href="./" hreflang="ru">
+        
+          <link rel="alternate" href="../../zh/benchmarks/" hreflang="zh">
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Бенчмарки - RustStream</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#бенчмарки" class="md-skip">
+          Перейти к содержанию
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Верхний колонтитул">
+    <a href="../" title="RustStream" class="md-header__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RustStream
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Бенчмарки
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Выберите язык">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../benchmarks/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="ru" class="md-select__link">
+              Russian
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../zh/benchmarks/" hreflang="zh" class="md-select__link">
+              Chinese
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Поиск" placeholder="Поиск" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Поиск">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Очистить" aria-label="Очистить" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Инициализация поиска
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/powersemmi/ruststream" title="Перейти к репозиторию" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Навигация" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../" title="RustStream" class="md-nav__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    RustStream
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/powersemmi/ruststream" title="Перейти к репозиторию" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Главная
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Начало работы
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Начало работы
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Установка
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Быстрый старт
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Учебник: собираем первый сервис
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../brokers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Брокеры
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Брокеры
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../brokers/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-fred/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Redis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-lapin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RabbitMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rdkafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-amqp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AMQP 1.0
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-gcp-pubsub/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google Cloud Pub/Sub
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sqs-sns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS SQS / SNS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-pulsar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Pulsar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rumqttc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MQTT 5
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-zeromq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ZeroMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sea-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stream files / stdio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-kinesis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Kinesis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Бенчмарки
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Бенчмарки
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Результаты
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Результаты">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#against-a-raw-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Против сырого клиента
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-of-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стоимость кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-numbers-are" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что означают эти числа
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Что означают эти числа">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-comparison-against-a-raw-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Сравнение с сырым клиентом
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-of-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стоимость кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Методология
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Методология">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-three-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Три цикла
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Прогон
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Отчёт
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-code-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Измерение кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publishing-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Как публиковать результаты
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Как публиковать результаты">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-stable-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стабильный путь
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Документ
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../broker-authors/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Авторам брокеров
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Авторам брокеров
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../broker-authors/example-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Разбор примера: адаптация библиотеки брокера NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../broker-authors/conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../broker-authors/templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Контракт шаблонов
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Справочник API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Результаты
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Результаты">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#against-a-raw-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Против сырого клиента
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-of-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стоимость кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-numbers-are" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что означают эти числа
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Что означают эти числа">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-comparison-against-a-raw-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Сравнение с сырым клиентом
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-cost-of-the-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стоимость кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Методология
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Методология">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-three-loops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Три цикла
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Прогон
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Отчёт
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-code-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Измерение кода
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publishing-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Как публиковать результаты
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Как публиковать результаты">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-stable-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стабильный путь
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Документ
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/powersemmi/ruststream/edit/main/docs/ru/benchmarks.md" title="Редактировать страницу" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="бенчмарки">Бенчмарки<a class="headerlink" href="#бенчмарки" title="Permanent link">&para;</a></h1>
+<div class="admonition info i18n-banner">
+<p class="admonition-title">Нормативная версия документации - английская</p>
+<p>Эта страница переведена с английского языковой моделью. При любом расхождении верен <a href="../../benchmarks/">английский оригинал</a>.</p>
+</div>
+
+<p>Между клиентом брокера и обработчиком фреймворк тратит время на каждое сообщение: поток подписки,
+декодирование, диспетчеризация, ack. Эта страница показывает эту стоимость двумя измерениями:</p>
+<ul>
+<li><strong>Против сырого клиента.</strong> Пропускная способность фреймворка и сырого клиента на настоящем брокере
+  очереди, на одной машине и на одной работе. Отвечает, во что фреймворк обходится развёрнутому
+  сервису.</li>
+<li><strong>Стоимость кода.</strong> Инструкции и выделения памяти собственного кода фреймворка на сообщение, без
+  брокера очереди. Отвечает, что изменилось вместе с фреймворком. Точности хватает, чтобы отклонить
+  пул-реквест, который сделал сообщение дороже.</li>
+</ul>
+<p>Каждый крейт измеряет себя сам и публикует свои числа, а страница загружает их и показывает
+вместе. Поэтому новые замеры крейта появляются здесь со следующей публикацией его документации.</p>
+<h2 id="results">Результаты<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
+<h3 id="against-a-raw-client">Против сырого клиента<a class="headerlink" href="#against-a-raw-client" title="Permanent link">&para;</a></h3>
+<div id="benchmark-results" data-benchmark-labels='{"loading": "Загружаем опубликованные результаты...", "broker": "Брокер", "scenario": "Сценарий", "raw": "Сырой клиент", "adapter": "Адаптация библиотеки брокера", "framework": "RustStream", "overhead": "Оверхед", "against": "({percent} к клиенту)", "indistinguishable": "неразличимо", "brokerBound": "упирается в брокер очереди", "measured": "измерено", "details": "Полные результаты и методология", "pending": "Результаты ещё не опубликованы: {brokers}.", "crate": "Крейт", "instructions": "Инструкции", "allocations": "Выделения", "cold": "Холодный старт"}'></div>
+
+<p>Как читать таблицу:</p>
+<ul>
+<li>в ячейке - лучший из трёх чередующихся кругов, в скобках - медиана этих трёх;</li>
+<li>«неразличимо» стоит там, где разница меньше разброса от лучшего круга до худшего. Худший круг
+  публикуется, но в ячейку не попадает;</li>
+<li>«Адаптация библиотеки брокера» - собственные консьюмер и паблишер адаптации без рантайма. Две
+  разности читаются отдельно: сколько адаптация стоит поверх клиента брокера и сколько добавляет
+  рантайм.</li>
+</ul>
+<p>Лучший круг ближе всего к стоимости без помех, а медиана показывает типичный круг
+(<a href="#the-report">подробнее об отчёте</a>).</p>
+<h3 id="cost-of-the-code">Стоимость кода<a class="headerlink" href="#cost-of-the-code" title="Permanent link">&para;</a></h3>
+<p>Вторая таблица считает только собственный код фреймворка. Для каждого сценария она показывает,
+сколько инструкций и выделений памяти уходит на одно сообщение в установившемся режиме. Измерение
+идёт на внутрипроцессном транспорте, поэтому числа абсолютные. Стоимость фреймворка поверх
+настоящего клиента брокера показывает таблица выше.</p>
+<div id="benchmark-code"></div>
+
+<p>Колонка «Холодный старт» считает запуск сервиса вместе с обработкой первого сообщения. Эти
+инструкции и выделения сервис тратит один раз, а не на каждом сообщении.</p>
+<p>Строка под таблицей описывает машину прогона вплоть до памяти. Счётчики инструкций с разных машин
+сравнимы, только если на них собран один и тот же код.</p>
+<h2 id="what-the-numbers-are">Что означают эти числа<a class="headerlink" href="#what-the-numbers-are" title="Permanent link">&para;</a></h2>
+<h3 id="the-comparison-against-a-raw-client">Сравнение с сырым клиентом<a class="headerlink" href="#the-comparison-against-a-raw-client" title="Permanent link">&para;</a></h3>
+<p><strong>Каждая строка - свой замер.</strong> Каждую строку измеряет тот, кто ведёт адаптацию библиотеки брокера:
+на своей машине, против брокера очереди на localhost. Поэтому строки между собой не сравниваются.
+Сравнимы только две колонки внутри одной строки, и ради этого сравнения страница существует.</p>
+<p><strong>Процент - верхняя граница.</strong> Брокер очереди на localhost ставит фреймворк в самые жёсткие условия.
+Сетевой задержки нет, поэтому та же абсолютная стоимость сообщения даёт больший процент, чем с
+брокером очереди за настоящей сетью. Читайте процент как верхнюю границу стоимости фреймворка для
+развёрнутого сервиса, а не как типичную величину.</p>
+<p><strong>«Упирается в брокер очереди» - нижняя граница.</strong> Пометка значит, что сырой клиент почти весь
+прогон ждал данных из сокета. Работа фреймворка укладывается в это ожидание, и измеренная разница
+стремится к нулю. Для такой нагрузки это честный результат: так выглядит насыщенный консьюмер. Но
+это число - нижняя граница стоимости диспетчеризации, а не её измерение. Бесплатной диспетчеризацию
+оно не делает.</p>
+<h3 id="the-cost-of-the-code">Стоимость кода<a class="headerlink" href="#the-cost-of-the-code" title="Permanent link">&para;</a></h3>
+<p><strong>Инструкции - точная мера.</strong> Два прогона одного бинарника дают одно число, и вдвое более быстрая
+машина даёт то же число. Поэтому строки этой таблицы сравнимы между собой и с той же строкой,
+измеренной на другой машине. Времени счётчик не показывает: та же величина обходится дороже там,
+где код промахивается мимо кэша. Поэтому рядом с таблицей измеряется и время по часам.</p>
+<p><strong>Измеряется только крейт.</strong> Величина - работа самого крейта и ничего больше: сервис, написанный как
+у пользователя, над внутрипроцессной очередью, с декодированием нагрузки в тип, чтением поля и
+подтверждением доставки. Брокера очереди в ней нет, поэтому число меняется тогда и только тогда,
+когда меняется код фреймворка. Рост на два процента - дефект, а не шум.</p>
+<p><strong>Установившийся режим.</strong> Каждая величина на сообщение измерена в установившемся режиме. Запуск
+сервиса стоит своё один раз: подключение, подписка, первые выделения памяти. Если разделить эту
+цену на сообщения прогона, разовая цена попадёт в цену сообщения. Поэтому сценарий измеряется на
+тысяче и на двух тысячах доставок, а стоимость сообщения - разница между прогонами. Холодный старт
+измеряется отдельно, на одной доставке.</p>
+<p><strong>Выделения памяти</strong> считаются на сообщение. На пути доставки их ноль: у работающего сервиса
+сообщение проходит от очереди до тела обработчика, ни разу не обратившись к аллокатору. На пути
+публикации выделяется только то, что брокер берёт себе, чтобы владеть переданным сообщением.</p>
+<h2 id="methodology">Методология<a class="headerlink" href="#methodology" title="Permanent link">&para;</a></h2>
+<p>Процедура ниже общая для всех адаптаций библиотек брокеров, поэтому их числа значат одно и то же.</p>
+<p>Адаптация, которая от неё отступает, сообщает об этом на своей странице.</p>
+<h3 id="the-three-loops">Три цикла<a class="headerlink" href="#the-three-loops" title="Permanent link">&para;</a></h3>
+<p>Прогон измеряет один сценарий трижды. Циклы различаются только тем, через что проходят сообщения:</p>
+<ul>
+<li><strong>Сырой клиент.</strong> Собственный клиент брокера, напрямую.</li>
+<li><strong>Адаптация библиотеки брокера.</strong> Консьюмер и паблишер самой адаптации (дескриптор подписки, поток
+  подписчика, его подтверждение, его издатель), которые крутит цикл внутри бенчмарка, без рантайма.</li>
+<li><strong>RustStream.</strong> Сервис целиком, как его пишет пользователь: обработчик, приложение,
+  диспетчеризация.</li>
+</ul>
+<p>Из трёх циклов получаются две разности:</p>
+<ul>
+<li><strong>адаптация минус клиент</strong> - сколько адаптация библиотеки брокера стоит поверх клиента. За эту
+  разность отвечает сама адаптация;</li>
+<li><strong>RustStream минус адаптация</strong> - сколько рантайм добавляет поверх адаптации. Её публикуют для
+  каждой адаптации, потому что адаптации передают сообщения рантайму по-разному: как поток отдаёт
+  доставки, приходят ли они пакетами, как до консьюмера доходит обратное давление.</li>
+</ul>
+<p>Всё остальное во всех трёх циклах одинаково:</p>
+<ul>
+<li><strong>Клиент и его конфигурация.</strong> Предвыборка, режим ack, consumer group, долговечность, число
+  соединений и любые настройки брокера. Фреймворк настраивает брокер через RustStream, но итоговые
+  настройки клиента обязаны совпасть.</li>
+<li><strong>Позиция ack.</strong> RustStream отправляет ack после возврата из обработчика, поэтому два других
+  цикла отправляют ack там же. Пакетный ack в конце прогона измеряет другой протокол, а не другой
+  фреймворк.</li>
+<li><strong>Декодирование в тот же тип.</strong> Циклы без обработчика десериализуют полезную нагрузку в ту же
+  структуру тем же кодеком и читают поле через <code>std::hint::black_box</code>. Без этого проще всего
+  получить неверное число: оптимизатор выбрасывает декодирование, результат которого не
+  используется, и сырая сторона незаметно перестаёт декодировать.</li>
+<li><strong>Полезная нагрузка, байт в байт.</strong> Тела сообщений всем циклам выдаёт один генератор.</li>
+<li><strong>Рантайм.</strong> Режим tokio (<code>flavor</code>), число рабочих потоков и число одновременно обрабатываемых
+  сообщений.</li>
+<li><strong>Сборка.</strong> Профиль, <code>RUSTFLAGS</code> и аллокатор совпадают, а фичи наблюдаемости (<code>logging</code>,
+  <code>metrics</code>, <code>otel</code>) выключены или включены во всех трёх циклах сразу. Числа с
+  <code>-C target-cpu=native</code> в окружении другая машина не воспроизведёт, поэтому флаги публикуются
+  вместе с результатами.</li>
+</ul>
+<h3 id="the-run">Прогон<a class="headerlink" href="#the-run" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Консьюмер подключается до публикации первого сообщения.</strong> Иначе одна сторона разбирает то, что
+  уже накопилось у брокера очереди, а другая принимает сообщения по мере публикации. В большинстве
+  брокеров очереди это два разных пути.</li>
+<li><strong>Каждый прогон получает свои имена.</strong> Новый субъект, очередь, поток или consumer group на каждый
+  прогон, чтобы прогон N не увидел остатков прогона N-1.</li>
+<li><strong>Окно открывается на первом принятом сообщении и закрывается на ack последнего.</strong> Перед
+  измеряемыми прогонами идёт калибровочный, его результат выбрасывается. Установка соединения,
+  регистрация консьюмера и первые выделения памяти - стоимость старта, а не сообщения.</li>
+<li><strong>Прогон длится не меньше пяти секунд.</strong> Под это подбирается число сообщений, чтобы переходные
+  процессы старта и разрешение таймера оставались в пределах шума.</li>
+<li><strong>Циклы чередуются, а не идут блоками.</strong> Сырой, адаптация, фреймворк, снова сырой, адаптация,
+  фреймворк, всего три круга. Если прогнать один цикл целиком, а потом следующий, весь дрейф машины
+  (нагрев, фоновая нагрузка, страничный кеш) достанется последнему.</li>
+</ul>
+<h3 id="the-report">Отчёт<a class="headerlink" href="#the-report" title="Permanent link">&para;</a></h3>
+<p><strong>Три круга.</strong> Одно число из одного прогона результатом не считается. Каждый цикл сообщает три
+круга: лучший, медианный и худший. Шум на машине только замедляет прогон, поэтому самый быстрый
+круг ближе всего к стоимости без помех. Медианный круг - типичный. Самый медленный показывает,
+насколько машина была далека от покоя.</p>
+<p><strong>Ячейка таблицы.</strong> В таблице печатается лучший круг, в скобках медианный. Худший остаётся в
+документе, но в ячейку не попадает: по нему считается разброс, расстояние от лучшего круга до
+худшего. Разница меньше разброса публикуется как <code>неразличимо</code>, а не процентом: величина ниже шума
+между прогонами изображала бы точность, которую никто не измерял.</p>
+<p><strong>Насыщенный консьюмер.</strong> Если сырая сторона провела прогон в ожидании брокера очереди, строка
+получает пометку <code>broker-bound</code>.</p>
+<p><strong>Окружение</strong> публикуется вместе с числами: процессор и число ядер, ядро системы, способ запуска
+брокера очереди (образ, контейнер, хост), версия rustc, версии крейтов, профиль сборки и флаги. Без
+этого число нельзя ни воспроизвести, ни признать устаревшим.</p>
+<h3 id="the-code-measurement">Измерение кода<a class="headerlink" href="#the-code-measurement" title="Permanent link">&para;</a></h3>
+<p>Вторую таблицу собирает <code>just bench</code> в репозитории крейта. Для него нужны valgrind и раннер
+бенчмарков той версии, на которую крейт ссылается в зависимостях.</p>
+<p><code>just bench 5000</code> измеряет каждый сценарий на пяти тысячах доставок вместо тысячи: число
+устойчивее, прогон дольше. Опубликованный документ остаётся на значении по умолчанию.</p>
+<p><strong>Что измеряется.</strong> Каждый сценарий - сервис, написанный как у пользователя. Его запускает
+настоящий рантайм с выключенной тестовой обвязкой, то есть код, который попадает в релиз. Транспорт
+внутрипроцессный, поэтому числа не зависят от сокета, нагрузки на сервер и сети. Это абсолютная
+собственная стоимость фреймворка. Сравнение с чужим клиентом - первая таблица, её делают адаптации
+библиотек брокеров.</p>
+<p><strong>Где идёт сбор.</strong> Только внутри измеряемой области. Очередь наполняется до её начала, поэтому
+сценарий измеряет установившуюся доставку, а не подключение, подписку и первые выделения памяти.
+Подготовка и уборка работают в том же процессе и через тот же код фреймворка. Если захватить и их,
+наполнение очереди сойдёт за стоимость её разбора.</p>
+<p><strong>Три прогона.</strong> Сценарий прогоняется на одной доставке, на тысяче и на двух тысячах. Прогон с
+одной доставкой - холодный старт. Разница между двумя другими - стоимость сообщения на запущенном
+сервисе. Посреди прогона ничего не выключают, поэтому способ годится и для счётчика выделений
+памяти: выключателя у него нет.</p>
+<p><strong>Три числа.</strong> Инструкции считает callgrind, выделения памяти - DHAT. Оба числа точны: инструкции
+сравнивают, а выделения ограничивает пол, заявленный сценарием. Время по часам берётся из
+отдельного прогона. Оно шумное и приводится для справки.</p>
+<p><strong>Сравнение, а не порог.</strong> <code>just bench --baseline=main</code> измеряет ветку против тех же бенчмарков на
+целевой ветке. Автор пул-реквеста запускает сравнение сам и приводит его числа.</p>
+<p><strong>Провал</strong> - это рост инструкций в сценарии больше чем на два процента или выделения памяти сверх
+заявленных сценарием. Изменение, которое удешевляет сценарий, в том же пул-реквесте опускает и его
+заявленный пол. Холодный старт и время по часам только печатаются.</p>
+<h2 id="publishing-results">Как публиковать результаты<a class="headerlink" href="#publishing-results" title="Permanent link">&para;</a></h2>
+<p>Каждая адаптация библиотеки брокера измеряет себя сама. Она запускает <code>just bench</code> против брокера
+очереди из своего compose-файла и кладёт итог в свой репозиторий: страницу для человека
+и документ JSON для этой страницы.</p>
+<h3 id="the-stable-path">Стабильный путь<a class="headerlink" href="#the-stable-path" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>https://raw.githubusercontent.com/powersemmi/&lt;crate&gt;/main/docs/benchmarks/results.json
+</code></pre></div>
+<p>Файл хранится в репозитории адаптации: <code>docs/benchmarks/results.json</code>, рядом со страницей, которая
+его объясняет. Эта страница читает его из ветки <code>main</code>, поэтому новый замер виден сразу после
+слияния.</p>
+<h3 id="the-document">Документ<a class="headerlink" href="#the-document" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"crate"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ruststream-nats"</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">"crate_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">"core_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">"measured_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20"</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">"environment"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nt">"cpu"</span><span class="p">:</span><span class="w"> </span><span class="s2">"AMD Ryzen 9 5950X 16-Core Processor"</span><span class="p">,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">"architecture"</span><span class="p">:</span><span class="w"> </span><span class="s2">"x86_64 (x86-64-v3)"</span><span class="p">,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">"cpu_frequency"</span><span class="p">:</span><span class="w"> </span><span class="s2">"base 3400 MHz, max 4900 MHz"</span><span class="p">,</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">"cores"</span><span class="p">:</span><span class="w"> </span><span class="s2">"16 physical, 32 logical"</span><span class="p">,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="nt">"memory"</span><span class="p">:</span><span class="w"> </span><span class="s2">"62.7 GiB"</span><span class="p">,</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="nt">"memory_speed"</span><span class="p">:</span><span class="w"> </span><span class="s2">"DDR4, 3600 MT/s"</span><span class="p">,</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span><span class="nt">"os"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Linux 6.16.7"</span><span class="p">,</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span><span class="nt">"broker"</span><span class="p">:</span><span class="w"> </span><span class="s2">"nats:2.10-alpine in Docker on localhost"</span><span class="p">,</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span><span class="nt">"rustc"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.90.0"</span><span class="p">,</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="nt">"valgrind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"3.25.1"</span><span class="p">,</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span><span class="nt">"profile"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)"</span><span class="p">,</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span><span class="nt">"features"</span><span class="p">:</span><span class="w"> </span><span class="s2">"--no-default-features --features memory,macros,json"</span><span class="p">,</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">    </span><span class="nt">"rustflags"</span><span class="p">:</span><span class="w"> </span><span class="s2">"-C target-cpu=native"</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">  </span><span class="nt">"scenarios"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"core NATS, 512 B JSON, ack each"</span><span class="p">,</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">      </span><span class="nt">"unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"msg/s"</span><span class="p">,</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">      </span><span class="nt">"messages"</span><span class="p">:</span><span class="w"> </span><span class="mi">200000</span><span class="p">,</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">      </span><span class="nt">"pairs"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">      </span><span class="nt">"raw"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"best"</span><span class="p">:</span><span class="w"> </span><span class="mi">129604</span><span class="p">,</span><span class="w"> </span><span class="nt">"median"</span><span class="p">:</span><span class="w"> </span><span class="mi">128470</span><span class="p">,</span><span class="w"> </span><span class="nt">"worst"</span><span class="p">:</span><span class="w"> </span><span class="mi">126980</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">      </span><span class="nt">"adapter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"best"</span><span class="p">:</span><span class="w"> </span><span class="mi">129310</span><span class="p">,</span><span class="w"> </span><span class="nt">"median"</span><span class="p">:</span><span class="w"> </span><span class="mi">128040</span><span class="p">,</span><span class="w"> </span><span class="nt">"worst"</span><span class="p">:</span><span class="w"> </span><span class="mi">126700</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">      </span><span class="nt">"framework"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"best"</span><span class="p">:</span><span class="w"> </span><span class="mi">129020</span><span class="p">,</span><span class="w"> </span><span class="nt">"median"</span><span class="p">:</span><span class="w"> </span><span class="mi">127640</span><span class="p">,</span><span class="w"> </span><span class="nt">"worst"</span><span class="p">:</span><span class="w"> </span><span class="mi">126100</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">      </span><span class="nt">"overhead_percent"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="p">,</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">      </span><span class="nt">"adapter_overhead_percent"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.3</span><span class="p">,</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">      </span><span class="nt">"adapter_verdict"</span><span class="p">:</span><span class="w"> </span><span class="s2">"indistinguishable"</span><span class="p">,</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">      </span><span class="nt">"verdict"</span><span class="p">:</span><span class="w"> </span><span class="s2">"indistinguishable"</span><span class="p">,</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">      </span><span class="nt">"broker_bound"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">  </span><span class="nt">"code"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"consume, JSON decode into a small struct"</span><span class="p">,</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="w">      </span><span class="nt">"messages"</span><span class="p">:</span><span class="w"> </span><span class="mi">1000</span><span class="p">,</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="w">      </span><span class="nt">"framework"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="mf">2839.8</span><span class="p">,</span><span class="w"> </span><span class="nt">"allocations"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="w">      </span><span class="nt">"cold"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"instructions"</span><span class="p">:</span><span class="w"> </span><span class="mi">19219</span><span class="p">,</span><span class="w"> </span><span class="nt">"allocations"</span><span class="p">:</span><span class="w"> </span><span class="mi">26</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="w">      </span><span class="nt">"gated"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="p">}</span>
+</code></pre></div>
+<p>Основные разделы документа:</p>
+<ul>
+<li><code>schema</code> - версия документа. Версия 3 сообщает по каждому циклу три круга (<code>best</code>, <code>median</code>,
+  <code>worst</code>), версия 2 добавила раздел <code>code</code>, версия 1 содержала медиану с крайними значениями;</li>
+<li><code>environment</code> - машина (<code>cpu</code>, <code>architecture</code>, <code>cpu_frequency</code>, <code>cores</code>, <code>memory</code>,
+  <code>memory_speed</code>) и сборка бенчмарков (<code>profile</code>, <code>features</code>);</li>
+<li><code>scenarios</code> - первая таблица, по записи на сценарий;</li>
+<li><code>code</code> - вторая таблица, по записи на сценарий.</li>
+</ul>
+<p>В записи <code>scenarios</code> поля <code>raw</code>, <code>adapter</code> и <code>framework</code> дают три круга каждого цикла. В таблице
+печатается <code>best</code>, в скобках <code>median</code>. <code>worst</code> читается, но не печатается: по расстоянию между
+лучшим и худшим кругом выносится вердикт. <code>unit</code> - короткая подпись рядом с каждым значением
+строки, а не предложение.</p>
+<p><code>verdict</code> - это <code>measured</code> или <code>indistinguishable</code> по правилу выше. <code>overhead_percent</code> - разница
+между фреймворком и сырым клиентом от края до края. Её записывают всегда, а показывают только при
+вердикте <code>measured</code>.</p>
+<p><code>adapter_overhead_percent</code> - разница между сырым клиентом и собственными консьюмером и паблишером
+адаптации, измеренными без рантайма. <code>adapter_verdict</code> применяет к ней то же правило разброса.</p>
+<p><code>broker_bound</code> помечает прогон, темп которого задавал брокер очереди, а не консьюмер. В
+<code>environment</code> может быть поле <code>round_trip</code>: проба, по которой считается <code>broker_bound</code>, чтобы
+читатель мог пересчитать сам.</p>
+<p>В записи <code>code</code> поле <code>framework</code> дано на сообщение в установившемся режиме, а <code>cold</code> - полная
+стоимость запуска сервиса и первой доставки, ни на что не делённая. <code>gated</code> говорит, валит ли
+регрессия в сценарии <code>just bench --baseline=main</code>.</p>
+<p>Документы старых схем и неполные документы страница читает так:</p>
+<ul>
+<li>в документе схемы 3 без <code>median</code> в скобках печатается худший круг, как было до появления этого
+  поля;</li>
+<li>без <code>adapter_verdict</code> страница сама применяет правило к опубликованным разбросам, чтобы две
+  колонки одной строки одинаково решали, что различимо. Без всех полей <code>adapter</code> средняя колонка
+  остаётся пустой;</li>
+<li>поле окружения, которого машина не сообщает, записывается как <code>unknown</code>, а не придумывается:
+  скорость памяти берётся из таблиц DMI, а их на большинстве систем читает только root.
+  Обязательны только <code>cpu</code>, <code>os</code> и <code>rustc</code>, поэтому документ схемы 1 остаётся читаемым;</li>
+<li>крейт, который публикует только <code>scenarios</code>, объявляет <code>schema</code> 1 и сохраняет свою строку в первой
+  таблице. Крейт, который не измеряет собственный брокер очереди, не пишет <code>scenarios</code> вовсе (а не
+  оставляет пустой список) и попадает только во вторую таблицу;</li>
+<li>если документ не загрузился или объявляет незнакомую версию <code>schema</code>, его брокер остаётся в
+  строке «результаты ещё не опубликованы». Так сломанная публикация видна, а не пропадает молча.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  К началу
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/powersemmi/ruststream" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.action.edit", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0432 \u0431\u0443\u0444\u0435\u0440", "clipboard.copy": "\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432 \u0431\u0443\u0444\u0435\u0440", "search.result.more.one": "\u0415\u0449\u0451 1 \u043d\u0430 \u044d\u0442\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435", "search.result.more.other": "\u0415\u0449\u0451 # \u043d\u0430 \u044d\u0442\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435", "search.result.none": "\u0421\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e", "search.result.one": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e 1 \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0435", "search.result.other": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439: #", "search.result.placeholder": "\u041d\u0430\u0447\u043d\u0438\u0442\u0435 \u043f\u0435\u0447\u0430\u0442\u0430\u0442\u044c \u0434\u043b\u044f \u043f\u043e\u0438\u0441\u043a\u0430", "search.result.term.missing": "\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442", "select.version": "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0432\u0435\u0440\u0441\u0438\u044e"}, "version": {"provider": "mike"}}</script>
+    
+    
+  
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../assets/benchmarks.js"></script>
+      
+    
+  
+  <script src="https://context7.com/widget.js" data-library="/powersemmi/ruststream"></script>
+
+  </body>
+</html>
