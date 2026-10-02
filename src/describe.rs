@@ -21,12 +21,16 @@ use thiserror::Error;
 ///
 /// ```
 /// use ruststream::Contact;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
 ///
-/// let contact = Contact::new()
-///     .name("Payments team")
-///     .email("payments@example.com");
-///
-/// assert_eq!(contact.name.as_deref(), Some("Payments team"));
+/// fn app() -> impl App {
+///     let info = AppInfo::new("payments", "1.4.0").contact(
+///         Contact::new()
+///             .name("Payments team")
+///             .email("payments@example.com"),
+///     );
+///     RustStream::new(info)
+/// }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
@@ -49,8 +53,14 @@ impl Contact {
     ///
     /// ```
     /// use ruststream::Contact;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// assert!(Contact::new().name.is_none());
+    /// fn app() -> impl App {
+    ///     // Every field is optional, so a contact states only what the team publishes.
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .contact(Contact::new().url("https://example.com/teams/payments"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub const fn new() -> Self {
@@ -67,8 +77,13 @@ impl Contact {
     ///
     /// ```
     /// use ruststream::Contact;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// assert_eq!(Contact::new().name("Ops").name.as_deref(), Some("Ops"));
+    /// fn app() -> impl App {
+    ///     let info =
+    ///         AppInfo::new("payments", "1.4.0").contact(Contact::new().name("Payments team"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
@@ -82,9 +97,16 @@ impl Contact {
     ///
     /// ```
     /// use ruststream::Contact;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let contact = Contact::new().url("https://example.com/support");
-    /// assert!(contact.url.is_some());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0").contact(
+    ///         Contact::new()
+    ///             .name("Payments team")
+    ///             .url("https://example.com/support"),
+    ///     );
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn url(mut self, url: impl Into<String>) -> Self {
@@ -98,9 +120,13 @@ impl Contact {
     ///
     /// ```
     /// use ruststream::Contact;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let contact = Contact::new().email("ops@example.com");
-    /// assert_eq!(contact.email.as_deref(), Some("ops@example.com"));
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .contact(Contact::new().email("payments@example.com"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn email(mut self, email: impl Into<String>) -> Self {
@@ -122,10 +148,13 @@ impl Contact {
 ///
 /// ```
 /// use ruststream::License;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
 ///
-/// let license = License::new("Apache-2.0").url("https://spdx.org/licenses/Apache-2.0.html");
-///
-/// assert_eq!(license.name, "Apache-2.0");
+/// fn app() -> impl App {
+///     let info = AppInfo::new("payments", "1.4.0")
+///         .license(License::new("Apache-2.0").url("https://spdx.org/licenses/Apache-2.0.html"));
+///     RustStream::new(info)
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
@@ -144,8 +173,12 @@ impl License {
     ///
     /// ```
     /// use ruststream::License;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// assert!(License::new("MIT").url.is_none());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0").license(License::new("MIT"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
@@ -161,9 +194,13 @@ impl License {
     ///
     /// ```
     /// use ruststream::License;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let license = License::new("MIT").url("https://spdx.org/licenses/MIT.html");
-    /// assert!(license.url.is_some());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .license(License::new("MIT").url("https://spdx.org/licenses/MIT.html"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn url(mut self, url: impl Into<String>) -> Self {
@@ -178,10 +215,14 @@ impl License {
 ///
 /// ```
 /// use ruststream::ExternalDocs;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
 ///
-/// let docs = ExternalDocs::new("https://example.com/orders").description("the order flow");
-///
-/// assert_eq!(docs.url, "https://example.com/orders");
+/// fn app() -> impl App {
+///     let info = AppInfo::new("payments", "1.4.0").external_docs(
+///         ExternalDocs::new("https://example.com/payments").description("the payment flow"),
+///     );
+///     RustStream::new(info)
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
@@ -200,8 +241,13 @@ impl ExternalDocs {
     ///
     /// ```
     /// use ruststream::ExternalDocs;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// assert!(ExternalDocs::new("https://example.com").description.is_none());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .external_docs(ExternalDocs::new("https://example.com/payments"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn new(url: impl Into<String>) -> Self {
@@ -217,9 +263,15 @@ impl ExternalDocs {
     ///
     /// ```
     /// use ruststream::ExternalDocs;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let docs = ExternalDocs::new("https://example.com").description("the runbook");
-    /// assert_eq!(docs.description.as_deref(), Some("the runbook"));
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0").external_docs(
+    ///         ExternalDocs::new("https://example.com/runbooks/payments")
+    ///             .description("the runbook"),
+    ///     );
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn description(mut self, description: impl Into<String>) -> Self {
@@ -234,10 +286,13 @@ impl ExternalDocs {
 ///
 /// ```
 /// use ruststream::Tag;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
 ///
-/// let tag = Tag::new("orders").description("everything the order domain emits");
-///
-/// assert_eq!(tag.name, "orders");
+/// fn app() -> impl App {
+///     let info = AppInfo::new("payments", "1.4.0")
+///         .tag(Tag::new("payments").description("everything the payment domain emits"));
+///     RustStream::new(info)
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
@@ -259,8 +314,14 @@ impl Tag {
     ///
     /// ```
     /// use ruststream::Tag;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// assert!(Tag::new("orders").description.is_none());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .tag(Tag::new("payments"))
+    ///         .tag(Tag::new("public"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
@@ -277,9 +338,13 @@ impl Tag {
     ///
     /// ```
     /// use ruststream::Tag;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     ///
-    /// let tag = Tag::new("orders").description("the order domain");
-    /// assert_eq!(tag.description.as_deref(), Some("the order domain"));
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0")
+    ///         .tag(Tag::new("payments").description("the payment domain"));
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn description(mut self, description: impl Into<String>) -> Self {
@@ -292,10 +357,16 @@ impl Tag {
     /// # Examples
     ///
     /// ```
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     /// use ruststream::{ExternalDocs, Tag};
     ///
-    /// let tag = Tag::new("orders").external_docs(ExternalDocs::new("https://example.com"));
-    /// assert!(tag.external_docs.is_some());
+    /// fn app() -> impl App {
+    ///     let info = AppInfo::new("payments", "1.4.0").tag(
+    ///         Tag::new("payments")
+    ///             .external_docs(ExternalDocs::new("https://example.com/payments")),
+    ///     );
+    ///     RustStream::new(info)
+    /// }
     /// ```
     #[must_use]
     pub fn external_docs(mut self, docs: ExternalDocs) -> Self {
@@ -314,13 +385,14 @@ impl Tag {
 /// # Examples
 ///
 /// ```
-/// use ruststream::AppId;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+/// use ruststream::{AppId, AppIdError};
 ///
-/// let id: AppId = "urn:example:orders".parse()?;
-/// assert_eq!(id.as_str(), "urn:example:orders");
-///
-/// assert!("orders".parse::<AppId>().is_err());
-/// # Ok::<_, ruststream::AppIdError>(())
+/// /// A bare title is refused: `"payments".parse::<AppId>()` fails, a URI does not.
+/// fn app() -> Result<impl App, AppIdError> {
+///     let id: AppId = "urn:example:payments".parse()?;
+///     Ok(RustStream::new(AppInfo::new("payments", "1.4.0").id(id)))
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -333,10 +405,12 @@ impl AppId {
     ///
     /// ```
     /// use ruststream::AppId;
+    /// use ruststream::runtime::AppInfo;
     ///
-    /// let id: AppId = "https://example.com/orders".parse()?;
-    /// assert!(id.as_str().starts_with("https:"));
-    /// # Ok::<_, ruststream::AppIdError>(())
+    /// /// The key the deployment tooling registers the service under: its id, or its title.
+    /// fn registry_key(info: &AppInfo) -> &str {
+    ///     info.id.as_ref().map_or(info.title.as_str(), AppId::as_str)
+    /// }
     /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {

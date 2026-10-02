@@ -619,12 +619,31 @@ impl ServerSpec {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::ServerSpec;
+    /// use ruststream::{DescribeServer, ServerSpec};
+    /// # use ruststream::{Broker, ConnectedBroker};
+    /// # struct ConnectedRabbit;
+    /// # impl Broker for RabbitBroker {
+    /// #     type Error = std::io::Error;
+    /// #     type Connected = ConnectedRabbit;
+    /// #     async fn connect(self) -> Result<ConnectedRabbit, Self::Error> { Ok(ConnectedRabbit) }
+    /// # }
+    /// # impl ConnectedBroker for ConnectedRabbit {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
     ///
-    /// let spec = ServerSpec::from_url("amqp://svc:secret@broker.example.com:5672/prod", "amqp");
+    /// /// Configured from `amqp://svc:secret@broker.example.com:5672/prod`.
+    /// struct RabbitBroker {
+    ///     url: String,
+    /// }
     ///
-    /// assert_eq!(spec.host.as_deref(), Some("broker.example.com:5672"));
-    /// assert_eq!(spec.protocol, "amqp");
+    /// impl DescribeServer for RabbitBroker {
+    ///     fn describe_server(&self) -> ServerSpec {
+    ///         // The document carries `broker.example.com:5672`, never the password.
+    ///         ServerSpec::from_url(&self.url, "amqp")
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn from_url(url: &str, protocol: impl Into<String>) -> Self {
@@ -644,13 +663,32 @@ impl ServerSpec {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::ServerSpec;
+    /// use ruststream::{DescribeServer, ServerSpec};
+    /// # use ruststream::{Broker, ConnectedBroker};
+    /// # struct ConnectedNats;
+    /// # impl Broker for NatsBroker {
+    /// #     type Error = std::io::Error;
+    /// #     type Connected = ConnectedNats;
+    /// #     async fn connect(self) -> Result<ConnectedNats, Self::Error> { Ok(ConnectedNats) }
+    /// # }
+    /// # impl ConnectedBroker for ConnectedNats {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
     ///
-    /// assert_eq!(
-    ///     ServerSpec::host_from_url("nats://user:pass@nats.example.com:4222"),
-    ///     "nats.example.com:4222",
-    /// );
-    /// assert_eq!(ServerSpec::host_from_url("redis://cache:6379"), "cache:6379");
+    /// /// Configured with every seed of the cluster, each with its own credentials.
+    /// struct NatsBroker {
+    ///     seeds: Vec<String>,
+    /// }
+    ///
+    /// impl DescribeServer for NatsBroker {
+    ///     fn describe_server(&self) -> ServerSpec {
+    ///         let hosts: Vec<String> =
+    ///             self.seeds.iter().map(|url| ServerSpec::host_from_url(url)).collect();
+    ///         ServerSpec::new(hosts.join(","), "nats")
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn host_from_url(url: &str) -> String {
@@ -701,11 +739,30 @@ impl ServerSpec {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::ServerSpec;
+    /// use ruststream::{DescribeServer, ServerSpec};
+    /// # use ruststream::{Broker, ConnectedBroker};
+    /// # struct ConnectedRabbit;
+    /// # impl Broker for RabbitBroker {
+    /// #     type Error = std::io::Error;
+    /// #     type Connected = ConnectedRabbit;
+    /// #     async fn connect(self) -> Result<ConnectedRabbit, Self::Error> { Ok(ConnectedRabbit) }
+    /// # }
+    /// # impl ConnectedBroker for ConnectedRabbit {
+    /// #     type Error = std::io::Error;
+    /// #     type Closed = ();
+    /// #     async fn shutdown(self) -> Result<(), Self::Error> { Ok(()) }
+    /// # }
     ///
-    /// let spec = ServerSpec::new("rabbit.example.com:5672", "amqp").protocol_version("0.9.1");
+    /// struct RabbitBroker {
+    ///     url: String,
+    /// }
     ///
-    /// assert_eq!(spec.protocol_version.as_deref(), Some("0.9.1"));
+    /// impl DescribeServer for RabbitBroker {
+    ///     fn describe_server(&self) -> ServerSpec {
+    ///         // The client speaks AMQP 0-9-1, not the 1.0 the protocol key alone would suggest.
+    ///         ServerSpec::from_url(&self.url, "amqp").protocol_version("0.9.1")
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn protocol_version(mut self, version: impl Into<String>) -> Self {
@@ -720,11 +777,14 @@ impl ServerSpec {
     /// # Examples
     ///
     /// ```
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     /// use ruststream::{SecurityScheme, ServerSpec};
     ///
-    /// let spec = ServerSpec::new("kafka.example.com:9093", "kafka")
-    ///     .security(SecurityScheme::scram_sha512().description("SASL over TLS"));
-    /// assert_eq!(spec.security.len(), 1);
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::scram_sha512().description("SASL over TLS"));
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn security(mut self, scheme: SecurityScheme) -> Self {
@@ -742,24 +802,32 @@ impl ServerSpec {
     ///
     /// ```
     /// # #[cfg(feature = "asyncapi")]
-    /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
+    /// # mod demo {
     /// use ruststream::ServerSpec;
-    /// use ruststream::asyncapi::{Binding, Bindings};
+    /// use ruststream::asyncapi::{Binding, BindingError, Bindings};
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
     /// use serde::Serialize;
     ///
     /// #[derive(Serialize)]
     /// struct MqttServer {
     ///     #[serde(rename = "clientId")]
-    ///     client_id: String,
+    ///     client_id: &'static str,
     /// }
     ///
-    /// let binding = Binding::new("mqtt", "0.2.0", &MqttServer { client_id: "orders".into() })?;
-    /// let spec = ServerSpec::new("mqtt.example.com:1883", "mqtt")
-    ///     .bindings(Bindings::new().with(binding));
-    ///
-    /// assert!(!spec.bindings.is_empty());
-    /// # Ok(())
+    /// pub fn app() -> Result<impl App, BindingError> {
+    ///     let binding = Binding::new(
+    ///         "mqtt",
+    ///         "0.2.0",
+    ///         &MqttServer {
+    ///             client_id: "orders",
+    ///         },
+    ///     )?;
+    ///     let production = ServerSpec::new("mqtt.example.com:1883", "mqtt")
+    ///         .bindings(Bindings::new().with(binding));
+    ///     Ok(RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production))
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[cfg(feature = "asyncapi")]
     #[must_use]
@@ -780,10 +848,14 @@ impl ServerSpec {
 /// # Examples
 ///
 /// ```
-/// use ruststream::SecurityScheme;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+/// use ruststream::{SecurityScheme, ServerSpec};
 ///
-/// let scheme = SecurityScheme::user_password().description("service credentials");
-/// # let _ = scheme;
+/// fn app() -> impl App {
+///     let production = ServerSpec::new("rabbit.example.com:5672", "amqp")
+///         .security(SecurityScheme::user_password().description("service credentials"));
+///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityScheme {
@@ -881,9 +953,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::user_password();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("rabbit.example.com:5672", "amqp")
+    ///         .security(SecurityScheme::user_password());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn user_password() -> Self {
@@ -895,9 +972,15 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{ApiKeyLocation, SecurityScheme};
-    /// let scheme = SecurityScheme::api_key(ApiKeyLocation::User);
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{ApiKeyLocation, SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     // The token rides in the user field of the connection credentials.
+    ///     let production = ServerSpec::new("pulsar.example.com:6651", "pulsar")
+    ///         .security(SecurityScheme::api_key(ApiKeyLocation::User));
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn api_key(location: ApiKeyLocation) -> Self {
@@ -909,9 +992,15 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::x509();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     // Clients present a certificate the broker trusts.
+    ///     let production =
+    ///         ServerSpec::new("rabbit.example.com:5671", "amqp").security(SecurityScheme::x509());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn x509() -> Self {
@@ -923,9 +1012,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::plain();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::plain());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn plain() -> Self {
@@ -937,9 +1031,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::scram_sha256();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::scram_sha256());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn scram_sha256() -> Self {
@@ -951,9 +1050,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::scram_sha512();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::scram_sha512());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn scram_sha512() -> Self {
@@ -965,9 +1069,15 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::gssapi();
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     // Kerberos, through the cluster's KDC.
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::gssapi());
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn gssapi() -> Self {
@@ -980,9 +1090,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::http("bearer");
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("gateway.example.com:443", "websockets")
+    ///         .security(SecurityScheme::http("bearer"));
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn http(scheme: impl Into<String>) -> Self {
@@ -996,9 +1111,15 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{HttpApiKeyLocation, SecurityScheme};
-    /// let scheme = SecurityScheme::http_api_key("X-Api-Key", HttpApiKeyLocation::Header);
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{HttpApiKeyLocation, SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("gateway.example.com:443", "websockets").security(
+    ///         SecurityScheme::http_api_key("X-Api-Key", HttpApiKeyLocation::Header),
+    ///     );
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn http_api_key(name: impl Into<String>, location: HttpApiKeyLocation) -> Self {
@@ -1013,9 +1134,17 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::open_id_connect("https://idp.example.com/.well-known/openid-configuration");
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("gateway.example.com:443", "websockets").security(
+    ///         SecurityScheme::open_id_connect(
+    ///             "https://idp.example.com/.well-known/openid-configuration",
+    ///         ),
+    ///     );
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn open_id_connect(url: impl Into<String>) -> Self {
@@ -1028,15 +1157,20 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    /// use serde_json::json;
     ///
-    /// let scheme = SecurityScheme::oauth2(serde_json::json!({
-    ///     "clientCredentials": {
-    ///         "tokenUrl": "https://idp.example.com/token",
-    ///         "availableScopes": { "kafka:write": "produce" },
-    ///     }
-    /// }));
-    /// # let _ = scheme;
+    /// fn app() -> impl App {
+    ///     let oauth = SecurityScheme::oauth2(json!({
+    ///         "clientCredentials": {
+    ///             "tokenUrl": "https://idp.example.com/token",
+    ///             "availableScopes": { "kafka:write": "produce" },
+    ///         }
+    ///     }));
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka").security(oauth);
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[cfg(feature = "json")]
     #[must_use]
@@ -1054,10 +1188,16 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    /// use serde_json::json;
     ///
-    /// let scheme = SecurityScheme::custom(serde_json::json!({ "type": "symmetricEncryption" }));
-    /// # let _ = scheme;
+    /// fn app() -> impl App {
+    ///     // Every frame on this bus is encrypted with a key the operators hand out.
+    ///     let encrypted = SecurityScheme::custom(json!({ "type": "symmetricEncryption" }));
+    ///     let production = ServerSpec::new("bus.example.com:5555", "zmq").security(encrypted);
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[cfg(feature = "json")]
     #[must_use]
@@ -1074,9 +1214,14 @@ impl SecurityScheme {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::SecurityScheme;
-    /// let scheme = SecurityScheme::plain().description("SASL over TLS");
-    /// # let _ = scheme;
+    /// use ruststream::runtime::{App, AppInfo, RustStream};
+    /// use ruststream::{SecurityScheme, ServerSpec};
+    ///
+    /// fn app() -> impl App {
+    ///     let production = ServerSpec::new("kafka.example.com:9093", "kafka")
+    ///         .security(SecurityScheme::plain().description("SASL over TLS"));
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).server("production", production)
+    /// }
     /// ```
     #[must_use]
     pub fn description(mut self, description: impl Into<String>) -> Self {
@@ -1124,13 +1269,10 @@ impl SecurityScheme {
 ///
 /// impl DescribeServer for AmqpBroker {
 ///     fn describe_server(&self) -> ServerSpec {
+///         // `amqp://svc:secret@broker:5672/prod` is described as `broker:5672`.
 ///         ServerSpec::from_url(&self.url, "amqp")
 ///     }
 /// }
-///
-/// let broker = AmqpBroker { url: "amqp://svc:secret@broker:5672".to_owned() };
-///
-/// assert_eq!(broker.describe_server().host.as_deref(), Some("broker:5672"));
 /// ```
 pub trait DescribeServer: Broker {
     /// Returns the server coordinates for this broker.

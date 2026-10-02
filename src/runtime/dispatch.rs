@@ -58,17 +58,33 @@ use threads::Threads;
 /// # Examples
 ///
 /// ```
-/// use ruststream::HeaderMap;
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
 /// use ruststream::runtime::RETRY_COUNT_HEADER;
+/// use serde::Deserialize;
 ///
-/// fn over_limit(headers: &HeaderMap, limit: u64) -> bool {
-///     let count: u64 = headers.get_str(RETRY_COUNT_HEADER).and_then(|v| v.parse().ok()).unwrap_or(0);
-///     count >= limit
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
 /// }
 ///
-/// let mut headers = HeaderMap::new();
-/// headers.insert(RETRY_COUNT_HEADER, "3");
-/// assert!(over_limit(&headers, 3));
+/// #[subscriber("orders")]
+/// async fn reconcile(order: &Order, ctx: &mut Context<'_>) -> HandlerOutcome {
+///     // The copies the runtime publishes count themselves; the first delivery carries no header.
+///     let attempt: u64 = ctx
+///         .headers()
+///         .get_str(RETRY_COUNT_HEADER)
+///         .and_then(|v| v.parse().ok())
+///         .unwrap_or(0);
+///     if attempt >= 3 {
+///         tracing::warn!(order.id, attempt, "giving up");
+///         return HandlerOutcome::drop();
+///     }
+///     HandlerOutcome::retry()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub const RETRY_COUNT_HEADER: &str = "x-ruststream-retry-count";
 
@@ -158,11 +174,36 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::nonzero;
-    /// use ruststream::runtime::Workers;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// let workers = Workers::threads(nonzero!(8));
-    /// assert_ne!(workers, Workers::pool(nonzero!(8)));
+    /// #[derive(Deserialize)]
+    /// struct Image {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("images.resize")]
+    /// async fn resize(image: &Image) -> HandlerOutcome {
+    ///     tracing::info!(image.id, "resized");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn images() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     // Resizing computes, so it runs on eight threads of its own.
+    ///     Router::new()
+    ///         .include(resize)
+    ///         .workers(Workers::threads(nonzero!(8)))
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(images());
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub const fn threads(count: NonZeroUsize) -> Self {
@@ -181,11 +222,36 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::nonzero;
-    /// use ruststream::runtime::Workers;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// let workers = Workers::threads_keyed(nonzero!(4));
-    /// assert_ne!(workers, Workers::threads(nonzero!(4)));
+    /// #[derive(Deserialize)]
+    /// struct Image {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("images.resize")]
+    /// async fn resize(image: &Image) -> HandlerOutcome {
+    ///     tracing::info!(image.id, "resized");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn images() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     // One tenant's images stay in order: a key always lands on the same thread.
+    ///     Router::new()
+    ///         .include(resize)
+    ///         .workers(Workers::threads_keyed(nonzero!(4)))
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(images());
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub const fn threads_keyed(count: NonZeroUsize) -> Self {

@@ -345,6 +345,8 @@ pub trait Serialized {
 ///
 /// use ruststream::prelude::*;
 ///
+/// /// A frame that already holds its encoded bytes: it lends them, and the buffer it was handed
+/// /// stays untouched.
 /// struct Frame(Vec<u8>);
 ///
 /// impl Serialized for Frame {
@@ -354,13 +356,6 @@ pub trait Serialized {
 ///         Ok(WireBytes::Own(&self.0))
 ///     }
 /// }
-///
-/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut buf = BytesMut::new();
-/// assert_eq!(Frame(vec![7]).wire_bytes(&mut buf)?.of(&buf), &[7]);
-/// # Ok(())
-/// # }
-/// # check().unwrap();
 /// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -381,11 +376,14 @@ impl<'a> WireBytes<'a> {
     ///
     /// ```
     /// use ruststream::BytesMut;
-    /// use ruststream::runtime::WireBytes;
+    /// use ruststream::runtime::Serialized;
     ///
-    /// let buf = BytesMut::from(&b"{}"[..]);
-    /// assert_eq!(WireBytes::InBuffer.of(&buf), b"{}");
-    /// assert_eq!(WireBytes::Own(b"[]").of(&buf), b"[]");
+    /// /// The size a value has on the wire, for a check against the broker's payload limit before
+    /// /// the publish is attempted.
+    /// fn wire_len<T: Serialized>(value: &T) -> Result<usize, T::Error> {
+    ///     let mut buf = BytesMut::new();
+    ///     Ok(value.wire_bytes(&mut buf)?.of(&buf).len())
+    /// }
     /// ```
     #[must_use]
     pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {

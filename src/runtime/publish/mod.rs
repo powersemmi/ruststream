@@ -59,22 +59,53 @@ pub struct Outgoing<'a> {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{HeaderMap, Str};
-/// use ruststream::runtime::{Outgoing, OutgoingName};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{Outgoing, OutgoingName, PublishContext};
+/// use serde::{Deserialize, Serialize};
 ///
-/// // What a transform sees: the request named the queue it wants its answer in.
-/// let mut headers = HeaderMap::new();
-/// headers.insert(Str::from_static("reply-to"), "replies.inbox");
+/// /// Each tenant reads its answers from a queue of its own. The name is built per delivery and
+/// /// moves in owned; a name the request carried would arrive as its own buffer instead.
+/// struct PerTenant;
 ///
-/// let address = headers.get_shared("reply-to").ok_or("the request named no inbox")?;
-/// let mut out = Outgoing::new("answers", b"{}".as_slice());
-/// out.set_name(Str::try_from(address)?);
-/// assert_eq!(out.name(), "replies.inbox");
+/// impl<C, Options> PublishTransform<ForReply<C>, Options> for PerTenant {
+///     type Destination = Names;
 ///
-/// // The other two forms, for a name nobody sent us: a literal, and one built per delivery.
-/// let computed = OutgoingName::from(format!("replies.{}", 7));
-/// assert_eq!(&*computed, "replies.7");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         cx: &PublishContext<'_, C>,
+///     ) {
+///         if let Some(tenant) = cx.headers().get_str("x-tenant") {
+///             out.set_name(OutgoingName::from(format!("answers.{tenant}")));
+///         }
+///     }
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Request {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// struct Answer {
+///     id: u64,
+/// }
+///
+/// #[subscriber("requests", reply("answers"))]
+/// async fn answer(request: &Request) -> Answer {
+///     Answer { id: request.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(answer).out_reply(Publish).transform(PerTenant);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone)]
 pub enum OutgoingName<'a> {
@@ -259,17 +290,62 @@ impl<'a> Outgoing<'a> {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{Bytes, Str};
-    /// use ruststream::runtime::Outgoing;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Outgoing, PublishContext};
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let mut out = Outgoing::new("answers", b"{}".as_slice());
-    /// out.set_name("replies.inbox");
-    /// assert_eq!(out.name(), "replies.inbox");
+    /// /// Sends each answer to the inbox its request named, or to a per-tenant queue when it named
+    /// /// none: the header's buffer moves in shared, the computed name moves in owned.
+    /// struct ToInbox;
     ///
-    /// // The same setter takes the buffer a delivery arrived in, with no copy between them.
-    /// out.set_name(Str::try_from(Bytes::from_static(b"replies.7"))?);
-    /// assert_eq!(out.name(), "replies.7");
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {
+    ///     type Destination = Names;
+    ///
+    ///     fn apply(
+    ///         &self,
+    ///         out: &mut Outgoing<'_>,
+    ///         _options: &mut Option<Options>,
+    ///         cx: &PublishContext<'_, C>,
+    ///     ) {
+    ///         if let Some(inbox) = cx
+    ///             .headers()
+    ///             .get_shared("reply-to")
+    ///             .and_then(|v| Str::try_from(v).ok())
+    ///         {
+    ///             out.set_name(inbox);
+    ///         } else if let Some(tenant) = cx.headers().get_str("x-tenant") {
+    ///             out.set_name(format!("answers.{tenant}"));
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Request {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// struct Answer {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("requests", reply("answers"))]
+    /// async fn answer(request: &Request) -> Answer {
+    ///     Answer { id: request.id }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(
+    ///         MemoryBroker::new(),
+    ///         |b| {
+    ///             b.include(answer).out_reply(Publish).transform(ToInbox);
+    ///         },
+    ///     )
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn set_name(&mut self, name: impl Into<OutgoingName<'a>>) {
         self.name = name.into();

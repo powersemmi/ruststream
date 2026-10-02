@@ -12,14 +12,18 @@
 //!
 //! ```
 //! use ruststream::metrics::Metrics;
-//! use ruststream::runtime::{AppInfo, RustStream};
+//! use ruststream::runtime::{App, AppInfo, RustStream};
 //!
-//! # fn build() -> Result<(), prometheus::Error> {
+//! fn app(metrics: &Metrics) -> impl App {
+//!     RustStream::new(AppInfo::new("svc", "0.1.0"))
+//!         .layer(metrics.consume_layer())
+//!         .publish_layer(metrics.publish_layer())
+//! }
+//!
+//! # async fn serve() -> Result<(), Box<dyn std::error::Error>> {
+//! // One collector per process: its registry is what the `/metrics` route renders.
 //! let metrics = Metrics::new()?;
-//! let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-//!     .layer(metrics.consume_layer())
-//!     .publish_layer(metrics.publish_layer());
-//! # let _ = app;
+//! app(&metrics).run().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -182,19 +186,19 @@ impl Metrics {
     /// # Examples
     ///
     /// ```
+    /// use prometheus::{Error, Registry};
     /// use ruststream::metrics::Metrics;
-    /// use ruststream::runtime::{AppInfo, PollDiagnostics, RustStream};
+    /// use ruststream::runtime::{App, AppInfo, PollDiagnostics, RustStream};
     ///
-    /// # fn build() -> Result<(), prometheus::Error> {
-    /// let metrics = Metrics::with_registry(prometheus::Registry::new())?;
-    /// let diagnostics = PollDiagnostics::new();
-    /// metrics.observe_poll_diagnostics(&diagnostics)?;
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .layer(metrics.consume_layer())
-    ///     .poll_diagnostics(diagnostics);
-    /// # let _ = app;
-    /// # Ok(())
-    /// # }
+    /// /// The registry is the service's own, shared with the collectors it already exports.
+    /// fn app(registry: Registry) -> Result<impl App, Error> {
+    ///     let metrics = Metrics::with_registry(registry)?;
+    ///     let diagnostics = PollDiagnostics::new();
+    ///     metrics.observe_poll_diagnostics(&diagnostics)?;
+    ///     Ok(RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///         .layer(metrics.consume_layer())
+    ///         .poll_diagnostics(diagnostics))
+    /// }
     /// ```
     #[cfg(feature = "poll-diagnostics")]
     pub fn observe_poll_diagnostics(

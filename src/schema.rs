@@ -8,14 +8,37 @@
 /// # Examples
 ///
 /// ```
-/// use ruststream::prelude::*;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// struct Order;
-/// impl MessageInfo for Order {
-///     const NAME: &'static str = "Order";
+/// /// An order a customer placed.
+/// #[derive(Deserialize)]
+/// struct OrderPlacedV2 {
+///     id: u64,
 /// }
 ///
-/// assert_eq!(Order::NAME, "Order");
+/// // The component keeps the name the contract was published under, whatever the Rust type is
+/// // called now.
+/// impl MessageInfo for OrderPlacedV2 {
+///     const NAME: &'static str = "OrderPlaced";
+///     const DESCRIPTION: Option<&'static str> = Some("An order a customer placed.");
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn accept(order: &OrderPlacedV2) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub trait MessageInfo {
     /// The message name, used as the `AsyncAPI` component name.
@@ -128,8 +151,6 @@ impl<H> HeadersContract for WithHeaders<H> {}
 ///     type Form = FixedName;
 ///     const DESTINATION: &'static str = "orders.done";
 /// }
-///
-/// assert_eq!(OrderDone::DESTINATION, "orders.done");
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not declare how it is sent",

@@ -1072,19 +1072,25 @@ write, and a relay publishes it afterwards. `examples/http_outbox.rs` in the rep
 that pattern on axum.
 
 ```no_run
-# #[cfg(all(feature = "memory", feature = "json"))]
+# #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 use ruststream::memory::prelude::*;
+use serde::Serialize;
+
+#[derive(Serialize, Outgoing)]
+#[outgoing(name = "orders")]
+struct Order {
+    id: u64,
+}
 
 let broker = MemoryBroker::new().bindable();
 let egress = broker.bind(Publish);
 let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |_b| {});
 
 let running = app.start().await?;
+// The HTTP state or a relay task owns the publisher until `running.stopping()` resolves.
 let publisher = running.publisher(egress).await?;
-// hand `publisher` to the HTTP state or a relay task, serve until `running.stopping()`
-// resolves or the host stops ...
-# let _ = publisher;
+publisher.message(&Order { id: 7 }).publish().await?;
 running.shutdown().await?;
 # Ok(())
 # }

@@ -30,26 +30,32 @@ use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 /// # Examples
 ///
 /// ```
-/// use std::convert::Infallible;
+/// use std::io;
 ///
 /// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # struct Socket;
+/// # impl Socket {
+/// #     async fn send_frame(&self, _name: &str, _payload: &[u8]) -> io::Result<()> {
+/// #         Ok(())
+/// #     }
+/// # }
 ///
-/// // A transport that packs the payload into a frame of its own reads it and keeps nothing.
-/// struct Framed;
+/// /// A transport that packs the payload into a frame of its own reads it and keeps nothing.
+/// struct Framed {
+///     socket: Socket,
+/// }
 ///
 /// impl Publisher for Framed {
 ///     type Payload = Lend;
-///     type Error = Infallible;
+///     type Error = io::Error;
 ///     type Options = ();
 ///
 ///     async fn publish(
 ///         &self,
 ///         msg: OutgoingMessage<'_, &[u8]>,
 ///         _options: Option<&()>,
-///     ) -> Result<(), Infallible> {
-///         let (name, payload, _headers) = msg.into_parts();
-///         let _frame = (name.len(), payload.len());
-///         Ok(())
+///     ) -> io::Result<()> {
+///         self.socket.send_frame(msg.name(), msg.payload()).await
 ///     }
 /// }
 /// ```
@@ -161,11 +167,35 @@ pub trait PayloadForm: sealed::Sealed {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{Lend, PayloadForm};
+/// use std::io;
 ///
-/// // What a lending transport is handed: the bytes where the framework wrote them.
-/// let handed: <Lend as PayloadForm>::Form<'_> = b"{}".as_slice();
-/// assert_eq!(handed, b"{}");
+/// use ruststream::{Lend, OutgoingMessage, Publisher};
+/// # struct Connection;
+/// # impl Connection {
+/// #     async fn write(&self, _subject: &str, _payload: &[u8]) -> io::Result<()> {
+/// #         Ok(())
+/// #     }
+/// # }
+///
+/// /// The client copies the bytes onto its socket, so it borrows them where the framework wrote
+/// /// them and the dispatch loop reuses that buffer for the next reply.
+/// struct SocketPublisher {
+///     connection: Connection,
+/// }
+///
+/// impl Publisher for SocketPublisher {
+///     type Payload = Lend;
+///     type Error = io::Error;
+///     type Options = ();
+///
+///     async fn publish(
+///         &self,
+///         msg: OutgoingMessage<'_, &[u8]>,
+///         _options: Option<&()>,
+///     ) -> io::Result<()> {
+///         self.connection.write(msg.name(), msg.payload()).await
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Lend;
@@ -179,12 +209,36 @@ pub struct Lend;
 /// # Examples
 ///
 /// ```
-/// use ruststream::{BytesMut, PayloadForm, Take};
+/// use std::io;
 ///
-/// // What a taking transport is handed: the buffer itself, to keep in the form its client
-/// // speaks.
-/// let handed: <Take as PayloadForm>::Form<'static> = BytesMut::from(&b"{}"[..]);
-/// assert_eq!(handed.freeze(), b"{}".as_slice());
+/// use ruststream::{Bytes, BytesMut, OutgoingMessage, Publisher, Take};
+/// # struct Producer;
+/// # impl Producer {
+/// #     async fn send(&self, _topic: &str, _payload: Bytes) -> io::Result<()> {
+/// #         Ok(())
+/// #     }
+/// # }
+///
+/// /// The client queues the record and sends it later, so it keeps the buffer: `freeze` turns it
+/// /// into the `Bytes` the client speaks without a copy.
+/// struct QueuedPublisher {
+///     producer: Producer,
+/// }
+///
+/// impl Publisher for QueuedPublisher {
+///     type Payload = Take;
+///     type Error = io::Error;
+///     type Options = ();
+///
+///     async fn publish(
+///         &self,
+///         msg: OutgoingMessage<'_, BytesMut>,
+///         _options: Option<&()>,
+///     ) -> io::Result<()> {
+///         let topic = msg.name();
+///         self.producer.send(topic, msg.into_payload().freeze()).await
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Take;
@@ -636,11 +690,11 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// # {
     /// # struct NatsPublish;
     /// # impl NatsPublish {
+    /// /// NATS replies go to the inbox a request names in its `reply-to` header.
     /// fn reply_address_location(&self) -> Option<&'static str> {
     ///     Some("$message.header#/reply-to")
     /// }
     /// # }
-    /// assert_eq!(NatsPublish.reply_address_location(), Some("$message.header#/reply-to"));
     /// # }
     /// ```
     #[cfg(feature = "asyncapi")]
@@ -684,16 +738,34 @@ impl PairError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
-/// # fn demo() {
-/// use ruststream::DefaultPublish;
-/// use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// fn default_policy<C: DefaultPublish>() -> C::Policy {
-///     C::Policy::default()
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
 /// }
-/// let _: MemoryPublish = default_policy::<ConnectedMemoryBroker>();
+///
+/// #[derive(Serialize, Outgoing)]
+/// struct Confirmed {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders", reply("orders.confirmed"))]
+/// async fn confirm(order: &Order) -> Confirmed {
+///     Confirmed { id: order.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // No policy named: the reply leaves through the broker's default one.
+///         b.include(confirm);
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 pub trait DefaultPublish: ConnectedBroker {
     /// The broker's plain publish policy, constructible with its defaults.

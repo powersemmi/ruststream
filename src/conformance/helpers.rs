@@ -27,13 +27,24 @@ use tokio::time::{sleep, timeout};
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
+/// # #[cfg(feature = "memory")]
+/// # async fn run() {
 /// use ruststream::conformance::helpers::unique_subject;
+/// use ruststream::conformance::message_shape::{self, OptionCases};
+/// use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource};
 ///
-/// let first = unique_subject("orders.e2e");
-/// let second = unique_subject("orders.e2e");
-/// assert!(first.starts_with("orders.e2e."));
-/// assert_ne!(first, second);
+/// // A live server keeps what earlier runs left, so each run publishes to a subject of its own.
+/// message_shape::publish_options(
+///     MemoryBroker::new,
+///     &unique_subject("conformance.options"),
+///     |name| MemorySource::new(name),
+///     MemoryPublish,
+///     OptionCases::new(()).overrides((), ()),
+///     |_delivery| (),
+/// )
+/// .await;
+/// # }
 /// ```
 #[must_use]
 pub fn unique_subject(prefix: &str) -> String {

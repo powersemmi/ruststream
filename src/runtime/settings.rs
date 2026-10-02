@@ -526,26 +526,36 @@ where
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
-/// use ruststream::nonzero;
-/// use ruststream::runtime::{FailurePolicies, FailurePolicy, HandlerOutcome, SubscriberSettings};
-/// use ruststream::subscriber;
-/// # #[derive(serde::Deserialize)]
-/// # struct Order;
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// /// Everything is left to the mount site: the name, the pool, the failure policy.
 /// #[subscriber]
 /// async fn audit(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "audited");
 ///     HandlerOutcome::ack()
 /// }
 ///
-/// # fn wire(shard: u8) {
-/// let _mountable = audit
-///     .name(format!("orders-{shard}"))
-///     .workers(nonzero!(4))
-///     .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip));
+/// /// One instance per shard, each reading its own subscription.
+/// fn app(shard: u8) -> RustStream {
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(
+///             audit
+///                 .name(format!("orders-{shard}"))
+///                 .workers(nonzero!(4))
+///                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
+///         );
+///     })
+/// }
 /// # }
-/// # }
+/// # fn main() {}
 /// ```
 pub trait SubscriberSettings: Declared {
     /// Names the subscription, building the kind the attribute fixed.
@@ -646,23 +656,56 @@ pub trait SubscriberSettings: Declared {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
     /// # mod demo {
-    /// use ruststream::memory::MemorySource;
-    /// use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
-    /// use ruststream::subscriber;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Order;
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::Buffered;
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    /// use serde::Deserialize;
+    ///
+    /// /// A broker crate's mount-site step for a transport that delivers one message at a time:
+    /// /// the batches are assembled on the client, and a partial one closes `wait` after it
+    /// /// opened.
+    /// pub trait Linger {
+    ///     type Out;
+    ///     fn linger(self, wait: Duration) -> Self::Out;
+    /// }
+    ///
+    /// impl<Def: Declared, State, DefCodec> Linger
+    ///     for SubscriberBuilder<Def, MemorySource, State, DefCodec>
+    /// {
+    ///     type Out = SubscriberBuilder<Def, Buffered<MemorySource>, State, DefCodec>;
+    ///
+    ///     fn linger(self, wait: Duration) -> Self::Out {
+    ///         self.map_source(|source| Buffered::new(source).max_wait(wait))
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
     ///
     /// #[subscriber(MemorySource)]
-    /// async fn audit(order: &Order) -> HandlerOutcome {
+    /// async fn settle(orders: &[Order]) -> HandlerOutcome {
+    ///     tracing::info!(count = orders.len(), "settled a batch");
     ///     HandlerOutcome::ack()
     /// }
     ///
-    /// # fn wire() {
-    /// let _mountable = audit.name("orders").map_source(|source| source);
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(
+    ///             settle
+    ///                 .name("orders")
+    ///                 .batch(nonzero!(64))
+    ///                 .linger(Duration::from_millis(20)),
+    ///         );
+    ///     })
+    /// }
     /// # }
-    /// # }
+    /// # fn main() {}
     /// ```
     fn map_source<F>(self, f: F) -> <Self::Settings as MapSourceStep<F>>::Out
     where

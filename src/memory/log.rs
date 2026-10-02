@@ -27,12 +27,32 @@ use crate::RawMessage;
 /// # Examples
 ///
 /// ```
-/// use ruststream::memory::{MemoryBroker, Retention};
-/// use ruststream::nonzero;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // The last 64 messages of every name stay replayable.
-/// let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64)));
-/// # let _ = broker;
+/// #[derive(Deserialize)]
+/// struct Entry {
+///     id: u64,
+/// }
+///
+/// /// Rebuilds its view from everything the broker still holds, on every start.
+/// #[subscriber("audit", start_at(MemoryPosition::start()))]
+/// async fn rebuild(entry: &Entry) -> HandlerOutcome {
+///     tracing::info!(entry.id, "replayed");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     // The last 1024 messages of every name stay replayable.
+///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+///         b.include(rebuild);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]

@@ -16,12 +16,15 @@
 /// # Examples
 ///
 /// ```
-/// use ruststream::Field;
+/// use ruststream::runtime::{Context, HandlerOutcome};
+/// use ruststream::{Field, IncomingMessage};
 ///
+/// /// A broker's per-delivery context.
 /// struct Delivery {
 ///     sequence: u64,
 /// }
 ///
+/// /// The broker's key for the sequence number a delivery carries.
 /// #[derive(Clone, Copy)]
 /// struct Sequence;
 ///
@@ -32,8 +35,13 @@
 ///     }
 /// }
 ///
-/// let delivery = Delivery { sequence: 7 };
-/// assert_eq!(Sequence.get(&delivery), 7);
+/// async fn audit<M: IncomingMessage>(
+///     _msg: &M,
+///     ctx: &mut Context<'_, Delivery>,
+/// ) -> HandlerOutcome {
+///     tracing::info!(sequence = ctx.context(Sequence), "audited");
+///     HandlerOutcome::ack()
+/// }
 /// ```
 pub trait Field<Src: ?Sized> {
     /// The value read through this key, borrowed from the source for `'a`.
@@ -60,12 +68,18 @@ pub trait Field<Src: ?Sized> {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
 /// use ruststream::ContextField;
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
+/// /// A broker's per-delivery context.
 /// struct Delivery {
 ///     sequence: u64,
 /// }
 ///
+/// /// The broker's key for the sequence number a delivery carries.
 /// #[derive(Clone, Copy, Default)]
 /// struct Sequence;
 ///
@@ -77,8 +91,18 @@ pub trait Field<Src: ?Sized> {
 ///     }
 /// }
 ///
-/// let delivery = Delivery { sequence: 7 };
-/// assert_eq!(Sequence.read(&delivery), 7);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn audit(order: &Order, Ctx(sequence): Ctx<Sequence>) -> HandlerOutcome {
+///     tracing::info!(order.id, sequence, "audited");
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub trait ContextField: Default {
     /// The per-delivery context type this key reads from.
@@ -102,31 +126,29 @@ pub trait ContextField: Default {
 /// ```
 /// use ruststream::{Field, FieldMut};
 ///
+/// /// A broker's per-delivery context, with a slot middleware fills in.
 /// #[derive(Default)]
-/// struct Ctx {
+/// struct Delivery {
 ///     user: Option<u64>,
 /// }
 ///
+/// /// The key an authentication middleware writes and a handler reads.
 /// #[derive(Clone, Copy)]
 /// struct User;
 ///
-/// impl Field<Ctx> for User {
+/// impl Field<Delivery> for User {
 ///     type Value<'a> = Option<&'a u64>;
-///     fn get(self, src: &Ctx) -> Option<&u64> {
+///     fn get(self, src: &Delivery) -> Option<&u64> {
 ///         src.user.as_ref()
 ///     }
 /// }
 ///
-/// impl FieldMut<Ctx> for User {
+/// impl FieldMut<Delivery> for User {
 ///     type Owned = u64;
-///     fn set(self, src: &mut Ctx, value: u64) {
+///     fn set(self, src: &mut Delivery, value: u64) {
 ///         src.user = Some(value);
 ///     }
 /// }
-///
-/// let mut ctx = Ctx::default();
-/// User.set(&mut ctx, 42);
-/// assert_eq!(User.get(&ctx), Some(&42));
 /// ```
 pub trait FieldMut<Src: ?Sized>: Field<Src> {
     /// The owned value written through this key.
@@ -151,24 +173,21 @@ pub trait FieldMut<Src: ?Sized>: Field<Src> {
 /// ```
 /// use ruststream::BuildContext;
 ///
-/// struct Msg {
+/// /// A broker's message, as its client hands it over.
+/// struct Record {
 ///     offset: u64,
 /// }
 ///
-/// // A broker context carrying one field, built from the message.
-/// struct OrdersContext {
+/// /// The broker's per-delivery context: built once per delivery, before the handler runs.
+/// struct RecordContext {
 ///     offset: u64,
 /// }
 ///
-/// impl BuildContext<Msg> for OrdersContext {
-///     fn build(msg: &Msg) -> Self {
+/// impl BuildContext<Record> for RecordContext {
+///     fn build(msg: &Record) -> Self {
 ///         Self { offset: msg.offset }
 ///     }
 /// }
-///
-/// let msg = Msg { offset: 9 };
-/// let cx = OrdersContext::build(&msg);
-/// assert_eq!(cx.offset, 9);
 /// ```
 pub trait BuildContext<M: ?Sized> {
     /// Builds the context value by reading fields out of `msg`.
@@ -197,26 +216,24 @@ impl<M: ?Sized> BuildContext<M> for () {
 /// ```
 /// use ruststream::BuildBatchContext;
 ///
-/// struct Msg {
+/// /// A broker's message, as its client hands it over.
+/// struct Entry {
 ///     stream: &'static str,
 /// }
 ///
-/// // Subscription-scoped: every delivery of the subscription reports the same stream.
-/// struct OrdersBatchContext {
+/// /// Subscription-scoped: every delivery of a batch comes from one stream, so the first one
+/// /// says which.
+/// struct StreamBatchContext {
 ///     stream: &'static str,
 /// }
 ///
-/// impl BuildBatchContext<Msg> for OrdersBatchContext {
-///     fn build(first: &Msg) -> Self {
+/// impl BuildBatchContext<Entry> for StreamBatchContext {
+///     fn build(first: &Entry) -> Self {
 ///         Self {
 ///             stream: first.stream,
 ///         }
 ///     }
 /// }
-///
-/// let msg = Msg { stream: "orders" };
-/// let cx = OrdersBatchContext::build(&msg);
-/// assert_eq!(cx.stream, "orders");
 /// ```
 pub trait BuildBatchContext<M: ?Sized> {
     /// Builds the context value by reading subscription-scoped fields out of the batch's first

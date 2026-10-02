@@ -9,10 +9,15 @@
 /// # Examples
 ///
 /// ```
-/// use ruststream::asyncapi::{render_viewer_html, ViewerOptions};
+/// use ruststream::asyncapi::{ViewerOptions, render_viewer_html};
 ///
-/// let html = render_viewer_html("/asyncapi.json", &ViewerOptions::default());
-/// assert!(html.contains("/asyncapi.json"));
+/// /// The `/docs` route of the service's HTTP stack, next to the `/asyncapi.json` it renders.
+/// fn docs_page() -> String {
+///     render_viewer_html(
+///         "/asyncapi.json",
+///         &ViewerOptions::default().title("Orders events"),
+///     )
+/// }
 /// ```
 #[must_use]
 pub fn render_viewer_html(spec_url: &str, opts: &ViewerOptions<'_>) -> String {

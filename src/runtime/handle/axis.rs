@@ -41,19 +41,43 @@ use super::verdict::{Batched, OneByOne, VerdictFamily};
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::Message;
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// # #[derive(Debug)]
-/// # struct OrderHeaders { tenant: String }
-/// # #[derive(Debug)]
-/// # struct Order { id: u64 }
-/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-/// let msg = Message::new(OrderHeaders { tenant: "acme".into() }, Order { id: 7 });
-/// assert_eq!(msg.headers.tenant, "acme");
-/// assert_eq!(msg.body.id, 7);
-/// # Ok(())
+/// #[derive(Deserialize, schemars::JsonSchema)]
+/// struct OrderHeaders {
+///     tenant: String,
+/// }
+///
+/// #[derive(Deserialize, schemars::JsonSchema)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// struct Bill;
+///
+/// /// The payload and its header contract arrive decoded together.
+/// impl Handle<Message<OrderHeaders, Order>> for Bill {
+///     async fn handle(
+///         &self,
+///         msg: &Message<OrderHeaders, Order>,
+///         _outs: &(),
+///         _ctx: &mut Context<'_>,
+///     ) -> Result<(), HandlerOutcome> {
+///         tracing::info!(order = msg.body.id, tenant = msg.headers.tenant, "billed");
+///         Ok(())
+///     }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(subscriber("orders", Bill).build());
+///     })
+/// }
 /// # }
-/// # check().unwrap();
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Message<H, P> {

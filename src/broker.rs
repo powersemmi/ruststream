@@ -123,15 +123,39 @@ pub trait Broker: Send + Sync + Sized {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
-    /// # fn demo() {
-    /// use ruststream::Broker;
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::{Deserialize, Serialize};
     ///
-    /// let broker = MemoryBroker::new().bindable();
-    /// let egress = broker.bind(MemoryPublish);
-    /// # let _ = (broker, egress);
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "orders.accepted")]
+    /// struct Accepted {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn accept(order: &Order) -> Accepted {
+    ///     Accepted { id: order.id }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     // Orders arrive on one bus and their answers leave on another.
+    ///     let egress = MemoryBroker::new().bindable();
+    ///     let to_egress = egress.bind(Publish);
+    ///     RustStream::new(AppInfo::new("bridge", "0.1.0"))
+    ///         .with_broker_labeled("egress", egress, |_b| {})
+    ///         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
+    ///             b.include(accept).out_reply(to_egress);
+    ///         })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     fn bindable(self) -> crate::runtime::Bindable<Self>

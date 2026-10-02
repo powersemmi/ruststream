@@ -684,26 +684,37 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
-    /// # fn build() {
-    /// use ruststream::nonzero;
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, Workers, subscriber};
+    /// #[derive(Deserialize)]
+    /// struct Job {
+    ///     id: u64,
+    /// }
     ///
-    /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
-    /// # struct Job { id: u64 }
-    /// # struct Work;
-    /// # impl Handle<Job> for Work {
-    /// #     async fn handle(&self, _job: &Job, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
-    /// #         Ok(())
-    /// #     }
+    /// #[subscriber("jobs")]
+    /// async fn work(job: &Job) -> HandlerOutcome {
+    ///     tracing::info!(job.id, "done");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn jobs() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     // Four lanes; the jobs of one key stay in order on one lane.
+    ///     Router::new()
+    ///         .include(work)
+    ///         .workers(Workers::keyed(nonzero!(4)))
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(jobs());
+    ///     })
+    /// }
     /// # }
-    /// let router = Router::<MemoryBroker>::new()
-    ///     .include(subscriber("jobs", Work).build())
-    ///     .workers(Workers::keyed(nonzero!(4)));
-    /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn workers(mut self, workers: Workers) -> Self {
@@ -729,25 +740,36 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # fn build() {
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{HandlerOutcome, Router, layers::TracingLayer};
-    /// use ruststream::subscriber;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Job { id: u64 }
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::layers::TracingLayer;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Job {
+    ///     id: u64,
+    /// }
     ///
     /// #[subscriber("jobs")]
     /// async fn work(job: &Job) -> HandlerOutcome {
-    ///     let _ = job.id;
+    ///     tracing::info!(job.id, "done");
     ///     HandlerOutcome::ack()
     /// }
     ///
-    /// let router = Router::<MemoryBroker>::new()
-    ///     .include(work)
-    ///     .layer(TracingLayer::default());
+    /// fn jobs() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     // Every handler of this router runs inside the tracing layer's span.
+    ///     Router::new().include(work).layer(TracingLayer::default())
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(jobs());
+    ///     })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     // The call site reads `.layer(TracingLayer::default())`, so the layer travels by value like
@@ -820,26 +842,37 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-    /// # fn build() {
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{HandlerOutcome, Retry, Router};
-    /// use ruststream::subscriber;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Job { id: u64 }
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Job {
+    ///     id: u64,
+    /// }
     ///
     /// #[subscriber("jobs")]
     /// async fn work(job: &Job) -> HandlerOutcome {
-    ///     let _ = job.id;
-    ///     HandlerOutcome::ack()
+    ///     tracing::info!(job.id, "done");
+    ///     HandlerOutcome::retry_after(Duration::from_secs(30))
     /// }
     ///
-    /// let router = Router::<MemoryBroker>::new()
-    ///     .include(work)
-    ///     .out(Retry, MemoryPublish)
-    ///     .build();
+    /// fn jobs() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     // The copies a `retry_after` publishes leave through this policy.
+    ///     Router::new().include(work).out(Retry, Publish).build()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(jobs());
+    ///     })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     // The unit marker drives inference, so it travels by value to keep the call site
     // `.out(Retry, ..)`, like every other position's.

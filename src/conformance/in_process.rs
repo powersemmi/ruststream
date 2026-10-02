@@ -775,22 +775,27 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// # #[cfg(feature = "memory")]
-/// # {
-/// use ruststream::conformance::in_process::Refusal;
-/// use ruststream::memory::MemorySource;
+/// # async fn run() {
+/// use ruststream::conformance::in_process::{self, Refusal};
+/// use ruststream::memory::{MemoryBroker, MemorySource};
 ///
-/// let refusals = [
-///     Refusal::Subscription {
-///         source: MemorySource::new("orders.*"),
-///     },
-///     Refusal::PayloadOver {
-///         name: "orders".to_owned(),
-///         limit: 1024 * 1024,
-///     },
-/// ];
-/// # let _ = refusals;
+/// // What the server refuses, and so what the in-process transport must refuse too.
+/// in_process::refuses_like_the_server(
+///     MemoryBroker::new,
+///     |connected| connected.publisher(),
+///     [
+///         Refusal::Subscription {
+///             source: MemorySource::new("orders.*"),
+///         },
+///         Refusal::PayloadOver {
+///             name: "orders".to_owned(),
+///             limit: 1024 * 1024,
+///         },
+///     ],
+/// )
+/// .await;
 /// # }
 /// ```
 #[derive(Debug, Clone)]

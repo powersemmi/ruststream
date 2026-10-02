@@ -440,12 +440,13 @@ pub async fn keyed_order<B, MkBroker, Src, MkSrc, Pub, MkPub, KeyWith>(
 ///     priority: Option<u8>,
 /// }
 ///
-/// // The policy under test defaults to priority 5; a call may lower it to 1; 42 is past the
-/// // transport's range and must be refused.
-/// let cases = OptionCases::new(Some(5))
-///     .overrides(Priority { priority: Some(1) }, Some(1))
-///     .refuses(Priority { priority: Some(42) });
-/// # let _ = cases;
+/// /// What a broker crate's conformance test hands `publish_options`: the policy under test is
+/// /// configured with priority 5, a call may lower it to 1, and 42 is past the transport's range.
+/// fn priority_cases() -> OptionCases<Priority, Option<u8>> {
+///     OptionCases::new(Some(5))
+///         .overrides(Priority { priority: Some(1) }, Some(1))
+///         .refuses(Priority { priority: Some(42) })
+/// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct OptionCases<Options, Observed> {
@@ -462,11 +463,25 @@ impl<Options, Observed> OptionCases<Options, Observed> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use ruststream::conformance::message_shape::OptionCases;
+    /// ```no_run
+    /// # #[cfg(feature = "memory")]
+    /// # async fn run() {
+    /// use ruststream::conformance::helpers::unique_subject;
+    /// use ruststream::conformance::message_shape::{self, OptionCases};
+    /// use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource};
     ///
-    /// let cases: OptionCases<(), &str> = OptionCases::new("policy default");
-    /// # let _ = cases;
+    /// // The in-memory broker has no per-message settings: the policy default and the one override
+    /// // are both the unit value.
+    /// message_shape::publish_options(
+    ///     MemoryBroker::new,
+    ///     &unique_subject("conformance.options"),
+    ///     |name| MemorySource::new(name),
+    ///     MemoryPublish,
+    ///     OptionCases::new(()).overrides((), ()),
+    ///     |_delivery| (),
+    /// )
+    /// .await;
+    /// # }
     /// ```
     #[must_use]
     pub const fn new(policy_default: Observed) -> Self {
@@ -487,8 +502,32 @@ impl<Options, Observed> OptionCases<Options, Observed> {
     /// ```
     /// use ruststream::conformance::message_shape::OptionCases;
     ///
-    /// let cases = OptionCases::new(5u8).overrides(Some(1u8), 1);
-    /// # let _ = cases;
+    /// /// An MQTT publisher's options, and what a delivery shows of them.
+    /// #[derive(Clone, Default)]
+    /// struct MqttOptions {
+    ///     qos: Option<u8>,
+    ///     retain: Option<bool>,
+    /// }
+    ///
+    /// /// The policy publishes at QoS 1 without retain. A call that names only the QoS keeps the
+    /// /// policy's retain flag, and one that names only retain keeps its QoS.
+    /// fn mqtt_cases() -> OptionCases<MqttOptions, (u8, bool)> {
+    ///     OptionCases::new((1, false))
+    ///         .overrides(
+    ///             MqttOptions {
+    ///                 qos: Some(2),
+    ///                 ..MqttOptions::default()
+    ///             },
+    ///             (2, false),
+    ///         )
+    ///         .overrides(
+    ///             MqttOptions {
+    ///                 retain: Some(true),
+    ///                 ..MqttOptions::default()
+    ///             },
+    ///             (1, true),
+    ///         )
+    /// }
     /// ```
     #[must_use]
     pub fn overrides(mut self, options: Options, observed: Observed) -> Self {
@@ -505,8 +544,18 @@ impl<Options, Observed> OptionCases<Options, Observed> {
     /// ```
     /// use ruststream::conformance::message_shape::OptionCases;
     ///
-    /// let cases = OptionCases::new(5u8).overrides(Some(1u8), 1).refuses(Some(42));
-    /// # let _ = cases;
+    /// /// An MQTT publisher's options, and the QoS a delivery shows.
+    /// #[derive(Clone, Default)]
+    /// struct MqttOptions {
+    ///     qos: Option<u8>,
+    /// }
+    ///
+    /// /// MQTT knows QoS 0 to 2, so a publish asking for 3 must fail rather than be clamped.
+    /// fn qos_cases() -> OptionCases<MqttOptions, u8> {
+    ///     OptionCases::new(1)
+    ///         .overrides(MqttOptions { qos: Some(0) }, 0)
+    ///         .refuses(MqttOptions { qos: Some(3) })
+    /// }
     /// ```
     #[must_use]
     pub fn refuses(mut self, options: Options) -> Self {

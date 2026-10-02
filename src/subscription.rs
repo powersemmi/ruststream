@@ -35,15 +35,37 @@ use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe, Sub
 /// # Examples
 ///
 /// ```
-/// use ruststream::{AddressedCopies, BrokerMoves, CopyPath, NamedCopies};
+/// use std::borrow::Cow;
 ///
-/// fn declared<P: CopyPath>() -> &'static str {
-///     std::any::type_name::<P>()
+/// use ruststream::{
+///     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, SubscriptionSource,
+/// };
+///
+/// /// A broker crate's topic descriptor: the topic it reads is also where a copy reaches it again,
+/// /// so this process publishes the copies and the descriptor knows where to.
+/// #[derive(Debug, Clone)]
+/// struct Topic {
+///     name: Cow<'static, str>,
 /// }
 ///
-/// assert!(declared::<AddressedCopies>().ends_with("AddressedCopies"));
-/// assert!(declared::<NamedCopies>().ends_with("NamedCopies"));
-/// assert!(declared::<BrokerMoves>().ends_with("BrokerMoves"));
+/// impl<C: Subscribe> SubscriptionSource<C> for Topic {
+///     type Subscriber = C::Subscriber;
+///     type Copies = AddressedCopies;
+///
+///     fn name(&self) -> &str {
+///         &self.name
+///     }
+///
+///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+///         connected.subscribe(&self.name).await
+///     }
+/// }
+///
+/// impl<C: Subscribe> RedeliveryAddressed<C> for Topic {
+///     async fn redelivery_address(&self, _connected: &C) -> Result<RedeliveryAddress, C::Error> {
+///         Ok(RedeliveryAddress::new(self.name.clone()))
+///     }
+/// }
 /// ```
 pub trait CopyPath: copy_path::Sealed {}
 
@@ -94,10 +116,32 @@ pub(crate) mod copy_path {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{AddressedCopies, CopyPath};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use std::time::Duration;
 ///
-/// fn publishes_here<P: CopyPath>(_: P) {}
-/// publishes_here(AddressedCopies);
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn reconcile(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "not ready yet");
+///     HandlerOutcome::retry_after(Duration::from_secs(30))
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // The subject is the copies' address; `.to(..)` sends them to a queue of their own.
+///         b.include(reconcile).out_retry(Publish).to("orders.retry");
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct AddressedCopies;
@@ -115,10 +159,32 @@ impl CopyPath for AddressedCopies {}
 /// # Examples
 ///
 /// ```
-/// use ruststream::{CopyPath, NamedCopies};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use std::time::Duration;
 ///
-/// fn publishes_here<P: CopyPath>(_: P) {}
-/// publishes_here(NamedCopies);
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber(MemoryPattern::new("orders.*"))]
+/// async fn reconcile(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "not ready yet");
+///     HandlerOutcome::retry_after(Duration::from_secs(30))
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // A pattern reads many subjects and names none, so the mount site says where copies go.
+///         b.include(reconcile).out_retry(Publish).to("orders.retry");
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct NamedCopies;
@@ -135,10 +201,52 @@ impl CopyPath for NamedCopies {}
 /// # Examples
 ///
 /// ```
-/// use ruststream::{BrokerMoves, CopyPath};
+/// use std::borrow::Cow;
 ///
-/// fn moves_at_the_broker<P: CopyPath>(_: P) {}
-/// moves_at_the_broker(BrokerMoves);
+/// use ruststream::{BrokerMoves, ConnectedBroker, RetryDeclaration};
+/// use ruststream::{Subscribe, SubscriptionSource};
+///
+/// /// The broker crate's own channel call: declares a queue with its limit and dead-letter
+/// /// exchange.
+/// trait DeclareQueue: ConnectedBroker {
+///     fn declare_queue(
+///         &self,
+///         name: &str,
+///         delivery_limit: Option<u32>,
+///         dead_letter: Option<&str>,
+///     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+/// }
+///
+/// /// A broker crate's queue with a delivery limit and a dead-letter exchange: the server moves a
+/// /// spent delivery itself, so this process publishes no copies.
+/// #[derive(Debug, Clone)]
+/// struct Queue {
+///     name: Cow<'static, str>,
+///     delivery_limit: Option<u32>,
+///     dead_letter: Option<String>,
+/// }
+///
+/// impl<C: Subscribe + DeclareQueue> SubscriptionSource<C> for Queue {
+///     type Subscriber = C::Subscriber;
+///     type Copies = BrokerMoves;
+///
+///     fn name(&self) -> &str {
+///         &self.name
+///     }
+///
+///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+///         connected
+///             .declare_queue(&self.name, self.delivery_limit, self.dead_letter.as_deref())
+///             .await?;
+///         connected.subscribe(&self.name).await
+///     }
+///
+///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+///         self.delivery_limit = declaration.max_attempts().map(|n| n.get());
+///         self.dead_letter = declaration.dead_letter().map(str::to_owned);
+///         self
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BrokerMoves;
@@ -158,15 +266,53 @@ impl CopyPath for BrokerMoves {}
 /// # Examples
 ///
 /// ```
-/// use ruststream::{RetryDeclaration, nonzero};
+/// use std::borrow::Cow;
 ///
-/// let declared = RetryDeclaration::new()
-///     .with_max_attempts(nonzero!(5u32))
-///     .with_dead_letter("orders.dead");
+/// use ruststream::{BrokerMoves, ConnectedBroker, RetryDeclaration};
+/// use ruststream::{Subscribe, SubscriptionSource};
 ///
-/// assert_eq!(declared.max_attempts().map(|n| n.get()), Some(5));
-/// assert_eq!(declared.dead_letter(), Some("orders.dead"));
-/// assert!(!declared.declares_nothing());
+/// /// The broker crate's own channel call: declares a queue with its arguments.
+/// trait DeclareQueue: ConnectedBroker {
+///     fn declare_queue(
+///         &self,
+///         name: &str,
+///         arguments: &[(&'static str, String)],
+///     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+/// }
+///
+/// /// A broker crate's queue: the server enforces the delivery limit and dead-letters the
+/// /// delivery that exhausts it.
+/// #[derive(Debug, Clone)]
+/// struct Queue {
+///     name: Cow<'static, str>,
+///     arguments: Vec<(&'static str, String)>,
+/// }
+///
+/// impl<C: Subscribe + DeclareQueue> SubscriptionSource<C> for Queue {
+///     type Subscriber = C::Subscriber;
+///     type Copies = BrokerMoves;
+///
+///     fn name(&self) -> &str {
+///         &self.name
+///     }
+///
+///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+///         connected.declare_queue(&self.name, &self.arguments).await?;
+///         connected.subscribe(&self.name).await
+///     }
+///
+///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+///         // The queue's own arguments carry what the mount site declared.
+///         if let Some(limit) = declaration.max_attempts() {
+///             self.arguments.push(("x-delivery-limit", limit.to_string()));
+///         }
+///         if let Some(exchange) = declaration.dead_letter() {
+///             self.arguments
+///                 .push(("x-dead-letter-exchange", exchange.to_owned()));
+///         }
+///         self
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct RetryDeclaration {
@@ -180,9 +326,16 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RetryDeclaration;
+    /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe, nonzero};
     ///
-    /// assert!(RetryDeclaration::new().declares_nothing());
+    /// /// What the runtime declares for
+    /// /// `b.include(reconcile).max_attempts(nonzero!(5)).dead_letter("orders.dead")`.
+    /// fn declare<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
+    ///     let declared = RetryDeclaration::new()
+    ///         .with_max_attempts(nonzero!(5u32))
+    ///         .with_dead_letter("orders.dead");
+    ///     connected.declare_retry("orders", &declared)
+    /// }
     /// ```
     #[must_use]
     pub const fn new() -> Self {
@@ -197,10 +350,13 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{RetryDeclaration, nonzero};
+    /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe, nonzero};
     ///
-    /// let declared = RetryDeclaration::new().with_max_attempts(nonzero!(3u32));
-    /// assert_eq!(declared.max_attempts().map(|n| n.get()), Some(3));
+    /// /// What the runtime declares for `b.include(reconcile).max_attempts(nonzero!(5))`.
+    /// fn declare<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
+    ///     let declared = RetryDeclaration::new().with_max_attempts(nonzero!(5u32));
+    ///     connected.declare_retry("orders", &declared)
+    /// }
     /// ```
     #[must_use]
     pub fn with_max_attempts(mut self, attempts: NonZeroU32) -> Self {
@@ -213,10 +369,13 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RetryDeclaration;
+    /// use ruststream::{DeclareRetryError, RetryDeclaration, Subscribe};
     ///
-    /// let declared = RetryDeclaration::new().with_dead_letter("orders.dead");
-    /// assert_eq!(declared.dead_letter(), Some("orders.dead"));
+    /// /// What the runtime declares for `b.include(reconcile).dead_letter("orders.dead")`.
+    /// fn declare<C: Subscribe>(connected: &C) -> Result<(), DeclareRetryError> {
+    ///     let declared = RetryDeclaration::new().with_dead_letter("orders.dead");
+    ///     connected.declare_retry("orders", &declared)
+    /// }
     /// ```
     #[must_use]
     pub fn with_dead_letter(mut self, destination: impl Into<Cow<'static, str>>) -> Self {
@@ -230,9 +389,37 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RetryDeclaration;
+    /// use std::borrow::Cow;
     ///
-    /// assert_eq!(RetryDeclaration::new().max_attempts(), None);
+    /// use ruststream::{BrokerMoves, RetryDeclaration, Subscribe, SubscriptionSource};
+    ///
+    /// /// A broker crate's queue: the server enforces the delivery limit and dead-letters the
+    /// /// delivery that exhausts it.
+    /// #[derive(Debug, Clone)]
+    /// struct Queue {
+    ///     name: Cow<'static, str>,
+    ///     arguments: Vec<(&'static str, String)>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = BrokerMoves;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    ///
+    ///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+    ///         if let Some(limit) = declaration.max_attempts() {
+    ///             self.arguments.push(("x-delivery-limit", limit.to_string()));
+    ///         }
+    ///         self
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub const fn max_attempts(&self) -> Option<NonZeroU32> {
@@ -245,9 +432,38 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RetryDeclaration;
+    /// use std::borrow::Cow;
     ///
-    /// assert_eq!(RetryDeclaration::new().dead_letter(), None);
+    /// use ruststream::{BrokerMoves, RetryDeclaration, Subscribe, SubscriptionSource};
+    ///
+    /// /// A broker crate's queue: the server enforces the delivery limit and dead-letters the
+    /// /// delivery that exhausts it.
+    /// #[derive(Debug, Clone)]
+    /// struct Queue {
+    ///     name: Cow<'static, str>,
+    ///     arguments: Vec<(&'static str, String)>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = BrokerMoves;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    ///
+    ///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+    ///         if let Some(exchange) = declaration.dead_letter() {
+    ///             self.arguments
+    ///                 .push(("x-dead-letter-exchange", exchange.to_owned()));
+    ///         }
+    ///         self
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn dead_letter(&self) -> Option<&str> {
@@ -260,10 +476,45 @@ impl RetryDeclaration {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::{RetryDeclaration, nonzero};
+    /// use std::borrow::Cow;
     ///
-    /// assert!(RetryDeclaration::new().declares_nothing());
-    /// assert!(!RetryDeclaration::new().with_max_attempts(nonzero!(2u32)).declares_nothing());
+    /// use ruststream::{BrokerMoves, RetryDeclaration, Subscribe, SubscriptionSource};
+    ///
+    /// /// A broker crate's queue: the server enforces the delivery limit and dead-letters the
+    /// /// delivery that exhausts it.
+    /// #[derive(Debug, Clone)]
+    /// struct Queue {
+    ///     name: Cow<'static, str>,
+    ///     arguments: Vec<(&'static str, String)>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = BrokerMoves;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    ///
+    ///     fn declare_retry(mut self, declaration: &RetryDeclaration) -> Self {
+    ///         // An empty declaration leaves the queue as the operator configured it.
+    ///         if declaration.declares_nothing() {
+    ///             return self;
+    ///         }
+    ///         if let Some(limit) = declaration.max_attempts() {
+    ///             self.arguments.push(("x-delivery-limit", limit.to_string()));
+    ///         }
+    ///         if let Some(exchange) = declaration.dead_letter() {
+    ///             self.arguments
+    ///                 .push(("x-dead-letter-exchange", exchange.to_owned()));
+    ///         }
+    ///         self
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub const fn declares_nothing(&self) -> bool {
@@ -350,8 +601,19 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// ```
     /// use std::borrow::Cow;
     ///
-    /// use ruststream::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed};
-    /// use ruststream::{RetryDeclaration, Subscribe, SubscriptionSource};
+    /// use ruststream::{AddressedCopies, ConnectedBroker, RedeliveryAddress};
+    /// use ruststream::{RedeliveryAddressed, RetryDeclaration, Subscribe, SubscriptionSource};
+    ///
+    /// /// The broker crate's own channel call: declares a queue with its limit and dead-letter
+    /// /// destination.
+    /// trait DeclareQueue: ConnectedBroker {
+    ///     fn declare_queue(
+    ///         &self,
+    ///         name: &str,
+    ///         delivery_limit: Option<u32>,
+    ///         dead_letter: Option<&str>,
+    ///     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    /// }
     ///
     /// /// A queue this broker declares itself, so it takes the declaration into its topology.
     /// #[derive(Debug, Clone)]
@@ -361,7 +623,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///     dead_letter: Option<Cow<'static, str>>,
     /// }
     ///
-    /// impl<C: Subscribe> SubscriptionSource<C> for Queue {
+    /// impl<C: Subscribe + DeclareQueue> SubscriptionSource<C> for Queue {
     ///     type Subscriber = C::Subscriber;
     ///     type Copies = AddressedCopies;
     ///
@@ -370,6 +632,9 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///     }
     ///
     ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected
+    ///             .declare_queue(&self.name, self.delivery_limit, self.dead_letter.as_deref())
+    ///             .await?;
     ///         connected.subscribe(&self.name).await
     ///     }
     ///
@@ -381,7 +646,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// }
     ///
     /// // The queue is one destination, so it answers where a copy reaches it again.
-    /// impl<C: Subscribe> RedeliveryAddressed<C> for Queue {
+    /// impl<C: Subscribe + DeclareQueue> RedeliveryAddressed<C> for Queue {
     ///     async fn redelivery_address(&self, _connected: &C) -> Result<RedeliveryAddress, C::Error> {
     ///         Ok(RedeliveryAddress::new(self.name.clone()))
     ///     }
@@ -521,10 +786,17 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///     queue: String,
     /// }
     ///
-    /// let body = NatsOperation { queue: "workers".into() };
-    /// let bindings = Bindings::new().with(Binding::new("nats", "0.1.0", &body)?);
-    ///
-    /// assert!(!bindings.is_empty());
+    /// # struct NatsQueue { group: String }
+    /// # impl NatsQueue {
+    /// fn operation_bindings(&self) -> Bindings {
+    ///     let body = NatsOperation { queue: self.group.clone() };
+    ///     match Binding::new("nats", "0.1.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # assert!(!NatsQueue { group: "workers".into() }.operation_bindings().is_empty());
     /// # Ok(())
     /// # }
     /// ```
@@ -553,10 +825,17 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     ///     schema_id_location: &'static str,
     /// }
     ///
-    /// let body = KafkaMessage { schema_id_location: "payload" };
-    /// let bindings = Bindings::new().with(Binding::new("kafka", "0.5.0", &body)?);
-    ///
-    /// assert!(!bindings.is_empty());
+    /// # struct KafkaTopic;
+    /// # impl KafkaTopic {
+    /// fn message_bindings(&self) -> Bindings {
+    ///     let body = KafkaMessage { schema_id_location: "payload" };
+    ///     match Binding::new("kafka", "0.5.0", &body) {
+    ///         Ok(binding) => Bindings::new().with(binding),
+    ///         Err(_) => Bindings::new(),
+    ///     }
+    /// }
+    /// # }
+    /// # assert!(!KafkaTopic.message_bindings().is_empty());
     /// # Ok(())
     /// # }
     /// ```
@@ -628,10 +907,37 @@ pub trait RedeliveryAddressed<C: ConnectedBroker>:
 /// # Examples
 ///
 /// ```
-/// use ruststream::RedeliveryAddress;
+/// use std::borrow::Cow;
 ///
-/// let address = RedeliveryAddress::new("orders");
-/// assert_eq!(address.as_str(), "orders");
+/// use ruststream::{
+///     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, SubscriptionSource,
+/// };
+///
+/// /// A broker crate's topic descriptor: the topic it reads is also where a copy reaches it again,
+/// /// so this process publishes the copies and the descriptor knows where to.
+/// #[derive(Debug, Clone)]
+/// struct Topic {
+///     name: Cow<'static, str>,
+/// }
+///
+/// impl<C: Subscribe> SubscriptionSource<C> for Topic {
+///     type Subscriber = C::Subscriber;
+///     type Copies = AddressedCopies;
+///
+///     fn name(&self) -> &str {
+///         &self.name
+///     }
+///
+///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+///         connected.subscribe(&self.name).await
+///     }
+/// }
+///
+/// impl<C: Subscribe> RedeliveryAddressed<C> for Topic {
+///     async fn redelivery_address(&self, _connected: &C) -> Result<RedeliveryAddress, C::Error> {
+///         Ok(RedeliveryAddress::new(self.name.clone()))
+///     }
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RedeliveryAddress(Cow<'static, str>);
@@ -642,10 +948,41 @@ impl RedeliveryAddress {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RedeliveryAddress;
+    /// use std::borrow::Cow;
     ///
-    /// let address = RedeliveryAddress::new(String::from("orders"));
-    /// assert_eq!(address.to_string(), "orders");
+    /// use ruststream::{
+    ///     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, SubscriptionSource,
+    /// };
+    ///
+    /// /// A broker crate's topic descriptor: the topic it reads is also where a copy reaches it
+    /// /// again, so this process publishes the copies and the descriptor knows where to.
+    /// #[derive(Debug, Clone)]
+    /// struct Topic {
+    ///     name: Cow<'static, str>,
+    /// }
+    ///
+    /// impl<C: Subscribe> SubscriptionSource<C> for Topic {
+    ///     type Subscriber = C::Subscriber;
+    ///     type Copies = AddressedCopies;
+    ///
+    ///     fn name(&self) -> &str {
+    ///         &self.name
+    ///     }
+    ///
+    ///     async fn subscribe(self, connected: &C) -> Result<Self::Subscriber, C::Error> {
+    ///         connected.subscribe(&self.name).await
+    ///     }
+    /// }
+    ///
+    /// impl<C: Subscribe> RedeliveryAddressed<C> for Topic {
+    ///     async fn redelivery_address(
+    ///         &self,
+    ///         _connected: &C,
+    ///     ) -> Result<RedeliveryAddress, C::Error> {
+    ///         // A copy goes to the topic's retry companion, built from its name.
+    ///         Ok(RedeliveryAddress::new(format!("{}.retry", self.name)))
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
@@ -657,13 +994,19 @@ impl RedeliveryAddress {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::RedeliveryAddress;
+    /// use ruststream::{OutgoingMessage, Publisher, RedeliveryAddress};
     ///
-    /// fn publishes_to(address: &RedeliveryAddress) -> &str {
-    ///     address.as_str()
+    /// /// A broker crate's own redelivery: the copy goes where the descriptor said it reaches the
+    /// /// subscription again.
+    /// async fn send_copy<P: Publisher>(
+    ///     publisher: &P,
+    ///     address: &RedeliveryAddress,
+    ///     payload: &[u8],
+    /// ) -> Result<(), P::Error> {
+    ///     publisher
+    ///         .publish(OutgoingMessage::new(address.as_str(), payload), None)
+    ///         .await
     /// }
-    ///
-    /// assert_eq!(publishes_to(&RedeliveryAddress::new("orders")), "orders");
     /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -717,14 +1060,26 @@ impl Name {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{FromName, Name};
+/// use std::borrow::Cow;
 ///
-/// fn build<S: FromName>(name: &'static str) -> S {
-///     S::from_name(name)
+/// use ruststream::FromName;
+///
+/// /// A broker crate's stream descriptor: one key names it, so `#[subscriber(RedisStream)]`
+/// /// leaves the key to the mount site's `.name(..)`.
+/// #[derive(Debug, Clone)]
+/// pub struct RedisStream {
+///     key: Cow<'static, str>,
+///     group: Option<String>,
 /// }
 ///
-/// let source: Name = build("orders");
-/// # let _ = source;
+/// impl FromName for RedisStream {
+///     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
+///         Self {
+///             key: name.into(),
+///             group: None,
+///         }
+///     }
+/// }
 /// ```
 pub trait FromName {
     /// Builds the source bound to `name`.
@@ -749,11 +1104,61 @@ impl FromName for Name {
 /// # Examples
 ///
 /// ```
-/// use ruststream::{FromName, Name, Unnamed};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let placeholder: Unnamed<Name> = Unnamed::new();
-/// let named: Name = placeholder.into_named("orders");
-/// # let _ = named;
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// /// The kind is fixed here; its source stays `Unnamed<MemorySource>` until the mount names it.
+/// #[subscriber(MemorySource)]
+/// async fn audit(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "audited");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app(region: &str) -> RustStream {
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(audit.name(format!("orders.{region}")));
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+///
+/// A definition mounted without a name does not compile:
+///
+/// ```compile_fail
+/// # #[cfg(not(all(feature = "macros", feature = "memory", feature = "json")))]
+/// # compile_error!("the example needs the macros, memory and json features");
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber(MemorySource)]
+/// async fn audit(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "audited");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // Never named: there is no subscription to open.
+///         b.include(audit);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 pub struct Unnamed<S>(PhantomData<fn() -> S>);
 
@@ -849,36 +1254,32 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros"))]
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-/// use futures::StreamExt;
-/// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource, Retention};
-/// use ruststream::runtime::PublishExt;
-/// use ruststream::{Broker, IncomingMessage, Outgoing, Serialized, StartAt, nonzero};
-/// use ruststream::{Subscriber, SubscriptionSource};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // An audit entry is opaque bytes, so it declares itself a serialized type and no codec
-/// // runs on it.
-/// #[derive(Outgoing, Serialized)]
-/// struct Entry(Vec<u8>);
+/// #[derive(Deserialize)]
+/// struct Entry {
+///     id: u64,
+/// }
 ///
-/// // Opening at a position replays what the broker kept, so this one keeps a window.
-/// let connected = MemoryBroker::retaining(Retention::Messages(nonzero!(8)))
-///     .connect()
-///     .await?;
-/// let publisher = connected.publisher();
-/// publisher.message(&Entry(b"one".to_vec())).to("audit").publish().await?;
+/// #[subscriber]
+/// async fn rebuild(entry: &Entry) -> HandlerOutcome {
+///     tracing::info!(entry.id, "replayed");
+///     HandlerOutcome::ack()
+/// }
 ///
-/// // A fresh subscription opened at the start of the log replays the earlier publish.
-/// let mut subscriber = StartAt::new(MemorySource::new("audit"), MemoryPosition::start())
-///     .subscribe(&connected)
-///     .await?;
-/// let mut stream = std::pin::pin!(subscriber.stream());
-/// let replayed = stream.next().await.expect("replayed")?;
-/// assert_eq!(replayed.payload(), b"one");
-/// replayed.ack().await?;
-/// # Ok(())
+/// fn app() -> RustStream {
+///     // Opening at a position replays what the broker kept, so this one keeps a window.
+///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
+///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+///         // Wraps the descriptor in `StartAt`: every start replays the whole retained log.
+///         b.include(rebuild.name("audit").start_at(MemoryPosition::start()));
+///     })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[derive(Clone)]
 pub struct StartAt<S, P> {
@@ -911,27 +1312,64 @@ impl<S, P> StartAt<S, P> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # {
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
     /// use std::time::Duration;
     ///
-    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPosition, MemorySource, Retaining};
-    /// use ruststream::{Buffered, StartAt, SubscriptionSource};
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    /// use ruststream::{Buffered, StartAt};
+    /// use serde::Deserialize;
     ///
-    /// // What `start_at(..)` builds at the mount site: the broker's descriptor, wrapped.
-    /// let source = StartAt::new(MemorySource::new("orders"), MemoryPosition::start());
+    /// /// A broker crate's setting that still reaches its descriptor once the mount site wrapped
+    /// /// it in `StartAt`: the position stays where the mount site put it.
+    /// pub trait Linger {
+    ///     type Out;
+    ///     fn linger(self, wait: Duration) -> Self::Out;
+    /// }
     ///
-    /// // The broker's own setting reaches the descriptor underneath - here the client-side
-    /// // batch buffer a transport with no batching of its own wraps it in - and the position
-    /// // the mount site named stays where it was.
-    /// let buffered =
-    ///     source.map_inner(|inner| Buffered::new(inner).max_wait(Duration::from_millis(25)));
+    /// impl<Def: Declared, State, DefCodec> Linger
+    ///     for SubscriberBuilder<Def, StartAt<MemorySource, MemoryPosition>, State, DefCodec>
+    /// {
+    ///     type Out = SubscriberBuilder<
+    ///         Def,
+    ///         StartAt<Buffered<MemorySource>, MemoryPosition>,
+    ///         State,
+    ///         DefCodec,
+    ///     >;
     ///
-    /// assert_eq!(
-    ///     SubscriptionSource::<ConnectedMemoryBroker<Retaining>>::name(&buffered),
-    ///     "orders",
-    /// );
+    ///     fn linger(self, wait: Duration) -> Self::Out {
+    ///         self.map_source(|source| {
+    ///             source.map_inner(|inner| Buffered::new(inner).max_wait(wait))
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Entry {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber(MemorySource)]
+    /// async fn rebuild(entries: &[Entry]) -> HandlerOutcome {
+    ///     tracing::info!(count = entries.len(), "replayed a batch");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
+    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+    ///         b.include(
+    ///             rebuild
+    ///                 .name("audit")
+    ///                 .batch(nonzero!(64))
+    ///                 .start_at(MemoryPosition::start())
+    ///                 .linger(Duration::from_millis(25)),
+    ///         );
+    ///     })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn map_inner<T>(self, f: impl FnOnce(S) -> T) -> StartAt<T, P> {

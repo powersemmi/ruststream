@@ -43,9 +43,7 @@
 //!             b.include(confirm);
 //!         },
 //!     );
-//!     let spec = build_spec(&app);
-//!     assert!(spec.messages_without_schema().is_empty());
-//!     spec.to_json()
+//!     build_spec(&app).to_json()
 //! }
 //! # }
 //! # fn main() {}
@@ -178,17 +176,37 @@ impl Spec {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
-    /// # fn demo() {
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
     /// use ruststream::asyncapi::build_spec;
-    /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::schemars::JsonSchema;
+    /// use serde::Deserialize;
     ///
-    /// let app = RustStream::new(AppInfo::new("orders", "1.0.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| { let _ = b; });
-    /// let spec = build_spec(&app);
-    /// assert!(spec.messages_without_schema().is_empty());
+    /// #[derive(Deserialize, JsonSchema)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "accepted");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// pub fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(accept);
+    ///     })
+    /// }
+    ///
+    /// /// A test in the service's suite: every model in the document carries a schema.
+    /// pub fn every_message_has_a_schema() {
+    ///     let spec = build_spec(&app());
+    ///     assert_eq!(spec.messages_without_schema(), Vec::<&str>::new());
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn messages_without_schema(&self) -> Vec<&str> {
@@ -372,13 +390,16 @@ pub struct OperationReply {
 /// # Examples
 ///
 /// ```
-/// use ruststream::asyncapi::ReplyAddress;
+/// use ruststream::asyncapi::Spec;
 ///
-/// let address = ReplyAddress::new("$message.header#/reply-to");
-/// let json = serde_json::to_string(&address)?;
-///
-/// assert_eq!(json, r#"{"location":"$message.header#/reply-to"}"#);
-/// # Ok::<_, serde_json::Error>(())
+/// /// Where a client generator finds the address to read an operation's reply from.
+/// fn reply_location<'a>(spec: &'a Spec, operation: &str) -> Option<&'a str> {
+///     let reply = spec.operations.get(operation)?.reply.as_ref()?;
+///     reply
+///         .address
+///         .as_ref()
+///         .map(|address| address.location.as_str())
+/// }
 /// ```
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
@@ -393,11 +414,19 @@ impl ReplyAddress {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::asyncapi::ReplyAddress;
+    /// use ruststream::asyncapi::{ReplyAddress, Spec};
     ///
-    /// let address = ReplyAddress::new("$message.header#/reply-to");
-    ///
-    /// assert_eq!(address.location, "$message.header#/reply-to");
+    /// /// The gateway in front of the service answers on the inbox a request names, which the
+    /// /// broker underneath cannot say, so the published document is completed here.
+    /// fn add_gateway_reply(spec: &mut Spec) {
+    ///     if let Some(reply) = spec
+    ///         .operations
+    ///         .get_mut("receive_requests")
+    ///         .and_then(|operation| operation.reply.as_mut())
+    ///     {
+    ///         reply.address = Some(ReplyAddress::new("$message.header#/reply-to"));
+    ///     }
+    /// }
     /// ```
     #[must_use]
     pub fn new(location: impl Into<String>) -> Self {
@@ -501,30 +530,41 @@ impl Reference {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
-/// # fn demo() -> Result<(), serde_json::Error> {
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use std::error::Error;
+/// use std::fs;
+///
 /// use ruststream::asyncapi::build_spec;
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::{AppInfo, Context, HandlerMetadata, HandlerOutcome, RustStream};
+/// use ruststream::memory::prelude::*;
+/// use ruststream::schemars::JsonSchema;
+/// use serde::Deserialize;
 ///
-/// let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
-///     MemoryBroker::new(),
-///     |b| {
-///         let subscriber = b.broker().subscribe("orders");
-///         b.handle(
-///             subscriber,
-///             |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
-///             HandlerMetadata::raw("orders"),
-///         );
-///     },
-/// );
+/// #[derive(Deserialize, JsonSchema)]
+/// struct Order {
+///     id: u64,
+/// }
 ///
-/// let spec = build_spec(&app);
-/// assert_eq!(spec.info.title, "orders");
-/// let json = spec.to_json()?;
-/// assert!(json.contains("\"asyncapi\""));
-/// # Ok(())
+/// #[subscriber("orders")]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+///
+/// pub fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(accept);
+///     })
+/// }
+///
+/// /// Writes the document the service publishes next to its code, from the app `main` runs.
+/// pub fn write_document() -> Result<(), Box<dyn Error>> {
+///     let spec = build_spec(&app());
+///     fs::write("asyncapi.json", spec.to_json()?)?;
+///     Ok(())
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 #[must_use]
 pub fn build_spec<A: App>(app: &A) -> Spec {

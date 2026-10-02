@@ -25,12 +25,38 @@ use crate::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscriptio
 /// # Examples
 ///
 /// ```
-/// use ruststream::memory::{MemoryBroker, Routing};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // A pattern subscription is a fallback: it receives what no exact name, and no more
-/// // specific pattern, took.
-/// let broker = MemoryBroker::new().routing(Routing::MostSpecific);
-/// # let _ = broker;
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders.eu")]
+/// async fn europe(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "europe");
+///     HandlerOutcome::ack()
+/// }
+///
+/// /// A fallback: it receives what no exact name, and no more specific pattern, took.
+/// #[subscriber(MemoryPattern::new("orders.*"))]
+/// async fn elsewhere(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "elsewhere");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+///         b.include(europe);
+///         b.include(elsewhere);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -389,11 +415,30 @@ impl MemoryPattern {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::memory::MemoryPattern;
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// let every_region = MemoryPattern::new("orders.*");
-    /// let everything_below = MemoryPattern::new("orders.>");
-    /// # let _ = (every_region, everything_below);
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// `orders.*` matches one token after `orders.`, `orders.>` every name below it.
+    /// #[subscriber(MemoryPattern::new("orders.>"))]
+    /// async fn audit(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "audited");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(audit);
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn new(pattern: impl Into<String>) -> Self {
         Self {

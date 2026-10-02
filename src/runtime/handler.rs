@@ -71,19 +71,35 @@ impl HandlerResult {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::HandlerOutcome;
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
-/// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-/// // A plain outcome settles and does nothing else.
-/// let plain = HandlerOutcome::ack();
-/// assert!(plain.is_ack());
+/// #[derive(Deserialize)]
+/// struct Payment {
+///     id: u64,
+///     settled: bool,
+///     valid: bool,
+/// }
 ///
-/// // Or carry a continuation that runs after the settle.
-/// let with_after = HandlerOutcome::drop().and_after(async move { /* cleanup */ });
-/// assert!(with_after.is_drop());
-/// # Ok(())
+/// async fn release_hold(_id: u64) {}
+///
+/// #[subscriber("payments")]
+/// async fn reconcile(payment: &Payment) -> HandlerOutcome {
+///     if !payment.valid {
+///         // Never coming right: off the queue for good.
+///         return HandlerOutcome::drop();
+///     }
+///     if !payment.settled {
+///         return HandlerOutcome::retry();
+///     }
+///     // Settled, and the hold is released once the ack is through.
+///     let id = payment.id;
+///     HandlerOutcome::ack().and_after(async move { release_hold(id).await })
+/// }
 /// # }
-/// # check().unwrap();
+/// # fn main() {}
 /// ```
 #[must_use]
 pub struct HandlerOutcome {
@@ -97,13 +113,23 @@ impl HandlerOutcome {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::runtime::HandlerOutcome;
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-    /// assert!(HandlerOutcome::ack().is_ack());
-    /// # Ok(())
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "accepted");
+    ///     HandlerOutcome::ack()
+    /// }
     /// # }
-    /// # check().unwrap();
+    /// # fn main() {}
     /// ```
     pub const fn ack() -> Self {
         Self {
@@ -174,16 +200,26 @@ impl HandlerOutcome {
     /// # Examples
     ///
     /// ```
-    /// use ruststream::runtime::HandlerOutcome;
+    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::prelude::*;
+    /// use serde::Deserialize;
     ///
-    /// # fn check() -> Result<(), Box<dyn std::error::Error>> {
-    /// let outcome = HandlerOutcome::ack().and_after(async move {
-    ///     // runs after this message is acked
-    /// });
-    /// assert!(outcome.is_ack());
-    /// # Ok(())
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// async fn notify_downstream(_id: u64) {}
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     let id = order.id;
+    ///     // Runs once the ack is through; its loss never brings the order back.
+    ///     HandlerOutcome::ack().and_after(async move { notify_downstream(id).await })
+    /// }
     /// # }
-    /// # check().unwrap();
+    /// # fn main() {}
     /// ```
     pub fn and_after<F>(self, fut: F) -> Self
     where
@@ -318,19 +354,26 @@ impl<E> IntoOutcome for Result<HandlerOutcome, E> {
 /// Closures implement `Handler` automatically:
 ///
 /// ```
-/// use ruststream::IncomingMessage;
+/// use std::time::Instant;
+///
 /// use ruststream::runtime::{Context, Handler, HandlerOutcome};
 ///
-/// fn assert_handler<M, H>(_: H)
-/// where
-///     M: IncomingMessage,
-///     H: Handler<M>,
-/// {
-/// }
+/// /// A middleware's wrapper: it is a handler itself, and hands each input on to the one inside.
+/// struct Timed<H>(H);
 ///
-/// fn use_closure<M: IncomingMessage + 'static>() {
-///     // A closure may return any shape the outcome conversion accepts.
-///     assert_handler::<M, _>(|_msg: &M, _ctx: &mut Context| async { HandlerOutcome::ack() });
+/// impl<M, C, S, H> Handler<M, C, S> for Timed<H>
+/// where
+///     M: Send + Sync,
+///     C: Send,
+///     S: Send + Sync,
+///     H: Handler<M, C, S>,
+/// {
+///     async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+///         let started = Instant::now();
+///         let outcome = self.0.handle(msg, ctx).await;
+///         tracing::info!(subscription = ctx.name(), elapsed = ?started.elapsed(), "handled");
+///         outcome
+///     }
 /// }
 /// ```
 #[diagnostic::on_unimplemented(

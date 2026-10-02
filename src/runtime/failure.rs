@@ -21,13 +21,27 @@ use super::shutdown::Shutdown;
 /// # Examples
 ///
 /// ```
+/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # mod demo {
 /// use std::time::Duration;
 ///
-/// use ruststream::runtime::FailurePolicy;
+/// use ruststream::prelude::*;
+/// use serde::Deserialize;
 ///
-/// let policy = FailurePolicy::RetryAfter(Duration::from_secs(5));
-/// assert!(matches!(policy, FailurePolicy::RetryAfter(_)));
-/// # Ok::<(), std::convert::Infallible>(())
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// /// A schema change rolls out producer-first: a payload this version cannot read yet comes
+/// /// back in a minute rather than being dropped.
+/// #[subscriber("orders", on_failure(decode = retry_after(Duration::from_secs(60))))]
+/// async fn accept(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "accepted");
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,13 +92,35 @@ impl FailurePolicy {
 /// # Examples
 ///
 /// ```
-/// use ruststream::runtime::{FailurePolicies, FailurePolicy};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
 ///
-/// // The defaults: a panic fails fast, a decode failure drops.
-/// let policies = FailurePolicies::default();
-/// assert_eq!(policies.panic, FailurePolicy::FailFast);
-/// assert_eq!(policies.decode, FailurePolicy::Drop);
-/// # Ok::<(), std::convert::Infallible>(())
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[subscriber]
+/// async fn ingest(order: &Order) -> HandlerOutcome {
+///     tracing::info!(order.id, "ingested");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("ingest", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         // An untrusted topic: a malformed payload is requeued, a handler bug still stops the
+///         // service (the default panic policy).
+///         b.include(
+///             ingest
+///                 .name("ingest")
+///                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry)),
+///         );
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

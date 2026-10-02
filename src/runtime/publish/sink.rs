@@ -21,19 +21,33 @@ use crate::{HeaderMap, OutgoingFor, PayloadForm, Publisher, Transaction};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
-/// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-/// use ruststream::memory::MemoryBroker;
-/// use ruststream::runtime::PublishSink;
-/// use ruststream::OutgoingMessage;
+/// use ruststream::runtime::{PublishBuilder, PublishSink};
 ///
-/// let broker = MemoryBroker::new();
-/// let publisher = broker.publisher();
-/// let mut sink = &publisher; // any &Publisher is a sink
-/// sink.send(OutgoingMessage::new("orders", b"{}".as_slice()), None)
-///     .await?;
-/// # Ok(())
-/// # }
+/// /// An AMQP broker's per-message settings: every field optional, so a call says only what it
+/// /// changes.
+/// #[derive(Clone, Default)]
+/// struct AmqpOptions {
+///     priority: Option<u8>,
+/// }
+///
+/// /// The broker's own step. The bound on the sink's options is what puts it on a builder over
+/// /// this broker's publisher, or a transaction on it, and on no other.
+/// trait AmqpSteps {
+///     #[must_use]
+///     fn priority(self, priority: u8) -> Self;
+/// }
+///
+/// impl<Sink, Body, Enc, Hdrs, Dest> AmqpSteps for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+/// where
+///     Sink: PublishSink<Options = AmqpOptions>,
+/// {
+///     fn priority(mut self, priority: u8) -> Self {
+///         self.options_mut()
+///             .get_or_insert_with(AmqpOptions::default)
+///             .priority = Some(priority);
+///         self
+///     }
+/// }
 /// ```
 pub trait PublishSink: Send {
     /// How the publisher or transaction underneath consumes the payload, forwarded so the

@@ -54,21 +54,30 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
-    /// # fn demo() {
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{AppInfo, RustStream};
-    /// use ruststream::{OutgoingMessage, Publisher};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Serialize;
     ///
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(MemoryBroker::new(), |b| {
-    ///         b.after_startup(MemoryPublish, async move |publisher| {
-    ///             let msg = OutgoingMessage::new("announcements", b"up".as_slice());
-    ///             publisher.publish(msg, None).await
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "services.started")]
+    /// struct Started {
+    ///     service: &'static str,
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         // The rest of the system learns the service is up once its subscriptions are open.
+    ///         b.after_startup(Publish, async move |publisher| {
+    ///             publisher
+    ///                 .message(&Started { service: "orders" })
+    ///                 .publish()
+    ///                 .await
     ///         });
-    ///     });
-    /// # let _ = app;
+    ///     })
+    /// }
     /// # }
+    /// # fn main() {}
     /// ```
     pub fn after_startup<Source, Hook, Fut, E>(&mut self, source: Source, hook: Hook)
     where

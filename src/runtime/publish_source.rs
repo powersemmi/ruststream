@@ -32,19 +32,56 @@ use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
-/// # fn demo() {
-/// use ruststream::Broker;
-/// use ruststream::memory::{MemoryBroker, MemoryPublish};
-/// use ruststream::runtime::{AppInfo, RustStream};
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
 ///
-/// let broker = MemoryBroker::new().bindable(); // sugar for Bindable::new(..)
-/// let egress = broker.bind(MemoryPublish);
-/// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
-/// // `egress` pairs once the app starts: attach it at an include site, or pair it through
-/// // the running handle for a sibling task.
-/// # let _ = (app, egress);
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// /// An order relayed out of the east region, under a name the west region does not relay.
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "orders.from-east")]
+/// struct FromEast {
+///     id: u64,
+/// }
+///
+/// /// An order relayed out of the west region, under a name the east region does not relay.
+/// #[derive(Serialize, Outgoing)]
+/// #[outgoing(name = "orders.from-west")]
+/// struct FromWest {
+///     id: u64,
+/// }
+///
+/// #[subscriber("orders", reply)]
+/// async fn east_to_west(order: &Order) -> FromEast {
+///     FromEast { id: order.id }
+/// }
+///
+/// #[subscriber("orders", reply)]
+/// async fn west_to_east(order: &Order) -> FromWest {
+///     FromWest { id: order.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     // Each region relays to the other: both tokens exist before either scope is built.
+///     let east = MemoryBroker::new().bindable();
+///     let west = MemoryBroker::new().bindable();
+///     let to_east = east.bind(Publish);
+///     let to_west = west.bind(Publish);
+///     RustStream::new(AppInfo::new("bridge", "0.1.0"))
+///         .with_broker_labeled("east", east, |b| {
+///             b.include(east_to_west).out_reply(to_west);
+///         })
+///         .with_broker_labeled("west", west, |b| {
+///             b.include(west_to_east).out_reply(to_east);
+///         })
+/// }
 /// # }
+/// # fn main() {}
 /// ```
 pub struct Bindable<B: Broker> {
     pub(crate) broker: B,
@@ -167,24 +204,40 @@ where
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
-    /// # fn demo() {
-    /// use ruststream::Broker;
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::memory::MemoryError;
+    /// use ruststream::runtime::PublishError;
+    /// use ruststream::PairError;
+    /// use serde::Serialize;
     ///
-    /// let broker = MemoryBroker::new().bindable();
-    /// let token = broker.bind(MemoryPublish);
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-    ///     .with_broker(broker, |_b| {})
-    ///     .after_startup(async move |_state| {
-    ///         let publisher = token.live().await?;
-    ///         // ... publish the first message through `publisher` ...
-    ///         # let _ = publisher;
-    ///         Ok::<_, ruststream::PairError>(())
-    ///     });
-    /// # let _ = app;
+    /// # #[derive(Debug, thiserror::Error)]
+    /// # enum StartupError {
+    /// #     #[error(transparent)]
+    /// #     Pair(#[from] PairError),
+    /// #     #[error(transparent)]
+    /// #     Publish(#[from] PublishError<MemoryError>),
     /// # }
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "services.started")]
+    /// struct Started {
+    ///     service: &'static str,
+    /// }
+    ///
+    /// fn app() -> impl App {
+    ///     let broker = MemoryBroker::new().bindable();
+    ///     let announce = broker.bind(Publish);
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .with_broker(broker, |_b| {})
+    ///         .after_startup(async move |_state| {
+    ///             let publisher = announce.live().await?;
+    ///             publisher.message(&Started { service: "orders" }).publish().await?;
+    ///             Ok::<_, StartupError>(())
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
     /// ```
     pub async fn live(self) -> Result<S::Live, PairError> {
         pair_bound::<B2, S>(&self.slot, self.source).await

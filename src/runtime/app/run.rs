@@ -299,17 +299,33 @@ impl RunningApp {
     ///
     /// ```no_run
     /// # #[cfg(feature = "memory")]
-    /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// use axum::Router;
+    /// use axum::extract::State;
+    /// use axum::http::StatusCode;
+    /// use axum::routing::get;
     /// use ruststream::memory::MemoryBroker;
-    /// use ruststream::runtime::{AppInfo, HealthState, RustStream};
+    /// use ruststream::runtime::{AppInfo, HealthProbe, RustStream};
+    /// use tokio::net::TcpListener;
     ///
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
+    /// async fn healthz(State(health): State<HealthProbe>) -> StatusCode {
+    ///     if health.is_running() {
+    ///         StatusCode::OK
+    ///     } else {
+    ///         StatusCode::SERVICE_UNAVAILABLE
+    ///     }
+    /// }
+    ///
+    /// let app =
+    ///     RustStream::new(AppInfo::new("svc", "0.1.0")).register_broker(MemoryBroker::new());
     /// let running = app.start().await?;
-    /// let health = running.health();
-    /// assert!(health.is_running());
-    /// // hand `health` to the HTTP task's /healthz route, then later:
+    /// let routes = Router::new()
+    ///     .route("/healthz", get(healthz))
+    ///     .with_state(running.health());
+    /// axum::serve(TcpListener::bind("0.0.0.0:8080").await?, routes)
+    ///     .with_graceful_shutdown(running.stopping())
+    ///     .await?;
     /// running.shutdown().await?;
-    /// assert_eq!(health.state(), HealthState::Stopped);
     /// # Ok(())
     /// # }
     /// ```
@@ -332,19 +348,26 @@ impl RunningApp {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// use ruststream::Broker;
-    /// use ruststream::memory::{MemoryBroker, MemoryPublish};
-    /// use ruststream::runtime::{AppInfo, RustStream};
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u64,
+    /// }
     ///
     /// let broker = MemoryBroker::new().bindable();
-    /// let egress = broker.bind(MemoryPublish);
-    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(broker, |_b| {});
+    /// let egress = broker.bind(Publish);
+    /// let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |_b| {});
     /// let running = app.start().await?;
+    ///
+    /// // The HTTP task owns this publisher and sends what its requests carry.
     /// let publisher = running.publisher(egress).await?;
-    /// // hand `publisher` to the sibling task (an outbox relay, a timer) ...
-    /// # let _ = publisher;
+    /// publisher.message(&Order { id: 7 }).publish().await?;
+    ///
     /// running.shutdown().await?;
     /// # Ok(())
     /// # }
