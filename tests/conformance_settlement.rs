@@ -9,6 +9,8 @@
 //! Both halves are pinned here: the honest stand-in passes the suite, and the one claiming
 //! settlements it never performs still fails it.
 
+#![cfg(all(feature = "conformance", feature = "memory", feature = "testing"))]
+
 use std::{
     future::{Future, ready},
     marker::PhantomData,

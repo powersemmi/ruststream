@@ -449,7 +449,7 @@ impl PollStats {
         // is the closure's answer for the value it replaced.
         let previous = self
             .average_ns
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, step)
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, step)
             .unwrap_or_else(|current| current);
         let current = step(previous).unwrap_or(previous);
         let warns = previous & OVER == 0 && current & OVER != 0;

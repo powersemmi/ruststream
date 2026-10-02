@@ -3,8 +3,9 @@
 //! takes. Both surfaces are here, because the attribute and the chain resolve the same way.
 //!
 //! A mount-site name that a declaration overrides is reported at startup. Those tests capture the
-//! log with a subscriber installed for the test's own thread, so they run on the current-thread
-//! runtime, where the harness starts every registration on that thread.
+//! log through one process-wide subscriber that writes into the capture the test's own thread
+//! installed, so they run on the current-thread runtime, where the harness starts every
+//! registration on that thread.
 #![cfg(all(
     feature = "testing",
     feature = "macros",
@@ -12,16 +13,16 @@
     feature = "json"
 ))]
 
+use std::cell::RefCell;
 use std::future::{Future, ready};
 use std::io;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, Once, PoisonError};
 
 use ruststream::memory::prelude::*;
 use ruststream::nonzero;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 use tracing::Level;
-use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq, schemars::JsonSchema)]
@@ -204,18 +205,47 @@ fn the_document_reports_the_resolved_destination() {
 /// The startup warning's message, as the log renders it.
 const IGNORED: &str = "the mount-site reply name is ignored";
 
-/// The log lines written while the guard lives, as text.
+/// The log lines written on one thread while its [`Installed`] guard lives, as text.
 #[derive(Clone, Default)]
 struct Captured(Arc<Mutex<Vec<u8>>>);
 
+thread_local! {
+    /// The capture the current thread's log lines go to, if a test installed one.
+    static CURRENT: RefCell<Option<Captured>> = const { RefCell::new(None) };
+}
+
+/// Clears the current thread's capture when dropped.
+struct Installed;
+
+impl Drop for Installed {
+    fn drop(&mut self) {
+        CURRENT.with(|current| current.borrow_mut().take());
+    }
+}
+
 impl Captured {
-    fn install(&self) -> DefaultGuard {
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(self.clone())
-            .with_ansi(false)
-            .with_max_level(Level::WARN)
-            .finish();
-        tracing::subscriber::set_default(subscriber)
+    /// Routes the current thread's log lines into this capture until the guard drops.
+    ///
+    /// The subscriber is process-wide, installed once, rather than a per-thread default. The
+    /// warning is one callsite shared by every test here, including the ones that start an app
+    /// without capturing, and tracing caches a callsite's interest globally: with a per-thread
+    /// default, a test thread that had no subscriber could register the callsite while another
+    /// test's subscriber was the only one alive, cache it as never enabled, and silence the
+    /// warning for the capturing test. A global subscriber is the same on every thread, so the
+    /// cached interest is always the right one; only where its lines go is per thread.
+    fn install(&self) -> Installed {
+        static GLOBAL: Once = Once::new();
+        GLOBAL.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(ThreadCapture)
+                .with_ansi(false)
+                .with_max_level(Level::WARN)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("no other global subscriber in this test binary");
+        });
+        CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));
+        Installed
     }
 
     fn text(&self) -> String {
@@ -233,12 +263,20 @@ impl Captured {
     }
 }
 
-impl io::Write for Captured {
+/// The global subscriber's writer: the current thread's capture, or nowhere.
+struct ThreadCapture;
+
+/// One log line's destination, resolved on the thread that wrote it.
+struct LineWriter(Option<Captured>);
+
+impl io::Write for LineWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(buf);
+        if let Some(Captured(bytes)) = &self.0 {
+            bytes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(buf);
+        }
         Ok(buf.len())
     }
 
@@ -247,11 +285,11 @@ impl io::Write for Captured {
     }
 }
 
-impl<'a> MakeWriter<'a> for Captured {
-    type Writer = Self;
+impl<'a> MakeWriter<'a> for ThreadCapture {
+    type Writer = LineWriter;
 
     fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
+        LineWriter(CURRENT.with(|current| current.borrow().clone()))
     }
 }
 
@@ -425,7 +463,7 @@ async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 /// Nothing is ignored where the mount site names nothing, on either surface.
@@ -441,7 +479,7 @@ async fn a_bare_publish_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 /// A reply type declaring no destination takes the mount-site name, so nothing is ignored.
@@ -456,7 +494,7 @@ async fn a_name_a_type_declaring_none_takes_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 #[derive(OutSlot)]

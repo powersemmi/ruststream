@@ -517,7 +517,7 @@ mod tests {
         let msg = RawMessage::new("name.a", b"payload".as_slice());
         assert_eq!(msg.name(), "name.a");
         assert_eq!(msg.payload(), b"payload");
-        assert!(msg.headers().is_empty());
+        assert_eq!(*msg.headers(), HeaderMap::new());
     }
 
     #[test]

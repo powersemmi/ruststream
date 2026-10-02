@@ -160,7 +160,6 @@ pub struct PublishDynNext<'a> {
 
 impl<'a> PublishDynNext<'a> {
     /// Runs the next dynamic middleware, or the surrounding static pipeline if the list is done.
-    #[must_use]
     pub fn run(self, out: &'a mut Outgoing<'a>) -> PublishFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.on_publish(

@@ -200,8 +200,9 @@ async fn own_publishes_are_logged<C: TestableBroker + Subscribe>(connected: C) {
             "the publish log must keep the headers the broker's own publisher sent",
         );
     } else {
-        assert!(
-            connected.published(&name).is_empty(),
+        assert_eq!(
+            connected.published(&name),
+            Vec::new(),
             "the publish log recorded a publish the broker's own publisher refused",
         );
     }
@@ -468,10 +469,9 @@ async fn settlement_counts<M, E, S>(
     S: Stream<Item = Result<M, E>> + Unpin,
 {
     let coordinator = coordinator.clone();
-    let mut stream = stream;
     {
         inject(b"dropped");
-        let msg = expect_next(&mut stream, "counts nack(false)").await;
+        let msg = expect_next(stream, "counts nack(false)").await;
         match msg.nack(false).await {
             Ok(()) | Err(AckError::Unsupported) => {}
             Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
@@ -480,10 +480,10 @@ async fn settlement_counts<M, E, S>(
             quiescent(&coordinator),
             "counts: a delivery nacked without requeue must be released exactly once",
         );
-        expect_no_more(&mut stream, "counts nack(false)").await;
+        expect_no_more(stream, "counts nack(false)").await;
 
         inject(b"requeued");
-        let msg = expect_next(&mut stream, "counts nack(true)").await;
+        let msg = expect_next(stream, "counts nack(true)").await;
         match msg.nack(true).await {
             Ok(()) => {
                 assert!(
@@ -491,7 +491,7 @@ async fn settlement_counts<M, E, S>(
                     "counts: a requeued message must be counted in flight again before `nack` \
                      returns; TestApp would stop waiting before the redelivery was handled",
                 );
-                settle_ack(expect_next(&mut stream, "counts requeued").await).await;
+                settle_ack(expect_next(stream, "counts requeued").await).await;
                 assert!(
                     quiescent(&coordinator),
                     "counts: an acked redelivery must be released exactly once",
@@ -505,19 +505,19 @@ async fn settlement_counts<M, E, S>(
         }
 
         inject(b"delayed");
-        let msg = expect_next(&mut stream, "counts nack_after").await;
+        let msg = expect_next(stream, "counts nack_after").await;
         if msg.supports_nack_after() {
-            delayed_redelivery(msg, &coordinator, &mut stream).await;
+            delayed_redelivery(msg, &coordinator, stream).await;
         } else {
             settle_ack(msg).await;
         }
 
         // Last, because a transport may take an unsettled delivery back on its own schedule.
         inject(b"unsettled");
-        drop(expect_next(&mut stream, "counts unsettled drop").await);
+        drop(expect_next(stream, "counts unsettled drop").await);
         if !quiescent(&coordinator) {
             // Counted again: the transport took the delivery back, so it must come back.
-            settle_ack(expect_next(&mut stream, "counts unsettled redelivery").await).await;
+            settle_ack(expect_next(stream, "counts unsettled redelivery").await).await;
             assert!(
                 quiescent(&coordinator),
                 "counts: an unsettled delivery the transport took back is counted once more than \

@@ -232,11 +232,9 @@ async fn a_declaration_a_bare_name_carries_nowhere_refuses_to_start() {
         message.contains("declare the cap and the destination on this broker's own descriptor"),
         "{message}"
     );
-    assert!(
-        declared
-            .lock()
-            .expect("declaration mutex poisoned")
-            .is_empty(),
+    assert_eq!(
+        *declared.lock().expect("declaration mutex poisoned"),
+        Vec::new(),
         "the refusal comes from the default, which records nothing",
     );
 }
@@ -303,11 +301,9 @@ async fn a_bare_name_on_an_unaddressed_broker_declares_with_a_named_destination(
     );
     let _tb = TestApp::start(app).await.expect("startup failed");
 
-    assert!(
-        declared
-            .lock()
-            .expect("declaration mutex poisoned")
-            .is_empty(),
+    assert_eq!(
+        *declared.lock().expect("declaration mutex poisoned"),
+        Vec::new(),
         "the runtime applies this one, so the broker is told nothing",
     );
 }

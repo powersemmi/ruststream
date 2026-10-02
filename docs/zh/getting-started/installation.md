@@ -12,7 +12,7 @@ serde = { version = "1", features = ["derive"] }
 `serde` 是你服务的直接依赖，因为消息类型要 derive `Deserialize` / `Serialize`。
 
 !!! note "Edition 与 MSRV"
-    RustStream 面向 **edition 2024**，最低支持的 Rust 版本是 **1.88**。在你的 `Cargo.toml` 里写上
+    RustStream 面向 **edition 2024**，最低支持的 Rust 版本是 **1.95**。在你的 `Cargo.toml` 里写上
     `edition = "2024"`。
     如果 Broker crate 的客户端库需要更新的工具链，它的下限就会高于核心。确切的下限见该 Broker crate
     自己的 `rust-version` 字段。

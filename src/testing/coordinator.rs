@@ -1128,7 +1128,7 @@ mod tests {
         coordinator.record(handled(&subscriptions[1]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
         assert_eq!(coordinator.published(1, "orders").len(), 1);
-        assert!(coordinator.published(0, "orders").is_empty());
+        assert_eq!(coordinator.published(0, "orders"), Vec::new());
     }
 
     #[tokio::test]
@@ -1199,7 +1199,7 @@ mod tests {
         })
         .await;
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
-        assert!(coordinator.published(0, "orders").is_empty());
+        assert_eq!(coordinator.published(0, "orders"), Vec::new());
     }
 
     #[test]

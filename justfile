@@ -57,6 +57,8 @@ test:
     cargo test --no-default-features --features macros,memory,testing --test codec_free_lanes
     cargo test --no-default-features --features macros,memory,testing --test ui_codec_free
     cargo test --no-default-features --features memory,testing --test lane_traits_without_macros
+    # Plain `cargo test`: every target needing a non-default feature has to gate itself.
+    cargo test --workspace
     # Both feature edges, because an all-features run hides a doc example that names a
     # feature-gated item without gating itself.
     cargo test --workspace --doc

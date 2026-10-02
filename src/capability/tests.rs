@@ -13,7 +13,7 @@ fn security_accumulates_schemes_in_order() {
 #[test]
 fn in_process_spec_starts_without_security() {
     let spec = ServerSpec::in_process("memory");
-    assert!(spec.security.is_empty());
+    assert_eq!(spec.security, Vec::new());
 }
 
 #[test]
