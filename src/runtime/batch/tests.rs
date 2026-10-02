@@ -535,7 +535,7 @@ async fn an_empty_deserialized_batch_reaches_no_handler() {
         .handle_batch(Vec::<MemoryMessage>::new(), &mut (), &mut ctx)
         .await;
 
-    assert!(seen.lock().unwrap().is_empty());
+    assert_eq!(*seen.lock().unwrap(), Vec::<Vec<u8>>::new());
 }
 
 /// An element whose construction fails is settled by the decode policy and never reaches the

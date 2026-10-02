@@ -108,7 +108,7 @@ fn a_value_that_holds_its_bytes_lends_them() {
         panic!("a value that holds its bytes lends them");
     };
     assert!(std::ptr::eq(lent.as_ptr(), export.0.as_ptr()));
-    assert!(buf.is_empty());
+    assert_eq!(buf, "");
 }
 
 #[test]

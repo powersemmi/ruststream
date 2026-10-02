@@ -56,7 +56,6 @@ pub struct Next<'a, I> {
 
 impl<'a, I> Next<'a, I> {
     /// Runs the next middleware in the chain, or the wrapped handler if the chain is exhausted.
-    #[must_use]
     pub fn run(self, input: &'a I, ctx: &'a mut Context<'_>) -> BoxFut<'a> {
         match self.rest.split_first() {
             Some((middleware, rest)) => middleware.handle(

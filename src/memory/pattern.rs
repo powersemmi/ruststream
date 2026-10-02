@@ -551,10 +551,9 @@ mod tests {
             Routing::MostSpecific.routes("orders.us.created", &subscriptions),
             [2]
         );
-        assert!(
-            Routing::MostSpecific
-                .routes("invoices", &subscriptions)
-                .is_empty()
+        assert_eq!(
+            Routing::MostSpecific.routes("invoices", &subscriptions),
+            Vec::<usize>::new()
         );
     }
 }

@@ -425,7 +425,7 @@ async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 /// Nothing is ignored where the mount site names nothing, on either surface.
@@ -441,7 +441,7 @@ async fn a_bare_publish_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 /// A reply type declaring no destination takes the mount-site name, so nothing is ignored.
@@ -456,7 +456,7 @@ async fn a_name_a_type_declaring_none_takes_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert!(log.ignored().is_empty(), "{}", log.text());
+    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
 }
 
 #[derive(OutSlot)]

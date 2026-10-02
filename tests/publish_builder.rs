@@ -390,7 +390,10 @@ async fn a_publisher_without_a_base_sends_only_the_call_sites_headers() {
         1,
         "a publisher with no base adds nothing of its own",
     );
-    assert!(connected.published("audit.bare")[0].headers().is_empty());
+    assert_eq!(
+        *connected.published("audit.bare")[0].headers(),
+        HeaderMap::new()
+    );
 }
 
 /// The handle's base travels with a publish that names no headers, and a call-site map wins key

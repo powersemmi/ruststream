@@ -101,7 +101,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
     let component = &spec.components.messages["u64"];
     assert!(component.payload.is_some());
     assert_eq!(component.headers.as_ref().unwrap()["title"], "MetaA");
-    assert!(spec.messages_without_schema().is_empty());
+    assert_eq!(spec.messages_without_schema(), Vec::<&str>::new());
 }
 
 #[test]
@@ -551,7 +551,7 @@ mod typed_headers_spec {
         assert!(response.headers.is_some());
 
         // Every model here derives JsonSchema: the coverage gate reports no gaps.
-        assert!(spec.messages_without_schema().is_empty());
+        assert_eq!(spec.messages_without_schema(), Vec::<&str>::new());
     }
 }
 
@@ -983,7 +983,7 @@ mod document_surface {
         let spec = build_spec(&app);
 
         assert!(spec.channels["orders"].servers.is_empty());
-        assert!(spec.operations["receive_orders"].tags.is_empty());
+        assert_eq!(spec.operations["receive_orders"].tags, Vec::new());
     }
 
     /// The codec names the media type of what it decodes, and a document that agrees on one

@@ -201,7 +201,7 @@ fn top_level_wrappers_unwrap_to_the_struct_they_carry() {
     // A `None` contract writes nothing rather than failing: there is no shape to reject.
     let mut headers = HeaderMap::new();
     headers.insert_typed(&Option::<Nested>::None).unwrap();
-    assert!(headers.is_empty());
+    assert_eq!(headers, HeaderMap::new());
 
     // An externally tagged newtype variant stays flat, like the untagged form.
     let mut headers = HeaderMap::new();

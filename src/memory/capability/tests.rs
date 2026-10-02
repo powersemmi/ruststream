@@ -275,7 +275,7 @@ async fn a_resolved_request_leaves_no_log_entry_for_its_inbox() {
         (inboxes, log.name("svc.echo").is_some())
     };
 
-    assert!(inboxes.is_empty(), "{inboxes:?}");
+    assert_eq!(inboxes, Vec::<String>::new());
     // The request subject itself is a real name, and stays.
     assert!(kept_the_subject);
 }
