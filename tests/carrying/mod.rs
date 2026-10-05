@@ -19,7 +19,7 @@ use std::future::{Future, ready};
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use ruststream::memory::{
     ConnectedMemoryBroker, Discarding, LogMode, MemoryError, MemoryMessage, MemorySeeker,
     MemorySubscriber, Retaining,
@@ -30,6 +30,7 @@ use ruststream::{
     HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
     Subscriber, SubscriptionSource,
 };
+use tokio::task::yield_now;
 
 /// The value a delivery carries: the service's own struct, with no serde model.
 #[derive(Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
@@ -91,6 +92,9 @@ pub(crate) enum Fault {
     /// Within the contract: the transport cannot requeue, so a nack with requeue drops the
     /// delivery and answers that it is unsupported.
     NoRequeue,
+    /// Every page comes back empty, each a moment after it is asked for: a client that answers
+    /// every poll with nothing, so no read of the batch stream ever times out.
+    EmptyPages,
 }
 
 /// The subscription descriptor: one subject of the in-memory bus, read as rows.
@@ -195,6 +199,17 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
         size: NonZeroUsize,
     ) -> impl Stream<Item = Result<RowBatch<Log>, Self::Error>> + Send + '_ {
         let fault = self.fault;
+        if fault == Fault::EmptyPages {
+            return stream::repeat(())
+                .then(async move |()| {
+                    yield_now().await;
+                    Ok(RowBatch {
+                        rows: Vec::new(),
+                        deliveries: Vec::new(),
+                    })
+                })
+                .left_stream();
+        }
         let size = if fault == Fault::OnePerPage {
             NonZeroUsize::MIN
         } else {
@@ -203,6 +218,7 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
         self.inner
             .batches(size)
             .map(move |batch| batch.map(|page| RowBatch::read(page, fault)))
+            .right_stream()
     }
 }
 

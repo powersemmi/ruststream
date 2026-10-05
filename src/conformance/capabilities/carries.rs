@@ -240,8 +240,8 @@ pub async fn carries<
 ///
 /// The suite opens a batch subscription from `make_source(subject)` and publishes each of
 /// `values` through `publish`. Across the batches that come back, every value is lent exactly
-/// once, every delivery of a published value lends one, and no batch lends more values than it
-/// delivers.
+/// once, every delivery of a published value lends one, no batch is empty, and no batch lends
+/// more values than it delivers.
 ///
 /// The order is checked through a settlement, because the runtime settles delivery `i` by the
 /// verdict on value `i`. Two values go out together until a batch carries both; the first
@@ -772,9 +772,10 @@ async fn values_go_before_deliveries_without_one<
     }
 }
 
-/// The next batch off `stream`: the values it lent, cloned, and its deliveries. A batch that lends
-/// more values than it delivers fails here, because the runtime settles delivery `i` by the
-/// verdict on value `i`.
+/// The next batch off `stream`: the values it lent, cloned, and its deliveries. An empty batch
+/// fails here, because a stream that keeps yielding them never delivers what was published and
+/// no read of it ever times out; so does a batch that lends more values than it delivers, because
+/// the runtime settles delivery `i` by the verdict on value `i`.
 async fn next_page<S, Batch, M, E, Value>(
     stream: &mut S,
     within: Duration,
@@ -794,6 +795,10 @@ where
         .unwrap_or_else(|err| panic!("{label}: the batch stream yielded an error: {err:?}"));
     let lent = batch.carried().to_vec();
     let deliveries: Vec<M> = batch.into_iter().collect();
+    assert!(
+        !deliveries.is_empty(),
+        "{label}: a yielded batch must not be empty; {expected}",
+    );
     assert!(
         lent.len() <= deliveries.len(),
         "{label}: a batch must never lend more values than it delivers: it lent {lent:?} for {} \

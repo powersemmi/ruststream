@@ -6,10 +6,16 @@
 
 mod carrying;
 
+use std::time::Duration;
+
 use carrying::{Fault, Row, Rows};
 use ruststream::conformance::capabilities;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
 use ruststream::{OutgoingMessage, Publisher};
+use tokio::time::timeout;
+
+/// How long a check that must fail at once may run before the test calls it a hang.
+const HANG_LIMIT: Duration = Duration::from_secs(5);
 
 /// The rows a check publishes: distinct, so a value lent twice or lent out of place shows.
 fn rows() -> [Row; 3] {
@@ -201,4 +207,21 @@ async fn a_batch_whose_copies_lose_their_values_fails_carries_batch() {
         &rows(),
     )
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a yielded batch must not be empty")]
+async fn a_subscription_yielding_empty_batches_fails_carries_batch() {
+    let rows = rows();
+    let suite = capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::EmptyPages),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows,
+    );
+    timeout(HANG_LIMIT, suite)
+        .await
+        .expect("carries_batch must fail against empty batches, not hang");
 }
