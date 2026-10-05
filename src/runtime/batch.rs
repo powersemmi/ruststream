@@ -669,6 +669,7 @@ impl BatchLog {
                 .iter()
                 .map(|msg| crate::testing::coordinator::Delivered {
                     raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    value: None,
                     settle: None,
                 })
                 .collect(),

@@ -42,7 +42,7 @@ use crate::{FromName, StartAt, Unnamed};
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
-use super::input::{Decoded, DecodedPair, Provided};
+use super::input::{Carried, DecodeSite, Decoded, DecodedPair, Provided};
 use super::router::{IncludeDef, InputCodec};
 
 /// A setting the attribute left out, still fillable at the mount site.
@@ -274,32 +274,42 @@ impl<F, Surface, C: Codec> DefinitionInputCodec<Provided<F>, Surface> for C {
     fn resolve(&self, _surface: &Surface) {}
 }
 
-/// What the mount machinery asks of a definition's settings: the codec its input decodes with,
-/// override and surface fallback resolved in one place. Machinery behind `include`.
+// A carried input reads the delivery's own value, so the override has nothing to apply to here
+// either.
+impl<T, Surface, C: Codec> DefinitionInputCodec<Carried<T>, Surface> for C {
+    type Codec = ();
+
+    fn resolve(&self, _surface: &Surface) {}
+}
+
+/// What the mount machinery asks of a definition's settings: what its input decodes with on the
+/// connected broker `Conn`, override and surface fallback resolved in one place - the codec, or
+/// for a carried input the subscription the value comes from. Machinery behind `include`.
 #[doc(hidden)]
-pub trait MountsWith<Input, Surface> {
-    /// The resolved codec.
+pub trait MountsWith<Input, Surface, Conn> {
+    /// What the adapter decodes with.
     type Codec: Clone + Send + Sync + 'static;
 
     /// Produces it, fresh per registration.
     fn mounted_codec(&self, surface: &Surface) -> Self::Codec;
 }
 
-impl<Def, Src, State, DC, Input, Surface> MountsWith<Input, Surface>
+impl<Def, Src, State, DC, Input, Surface, Conn> MountsWith<Input, Surface, Conn>
     for SubscriberBuilder<Def, Src, State, DC>
 where
     DC: DefinitionInputCodec<Input, Surface>,
+    Input: DecodeSite<DC::Codec, Src, Conn>,
 {
-    type Codec = DC::Codec;
+    type Codec = Input::Decoder;
 
     fn mounted_codec(&self, surface: &Surface) -> Self::Codec {
-        self.codec.resolve(surface)
+        Input::decoder(self.codec.resolve(surface))
     }
 }
 
-/// The codec a definition `D` with input `I` mounts with on the surface `S`. Tames the
-/// projection in the mount impls.
-pub(crate) type DefMountCodec<D, I, S> = <D as MountsWith<I, S>>::Codec;
+/// What a definition `D` with input `I` decodes with on the surface `S` of the connected broker
+/// `Conn`. Tames the projection in the mount impls.
+pub(crate) type DefMountCodec<D, I, S, Conn> = <D as MountsWith<I, S, Conn>>::Codec;
 
 impl<Def, Src, State, DefCodec> Declared for SubscriberBuilder<Def, Src, State, DefCodec>
 where

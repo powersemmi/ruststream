@@ -1,0 +1,60 @@
+error[E0277]: the subscription `MemorySource` does not carry `Row`
+  --> tests/ui/carried_without_carries.rs:25:11
+   |
+25 |         b.include(handle);
+   |           ^^^^^^^ a `&Row` handler reads the value this subscription's deliveries hold
+   |
+   = help: the trait `runtime::input::SourceCarries<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
+   = note: mount it on a subscription whose deliveries implement `Carries<Row>`; a `Row` that arrives as bytes derives `Deserialize` instead and rides the codec
+help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `Subscribing`
+  --> src/runtime/app/include/mod.rs
+   |
+   | /         impl<'s, B, Layers, C, State, Pipeline, Def>
+   | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
+   | |         where
+   | |             B: Broker + 'static,
+...  |
+   | |             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
+   | |                   --------------------------------------------- unsatisfied requirement introduced here: `Subscribing: ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
+   | |             ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
+   | |____________________________________________________------------------------------------------^
+   |                                                      |
+   |                                                      unsatisfied requirement introduced here: `<Subscribing as ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>>::Out: ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+...
+   | / eager_mount! {
+   | |     forms::Subscribing,
+   | |     forms::RawSubscribing,
+   | |     forms::Batch,
+   | |     forms::RawBatch,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `runtime::input::Carried<Row>` to implement `runtime::input::Materialize<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`
+   = note: this error originates in the macro `eager_mount` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>` cannot handle `MemoryMessage`
+  --> tests/ui/carried_without_carries.rs:25:11
+   |
+25 |         b.include(handle);
+   |           ^^^^^^^ unsatisfied trait bound
+   |
+   = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>`
+   = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
+help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, Input, DecodeCodec, Inner>`
+  --> src/runtime/typed.rs
+   |
+   | / impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
+   | |     for Typed<M, Input, DecodeCodec, Inner>
+   | | where
+   | |     M: IncomingMessage,
+   | |     Input: Materialize<DecodeCodec, M>,
+   | |            --------------------------- unsatisfied requirement introduced here: `runtime::input::Carried<Row>: runtime::input::Materialize<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`
+...  |
+   | |     St: Send + Sync,
+   | |     Inner: Handler<Input::Target, Cx, St>,
+   | |__________________________________________^
+   = note: required for `runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (runtime::router::routes::SubscribeRoute<MemorySource, Typed<MemoryMessage, runtime::input::Carried<Row>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, runtime::handle::eager::SoloBody<SoloCarried<Row>, (), handle>>>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Open)>>`

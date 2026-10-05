@@ -314,12 +314,19 @@ pub enum Outcome {
     Panicked,
 }
 
-/// One delivery inside a recorded handler call: the payload the handler saw, and how the
+/// One delivery inside a recorded handler call: the payload the handler saw, the value its
+/// delivery lent where the handler took one ([`Carries`](crate::Carries)), and how the
 /// dispatcher settled it (`None` when a fail-fast panic left the message unsettled).
 pub(crate) struct Delivered {
     pub(crate) raw: Bytes,
+    /// A clone of the carried value, taken only on the carried lane: that value never was bytes,
+    /// so the payload cannot stand for it.
+    pub(crate) value: Option<RecordedValue>,
     pub(crate) settle: Option<HandlerResult>,
 }
+
+/// A carried value as the harness keeps it: cloned once, read back by its own type.
+pub(crate) type RecordedValue = Arc<dyn Any + Send + Sync>;
 
 /// One recorded call into a handler: a single delivery, or a whole batch.
 pub(crate) struct Record {
@@ -1009,6 +1016,7 @@ mod tests {
             name: subscription.name.clone(),
             deliveries: vec![Delivered {
                 raw: Bytes::from_static(b"{}"),
+                value: None,
                 settle: Some(HandlerResult::Ack),
             }],
             panicked: false,

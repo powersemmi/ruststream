@@ -1173,6 +1173,7 @@ async fn dispatch<H, M, C, St>(
                 name: name.to_owned(),
                 deliveries: vec![Delivered {
                     raw: Bytes::copy_from_slice(msg.payload()),
+                    value: ctx.take_carried(),
                     settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
                 }],
                 panicked,
@@ -1305,7 +1306,11 @@ async fn run_batch<H, M, C, St>(
                     name: name.to_owned(),
                     deliveries: payloads
                         .into_iter()
-                        .map(|raw| Delivered { raw, settle: None })
+                        .map(|raw| Delivered {
+                            raw,
+                            value: None,
+                            settle: None,
+                        })
                         .collect(),
                     panicked: true,
                     decode_failed: false,

@@ -13,9 +13,13 @@
 use std::cell::OnceCell;
 use std::future::Future;
 use std::pin::Pin;
+#[cfg(feature = "testing")]
+use std::sync::Arc;
 
 use bytes::BytesMut;
 
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::RecordedValue;
 use crate::{Field, FieldMut, HeaderMap, IncomingMessage};
 
 use super::dispatch::Delivery;
@@ -151,6 +155,10 @@ pub struct Context<'a, C = (), S = ()> {
     /// `otel` feature (the consume layer's decode-failure counter).
     #[cfg(any(feature = "testing", feature = "otel"))]
     decode_failed: bool,
+    /// The value the delivery lent the handler on the carried lane, cloned for the harness's
+    /// record; `None` everywhere else, and always outside a harness run.
+    #[cfg(feature = "testing")]
+    carried: Option<RecordedValue>,
 }
 
 impl<C, S> std::fmt::Debug for Context<'_, C, S> {
@@ -187,6 +195,8 @@ impl<'a, C, S> Context<'a, C, S> {
             decode: FailurePolicy::Drop,
             #[cfg(any(feature = "testing", feature = "otel"))]
             decode_failed: false,
+            #[cfg(feature = "testing")]
+            carried: None,
         }
     }
 
@@ -209,6 +219,22 @@ impl<'a, C, S> Context<'a, C, S> {
     #[cfg(feature = "testing")]
     pub(crate) fn took_decode_failed(&mut self) -> bool {
         std::mem::take(&mut self.decode_failed)
+    }
+
+    /// Keeps a clone of the value the delivery lent the handler, for the harness to record: the
+    /// carried value never was bytes, so the payload the record keeps cannot stand for it.
+    /// Nothing is cloned outside a harness run.
+    #[cfg(feature = "testing")]
+    pub(crate) fn record_carried<T: Clone + Send + Sync + 'static>(&mut self, value: &T) {
+        if self.delivery.hooks.coordinator().is_some() {
+            self.carried = Some(Arc::new(value.clone()));
+        }
+    }
+
+    /// Takes the value [`record_carried`](Self::record_carried) kept for this delivery.
+    #[cfg(feature = "testing")]
+    pub(crate) fn take_carried(&mut self) -> Option<RecordedValue> {
+        self.carried.take()
     }
 
     /// Attaches the runtime's error-shutdown handle, so a fail-fast decode policy can tear the

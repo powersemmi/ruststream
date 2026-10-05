@@ -305,6 +305,78 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
+    /// Asserts the most recent delivery lent the handler `expected`: the value a broker's
+    /// delivery already holds, on the carried lane ([`Carries`](crate::Carries)). That value never
+    /// was bytes, so [`with`](Self::with) has nothing to decode; the harness keeps a clone of it
+    /// instead.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "testing", feature = "memory"))]
+    /// # mod demo {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::HandlerOutcome;
+    /// use ruststream::testing::TestApp;
+    ///
+    /// /// A row a broker's driver reads, with the fields a test compares.
+    /// #[derive(Debug, Clone, PartialEq)]
+    /// pub struct Row {
+    ///     pub id: u64,
+    /// }
+    ///
+    /// pub fn the_row_reached_the_handler(tb: &TestApp<()>) {
+    ///     tb.broker::<MemoryBroker>()
+    ///         .subscriber("rows")
+    ///         .assert_called_once()
+    ///         .with_value(&Row { id: 7 })
+    ///         .settled(HandlerOutcome::ack());
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the subscriber was not called, the most recent call was a batch of several
+    /// deliveries, its delivery lent no `T` (the handler takes no carried value, or the delivery
+    /// carried none), or the value differs from `expected`.
+    // `Clone` is the carried lane's own bound: what was recorded is a clone of a `T`.
+    #[allow(clippy::extra_unused_type_parameters)]
+    pub fn with_value<T>(self, expected: &T) -> Self
+    where
+        T: PartialEq + Debug + Clone + 'static,
+    {
+        self.with_sole_delivery("lent value", |one| {
+            let actual = recorded::<T>(one, &self.name);
+            assert_eq!(
+                actual, expected,
+                "subscriber {:?} was lent an unexpected value",
+                self.name
+            );
+        });
+        self
+    }
+
+    /// Every value this subscriber's deliveries lent it on the carried lane, in delivery order: the
+    /// counterpart of [`received`](Self::received) for a value that never was bytes. A batch
+    /// contributes its elements, so the list is flat whether the handler takes one value or a
+    /// slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a delivery lent no `T`: the handler takes no carried value, or a delivery
+    /// carried none and was settled by the decode policy.
+    #[must_use]
+    pub fn received_values<T: Clone + 'static>(&self) -> Vec<T> {
+        self.with_records(|records| {
+            records
+                .iter()
+                .flat_map(|record| record.deliveries.iter())
+                .map(|one| recorded::<T>(one, &self.name).clone())
+                .collect()
+        })
+    }
+
     /// Asserts the most recent call carried one delivery whose raw payload equals `bytes`.
     ///
     /// # Panics
@@ -438,6 +510,27 @@ impl<'a> SubscriberAssertions<'a> {
             );
         });
     }
+}
+
+/// The value one delivery lent its handler, as a `T`.
+///
+/// # Panics
+///
+/// Panics when the delivery lent nothing, or lent a value of another type.
+fn recorded<'a, T: 'static>(one: &'a Delivered, subscriber: &str) -> &'a T {
+    let value = one.value.as_ref().unwrap_or_else(|| {
+        panic!(
+            "subscriber {subscriber:?} was lent no value: its handler takes no carried `{}`, or \
+             the delivery carried none",
+            std::any::type_name::<T>(),
+        )
+    });
+    value.downcast_ref::<T>().unwrap_or_else(|| {
+        panic!(
+            "subscriber {subscriber:?} was lent a value that is not a `{}`",
+            std::any::type_name::<T>(),
+        )
+    })
 }
 
 /// Assertions over what was published to one channel, read from the broker's publish log or from

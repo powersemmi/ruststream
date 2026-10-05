@@ -10,20 +10,29 @@
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
 use crate::{BatchSubscriber, Broker, Connected, DefaultPublish, SubscriptionSource};
 
-use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_publishing::BatchPublishingDef;
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, Materialize};
 use crate::runtime::publish::RawReplyWiring;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publishing::PublishingDef;
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::slot::{IntoSlotSource, WithSource};
+use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterPublishing, RouterWith};
 use super::mount::{BatchPublishMount, DefaultReply, PublishMount, RawReplyMount, RouterMount};
 use super::{BatchPublishingRouter, PublishingRouter, RawReplyRouter, forms};
+
+/// What a reply definition's single-delivery input decodes with when it mounts on a router of
+/// broker `B` with the surface codec `RouteCodec`.
+type ReplyDecoder<Def, B, RouteCodec> =
+    DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec, Connected<B>>;
+
+/// The same for a batch reply definition's element.
+type BatchReplyDecoder<Def, B, RouteCodec> =
+    DefMountCodec<Def, <Def as BatchPublishingDef>::Input, RouteCodec, Connected<B>>;
 
 // The three chain-producing entry points.
 
@@ -68,17 +77,19 @@ where
     B: Broker + 'static,
     // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
     // carries no demand for a default codec the build may not have.
-    Def: PublishingDef + MountsWith<<Def as PublishingDef>::Input, RouteCodec> + 'static,
+    Def: PublishingDef
+        + MountsWith<<Def as PublishingDef>::Input, RouteCodec, Connected<B>>
+        + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec>>,
+    Def::Input: Materialize<ReplyDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Policy: 'static,
 {
     type Out = PublishingRouter<
         B,
         Def::Source,
         Def,
-        DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec>,
+        ReplyDecoder<Def, B, RouteCodec>,
         Policy,
         ((),),
         RouteCodec,
@@ -144,17 +155,19 @@ where
     B: Broker + 'static,
     // Resolved against the input kind: a byte input decodes with `()`, so a byte-in route
     // carries no demand for a default codec the build may not have.
-    Def: PublishingDef + MountsWith<<Def as PublishingDef>::Input, RouteCodec> + 'static,
+    Def: PublishingDef
+        + MountsWith<<Def as PublishingDef>::Input, RouteCodec, Connected<B>>
+        + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec>>,
+    Def::Input: Materialize<ReplyDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Policy: 'static,
 {
     type Out = RawReplyRouter<
         B,
         Def::Source,
         Def,
-        DefMountCodec<Def, <Def as PublishingDef>::Input, RouteCodec>,
+        ReplyDecoder<Def, B, RouteCodec>,
         Policy,
         ((),),
         RouteCodec,
@@ -219,18 +232,18 @@ where
     // As on the single-message routes: the input kind decides whether a codec is wanted here.
     Def: BatchPublishingDef
         + BatchSized
-        + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec>
+        + MountsWith<<Def as BatchPublishingDef>::Input, RouteCodec, Connected<B>>
         + 'static,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchPublishingDef>::Input, RouteCodec>>,
+    Def::Input: DecodeWith<BatchReplyDecoder<Def, B, RouteCodec>>,
     Policy: 'static,
 {
     type Out = BatchPublishingRouter<
         B,
         Def::Source,
         Def,
-        DefMountCodec<Def, <Def as BatchPublishingDef>::Input, RouteCodec>,
+        BatchReplyDecoder<Def, B, RouteCodec>,
         Policy,
         ((),),
         RouteCodec,

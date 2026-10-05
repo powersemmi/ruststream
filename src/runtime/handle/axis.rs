@@ -3,14 +3,16 @@
 //!
 //! The form rule is uniform - `&T` is one message, `&[T]` a batch of them - and the lane is the
 //! type's own business: a `serde` type rides the codec, a [`Deserialized`] type constructs
-//! itself from the payload bytes, and a [`Message<H, P>`](Message) pair decodes its typed
-//! header contract in the same stage. The spellings:
+//! itself from the payload bytes, a [`Message<H, P>`](Message) pair decodes its typed header
+//! contract in the same stage, and a type on the carried lane is lent by the delivery that holds
+//! it ([`Carries`](crate::Carries)). The spellings:
 //!
 //! | `In` | delivery | body parameter |
 //! |---|---|---|
 //! | `T` | one decoded message | `&T` |
 //! | `Message<H, P>` | one decoded message + typed headers | `&Message<H, P>` |
 //! | `F<'_>` where `F` is [`Deserialized`] | one payload, self-constructed | `&F<'_>` |
+//! | `T` on the carried lane | the value one delivery holds | `&T` |
 //! | `[T]` | a batch of decoded messages | `&[T]` |
 //! | `[Message<H, P>]` | a batch with typed headers per element | `&[Message<H, P>]` |
 //! | `[F<'_>]` where `F` is [`Deserialized`] | a batch of self-constructed payloads | `&[F<'_>]` |
@@ -21,7 +23,7 @@
 
 use serde::de::DeserializeOwned;
 
-use crate::runtime::input::{Decoded, DecodedPair, InputKind, Provided};
+use crate::runtime::input::{Carried, Decoded, DecodedPair, InputKind, Provided};
 
 use super::docs::DocState;
 use super::verdict::{Batched, OneByOne, VerdictFamily};
@@ -240,6 +242,12 @@ pub struct SoloDeserialized<F>(core::marker::PhantomData<F>);
 #[derive(Debug)]
 pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
 
+/// The single carried input: `In = T` for a `T` the subscription's deliveries lend
+/// ([`Carries<T>`](crate::Carries)). A broker crate's derive selects it for the type, with
+/// `impl Input for Row { type Axis = SoloCarried<Row>; }`.
+#[derive(Debug)]
+pub struct SoloCarried<T>(core::marker::PhantomData<T>);
+
 /// The decoded batch input: `In = [T]`.
 #[derive(Debug)]
 pub struct Batch<T>(core::marker::PhantomData<T>);
@@ -319,6 +327,13 @@ impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P>
     type SlotForm = crate::runtime::router::forms::Out;
 }
 
+impl<T: Clone + Send + Sync + 'static> Axis for SoloCarried<T> {
+    type Family = OneByOne;
+    type Kind = Carried<T>;
+    type EagerForm = crate::runtime::router::forms::Subscribing;
+    type SlotForm = crate::runtime::router::forms::Out;
+}
+
 impl<T: Send + Sync + 'static> Axis for Batch<T> {
     type Family = Batched;
     type Kind = Decoded<T>;
@@ -354,6 +369,13 @@ where
 {
     fn payload_schema() -> Option<String> {
         None
+    }
+}
+
+// A carried value is the service's own type, so it documents itself exactly like a decoded one.
+impl<T: Clone + Send + Sync + 'static, Doc: DocState<T>> AxisDocs<SoloCarried<T>> for Doc {
+    fn payload_schema() -> Option<String> {
+        Doc::schema()
     }
 }
 
@@ -411,6 +433,7 @@ pub trait SoloAxis: Axis<Family = OneByOne> {}
 impl<T: Send + Sync + 'static> SoloAxis for Solo<T> {}
 impl<F: Send + Sync + 'static> SoloAxis for SoloDeserialized<F> {}
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> SoloAxis for SoloPair<H, P> {}
+impl<T: Clone + Send + Sync + 'static> SoloAxis for SoloCarried<T> {}
 
 /// A batch axis: the slice spellings. The bound behind `.batch(..)`.
 #[doc(hidden)]

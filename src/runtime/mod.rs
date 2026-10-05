@@ -62,8 +62,8 @@ pub use failure::{FailurePolicies, FailurePolicy};
 pub use handle::{
     Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DecodeOutcome, DocState,
     Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDeclaredReplyDef,
-    ProbedDocs, ProbedReplyDef, ReplyValue, ResolvedDest, Sealed, Solo, SoloAxis, SoloPair,
-    VerdictFamily, probed_declared_reply_def, probed_def, probed_reply_def,
+    ProbedDocs, ProbedReplyDef, ReplyValue, ResolvedDest, Sealed, Solo, SoloAxis, SoloCarried,
+    SoloPair, VerdictFamily, probed_declared_reply_def, probed_def, probed_reply_def,
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,

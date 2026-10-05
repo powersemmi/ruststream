@@ -7,31 +7,36 @@
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
-use crate::runtime::SourceSubscriber;
 use crate::runtime::batch::BatchDef;
-use crate::runtime::input::{DecodeWith, Provided};
+use crate::runtime::input::{DecodeWith, Materialize, Provided};
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::subscriber_def::SubscriberDef;
+use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::mount::RouterMount;
 use super::{IncludedBatchRouter, IncludedRawBatchRouter, IncludedRouter, forms};
 
+/// What a definition's single-delivery input decodes with when it mounts on a router of broker
+/// `B` with the surface codec `RouteCodec`.
+type SoloDecoder<Def, B, RouteCodec> =
+    DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec, Connected<B>>;
+
 impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Subscribing
 where
     B: Broker + 'static,
-    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec>,
+    Def: SubscriberDef + MountsWith<<Def as SubscriberDef>::Input, RouteCodec, Connected<B>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec>>,
+    Def::Input: Materialize<SoloDecoder<Def, B, RouteCodec>, SourceMessage<B, Def::Source>>,
     Def::Handler: 'static,
 {
     type Out = IncludedRouter<
         B,
         Def::Source,
         Def,
-        DefMountCodec<Def, <Def as SubscriberDef>::Input, RouteCodec>,
+        SoloDecoder<Def, B, RouteCodec>,
         RouteCodec,
         RouteLayers,
         RoutePipe,
@@ -70,17 +75,17 @@ impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def>
     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::Batch
 where
     B: Broker + 'static,
-    Def: BatchDef + BatchSized + MountsWith<<Def as BatchDef>::Input, RouteCodec>,
+    Def: BatchDef + BatchSized + MountsWith<<Def as BatchDef>::Input, RouteCodec, Connected<B>>,
     Def::Source: SubscriptionSource<Connected<B>> + Send + 'static,
     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
-    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec>>,
+    Def::Input: DecodeWith<DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec, Connected<B>>>,
     Def::Handler: 'static,
 {
     type Out = IncludedBatchRouter<
         B,
         Def::Source,
         Def,
-        DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec>,
+        DefMountCodec<Def, <Def as BatchDef>::Input, RouteCodec, Connected<B>>,
         RouteCodec,
         RouteLayers,
         RoutePipe,
