@@ -7,15 +7,17 @@
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
-use crate::runtime::batch::BatchDef;
-use crate::runtime::input::{DecodeWith, Materialize, Provided};
+use crate::runtime::batch::{BatchDef, SourceCarriesBatch};
+use crate::runtime::input::{Carried, DecodeWith, Materialize, Provided};
 use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::mount::RouterMount;
-use super::{IncludedBatchRouter, IncludedRawBatchRouter, IncludedRouter, forms};
+use super::{
+    IncludedBatchRouter, IncludedCarriedBatchRouter, IncludedRawBatchRouter, IncludedRouter, forms,
+};
 
 /// What a definition's single-delivery input decodes with when it mounts on a router of broker
 /// `B` with the surface codec `RouteCodec`.
@@ -117,5 +119,35 @@ where
     fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>) -> Self::Out {
         let source = def.source();
         router.mount_raw_batch(source, def)
+    }
+}
+
+// A carried batch decodes nothing: the subscription's batches lend their values, so no codec is
+// resolved, and the subscription is checked for the values the body reads.
+impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, T>
+    RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::CarriedBatch
+where
+    B: Broker + 'static,
+    Def: BatchDef<Input = Carried<T>> + BatchSized,
+    Def::Source:
+        SubscriptionSource<Connected<B>> + SourceCarriesBatch<T, Connected<B>> + Send + 'static,
+    SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+    Def::Handler: 'static,
+    T: Clone + Send + Sync + 'static,
+{
+    type Out = IncludedCarriedBatchRouter<
+        B,
+        Def::Source,
+        Def,
+        T,
+        RouteCodec,
+        RouteLayers,
+        RoutePipe,
+        Routes,
+    >;
+
+    fn begin(def: Def, router: Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>) -> Self::Out {
+        let source = def.source();
+        router.mount_carried_batch(source, def)
     }
 }

@@ -1281,7 +1281,7 @@ pub trait DescribeServer: Broker {
 
 mod carries;
 
-pub use carries::Carries;
+pub use carries::{Carries, CarriesBatch};
 
 #[cfg(test)]
 mod tests;

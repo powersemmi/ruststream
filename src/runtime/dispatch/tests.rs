@@ -365,8 +365,13 @@ struct ReportingBatchHandler {
     seen: mpsc::UnboundedSender<Bytes>,
 }
 
-impl BatchHandler<PlainMessage, (), ()> for ReportingBatchHandler {
+impl BatchHandler<Vec<PlainMessage>, (), ()> for ReportingBatchHandler {
     type Scratch = ();
+    type Taken = Vec<PlainMessage>;
+
+    fn take(batch: Vec<PlainMessage>) -> Vec<PlainMessage> {
+        batch
+    }
 
     fn handle_batch(
         &self,

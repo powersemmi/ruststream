@@ -55,7 +55,9 @@ pub trait InputKind: Send + Sync + 'static {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be decoded with the codec `{DecodeCodec}`",
     note = "a typed input needs `serde::de::DeserializeOwned`; a `Deserialized` input decodes \
-            with any codec (it never calls one)"
+            with any codec (it never calls one)",
+    note = "a batch of values a broker's batches carry mounts in the plain batch form only, \
+            with no reply and no `Out` slots"
 )]
 pub trait DecodeWith<DecodeCodec>: InputKind {
     /// The media type this input arrives in, when a codec decodes it at all: the codec's own

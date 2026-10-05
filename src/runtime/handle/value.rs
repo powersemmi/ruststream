@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
 
-use super::axis::{Batch, BatchDeserialized, BatchPair, Input};
+use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
 
@@ -299,7 +299,7 @@ impl<V> fmt::Debug for Sealed<V> {
 // axes changes how a batch is opened. The size itself rides the settings builder, not the
 // definition; this only says the step belongs here.
 //
-// The three batch spellings are named one by one rather than through a `BatchedAxis` bound on one
+// The batch spellings are named one by one rather than through a `BatchedAxis` bound on one
 // impl: a bound inside a matching impl is what the compiler reports back, and the axis marker's
 // name is machinery. With no impl matching a single-message definition, the missing `CapsBatches`
 // carries the message instead.
@@ -308,6 +308,8 @@ impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<Batch<T>, R, O, C, H, Doc> 
 impl<F, R, O, C, H, Doc> CapsBatches for HandleValue<BatchDeserialized<F>, R, O, C, H, Doc> {}
 
 impl<Hd, P, R, O, C, H, Doc> CapsBatches for HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc> {}
+
+impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<BatchCarried<T>, R, O, C, H, Doc> {}
 
 // The reply wrapper and the seal are transparent to the step, so the attribute path sizes the
 // very definition the `subscriber(..)` chain does.

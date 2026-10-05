@@ -17,5 +17,8 @@ help: the following other types implement trait `ruststream::runtime::CapsBatche
    |
    | impl<Hd, P, R, O, C, H, Doc> CapsBatches for HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc>`
+   |
+   | impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<BatchCarried<T>, R, O, C, H, Doc> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HandleValue<BatchCarried<T>, R, O, C, H, Doc>`
    = note: required for `Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>` to implement `ruststream::runtime::CapsBatches`
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `BatchStep`

@@ -16,8 +16,8 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Batch, BatchDeserialized, BatchPair, BatchedAxis, Deserialized, Input, Message,
-    Solo, SoloAxis, SoloCarried, SoloDeserialized, SoloPair,
+    Axis, AxisDocs, Batch, BatchCarried, BatchDeserialized, BatchPair, BatchedAxis, Deserialized,
+    Input, Message, Solo, SoloAxis, SoloCarried, SoloDeserialized, SoloPair,
 };
 use super::value::{HandleValue, Sealed};
 
@@ -265,6 +265,21 @@ impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<Batch<T>, H>
 where
     [T]: Input<Axis = Batch<T>>,
     T: Send + Sync + 'static,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[T], (), (), C, S>,
+{
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
+        run_batch(&self.body, &(), batch, ctx).await
+    }
+}
+
+// The batch lent its values before the body runs, so this cell only runs and settles, like the
+// decoded one.
+impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchCarried<T>, H>
+where
+    [T]: Input<Axis = BatchCarried<T>>,
+    T: Clone + Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<[T], (), (), C, S>,

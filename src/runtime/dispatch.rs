@@ -13,7 +13,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{FutureExt, Stream};
 #[cfg(test)]
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
@@ -25,7 +25,7 @@ use crate::{
     Subscriber,
 };
 
-use super::batch::BatchHandler;
+use super::batch::{BatchHandler, TakenBatch};
 use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
 use super::handler::{Handler, HandlerResult};
@@ -881,8 +881,9 @@ pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
-    H: BatchHandler<S::Message, C, St> + 'static,
-    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
+    S::Batch: 'static,
+    H: BatchHandler<S::Batch, C, St> + 'static,
+    C: Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     // See `spawn_dispatch_workers`: the declaration is what the warning advises, and the harness
@@ -913,7 +914,7 @@ where
         // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
         // others and cannot share these, so it takes a pair of its own from `spare`, where the
         // pool keeps what finished workers handed back.
-        let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
+        let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
         let mut spare = Vec::new();
         loop {
@@ -940,7 +941,6 @@ where
             .await;
             match pulled {
                 Turn::Delivery(Ok(batch)) => {
-                    let batch: Vec<S::Message> = batch.into_iter().collect();
                     if workers.is_sequential() {
                         // Turbofish: the adapter handlers are generic over the batch context,
                         // so the spawn's own parameter names it.
@@ -1020,8 +1020,9 @@ fn spawn_batch_threads<S, H, C, St>(
 where
     S: BatchSubscriber + Send + 'static,
     S::Message: Send + 'static,
-    H: BatchHandler<S::Message, C, St> + 'static,
-    C: crate::BuildBatchContext<S::Message> + Send + Sync + 'static,
+    S::Batch: 'static,
+    H: BatchHandler<S::Batch, C, St> + 'static,
+    C: Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
     let shared = Arc::new(pool::Shared {
@@ -1034,9 +1035,9 @@ where
     let threads = Threads::start(&shared.name, workers.count, false, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared.delivery.on_thread(own);
-        let mut scratch = <H as BatchHandler<S::Message, C, St>>::Scratch::default();
+        let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
         let mut encode = BytesMut::new();
-        async move |batch: Vec<S::Message>| {
+        async move |batch: S::Batch| {
             run_batch::<_, _, C, _>(
                 &*shared.handler,
                 batch,
@@ -1051,11 +1052,13 @@ where
         }
     })?;
     Ok(tokio::spawn(async move {
-        let batches = subscriber
-            .batches(batch_size)
-            .map(|batch| batch.map(|batch| batch.into_iter().collect::<Vec<_>>()));
         threads
-            .feed(batches, &shared.name, &shutdown, |_| None)
+            .feed(
+                subscriber.batches(batch_size),
+                &shared.name,
+                &shutdown,
+                |_| None,
+            )
             .await;
     }))
 }
@@ -1220,9 +1223,9 @@ async fn dispatch<H, M, C, St>(
 // The loop hands this everything one batch needs, the buffers it lends included: see
 // spawn_dispatch_workers.
 #[allow(clippy::too_many_arguments)]
-async fn run_batch<H, M, C, St>(
+async fn run_batch<H, Batch, C, St>(
     handler: &H,
-    batch: Vec<M>,
+    batch: Batch,
     scratch: &mut H::Scratch,
     encode: &mut BytesMut,
     name: &str,
@@ -1230,32 +1233,27 @@ async fn run_batch<H, M, C, St>(
     delivery: &Delivery<C>,
     failure: &DispatchFailure,
 ) where
-    H: BatchHandler<M, C, St>,
-    M: IncomingMessage,
-    C: crate::BuildBatchContext<M> + Send + Sync + 'static,
+    H: BatchHandler<Batch, C, St>,
+    C: Send + Sync + 'static,
     St: Send + Sync,
 {
-    // A batch with no deliveries has nothing to settle and no first delivery to build a context
-    // from; nothing to do.
-    let Some(first) = batch.first() else { return };
+    let batch = H::take(batch);
+    // A batch spans many deliveries, so its context carries only subscription-scoped data, built
+    // from its first delivery, or from the batch itself where the handler lends its values; the
+    // shared app state is threaded the same way as on the single-message path. A batch with
+    // nothing in it has nothing to settle and nothing to build a context from.
+    let Some(cx) = batch.context() else { return };
     let empty = HeaderMap::new();
-    // A batch spans many deliveries, so its context carries only subscription-scoped data,
-    // built from the first delivery; the shared app state is threaded the same way as on the
-    // single-message path.
-    let cx = C::build(first);
     let mut ctx = Context::new(name, &empty, state, cx, delivery)
         .with_failfast(&failure.shutdown)
         .with_encode_buffer(encode)
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
     // batch settle path record the batch it applied.
-    // A panicking batch settles nothing, so its payloads are captured here (the handler owns the
-    // deliveries and a panic consumes them) to record the call the settle path never reached.
+    // A panicking batch settles nothing, so what it carried is captured here (the handler owns
+    // the deliveries and a panic consumes them) to record the call the settle path never reached.
     #[cfg(feature = "testing")]
-    let payloads: Vec<Bytes> = batch
-        .iter()
-        .map(|msg| Bytes::copy_from_slice(msg.payload()))
-        .collect();
+    let unsettled = batch.unsettled();
     // A batch settles its own deliveries inside the handler (a panic settles them by dropping
     // them), so the last decrement lands before the batch record and the fail-fast signal below.
     // One extra in-flight token spans the whole dispatch, so a harness driving to quiescence
@@ -1304,14 +1302,7 @@ async fn run_batch<H, M, C, St>(
                     scope_id: delivery.scope_id,
                     subscription: delivery.subscription,
                     name: name.to_owned(),
-                    deliveries: payloads
-                        .into_iter()
-                        .map(|raw| Delivered {
-                            raw,
-                            value: None,
-                            settle: None,
-                        })
-                        .collect(),
+                    deliveries: unsettled,
                     panicked: true,
                     decode_failed: false,
                 });

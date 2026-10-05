@@ -6,19 +6,28 @@
 //! payload as a row the way such a client would, and a payload that is no row stands for a
 //! claimed id whose row is gone: the delivery carries no value.
 //!
+//! A batch holds its rows in one vector and its deliveries in another, the way a client that
+//! fetches a page of rows does, and lends the rows as one slice. Deliveries whose row is gone go
+//! last, past the end of that slice.
+//!
 //! A row is written `id:name` (`7:alice`). Each test binary that names this module uses part of
 //! it, hence the `dead_code` allowance.
 #![allow(dead_code)]
 
 use std::future::{Future, ready};
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
-use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryMessage, MemorySubscriber};
+use ruststream::memory::{
+    ConnectedMemoryBroker, Discarding, LogMode, MemoryError, MemoryMessage, MemorySeeker,
+    MemorySubscriber, Retaining,
+};
 use ruststream::runtime::{Input, IntoSource, SoloCarried};
 use ruststream::{
-    AckError, AddressedCopies, Carries, HeaderMap, IncomingMessage, RedeliveryAddress,
-    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, BuildBatchContext, Carries, CarriesBatch, Field,
+    HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 
 /// The value a delivery carries: the service's own struct, with no serde model.
@@ -75,8 +84,8 @@ impl IntoSource for Rows {
     }
 }
 
-impl SubscriptionSource<ConnectedMemoryBroker> for Rows {
-    type Subscriber = RowSubscriber;
+impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for Rows {
+    type Subscriber = RowSubscriber<Log>;
     type Copies = AddressedCopies;
 
     fn name(&self) -> &str {
@@ -85,57 +94,80 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Rows {
 
     async fn subscribe(
         self,
-        connected: &ConnectedMemoryBroker,
-    ) -> Result<RowSubscriber, MemoryError> {
+        connected: &ConnectedMemoryBroker<Log>,
+    ) -> Result<RowSubscriber<Log>, MemoryError> {
         Ok(RowSubscriber(
             Subscribe::subscribe(connected, &self.name).await?,
         ))
     }
 }
 
-impl RedeliveryAddressed<ConnectedMemoryBroker> for Rows {
+impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for Rows {
     fn redelivery_address(
         &self,
-        _connected: &ConnectedMemoryBroker,
+        _connected: &ConnectedMemoryBroker<Log>,
     ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
 
 /// The subscription itself: the bus's own, with each delivery read as a row.
-pub(crate) struct RowSubscriber(MemorySubscriber);
+pub(crate) struct RowSubscriber<Log = Discarding>(MemorySubscriber<Log>);
 
-impl Subscriber for RowSubscriber {
-    type Message = RowDelivery;
+impl<Log: LogMode> Subscriber for RowSubscriber<Log> {
+    type Message = RowDelivery<Log>;
     type Error = std::convert::Infallible;
 
-    fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery, Self::Error>> + Send + '_ {
+    fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery<Log>, Self::Error>> + Send + '_ {
         self.0
             .stream()
             .map(|delivery| delivery.map(RowDelivery::read))
     }
 }
 
-/// One delivery and the row read out of it.
-pub(crate) struct RowDelivery {
-    inner: MemoryMessage,
+/// A page of rows: the bus's own batch, each delivery read, the rows kept apart from the
+/// deliveries that settle them.
+impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
+    type Batch = RowBatch<Log>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<RowBatch<Log>, Self::Error>> + Send + '_ {
+        self.0.batches(size).map(|batch| batch.map(RowBatch::read))
+    }
+}
+
+// The bus replays its log on a seek, so a test can hand a subscription a whole page at once.
+impl Seekable for RowSubscriber<Retaining> {
+    type Seeker = MemorySeeker;
+
+    fn seeker(&self) -> MemorySeeker {
+        self.0.seeker()
+    }
+}
+
+/// One delivery and the row read out of it; `None` where the row is gone, and on a delivery a
+/// batch handed its row to the batch's own vector.
+pub(crate) struct RowDelivery<Log = Discarding> {
+    inner: MemoryMessage<Log>,
     row: Option<Row>,
 }
 
-impl RowDelivery {
-    fn read(inner: MemoryMessage) -> Self {
+impl<Log: LogMode> RowDelivery<Log> {
+    fn read(inner: MemoryMessage<Log>) -> Self {
         let row = Row::read(inner.payload());
         Self { inner, row }
     }
 }
 
-impl Carries<Row> for RowDelivery {
+impl<Log> Carries<Row> for RowDelivery<Log> {
     fn carried(&self) -> Option<&Row> {
         self.row.as_ref()
     }
 }
 
-impl IncomingMessage for RowDelivery {
+impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     fn payload(&self) -> &[u8] {
         self.inner.payload()
     }
@@ -162,5 +194,81 @@ impl IncomingMessage for RowDelivery {
 
     fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + Send {
         self.inner.nack_after(delay)
+    }
+}
+
+/// One page: the rows in one vector, the deliveries that settle them in another, in the same
+/// order, and the deliveries whose row is gone after them.
+pub(crate) struct RowBatch<Log = Discarding> {
+    rows: Vec<Row>,
+    deliveries: Vec<RowDelivery<Log>>,
+}
+
+impl<Log: LogMode> RowBatch<Log> {
+    fn read(page: Vec<MemoryMessage<Log>>) -> Self {
+        let mut rows = Vec::with_capacity(page.len());
+        let mut deliveries = Vec::with_capacity(page.len());
+        let mut gone = Vec::new();
+        for inner in page {
+            match Row::read(inner.payload()) {
+                Some(row) => {
+                    rows.push(row);
+                    deliveries.push(RowDelivery { inner, row: None });
+                }
+                None => gone.push(RowDelivery { inner, row: None }),
+            }
+        }
+        deliveries.extend(gone);
+        Self { rows, deliveries }
+    }
+}
+
+impl<Log> CarriesBatch<Row> for RowBatch<Log> {
+    fn carried(&self) -> &[Row] {
+        &self.rows
+    }
+}
+
+impl<Log> IntoIterator for RowBatch<Log> {
+    type Item = RowDelivery<Log>;
+    type IntoIter = std::vec::IntoIter<RowDelivery<Log>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.deliveries.into_iter()
+    }
+}
+
+/// What a page's handler reads of the page itself: how many rows it fetched. On the carried lane
+/// the batch context is built from the batch, because the batch stays whole while the body reads
+/// its rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PageContext {
+    pub(crate) rows: usize,
+}
+
+impl<Log> BuildBatchContext<RowBatch<Log>> for PageContext {
+    fn build(page: &RowBatch<Log>) -> Self {
+        Self {
+            rows: page.rows.len(),
+        }
+    }
+}
+
+// The copies a retry publishes build their context from one delivery, which knows no page.
+impl<Log> BuildBatchContext<RowDelivery<Log>> for PageContext {
+    fn build(_one: &RowDelivery<Log>) -> Self {
+        Self { rows: 1 }
+    }
+}
+
+/// The key a handler reads the page's row count with.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PageRows;
+
+impl Field<PageContext> for PageRows {
+    type Value<'a> = usize;
+
+    fn get(self, src: &PageContext) -> usize {
+        src.rows
     }
 }

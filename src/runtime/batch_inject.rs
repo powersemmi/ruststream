@@ -129,9 +129,10 @@ impl<Def: BatchInjectDef, DecodeCodec> std::fmt::Debug for BatchInjectHandler<De
     }
 }
 
-impl<Msg, Def, DecodeCodec, State> BatchHandler<Msg, Def::Context, State>
+impl<Batch, Msg, Def, DecodeCodec, State> BatchHandler<Batch, Def::Context, State>
     for BatchInjectHandler<Def, DecodeCodec>
 where
+    Batch: IntoIterator<Item = Msg>,
     Msg: IncomingMessage,
     Def: BatchInjectCall<State>,
     Def::Input: DecodeWith<DecodeCodec>,
@@ -141,6 +142,11 @@ where
     State: Send + Sync,
 {
     type Scratch = Vec<<Def::Input as InputKind>::Owned>;
+    type Taken = Vec<Msg>;
+
+    fn take(batch: Batch) -> Vec<Msg> {
+        batch.into_iter().collect()
+    }
 
     async fn handle_batch(
         &self,
@@ -175,6 +181,7 @@ mod tests {
 
     use futures::StreamExt;
 
+    use super::super::batch::handled;
     use super::super::dispatch::Delivery;
     use super::super::handler::HandlerOutcome;
     use super::super::input::Decoded;
@@ -284,7 +291,7 @@ mod tests {
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+        handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
         assert_eq!(*seen.lock().unwrap(), [10, 20]);
         // The uniform Ack settled both deliveries, so neither comes back.
@@ -315,7 +322,7 @@ mod tests {
         let mut ctx = Context::new("scale", &headers, &state, (), &delivery);
         let batch = pull_batch(&mut sub).await;
         assert_eq!(batch.len(), 2);
-        handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+        handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let mut stream = std::pin::pin!(sub.stream());

@@ -26,6 +26,7 @@ help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipe
    | |     forms::RawSubscribing,
    | |     forms::Batch,
    | |     forms::RawBatch,
+   | |     forms::CarriedBatch,
    | | }
    | |_- in this macro invocation
    = note: required for `runtime::input::Carried<Row>` to implement `runtime::input::Materialize<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, MemoryMessage>`

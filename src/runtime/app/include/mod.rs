@@ -175,6 +175,7 @@ eager_mount! {
     forms::RawSubscribing,
     forms::Batch,
     forms::RawBatch,
+    forms::CarriedBatch,
 }
 
 impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
