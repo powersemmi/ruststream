@@ -48,7 +48,8 @@ pub use routes::{RetryDestinationsDeclared, RouteMetadata, RouteSubscription};
 pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
-use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch};
+use crate::Connected;
+use crate::runtime::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
 use crate::runtime::subscriber_def::SubscriberDef;
 use crate::runtime::typed::Typed;
 
@@ -56,7 +57,7 @@ use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::runtime::SourceMessage;
+pub(crate) use crate::runtime::{SourceBatch, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.
@@ -96,6 +97,18 @@ type DeserializedBatchRoute<B, S, D, F> = BatchRoute<
 /// produces.
 type IncludedRawBatchRouter<B, S, D, F, RC, RL, RP, R> =
     Router<B, (DeserializedBatchRoute<B, S, D, F>, R), RC, RL, RP>;
+
+/// The route a carried [`BatchDef`] `D` mounted on source `S` becomes: the subscription's batches
+/// lend their values of `T`, so the adapter carries the subscription and the value type.
+type CarriedBatchRoute<B, S, D, T> = BatchRoute<
+    S,
+    CarriedBatch<S, Connected<B>, T, <D as BatchDef>::Handler>,
+    <D as BatchDef>::Context,
+>;
+
+/// The router that mounting a carried [`BatchDef`] `D` on source `S` onto `R` produces.
+type IncludedCarriedBatchRouter<B, S, D, T, RC, RL, RP, R> =
+    Router<B, (CarriedBatchRoute<B, S, D, T>, R), RC, RL, RP>;
 
 /// The router that mounting an injected definition `D` on source `S` (decoded with `C`,
 /// resolving its startup injections against the attachment `E`) onto `R` produces.

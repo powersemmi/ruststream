@@ -19,8 +19,8 @@ use crate::runtime::retry::DestinationDeclared;
 use crate::runtime::retry::RetryOpen;
 use crate::{CopyPath, RetryDeclaration};
 
-use super::SourceMessage;
 use super::sink::RouterSink;
+use super::{SourceBatch, SourceMessage};
 
 /// One subscription registration: a source plus the handler it dispatches to. An implementation
 /// detail of [`Router`](crate::runtime::Router)'s registration list.
@@ -445,7 +445,7 @@ where
     SourceMessage<B, S>: Send + 'static,
     Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
     State: Send + Sync + 'static,
-    H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
+    H: BatchHandler<SourceBatch<B, S>, Cx, State> + 'static,
     RetryPipeline: Clone,
 {
     type Context = Cx;

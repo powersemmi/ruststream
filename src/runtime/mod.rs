@@ -40,6 +40,9 @@ pub(crate) type SourceSubscriber<B, S> =
 /// The message that subscriber yields. See [`SourceSubscriber`].
 pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscriber>::Message;
 
+/// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
+pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as crate::BatchSubscriber>::Batch;
+
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
     RustStream, RustStreamError, Setup, Wired,
@@ -60,10 +63,11 @@ pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
 pub use handle::{
-    Axis, AxisDocs, Batch, BatchPair, Batched, BatchedAxis, DeclaredDest, DecodeOutcome, DocState,
-    Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed, ProbedDeclaredReplyDef,
-    ProbedDocs, ProbedReplyDef, ReplyValue, ResolvedDest, Sealed, Solo, SoloAxis, SoloPair,
-    VerdictFamily, probed_declared_reply_def, probed_def, probed_reply_def,
+    Axis, AxisDocs, Batch, BatchCarried, BatchPair, Batched, BatchedAxis, DeclaredDest,
+    DecodeOutcome, DocState, Docs, HandleValue, IsDocumented, NamedDest, OneByOne, Probed,
+    ProbedDeclaredReplyDef, ProbedDocs, ProbedReplyDef, ReplyValue, ResolvedDest, Sealed, Solo,
+    SoloAxis, SoloCarried, SoloPair, VerdictFamily, probed_declared_reply_def, probed_def,
+    probed_reply_def,
 };
 pub use handle::{
     BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,

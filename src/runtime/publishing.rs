@@ -24,11 +24,12 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerOutcome};
-use super::input::{DecodeWith, InputKind};
+use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
     ForReply, PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
 };
+use super::typed::unmaterialized;
 
 /// The reply-wiring axis: how a handler's reply value leaves the service.
 ///
@@ -397,12 +398,12 @@ impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> Handler<Msg, Def::Context, 
 where
     Msg: IncomingMessage,
     Def: PublishingCall<State>,
-    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Input: Materialize<DecodeCodec, Msg>,
     Def::Injections: Send + Sync,
     Def::Reply: Send + Sync,
     Def::Context: Send + Sync,
     // `Send + Sync` rather than `Codec`: what the input needs of the codec is exactly what
-    // `DecodeWith` asks for, and a raw input asks for nothing - so demanding a codec would
+    // `Materialize` asks for, and a raw input asks for nothing - so demanding a codec would
     // shut the byte-in/byte-out handler out of a build with no codec feature at all. The
     // thread bounds stay, because the handler is held across an await.
     DecodeCodec: Send + Sync,
@@ -416,32 +417,22 @@ where
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> HandlerOutcome {
         // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
-        // (with any `and_after` continuation it carries) settles the delivery directly. The
-        // decode product lives on this stack frame and the handler borrows its view.
-        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %ctx.name(),
-                    message_type = <Def::Input as InputKind>::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                #[cfg(any(feature = "testing", feature = "otel"))]
-                ctx.mark_decode_failed();
-                return match self.decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerOutcome::drop()
-                    }
-                    other => other
-                        .settlement()
-                        .map_or_else(HandlerOutcome::drop, Into::into),
-                };
-            }
-        };
-        let view = <Def::Input as InputKind>::view(&owned, msg.payload());
+        // (with any `and_after` continuation it carries) settles the delivery directly. What the
+        // delivery materialized into lives on this stack frame and the handler borrows its view.
+        let held =
+            match <Def::Input as Materialize<DecodeCodec, Msg>>::materialize(&self.codec, msg) {
+                Ok(held) => held,
+                Err(err) => {
+                    return unmaterialized::<Def::Input, DecodeCodec, Msg, Def::Context, State>(
+                        &err,
+                        self.decode,
+                        ctx,
+                    );
+                }
+            };
+        #[cfg(feature = "testing")]
+        <Def::Input as Materialize<DecodeCodec, Msg>>::record(&held, ctx);
+        let view = <Def::Input as Materialize<DecodeCodec, Msg>>::view(&held, msg);
         let reply = match self.def.call(view, &self.injections, ctx).await {
             Ok(reply) => reply,
             Err(outcome) => return outcome,

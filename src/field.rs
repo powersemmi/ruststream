@@ -198,7 +198,8 @@ impl<M: ?Sized> BuildContext<M> for () {
     fn build(_msg: &M) -> Self {}
 }
 
-/// Builds a batch handler's context value from the batch's first delivery.
+/// Builds a batch handler's context value once per batch, from its first delivery or from the
+/// batch itself.
 ///
 /// The batch counterpart of [`BuildContext`]: the runtime calls this once per dispatched batch.
 /// A batch spans many deliveries, so only subscription-scoped data - handles every delivery of
@@ -207,6 +208,11 @@ impl<M: ?Sized> BuildContext<M> for () {
 /// batch context a separate type from the broker's per-delivery one is what makes that
 /// distinction hold at compile time: a per-delivery context type simply does not implement
 /// this, so a batch body cannot name it.
+///
+/// Where the batch lends its values as one slice ([`CarriesBatch`](crate::CarriesBatch)), the
+/// batch stays whole while the handler reads them, so the runtime builds the context from the
+/// batch itself: a broker with a batch context of its own implements this for its batch type
+/// as well.
 ///
 /// The blanket `impl` for `()` gives the zero-field default, so a broker with no
 /// subscription-scoped data needs no implementation.
@@ -237,7 +243,7 @@ impl<M: ?Sized> BuildContext<M> for () {
 /// ```
 pub trait BuildBatchContext<M: ?Sized> {
     /// Builds the context value by reading subscription-scoped fields out of the batch's first
-    /// delivery.
+    /// delivery, or out of the batch itself where it lends its values as one slice.
     fn build(first: &M) -> Self;
 }
 

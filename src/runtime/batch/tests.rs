@@ -44,7 +44,7 @@ async fn per_element_outcomes_settle_individually() {
     let mut ctx = Context::new("selective", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     let redelivered = pull_batch(&mut sub).await;
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
@@ -89,7 +89,7 @@ async fn per_element_continuations_run_after_settle() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("after-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     // The continuation for element 0 runs on the tracked set after settling.
     ran.notified().await;
@@ -122,7 +122,7 @@ async fn unmatched_remainder_is_retried() {
     let mut ctx = Context::new("short", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 3);
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     let redelivered = pull_batch(&mut sub).await;
     let payloads: Vec<&[u8]> = redelivered.iter().map(IncomingMessage::payload).collect();
@@ -156,7 +156,7 @@ async fn per_element_outcomes_carry_delays() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("delayed", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
@@ -184,7 +184,7 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let mut ctx = Context::new("uniform", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     let redelivered = pull_batch(&mut sub).await;
     assert_eq!(redelivered.len(), 2);
@@ -321,7 +321,7 @@ async fn fail_fast_decode_tears_down_and_drops_the_element() {
         Context::new("ff-batch", &headers, &state, (), &delivery).with_failfast(&shutdown);
     let batch = pull_batch(&mut sub).await;
     assert_eq!(batch.len(), 2);
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     assert!(shutdown.is_cancelled(), "a fail-fast decode must tear down");
     let failure = shutdown.peek_failure().expect("a failure must be recorded");
@@ -433,7 +433,7 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handler.handle_batch(batch, &mut Vec::new(), &mut ctx).await;
+    handled(&handler, batch, &mut Vec::new(), &mut ctx).await;
 
     settle_batch(
         vec![UnsettleableMessage(Arc::new(AtomicUsize::new(0)))],
@@ -514,7 +514,7 @@ async fn a_deserialized_batch_lends_the_payloads_and_settles_the_deliveries() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handler.handle_batch(batch, &mut (), &mut ctx).await;
+    handled(&handler, batch, &mut (), &mut ctx).await;
 
     assert_eq!(
         seen.lock().unwrap().as_slice(),
@@ -531,9 +531,7 @@ async fn an_empty_deserialized_batch_reaches_no_handler() {
     let delivery = Delivery::empty();
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
-    handler
-        .handle_batch(Vec::<MemoryMessage>::new(), &mut (), &mut ctx)
-        .await;
+    handled(&handler, Vec::<MemoryMessage>::new(), &mut (), &mut ctx).await;
 
     assert_eq!(*seen.lock().unwrap(), Vec::<Vec<u8>>::new());
 }
@@ -555,7 +553,7 @@ async fn a_failed_construction_is_settled_and_the_rest_reach_the_batch() {
     let headers = HeaderMap::new();
     let mut ctx = Context::new("raw-batch", &headers, &state, (), &delivery);
     let batch = pull_batch(&mut sub).await;
-    handler.handle_batch(batch, &mut (), &mut ctx).await;
+    handled(&handler, batch, &mut (), &mut ctx).await;
 
     assert_eq!(
         seen.lock().unwrap().as_slice(),
@@ -661,13 +659,13 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
     let state = ();
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-    handler
-        .handle_batch(
-            PlainMessage::batch(&[b"1", b"2"], &dropped),
-            &mut Vec::new(),
-            &mut ctx,
-        )
-        .await;
+    handled(
+        &handler,
+        PlainMessage::batch(&[b"1", b"2"], &dropped),
+        &mut Vec::new(),
+        &mut ctx,
+    )
+    .await;
 
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
     assert_eq!(
@@ -698,13 +696,13 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
     let state = ();
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-    handler
-        .handle_batch(
-            PlainMessage::batch(&[b"1", b"2"], &dropped),
-            &mut Vec::new(),
-            &mut ctx,
-        )
-        .await;
+    handled(
+        &handler,
+        PlainMessage::batch(&[b"1", b"2"], &dropped),
+        &mut Vec::new(),
+        &mut ctx,
+    )
+    .await;
 
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -734,13 +732,13 @@ async fn a_deferred_decode_rejection_is_republished() {
     let state = ();
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-    handler
-        .handle_batch(
-            PlainMessage::batch(&[b"not json", b"1"], &dropped),
-            &mut Vec::new(),
-            &mut ctx,
-        )
-        .await;
+    handled(
+        &handler,
+        PlainMessage::batch(&[b"not json", b"1"], &dropped),
+        &mut Vec::new(),
+        &mut ctx,
+    )
+    .await;
 
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -788,13 +786,13 @@ async fn a_split_batch_defers_the_rejected_and_the_accepted_alike() {
     let state = ();
     let headers = HeaderMap::new();
     let mut ctx = Context::new("orders", &headers, &state, (), &delivery);
-    handler
-        .handle_batch(
-            PlainMessage::batch(&[b"one", b"", b"two"], &dropped),
-            &mut (),
-            &mut ctx,
-        )
-        .await;
+    handled(
+        &handler,
+        PlainMessage::batch(&[b"one", b"", b"two"], &dropped),
+        &mut (),
+        &mut ctx,
+    )
+    .await;
 
     assert_eq!(dropped.load(Ordering::SeqCst), 3);
     assert_eq!(

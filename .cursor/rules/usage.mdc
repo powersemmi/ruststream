@@ -25,10 +25,12 @@ alwaysApply: false
   (`PublishTransform`, `ForReply` / `ForSlot`, `Reads` / `Names`) and the manual path's `Handle` /
   `subscriber` pair are all in the prelude.
 - A handler is an `async fn` annotated with `#[subscriber("subject")]`. Its first parameter is the
-  payload, and its type alone picks the form: `&T` is one message and `&[T]` a batch, while the
+  message, and its type alone picks the form: `&T` is one message and `&[T]` a batch, while the
   lane is the type's own business - `T: serde::Deserialize` decodes with the codec, a
   `#[derive(Deserialized)]` type builds itself from the raw bytes (`&Frame<'_>`, batch
-  `&[Frame<'_>]`). No clause names any of this. Further parameters are extractors:
+  `&[Frame<'_>]`), and a type a broker crate's derive puts on the carried lane is the value the
+  delivery already holds (a row a database driver read; a batch lends them as one slice). No
+  clause names any of this. Further parameters are extractors:
   `State<T>` injects a component of the application state, `Ctx<K>` one broker context field,
   `Headers<T>` the delivery headers parsed into a typed contract, and any type implementing
   `FromContext` is one you wrote yourself (an auth guard, a request-scoped lookup); an extractor
@@ -211,7 +213,7 @@ b.include(
 // a batch body: `batch(n)` is the batch size, the one batch parameter the framework carries, and it
 // is mandatory - a batch handler mounted without it does not compile. The size goes to the broker,
 // which builds its batches to it; the body sees exactly what the broker delivered. It applies to
-// every batch shape, replying or `Out`-carrying alike, and composes with a start position
+// every batch shape and composes with a start position
 b.include(settle.name("orders").batch(nonzero!(64)));
 b.include(
     drain
@@ -345,7 +347,7 @@ async fn ingest_batch(frames: &[Frame<'_>]) -> HandlerOutcome {
 length check) returns `Err` from `from_payload` and that policy settles the delivery, the same rung
 a codec decode failure lands on. Extractors, `&mut Context`, `workers(..)`,
 `on_failure(panic = ..)` and the injected `Out` parameters work unchanged on the single-delivery
-shape; a batch of frames does not take `Out` yet.
+shape; a batch of frames mounts in the plain form, with no reply and no `Out`.
 
 There is one `reply("dest")` clause, and the reply *type* picks the wire: a `serde::Serialize`
 reply encodes through the reply codec, a `#[derive(Serialized)]` newtype leaves byte-for-byte. The
@@ -841,10 +843,9 @@ There is no `ctx.get::<T>()` and no named-publisher registry; state is typed (`S
 
 On a batch handler `C` is the broker's *subscription-scoped* context, not its per-delivery one:
 name it (`ctx: &mut Context<'_, MemoryBatchContext>`) to read what the whole subscription shares -
-a seek handle, say - which the runtime builds once per batch from the batch's first delivery. A
-position or a header belongs to one delivery, so it rides the batch's elements
-(`&[Message<H, T>]`) instead, and a batch body naming the per-delivery context type does not
-compile.
+a seek handle, say - which the runtime builds once per batch. A position or a header belongs to
+one delivery, so it rides the batch's elements (`&[Message<H, T>]`) instead, and a batch body
+naming the per-delivery context type does not compile.
 
 ## Choosing a codec
 
@@ -967,6 +968,10 @@ tb.broker::<MemoryBroker>()
     .assert_called_once()
     .with(&Receipt { order_id: 42 });
 ```
+
+A handler that takes a value its broker's delivery already holds is asserted with
+`with_value(&expected)` and `received_values::<T>()`: that value never was bytes, so `with` has
+nothing to decode.
 
 `tb.out::<Marker>()` is the other view: exactly what left through one injected publisher, across
 every broker. It takes the same assertions as `published` (`assert_called_once`, `with_raw`,

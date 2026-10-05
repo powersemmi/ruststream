@@ -64,7 +64,8 @@ mod parity_tests;
 
 #[doc(hidden)]
 pub use axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis, SoloPair,
+    Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,
+    SoloCarried, SoloPair,
 };
 pub use axis::{BatchDeserialized, Deserialized, Input, Message, SoloDeserialized};
 #[doc(hidden)]

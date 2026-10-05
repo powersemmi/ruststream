@@ -19,17 +19,18 @@ alwaysApply: false
 - There is one body trait and one constructor. Every axis of the form matrix is a defaulted
   parameter the impl pins, so the signature decides the form and nothing else names it. `In` is the
   input spelling (`T` decoded, `F<'_>` a type that deserializes itself from the bytes,
-  `Message<H, P>` a decoded payload next to its typed header contract, and `[T]` / `[F<'_>]` /
-  `[Message<H, P>]` for a batch of each), `R` the reply type (`()` declares none), `O` the
-  injections arena (`()` declares none), `C` the broker's typed context - per delivery on the
-  single forms, the broker's subscription-scoped batch context (`BuildBatchContext`, built once per
-  batch) on the batch ones - and `S` the application state the body reads with `ctx.state()`. What
-  the signature does not carry rides the chain: the declarative settings (`.name`, `.workers`,
-  `.workers_by_key`, `.threads`, `.threads_by_key`, `.on_failure`, `.batch`, `.start_at`,
-  `.codec`), the reply declaration
-  (`.reply()`, `.to(dest)` - never a publisher, which is the mount site's `.out_reply(policy)`)
-  and the document controls (`.describe(..)`, `.undocumented()`); `.build()` seals the chain and
-  `include` mounts it. The registration metadata comes off the source and the body's input type.
+  `Message<H, P>` a decoded payload next to its typed header contract, `T` on the carried lane a
+  value the delivery already holds, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a batch of
+  each), `R` the reply type (`()` declares none), `O` the injections arena (`()` declares none),
+  `C` the broker's typed context - per delivery on the single forms, the broker's
+  subscription-scoped batch context (`BuildBatchContext`, built once per batch) on the batch ones -
+  and `S` the application state the body reads with `ctx.state()`. What the signature does not
+  carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
+  `.threads`, `.threads_by_key`, `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply
+  declaration (`.reply()`, `.to(dest)` - never a publisher, which is the mount site's
+  `.out_reply(policy)`) and the document controls (`.describe(..)`, `.undocumented()`);
+  `.build()` seals the chain and `include` mounts it. The registration metadata comes off the
+  source and the body's input type.
 - That constructor is the only way in. The definition traits behind it (`SubscriberDef`, the batch
   and publishing defs) are crate-internal machinery, not an extension point: a service cannot write
   a definition type of its own, and a custom source, custom metadata or computed settings go on the

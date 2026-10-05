@@ -19,7 +19,7 @@ use crate::runtime::redelivery::{
 };
 use crate::runtime::shutdown::Shutdown;
 
-use super::SourceMessage;
+use super::{SourceBatch, SourceMessage};
 
 /// A deferred registration: given the broker's connected form (produced by
 /// [`Broker::connect`](crate::Broker::connect) at startup), shared state, the scope's publish
@@ -115,7 +115,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         S::Copies: CopyPathAddress<Connected<B>, S>,
         SourceMessage<B, S>: Send + 'static,
         Cx: crate::BuildBatchContext<SourceMessage<B, S>> + Send + Sync + 'static,
-        H: BatchHandler<SourceMessage<B, S>, Cx, State> + 'static,
+        H: BatchHandler<SourceBatch<B, S>, Cx, State> + 'static,
     {
         let handler = Arc::new(handler);
         let name: Arc<str> = Arc::from(meta.name.as_ref());
@@ -215,7 +215,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
         MakeHandler: FnOnce(Arc<Connected<B>>, Source::Subscriber) -> HandlerFut + Send + 'static,
         HandlerFut: Future<Output = Result<(Source::Subscriber, NewHandler), BoxError>> + Send,
         HandlerCx: crate::BuildBatchContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-        NewHandler: BatchHandler<SourceMessage<B, Source>, HandlerCx, State> + 'static,
+        NewHandler: BatchHandler<SourceBatch<B, Source>, HandlerCx, State> + 'static,
     {
         let name: Arc<str> = Arc::from(meta.name.as_ref());
         self.starters.push(Box::new(

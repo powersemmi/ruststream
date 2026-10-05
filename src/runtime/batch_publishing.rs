@@ -188,8 +188,10 @@ impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler
     }
 }
 
-impl<M, D, C, R, PP, S> BatchHandler<M, D::Context, S> for BatchPublishingHandler<D, C, R, PP>
+impl<Batch, M, D, C, R, PP, S> BatchHandler<Batch, D::Context, S>
+    for BatchPublishingHandler<D, C, R, PP>
 where
+    Batch: IntoIterator<Item = M>,
     M: IncomingMessage,
     D: BatchPublishingCall<S>,
     D::Input: DecodeWith<C>,
@@ -202,6 +204,11 @@ where
     S: Send + Sync,
 {
     type Scratch = Vec<<D::Input as InputKind>::Owned>;
+    type Taken = Vec<M>;
+
+    fn take(batch: Batch) -> Vec<M> {
+        batch.into_iter().collect()
+    }
 
     async fn handle_batch(
         &self,

@@ -7,7 +7,7 @@
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 
 use crate::codec::Codec;
-use crate::runtime::input::{Decoded, DecodedPair, Provided};
+use crate::runtime::input::{Carried, Decoded, DecodedPair, Provided};
 use crate::runtime::publish::{RawReplyWiring, ReplyWiring};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
@@ -103,6 +103,13 @@ impl<C: MountCodec, H, P> InputCodec<DecodedPair<H, P>> for C {
 }
 
 impl<C, F> InputCodec<Provided<F>> for C {
+    type Codec = ();
+
+    fn input_codec(&self) {}
+}
+
+// A carried input reads the value its delivery holds, so it asks the surface for no codec.
+impl<C, T> InputCodec<Carried<T>> for C {
     type Codec = ();
 
     fn input_codec(&self) {}

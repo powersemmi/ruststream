@@ -111,7 +111,7 @@ use crate::{
 use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
-    SoloDeserialized, SoloPair,
+    SoloCarried, SoloDeserialized, SoloPair,
 };
 use super::eager::{construct, run_batch, settle_solo};
 use super::value::{HandleValue, Sealed};
@@ -887,6 +887,26 @@ impl<T, C, S, H, Doc, E> InjectCall<S> for Sealed<HandleValue<Solo<T>, (), Outs<
 where
     Self: InjectDef<Input = <Solo<T> as Axis>::Kind, Context = C, Injections = Outs<E>>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<T, (), Outs<E>, C, S>,
+    E: Send + Sync,
+{
+    async fn call(
+        &self,
+        input: &T,
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> HandlerOutcome {
+        settle_solo(self.0.body.handle(input, injections, ctx).await)
+    }
+}
+
+impl<T, C, S, H, Doc, E> InjectCall<S>
+    for Sealed<HandleValue<SoloCarried<T>, (), Outs<E>, C, H, Doc>>
+where
+    Self: InjectDef<Input = <SoloCarried<T> as Axis>::Kind, Context = C, Injections = Outs<E>>,
+    T: Input<Axis = SoloCarried<T>> + Clone + Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<T, (), Outs<E>, C, S>,

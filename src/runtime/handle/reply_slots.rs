@@ -17,7 +17,7 @@ use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 use super::Handle;
 use super::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
-    SoloDeserialized, SoloPair,
+    SoloCarried, SoloDeserialized, SoloPair,
 };
 use super::eager::construct;
 use super::outs::{EntryMarkers, Outs, Slot};
@@ -163,6 +163,32 @@ impl<T, R, E, C, S, H, Doc, Dest> PublishingCall<S>
 where
     Self: PublishingDef<Input = <Solo<T> as Axis>::Kind, Injections = Outs<E>, Reply = R, Context = C>,
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    R: ReplyShape,
+    E: Send + Sync,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<T, R, Outs<E>, C, S>,
+{
+    async fn call(
+        &self,
+        input: &T,
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, injections, ctx).await
+    }
+}
+
+impl<T, R, E, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloCarried<T>, R, Outs<E>, C, H, Doc>, Dest>>
+where
+    Self: PublishingDef<
+            Input = <SoloCarried<T> as Axis>::Kind,
+            Injections = Outs<E>,
+            Reply = R,
+            Context = C,
+        >,
+    T: Input<Axis = SoloCarried<T>> + Clone + Send + Sync + 'static,
     R: ReplyShape,
     E: Send + Sync,
     C: Send + Sync,

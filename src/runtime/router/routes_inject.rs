@@ -18,7 +18,7 @@ use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectH
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, Materialize};
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::BlanketLayer;
@@ -151,10 +151,10 @@ where
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: InjectCall<State> + 'static,
-    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte input
+    // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte input
     // asks for nothing - its route is built with `()` there.
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,

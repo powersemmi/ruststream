@@ -280,25 +280,86 @@ pub(crate) fn batch_metadata<D: BatchDef>(name: String, def: &D) -> HandlerMetad
     meta
 }
 
-/// The dispatch-side consumer of one raw batch: decode, run the handler, settle every delivery.
-/// The batch counterpart of [`Handler`](super::Handler) at the raw-message level.
-pub(crate) trait BatchHandler<M, C = (), S = ()>: Send + Sync {
+/// One batch as its handler takes it: what its context is built from, and what the harness
+/// records of it when the handler panics before settling anything.
+pub(crate) trait TakenBatch<C>: Send {
+    /// The batch's context, or `None` for a batch with nothing in it: such a batch runs nothing.
+    fn context(&self) -> Option<C>;
+
+    /// The deliveries a panicking handler left unsettled, as the harness records them. Taken only
+    /// while a harness watches the dispatch; a batch that lends its values keeps the copies it
+    /// makes here for the record of its settlement, so each value is cloned once.
+    #[cfg(feature = "testing")]
+    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered>;
+}
+
+// The decoding forms collect the deliveries, and a batch's context is built from its first.
+impl<M, C> TakenBatch<C> for Vec<M>
+where
+    M: IncomingMessage,
+    C: BuildBatchContext<M>,
+{
+    fn context(&self) -> Option<C> {
+        self.first().map(C::build)
+    }
+
+    #[cfg(feature = "testing")]
+    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered> {
+        self.iter()
+            .map(|msg| crate::testing::coordinator::Delivered {
+                raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                value: None,
+                settle: None,
+            })
+            .collect()
+    }
+}
+
+/// The dispatch-side consumer of one batch the subscription delivered: decode, run the handler,
+/// settle every delivery. The batch counterpart of [`Handler`](super::Handler) at the
+/// raw-message level.
+pub(crate) trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
     /// The buffer the decoded batch is built in.
     ///
     /// A dispatch loop keeps one and lends it to every batch it hands over, so the slice the
     /// handler reads costs one allocation for the subscription rather than one per batch. It is
-    /// `()` on the form whose values borrow their deliveries, which cannot outlive the batch
-    /// they came from.
+    /// `()` on the forms whose values the batch already holds or borrows, which cannot outlive
+    /// the batch they came from.
     type Scratch: Default + Send;
 
-    /// Consumes one batch of raw deliveries, acknowledging each of them, decoding into the
-    /// buffer the caller lends. Whatever the buffer holds on entry is discarded.
+    /// The batch as this handler takes it: its deliveries collected, or the broker's batch whole
+    /// where the handler lends the values the batch holds.
+    type Taken: TakenBatch<C>;
+
+    /// Takes one batch off the subscription.
+    fn take(batch: Batch) -> Self::Taken;
+
+    /// Consumes one batch, acknowledging each of its deliveries, decoding into the buffer the
+    /// caller lends. Whatever the buffer holds on entry is discarded.
     fn handle_batch(
         &self,
-        batch: Vec<M>,
+        batch: Self::Taken,
         scratch: &mut Self::Scratch,
         ctx: &mut Context<'_, C, S>,
     ) -> impl Future<Output = ()> + Send;
+}
+
+/// Hands `handler` one batch of deliveries the way the dispatch loop does once it took them off
+/// the subscription: collected, the shape every decoding batch adapter takes. The adapter tests'
+/// entry point, which names the batch type the trait leaves open.
+#[cfg(test)]
+pub(crate) async fn handled<H, M, C, S>(
+    handler: &H,
+    batch: Vec<M>,
+    scratch: &mut H::Scratch,
+    ctx: &mut Context<'_, C, S>,
+) where
+    H: BatchHandler<Vec<M>, C, S, Taken = Vec<M>>,
+    M: Send,
+    C: Send + Sync,
+    S: Send + Sync,
+{
+    handler.handle_batch(batch, scratch, ctx).await;
 }
 
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
@@ -367,9 +428,10 @@ impl<M, Input, DecodeCodec, Inner> fmt::Debug for TypedBatch<M, Input, DecodeCod
     }
 }
 
-impl<M, Input, DecodeCodec, Inner, C, S> BatchHandler<M, C, S>
+impl<Batch, M, Input, DecodeCodec, Inner, C, S> BatchHandler<Batch, C, S>
     for TypedBatch<M, Input, DecodeCodec, Inner>
 where
+    Batch: IntoIterator<Item = M>,
     M: IncomingMessage,
     Input: DecodeWith<DecodeCodec>,
     DecodeCodec: Send + Sync,
@@ -378,6 +440,11 @@ where
     S: Send + Sync,
 {
     type Scratch = Vec<Input::Owned>;
+    type Taken = Vec<M>;
+
+    fn take(batch: Batch) -> Vec<M> {
+        batch.into_iter().collect()
+    }
 
     async fn handle_batch(
         &self,
@@ -447,8 +514,9 @@ impl<M, F, Inner> fmt::Debug for DeserializedBatch<M, F, Inner> {
     }
 }
 
-impl<M, F, Inner, C, S> BatchHandler<M, C, S> for DeserializedBatch<M, F, Inner>
+impl<Batch, M, F, Inner, C, S> BatchHandler<Batch, C, S> for DeserializedBatch<M, F, Inner>
 where
+    Batch: IntoIterator<Item = M>,
     M: IncomingMessage,
     F: Deserialized + Send + Sync + 'static,
     Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
@@ -459,6 +527,11 @@ where
     // buffer that outlived the batch could not hold them: this form builds its values vector per
     // batch, and the borrow is what forces it.
     type Scratch = ();
+    type Taken = Vec<M>;
+
+    fn take(batch: Batch) -> Vec<M> {
+        batch.into_iter().collect()
+    }
 
     async fn handle_batch(&self, batch: Vec<M>, _scratch: &mut (), ctx: &mut Context<'_, C, S>) {
         let subscription = ctx.subscription();
@@ -582,10 +655,43 @@ pub(crate) async fn settle_batch<M, C>(
     M: IncomingMessage,
     C: BuildBatchContext<M> + Send + Sync + 'static,
 {
+    settle_lent_batch(
+        accepted,
+        result,
+        subscription,
+        delivery,
+        LentValues::default(),
+    )
+    .await;
+}
+
+/// What the harness records of the values a batch lent its handler, one per accepted delivery
+/// in order: empty where the batch lent none, and nothing at all outside the `testing` feature.
+#[cfg(feature = "testing")]
+pub(crate) type LentValues = Vec<crate::testing::coordinator::RecordedValue>;
+
+/// See the `testing` counterpart: without the harness there is nothing to record.
+#[cfg(not(feature = "testing"))]
+pub(crate) type LentValues = ();
+
+/// [`settle_batch`] for a batch that lent its handler the values its deliveries carry: the
+/// harness records each value beside the delivery it belongs to.
+pub(crate) async fn settle_lent_batch<M, C>(
+    accepted: Vec<M>,
+    result: BatchResult,
+    subscription: &str,
+    delivery: &Delivery<C>,
+    lent: LentValues,
+) where
+    M: IncomingMessage,
+    C: BuildBatchContext<M> + Send + Sync + 'static,
+{
     // Every batch form funnels its batch through here, which is the one place that knows both
     // the deliveries and the settlements they got; the harness reads the batch off it.
     #[cfg(feature = "testing")]
-    let mut batch = BatchLog::of(&accepted);
+    let mut batch = BatchLog::of(&accepted, lent);
+    #[cfg(not(feature = "testing"))]
+    let () = lent;
     match result {
         BatchResult::Uniform(mut outcome) => {
             let after = outcome.take_after();
@@ -663,12 +769,14 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<M: IncomingMessage>(accepted: &[M]) -> Self {
+    fn of<M: IncomingMessage>(accepted: &[M], lent: LentValues) -> Self {
+        let mut lent = lent.into_iter();
         Self {
             deliveries: accepted
                 .iter()
                 .map(|msg| crate::testing::coordinator::Delivered {
                     raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    value: lent.next(),
                     settle: None,
                 })
                 .collect(),
@@ -709,7 +817,7 @@ static BATCH_SIZE: LazyLock<Histogram<u64>> = LazyLock::new(|| {
 
 /// Records one decoded batch's size under its destination.
 #[cfg(feature = "otel")]
-fn record_batch_size(destination: &str, len: usize) {
+pub(crate) fn record_batch_size(destination: &str, len: usize) {
     // Batches beyond u64 elements do not exist.
     #[allow(clippy::cast_possible_truncation)]
     BATCH_SIZE.record(
@@ -809,7 +917,7 @@ where
 /// Shared by the payload decode and the header contract, which are the same class of bad external
 /// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
 /// error never crosses an await.
-fn rejection<C, S>(
+pub(crate) fn rejection<C, S>(
     err: &impl fmt::Display,
     reason: &str,
     decode: FailurePolicy,
@@ -823,6 +931,10 @@ fn rejection<C, S>(
         other => other.settlement().unwrap_or_else(HandlerResult::drop),
     }
 }
+
+mod carried;
+
+pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
 
 #[cfg(all(test, feature = "memory", feature = "json"))]
 mod tests;

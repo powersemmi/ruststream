@@ -124,7 +124,10 @@ vocabulary, plus `with_header(key, value)` for what a transform or a publish lay
 [`TestApp::out`] reads exactly what left through one `Out` slot, across brokers, and
 `with_options` and `assert_options_default` read the per-message settings a publish carried.
 The decoding assertions use the default codec; a mounting with another codec passes it
-through the `with_codec`, `received_with` and `decoded_with` variants.
+through the `with_codec`, `received_with` and `decoded_with` variants. A value a broker's
+delivery already holds never was bytes, so it has assertions of its own: `with_value(&value)`
+compares the value of the most recent single delivery, and `received_values::<T>()` lists every
+value in delivery order, batch elements included.
 
 The harness runs dispatch under the app's real failure policy. A panic under the default
 `fail_fast` shuts the service down, [`run_result`](TestApp::run_result) returns what `run`

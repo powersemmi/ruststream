@@ -78,7 +78,7 @@ use ruststream::memory::prelude::*;
 
 ## 能力 { #capabilities }
 
-每个能力 trait 都实现在该 Broker 自己的进程内语义之上：
+下面这些能力 trait 都实现在该 Broker 自己的进程内语义之上：
 
 - **请求-响应。** `broker.requester()` 给出 `MemoryRequester`。它的 `request` 发布消息，并在
   `reply-to` 消息头里写上一个唯一的进程内响应主题。第一条消息投递到该主题时，`request` 完成。

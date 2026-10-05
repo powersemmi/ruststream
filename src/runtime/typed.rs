@@ -1,6 +1,6 @@
 //! Typed handler adapter: turns a handler over an input kind's borrowed target into a
 //! [`Handler<M>`](Handler) by materializing the input from each delivery via the input axis
-//! ([`InputKind`]).
+//! ([`Materialize`]).
 //!
 //! This is the decode boundary between the two middleware levels: raw (pre-decode) middleware
 //! wrap the produced `Handler<M>`; typed (post-decode) middleware wrap the `inner: Handler<T>`
@@ -10,14 +10,14 @@
 use std::{fmt, marker::PhantomData};
 
 use crate::IncomingMessage;
-use crate::codec::Codec;
+use crate::codec::{Codec, CodecError};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::{Handler, HandlerOutcome};
-use super::input::{DecodeWith, Decoded};
+use super::input::{Decoded, Materialize};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
@@ -49,7 +49,7 @@ impl<M, Input, DecodeCodec, Inner> Typed<M, Input, DecodeCodec, Inner> {
     #[must_use]
     pub fn over(codec: DecodeCodec, inner: Inner) -> Self
     where
-        Input: DecodeWith<DecodeCodec>,
+        Input: Materialize<DecodeCodec, M>,
     {
         Self {
             codec,
@@ -80,43 +80,56 @@ impl<M, Input, DecodeCodec, Inner, Cx, St> Handler<M, Cx, St>
     for Typed<M, Input, DecodeCodec, Inner>
 where
     M: IncomingMessage,
-    Input: DecodeWith<DecodeCodec>,
+    Input: Materialize<DecodeCodec, M>,
     DecodeCodec: Send + Sync,
     Cx: Send,
     St: Send + Sync,
     Inner: Handler<Input::Target, Cx, St>,
 {
     async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
-        // The decode product lives on this stack frame and the handler borrows its view, so the
-        // input path allocates nothing of its own (a raw input borrows the payload straight out
-        // of the broker's buffer).
-        match Input::decode(&self.codec, msg) {
-            Ok(owned) => {
-                self.inner
-                    .handle(Input::view(&owned, msg.payload()), ctx)
-                    .await
+        // What the delivery materialized into lives on this stack frame and the handler borrows
+        // its view, so the input path allocates nothing of its own (a raw input borrows the
+        // payload, a carried one the delivery's own value).
+        match Input::materialize(&self.codec, msg) {
+            Ok(held) => {
+                #[cfg(feature = "testing")]
+                Input::record(&held, ctx);
+                self.inner.handle(Input::view(&held, msg), ctx).await
             }
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %ctx.name(),
-                    message_type = Input::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                #[cfg(any(feature = "testing", feature = "otel"))]
-                ctx.mark_decode_failed();
-                match self.decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerOutcome::drop()
-                    }
-                    other => other
-                        .settlement()
-                        .map_or_else(HandlerOutcome::drop, Into::into),
-                }
-            }
+            Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
         }
+    }
+}
+
+/// Settles a delivery that did not materialize into the handler's input, by the definition's
+/// decode policy. The single-delivery adapters all end here, so the diagnostic names the
+/// subscription and the type the same way on every form.
+pub(crate) fn unmaterialized<Input, Decoder, M, Cx, St>(
+    err: &CodecError,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> HandlerOutcome
+where
+    Input: Materialize<Decoder, M>,
+{
+    warn!(
+        target: "ruststream::dispatch",
+        subscription = %ctx.name(),
+        message_type = Input::input_label(),
+        error = %err,
+        "{}",
+        Input::FAILURE,
+    );
+    #[cfg(any(feature = "testing", feature = "otel"))]
+    ctx.mark_decode_failed();
+    match decode {
+        FailurePolicy::FailFast => {
+            ctx.fail_fast(&format!("decode failed: {err}"));
+            HandlerOutcome::drop()
+        }
+        other => other
+            .settlement()
+            .map_or_else(HandlerOutcome::drop, Into::into),
     }
 }
 

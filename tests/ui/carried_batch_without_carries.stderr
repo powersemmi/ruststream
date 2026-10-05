@@ -1,0 +1,32 @@
+error[E0277]: the subscription `MemorySource` does not lend batches of `Row`
+  --> tests/ui/carried_batch_without_carries.rs:26:11
+   |
+26 |         b.include(handle.batch(nonzero!(8)));
+   |           ^^^^^^^ a `&[Row]` handler reads the values this subscription's batches hold
+   |
+   = help: the trait `runtime::batch::carried::SourceCarriesBatch<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
+   = note: mount it on a subscription whose batches implement `CarriesBatch<Row>`
+help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `CarriedBatch`
+  --> src/runtime/app/include/mod.rs
+   |
+   | /         impl<'s, B, Layers, C, State, Pipeline, Def>
+   | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
+   | |         where
+   | |             B: Broker + 'static,
+...  |
+   | |             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
+   | |                   --------------------------------------------- unsatisfied requirement introduced here: `CarriedBatch: ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
+   | |             ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
+   | |______________________________________________________________________________________________^
+...
+   | / eager_mount! {
+   | |     forms::Subscribing,
+   | |     forms::RawSubscribing,
+   | |     forms::Batch,
+   | |     forms::RawBatch,
+   | |     forms::CarriedBatch,
+   | | }
+   | |_- in this macro invocation
+   = note: required for `CarriedBatch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
+   = note: required for `CarriedBatch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
+   = note: this error originates in the macro `eager_mount` (in Nightly builds, run with -Z macro-backtrace for more info)

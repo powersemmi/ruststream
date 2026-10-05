@@ -26,7 +26,7 @@ use crate::runtime::batch_publishing::{
 use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
 use crate::runtime::failure::{DispatchFailure, FailurePolicies};
 use crate::runtime::inject::FromStartup;
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, Materialize};
 use crate::runtime::lifecycle::BoxError;
 use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
 use crate::runtime::middleware::BlanketLayer;
@@ -220,11 +220,11 @@ where
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
-    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: crate::runtime::publishing::EncodeReply + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
+    // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,
@@ -348,11 +348,11 @@ where
     SourceMessage<B, Source>: Send + Sync + 'static,
     State: Send + Sync + 'static,
     Def: PublishingCall<State> + 'static,
-    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
     Def::Reply: crate::runtime::Serialized + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
-    // `DecodeWith` above carries whatever the input asks of the codec, and a byte input asks
+    // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
     DecodeCodec: Send + Sync + 'static,
     Extra: Send + Sync + 'static,

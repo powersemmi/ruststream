@@ -4,7 +4,7 @@ use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::{PublishBindings, SubscriptionBindings};
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, Materialize};
 use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.
@@ -431,6 +431,17 @@ impl HandlerMetadata {
         Input: DecodeWith<DecodeCodec>,
     {
         self.content_type = <Input as DecodeWith<DecodeCodec>>::CONTENT_TYPE;
+        self
+    }
+
+    /// The same for a single-delivery input, which materializes from the subscription's
+    /// delivery type `M`: a carried value is read by no codec, so it reports none either.
+    #[must_use]
+    pub(crate) fn materialized_with<Input, Decoder, M>(mut self) -> Self
+    where
+        Input: Materialize<Decoder, M>,
+    {
+        self.content_type = <Input as Materialize<Decoder, M>>::CONTENT_TYPE;
         self
     }
 

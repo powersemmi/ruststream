@@ -11,14 +11,16 @@ use crate::{
     SubscriptionSource,
 };
 
-use crate::runtime::batch::{BatchDef, DeserializedBatch, TypedBatch, batch_metadata};
+use crate::runtime::batch::{
+    BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata,
+};
 use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
 use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
 use crate::runtime::dispatch::Workers;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
 use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::{DecodeWith, Provided};
+use crate::runtime::input::{Carried, DecodeWith, Materialize, Provided};
 use crate::runtime::metadata::{HandlerMetadata, OutgoingKind, PublishDescription};
 use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
 use crate::runtime::publish::{
@@ -45,8 +47,9 @@ use super::routes_inject::{BatchInjectRoute, InjectRoute};
 use super::routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 use super::sink::RouterSink;
 use super::{
-    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedRawBatchRouter,
-    IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter, RawReplyRouter,
+    BatchInjectedRouter, BatchPublishingRouter, IncludedBatchRouter, IncludedCarriedBatchRouter,
+    IncludedRawBatchRouter, IncludedRouter, InjectedRouter, MergedRouter, PublishingRouter,
+    RawReplyRouter, SourceMessage,
 };
 
 /// A statically-typed, lazily-bound group of handler registrations, not attached to any broker.
@@ -267,12 +270,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: SubscriberDef,
-        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
         Def::Handler: 'static,
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = subscriber_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>()
+            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
@@ -384,6 +387,49 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         }
     }
 
+    /// Mounts a carried batch definition on `source`: the subscription's batches lend the values
+    /// of `T` the body reads, so no codec takes part.
+    pub(super) fn mount_carried_batch<Source, Def, T>(
+        self,
+        source: Source,
+        def: Def,
+    ) -> IncludedCarriedBatchRouter<B, Source, Def, T, RouteCodec, RouteLayers, RoutePipe, Routes>
+    where
+        Source: SubscriptionSource<Connected<B>> + Send + 'static,
+        Source::Subscriber: BatchSubscriber + Send + 'static,
+        Def: BatchDef<Input = Carried<T>> + BatchSized,
+        Def::Handler: 'static,
+        T: Clone + Send + Sync + 'static,
+    {
+        // No codec reads the values, so the media type it would report is the one nothing
+        // produced.
+        let meta =
+            batch_metadata(source.name().to_owned(), &def).describing::<Connected<B>, _>(&source);
+        let policies = def.failure_policies();
+        let workers = def.workers();
+        let batch_size = def.batch_size();
+        let handler = CarriedBatch::<Source, Connected<B>, T, _>::over(def.into_handler())
+            .with_decode(policies.decode);
+        Router {
+            routes: (
+                BatchRoute {
+                    source,
+                    handler,
+                    meta,
+                    policies,
+                    workers,
+                    batch_size,
+                    _context: PhantomData,
+                },
+                self.routes,
+            ),
+            codec: self.codec,
+            layers: self.layers,
+            pipeline: self.pipeline,
+            _broker: PhantomData,
+        }
+    }
+
     /// Mounts an injected definition on `source`: its startup injections (an attached publish
     /// policy pairing into an `Out` parameter) resolve right after the subscription opens, so
     /// the handler holds live handles by construction. The tail of the `Out` form.
@@ -408,11 +454,11 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: InjectDef + 'static,
-        Def::Input: DecodeWith<DecodeCodec>,
+        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
         DecodeCodec: Send + Sync + 'static,
     {
         let meta = inject_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>()
+            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
@@ -579,14 +625,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: DecodeWith<DecodeCodec>,
-        // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte
+        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
+        // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte
         // input asks for nothing - the route is built with `()` there.
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>()
+            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
@@ -637,14 +683,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         Source: SubscriptionSource<Connected<B>> + Send + 'static,
         Source::Subscriber: Send + 'static,
         Def: PublishingDef + 'static,
-        Def::Input: DecodeWith<DecodeCodec>,
-        // Not `Codec`: `DecodeWith` already carries what the input asks of it, and a byte
+        Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
+        // Not `Codec`: `Materialize` already carries what the input asks of it, and a byte
         // input asks for nothing - the route is built with `()` there.
         DecodeCodec: 'static,
         ReplySource: 'static,
     {
         let meta = publishing_metadata(source.name().to_owned(), &def)
-            .decoded_with::<Def::Input, DecodeCodec>()
+            .materialized_with::<Def::Input, DecodeCodec, SourceMessage<B, Source>>()
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();

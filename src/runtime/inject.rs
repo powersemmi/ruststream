@@ -12,17 +12,16 @@ use std::fmt;
 use std::future::{Future, ready};
 use std::marker::PhantomData;
 
-use tracing::warn;
-
 use crate::{Broker, Connected, IncomingMessage, PairError};
 
 use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::{Handler, HandlerOutcome};
-use super::input::{DecodeWith, InputKind};
+use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::slot::DefaultSlot;
+use super::typed::unmaterialized;
 
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
@@ -268,10 +267,10 @@ impl<Msg, Def, DecodeCodec, State> Handler<Msg, Def::Context, State>
 where
     Msg: IncomingMessage,
     Def: InjectCall<State>,
-    Def::Input: DecodeWith<DecodeCodec>,
+    Def::Input: Materialize<DecodeCodec, Msg>,
     Def::Context: Send + Sync,
     Def::Injections: Send + Sync,
-    // See the same relaxation on `PublishingHandler`: `DecodeWith` carries whatever the input
+    // See the same relaxation on `PublishingHandler`: `Materialize` carries whatever the input
     // needs of the codec, and a raw input needs nothing.
     DecodeCodec: Send + Sync,
     State: Send + Sync,
@@ -281,33 +280,23 @@ where
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> HandlerOutcome {
-        // The decode product lives on this stack frame and the handler borrows its view, so
-        // the input path allocates nothing of its own (a raw input borrows the payload
-        // straight out of the broker's buffer).
-        let owned = match <Def::Input as DecodeWith<DecodeCodec>>::decode(&self.codec, msg) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %ctx.name(),
-                    message_type = <Def::Input as InputKind>::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                #[cfg(any(feature = "testing", feature = "otel"))]
-                ctx.mark_decode_failed();
-                return match self.decode {
-                    FailurePolicy::FailFast => {
-                        ctx.fail_fast(&format!("decode failed: {err}"));
-                        HandlerOutcome::drop()
-                    }
-                    other => other
-                        .settlement()
-                        .map_or_else(HandlerOutcome::drop, Into::into),
-                };
-            }
-        };
-        let view = <Def::Input as InputKind>::view(&owned, msg.payload());
+        // What the delivery materialized into lives on this stack frame and the handler borrows
+        // its view, so the input path allocates nothing of its own (a raw input borrows the
+        // payload, a carried one the delivery's own value).
+        let held =
+            match <Def::Input as Materialize<DecodeCodec, Msg>>::materialize(&self.codec, msg) {
+                Ok(held) => held,
+                Err(err) => {
+                    return unmaterialized::<Def::Input, DecodeCodec, Msg, Def::Context, State>(
+                        &err,
+                        self.decode,
+                        ctx,
+                    );
+                }
+            };
+        #[cfg(feature = "testing")]
+        <Def::Input as Materialize<DecodeCodec, Msg>>::record(&held, ctx);
+        let view = <Def::Input as Materialize<DecodeCodec, Msg>>::view(&held, msg);
         self.def.call(view, &self.injections, ctx).await
     }
 }

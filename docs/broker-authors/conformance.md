@@ -335,9 +335,10 @@ the policy cannot pass by landing on the default.
 
 If your broker implements a capability trait, run the matching suite from
 `conformance::capabilities`: it proves the implementation honours the trait contract. A broker
-without that capability does not call it. Each suite takes factories of the same shape as
-`lifecycle` and performs a real `connect`, so enable it by the same environment variable. Every
-call a suite makes has a time limit, so a broker that stalls fails the suite instead of hanging it:
+without that capability does not call it. Each suite builds the broker and its subscription
+from factories, as `lifecycle` does, and performs a real `connect`, so enable it by the same
+environment variable. Every call a suite makes has a time limit, so a broker that stalls fails the
+suite instead of hanging it:
 
 | Suite | Requires | Asserts |
 |---|---|---|
@@ -348,6 +349,8 @@ call a suite makes has a time limit, so a broker that stalls fails the suite ins
 | `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one publisher settle independently, and that publisher keeps publishing directly while one is open; a commit from a runtime that has since stopped still publishes, and after shutdown a commit, a direct publish and a transaction opened then all return an error |
 | `capabilities::seeking` | `Seekable`, messages `Positioned` | a seek back to a position captured from a delivered message redelivers exactly that message and the ordered suffix after it, a seek forward skips the queued deliveries before the target, and the subscription keeps delivering new publishes after repositioning; a fresh subscription that seeks before its first delivery, to a position an earlier subscription captured, starts at that message, a seek from a runtime that has since stopped still repositions, and a seek after shutdown returns an error |
 | `capabilities::seeking_unknown_position` | `Seekable`, and a position the broker builds | a seek to a position the subscription's log does not hold (evicted by retention, or never there) returns an error and does not move the subscription: nothing is read from elsewhere, and an error on the stream does not end the check, which reads on to the next delivery |
+| `capabilities::carries` | `Carries` on the subscription's deliveries | every delivery of a published value lends that value, and each value is lent exactly once; a copy of a delivery, published from its payload and headers the way the runtime publishes a retry copy or a dead letter, lends the same value; a delivery whose value is gone lends none, so the runtime settles it by the decode-failure policy |
+| `capabilities::carries_batch` | `BatchSubscriber`, `CarriesBatch` on its batches | every published value is lent exactly once across the batches, and no batch lends more values than it delivers; when two values share a batch in one of five rounds, the batch's first delivery, nacked with requeue, comes back lending the value the batch lent first (a subscription that never groups them, or a transport that answers the requeue with `AckError::Unsupported`, passes, and the order goes unchecked for it); a copy of a delivery lends the same value, as for `carries`; a delivery whose value is gone, published in front of a value, is lent none and goes after it, past the end of the slice, checked the same way |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -375,9 +378,10 @@ durable queue still holds the earlier messages, a key namespace still holds the 
 suites call `conformance::helpers::unique_subject` for that, and your own end-to-end suite has the
 same problem and the same answer.
 
-The in-memory broker implements every capability natively and passes all seven suites in process
-(see [Memory](../brokers/memory.md#capabilities)); it is the executable reference for what each
-suite expects.
+The in-memory broker implements request / reply, batches, transactions and seeking natively and
+passes their seven suites in process (see [Memory](../brokers/memory.md#capabilities)); it is the
+executable reference for what each of them expects. The suites of `Carries` and `CarriesBatch` are
+for brokers whose deliveries hold a decoded value, such as a database queue.
 
 ## Author checklist
 

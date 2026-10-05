@@ -147,9 +147,9 @@ pub use bytes_utils::Str;
 pub use broker::{Broker, Connected, ConnectedBroker};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use capability::{
-    ApiKeyLocation, BatchSubscriber, DescribeServer, HttpApiKeyLocation, OwnedTransactions,
-    Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe,
-    Transaction, TransactionalPublisher,
+    ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
+    OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
+    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
 pub use error::{AckError, DeclareRetryError};

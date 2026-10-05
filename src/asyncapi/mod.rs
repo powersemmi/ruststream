@@ -59,9 +59,11 @@
 //! time; `.undocumented()` takes a registration out of the document. A message that is its own
 //! wire format, a [`Deserialized`](macro@crate::Deserialized) input or a
 //! [`Serialized`](macro@crate::Serialized) output, appears under its own name with no schema and
-//! no warning: the bytes are the format. A payload type's doc comment becomes the message
-//! description, and [`MessageInfo`](crate::MessageInfo) names the component explicitly, so
-//! renaming the Rust type does not change the wire contract.
+//! no warning: the bytes are the format. A value a broker's delivery already holds
+//! ([`Carries`](crate::Carries)) is documented like a decoded payload, through its `JsonSchema`
+//! derive, and reports no content type, since no codec reads it. A payload type's doc comment
+//! becomes the message description, and [`MessageInfo`](crate::MessageInfo) names the component
+//! explicitly, so renaming the Rust type does not change the wire contract.
 //!
 //! # What else the document says
 //!

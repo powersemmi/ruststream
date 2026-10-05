@@ -1279,5 +1279,9 @@ pub trait DescribeServer: Broker {
     fn describe_server(&self) -> ServerSpec;
 }
 
+mod carries;
+
+pub use carries::{Carries, CarriesBatch};
+
 #[cfg(test)]
 mod tests;

@@ -23,11 +23,10 @@ use crate::{
 };
 
 use crate::codec::Codec;
-use crate::runtime::SourceSubscriber;
 use crate::runtime::batch_inject::BatchInjectDef;
 use crate::runtime::batch_publishing::BatchPublishingDef;
 use crate::runtime::inject::InjectDef;
-use crate::runtime::input::DecodeWith;
+use crate::runtime::input::{DecodeWith, Materialize};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::runtime::publish::ReplyWiring;
 use crate::runtime::publish::{LowerOutTransforms, NarrowToUse, RawReplyWiring, SlotStackUse};
@@ -37,6 +36,7 @@ use crate::runtime::slot::{
     BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
     SlotPolicy, WithSource,
 };
+use crate::runtime::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterOut, RouterPublishingOut, RouterWith};
@@ -99,6 +99,10 @@ type SlotPipeline<Layers, Pipe> = <Layers as LowerOutTransforms<Pipe>>::Out;
 /// fixes the per-message options the slot's transforms write.
 type SlotLive<Policy, B> = <Policy as PublishPolicy<Connected<B>>>::Live;
 
+/// What the bound definition's input `Input` decodes with, as the include-site value `Def`
+/// resolves it on the broker `B`.
+type BoundDecoder<Def, Input, RouteCodec, B> = DefMountCodec<Def, Input, RouteCodec, Connected<B>>;
+
 /// The bound-source tuple element of one slot: the policy the runtime pairs (narrowed where the
 /// chain mounted a naming transform), the codec the slot encodes with (its own when the chain
 /// named one, else the surface's) and the pipeline it publishes through.
@@ -135,17 +139,20 @@ macro_rules! impl_inject_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec>,
+            Def: MountsWith<<Bound as InjectDef>::Input, RouteCodec, Connected<B>>,
             Bound: InjectDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input: DecodeWith<DefMountCodec<Def, <Bound as InjectDef>::Input, RouteCodec>>,
+            Bound::Input: Materialize<
+                BoundDecoder<Def, <Bound as InjectDef>::Input, RouteCodec, B>,
+                SourceMessage<B, Bound::Source>,
+            >,
         {
             type Out = InjectedRouter<
                 B,
                 Bound::Source,
                 Bound,
-                DefMountCodec<Def, <Bound as InjectDef>::Input, RouteCodec>,
+                BoundDecoder<Def, <Bound as InjectDef>::Input, RouteCodec, B>,
                 Extra,
                 RouteCodec,
                 RouteLayers,
@@ -203,18 +210,18 @@ macro_rules! impl_inject_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec>,
+            Def: MountsWith<<Bound as BatchInjectDef>::Input, RouteCodec, Connected<B>>,
             Bound: BatchInjectDef + BatchSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
-                DecodeWith<DefMountCodec<Def, <Bound as BatchInjectDef>::Input, RouteCodec>>,
+                DecodeWith<BoundDecoder<Def, <Bound as BatchInjectDef>::Input, RouteCodec, B>>,
         {
             type Out = BatchInjectedRouter<
                 B,
                 Bound::Source,
                 Bound,
-                DefMountCodec<Def, <Bound as BatchInjectDef>::Input, RouteCodec>,
+                BoundDecoder<Def, <Bound as BatchInjectDef>::Input, RouteCodec, B>,
                 Extra,
                 RouteCodec,
                 RouteLayers,
@@ -285,19 +292,21 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec>,
+            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: PublishingDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input:
-                DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>>,
+            Bound::Input: Materialize<
+                BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
+                SourceMessage<B, Bound::Source>,
+            >,
             Policy: 'static,
         {
             type Out = PublishingRouter<
                 B,
                 Bound::Source,
                 Bound,
-                DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>,
+                BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
                 Policy,
                 Extra,
                 RouteCodec,
@@ -359,19 +368,21 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec>,
+            Def: MountsWith<<Bound as PublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: PublishingDef + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: Send + 'static,
-            Bound::Input:
-                DecodeWith<DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>>,
+            Bound::Input: Materialize<
+                BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
+                SourceMessage<B, Bound::Source>,
+            >,
             Policy: 'static,
         {
             type Out = RawReplyRouter<
                 B,
                 Bound::Source,
                 Bound,
-                DefMountCodec<Def, <Bound as PublishingDef>::Input, RouteCodec>,
+                BoundDecoder<Def, <Bound as PublishingDef>::Input, RouteCodec, B>,
                 Policy,
                 Extra,
                 RouteCodec,
@@ -433,19 +444,19 @@ macro_rules! impl_publishing_out_commit {
                 Bound = Bound,
                 Extra = Extra,
             >,
-            Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec>,
+            Def: MountsWith<<Bound as BatchPublishingDef>::Input, RouteCodec, Connected<B>>,
             Bound: BatchPublishingDef + BatchSized + 'static,
             Bound::Source: SubscriptionSource<Connected<B>> + Send + 'static,
             SourceSubscriber<B, Bound::Source>: BatchSubscriber + Send + 'static,
             Bound::Input:
-                DecodeWith<DefMountCodec<Def, <Bound as BatchPublishingDef>::Input, RouteCodec>>,
+                DecodeWith<BoundDecoder<Def, <Bound as BatchPublishingDef>::Input, RouteCodec, B>>,
             Policy: 'static,
         {
             type Out = BatchPublishingRouter<
                 B,
                 Bound::Source,
                 Bound,
-                DefMountCodec<Def, <Bound as BatchPublishingDef>::Input, RouteCodec>,
+                BoundDecoder<Def, <Bound as BatchPublishingDef>::Input, RouteCodec, B>,
                 Policy,
                 Extra,
                 RouteCodec,

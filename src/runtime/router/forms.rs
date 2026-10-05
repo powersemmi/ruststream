@@ -40,6 +40,11 @@ pub struct Batch;
 /// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
+/// A carried batch subscriber (a handler taking a batch of values its subscription's batches
+/// lend as one slice, [`CarriesBatch`](crate::CarriesBatch)): no decode, no codec, and no
+/// vector of the runtime's own.
+#[derive(Debug, Clone, Copy)]
+pub struct CarriedBatch;
 /// A batch reply-publishing subscriber (a `&[T]` handler with `reply("out")`).
 #[derive(Debug, Clone, Copy)]
 pub struct BatchPublishing;
