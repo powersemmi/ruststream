@@ -10,8 +10,9 @@
 //! fetches a page of rows does, and lends the rows as one slice. Deliveries whose row is gone go
 //! last, past the end of that slice.
 //!
-//! A row is written `id:name` (`7:alice`). Each test binary that names this module uses part of
-//! it, hence the `dead_code` allowance.
+//! A row is written `id:name` (`7:alice`). A [`Fault`] breaks the subscription in one way, for the
+//! conformance checks that must fail against it. Each test binary that names this module uses
+//! part of it, hence the `dead_code` allowance.
 #![allow(dead_code)]
 
 use std::future::{Future, ready};
@@ -63,15 +64,41 @@ impl Input for Row {
     type Axis = SoloCarried<Self>;
 }
 
+/// One way a broker can break the carried lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Fault {
+    /// Behaves.
+    #[default]
+    None,
+    /// Every delivery lends the first row the subscription read: a value cached past its
+    /// delivery.
+    StaleValue,
+    /// A delivery whose row is gone lends a placeholder row instead of nothing.
+    PlaceholderForGone,
+    /// A page lends its rows in the reverse order of its deliveries.
+    ReversedPage,
+    /// A page lends one row more than it delivers.
+    ExtraRow,
+}
+
 /// The subscription descriptor: one subject of the in-memory bus, read as rows.
 #[derive(Debug, Clone)]
 pub(crate) struct Rows {
     name: String,
+    fault: Fault,
 }
 
 impl Rows {
     pub(crate) fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
+        Self {
+            name: name.into(),
+            fault: Fault::None,
+        }
+    }
+
+    /// The same subscription, broken in one way.
+    pub(crate) fn faulty(self, fault: Fault) -> Self {
+        Self { fault, ..self }
     }
 }
 
@@ -96,9 +123,11 @@ impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for Rows {
         self,
         connected: &ConnectedMemoryBroker<Log>,
     ) -> Result<RowSubscriber<Log>, MemoryError> {
-        Ok(RowSubscriber(
-            Subscribe::subscribe(connected, &self.name).await?,
-        ))
+        Ok(RowSubscriber {
+            inner: Subscribe::subscribe(connected, &self.name).await?,
+            fault: self.fault,
+            first: None,
+        })
     }
 }
 
@@ -112,16 +141,35 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for Rows {
 }
 
 /// The subscription itself: the bus's own, with each delivery read as a row.
-pub(crate) struct RowSubscriber<Log = Discarding>(MemorySubscriber<Log>);
+pub(crate) struct RowSubscriber<Log = Discarding> {
+    inner: MemorySubscriber<Log>,
+    fault: Fault,
+    /// The first row read, which a stale subscription keeps lending.
+    first: Option<Row>,
+}
+
+impl<Log: LogMode> RowSubscriber<Log> {
+    /// Reads one delivery as a row, the way the subscription's fault has it.
+    fn read(fault: Fault, first: &mut Option<Row>, inner: MemoryMessage<Log>) -> RowDelivery<Log> {
+        let row = match (fault, Row::read(inner.payload())) {
+            (Fault::StaleValue, Some(row)) => Some(first.get_or_insert(row).clone()),
+            (Fault::PlaceholderForGone, None) => Some(Row::new(0, "placeholder")),
+            (_, row) => row,
+        };
+        RowDelivery { inner, row }
+    }
+}
 
 impl<Log: LogMode> Subscriber for RowSubscriber<Log> {
     type Message = RowDelivery<Log>;
     type Error = std::convert::Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery<Log>, Self::Error>> + Send + '_ {
-        self.0
+        let fault = self.fault;
+        let first = &mut self.first;
+        self.inner
             .stream()
-            .map(|delivery| delivery.map(RowDelivery::read))
+            .map(move |delivery| delivery.map(|inner| Self::read(fault, first, inner)))
     }
 }
 
@@ -134,7 +182,10 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
         &mut self,
         size: NonZeroUsize,
     ) -> impl Stream<Item = Result<RowBatch<Log>, Self::Error>> + Send + '_ {
-        self.0.batches(size).map(|batch| batch.map(RowBatch::read))
+        let fault = self.fault;
+        self.inner
+            .batches(size)
+            .map(move |batch| batch.map(|page| RowBatch::read(page, fault)))
     }
 }
 
@@ -143,7 +194,7 @@ impl Seekable for RowSubscriber<Retaining> {
     type Seeker = MemorySeeker;
 
     fn seeker(&self) -> MemorySeeker {
-        self.0.seeker()
+        self.inner.seeker()
     }
 }
 
@@ -152,13 +203,6 @@ impl Seekable for RowSubscriber<Retaining> {
 pub(crate) struct RowDelivery<Log = Discarding> {
     inner: MemoryMessage<Log>,
     row: Option<Row>,
-}
-
-impl<Log: LogMode> RowDelivery<Log> {
-    fn read(inner: MemoryMessage<Log>) -> Self {
-        let row = Row::read(inner.payload());
-        Self { inner, row }
-    }
 }
 
 impl<Log> Carries<Row> for RowDelivery<Log> {
@@ -205,7 +249,7 @@ pub(crate) struct RowBatch<Log = Discarding> {
 }
 
 impl<Log: LogMode> RowBatch<Log> {
-    fn read(page: Vec<MemoryMessage<Log>>) -> Self {
+    fn read(page: Vec<MemoryMessage<Log>>, fault: Fault) -> Self {
         let mut rows = Vec::with_capacity(page.len());
         let mut deliveries = Vec::with_capacity(page.len());
         let mut gone = Vec::new();
@@ -219,6 +263,11 @@ impl<Log: LogMode> RowBatch<Log> {
             }
         }
         deliveries.extend(gone);
+        match fault {
+            Fault::ReversedPage => rows.reverse(),
+            Fault::ExtraRow => rows.push(Row::new(0, "extra")),
+            _ => {}
+        }
         Self { rows, deliveries }
     }
 }

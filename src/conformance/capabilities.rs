@@ -3,9 +3,9 @@
 //! A broker crate that implements a capability ([`RequestReply`](crate::RequestReply),
 //! [`BatchSubscriber`](crate::BatchSubscriber),
 //! [`TransactionalPublisher`](crate::TransactionalPublisher),
-//! [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`]) runs the matching suite to
-//! prove the implementation honours the trait contract; brokers without the capability simply do
-//! not call it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
+//! [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`], [`Carries`](crate::Carries),
+//! [`CarriesBatch`](crate::CarriesBatch)) runs the matching suite to prove the implementation
+//! honours the trait contract; brokers without the capability simply do not call it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
 //! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
 //! executable reference that passes all of them.
 //!
@@ -57,11 +57,13 @@ type SeekPosition<S> = <<S as Seekable>::Seeker as Seeker>::Position;
 type SubscriberMessage<S> = <S as Subscriber>::Message;
 
 mod batches;
+mod carries;
 mod request_reply;
 mod seeking;
 mod transactions;
 
 pub use batches::{batch_seeking, batches};
+pub use carries::{carries, carries_batch};
 pub use request_reply::request_reply;
 pub use seeking::{seeking, seeking_unknown_position};
 pub use transactions::{owned_transactions, transactions};
