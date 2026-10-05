@@ -123,7 +123,7 @@ const BATCH: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 /// # Panics
 ///
 /// Panics with a descriptive message if any step violates the contract, or when `values` holds
-/// fewer than two values.
+/// fewer than two distinct values.
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
@@ -163,7 +163,7 @@ pub async fn carries<
 {
     const LABEL: &str = "carries";
     assert!(
-        values.len() >= 2,
+        distinct_pair(values).is_some(),
         "{LABEL}: pass at least two distinct values, so a delivery lending one twice shows",
     );
 
@@ -244,13 +244,15 @@ pub async fn carries<
 /// more values than it delivers.
 ///
 /// The order is checked through a settlement, because the runtime settles delivery `i` by the
-/// verdict on value `i`. Two values go out together until a batch carries both; the first
-/// delivery of that batch is nacked with requeue and the other acked, and the delivery that comes
-/// back must lend the value the batch lent first. A subscription that hands out one value per
-/// batch in five rounds is within its contract, and a transport that answers the requeue with
-/// [`AckError::Unsupported`] has nothing to bring back; the order goes unchecked for either. The
-/// suite settles a batch of one before it reads the next, so a subscription that hands out its
-/// next delivery only once the last one is settled passes.
+/// verdict on value `i`. The first of `values` and the first value unequal to it go out together
+/// until a batch carries both; the first delivery of that batch is nacked with requeue and the
+/// other acked, and the delivery that comes back must lend the value the batch lent first. Two
+/// equal values would show no order, so `values` holds at least two distinct ones. A
+/// subscription that hands out one value per batch in five rounds is within its contract, and a
+/// transport that answers the requeue with [`AckError::Unsupported`] has nothing to bring back;
+/// the order goes unchecked for either. The suite settles a batch of one before it reads the
+/// next, so a subscription that hands out its next delivery only once the last one is settled
+/// passes.
 ///
 /// A delivery of a batch is copied as on [`carries`], from its payload and headers through the
 /// publisher `make_publisher` builds, and the batch the copy comes in must lend the same value.
@@ -348,7 +350,7 @@ pub async fn carries<
 /// # Panics
 ///
 /// Panics with a descriptive message if any step violates the contract, or when `values` holds
-/// fewer than two values.
+/// fewer than two distinct values.
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
@@ -387,10 +389,12 @@ pub async fn carries_batch<
     Value: PartialEq + Clone + fmt::Debug,
 {
     const LABEL: &str = "carries_batch";
-    assert!(
-        values.len() >= 2,
-        "{LABEL}: pass at least two distinct values, so a batch lending one twice shows",
-    );
+    let Some(pair) = distinct_pair(values) else {
+        panic!(
+            "{LABEL}: pass at least two distinct values, so a batch lending one twice or out of \
+             order shows",
+        );
+    };
 
     let subject = unique_subject("conformance.carries_batch");
     let connected = within(make_broker().connect(), "carries_batch: connect")
@@ -434,7 +438,7 @@ pub async fn carries_batch<
         }
     }
 
-    pages_keep_their_order(&connected, &publish, &mut stream, &subject, values).await;
+    pages_keep_their_order(&connected, &publish, &mut stream, &subject, pair).await;
     a_batch_copy_lends_the_value(
         &connected,
         &make_publisher(&connected),
@@ -574,10 +578,11 @@ async fn publish_copy<Pub: Publisher, M: IncomingMessage>(
     .expect("publishing a copy failed");
 }
 
-/// Two values go out together until a batch carries both; the batch's first delivery is
+/// Two distinct values go out together until a batch carries both; the batch's first delivery is
 /// requeued and the second acked, and what comes back must lend the value the batch lent first.
-/// A batch of one shows no order and is acked before the next is read, so a subscription that
-/// hands out its next delivery only once the last one is settled passes.
+/// Equal values would lend the same value in either order, so a batch that reverses them would
+/// pass. A batch of one shows no order and is acked before the next is read, so a subscription
+/// that hands out its next delivery only once the last one is settled passes.
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
@@ -586,7 +591,7 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
     publish: &Publish,
     stream: &mut S,
     subject: &str,
-    values: &[Value],
+    pair: [&Value; 2],
 ) where
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
@@ -599,7 +604,7 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
     const LABEL: &str = "carries_batch: a batch lends its values in delivery order";
 
     for _ in 0..ROUNDS {
-        for value in &values[..2] {
+        for value in pair {
             within(
                 publish(connected, subject, value),
                 "carries_batch: a publish",
@@ -818,6 +823,14 @@ where
         deliveries.len(),
     );
     (lent, deliveries)
+}
+
+/// The first of `values` and the first one unequal to it, or `None` when `values` holds no two
+/// distinct values.
+fn distinct_pair<Value: PartialEq>(values: &[Value]) -> Option<[&Value; 2]> {
+    let (first, rest) = values.split_first()?;
+    let other = rest.iter().find(|value| *value != first)?;
+    Some([first, other])
 }
 
 /// Strikes `lent` off the values still unseen, failing when it was never published or already

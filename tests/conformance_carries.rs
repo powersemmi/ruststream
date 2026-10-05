@@ -22,6 +22,17 @@ fn rows() -> [Row; 3] {
     [Row::new(1, "ann"), Row::new(2, "bob"), Row::new(3, "cyd")]
 }
 
+/// Rows whose first two are equal: a check that takes the first two as its distinct pair sees
+/// no order in them.
+fn rows_led_by_a_repeat() -> [Row; 3] {
+    [Row::new(1, "ann"), Row::new(1, "ann"), Row::new(2, "bob")]
+}
+
+/// Rows that are all equal: no check can tell one from another.
+fn one_row_twice() -> [Row; 2] {
+    [Row::new(1, "ann"), Row::new(1, "ann")]
+}
+
 /// Publishes one row the way the broker's own producer writes it.
 async fn publish_row(
     connected: &ConnectedMemoryBroker,
@@ -109,6 +120,48 @@ async fn a_batch_lending_its_values_out_of_order_fails_carries_batch() {
         publish_row,
         publish_gone,
         &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the value at index `i` must belong to the `i`-th delivery")]
+async fn a_batch_lending_its_values_out_of_order_fails_carries_batch_whose_first_values_repeat() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::ReversedPage),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows_led_by_a_repeat(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "pass at least two distinct values")]
+async fn carries_refuses_values_that_are_all_equal() {
+    capabilities::carries(
+        MemoryBroker::new,
+        |name| Rows::new(name),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &one_row_twice(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "pass at least two distinct values")]
+async fn carries_batch_refuses_values_that_are_all_equal() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &one_row_twice(),
     )
     .await;
 }
