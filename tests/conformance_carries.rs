@@ -182,6 +182,19 @@ async fn a_transport_that_cannot_requeue_passes_carries_batch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_with_one_delivery_in_flight_passes_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::OneInFlight),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "a copy of a delivery, published from its payload and headers")]
 async fn a_delivery_whose_copy_loses_its_value_fails_carries() {
     capabilities::carries(

@@ -248,7 +248,9 @@ pub async fn carries<
 /// delivery of that batch is nacked with requeue and the other acked, and the delivery that comes
 /// back must lend the value the batch lent first. A subscription that hands out one value per
 /// batch in five rounds is within its contract, and a transport that answers the requeue with
-/// [`AckError::Unsupported`] has nothing to bring back; the order goes unchecked for either.
+/// [`AckError::Unsupported`] has nothing to bring back; the order goes unchecked for either. The
+/// suite settles a batch of one before it reads the next, so a subscription that hands out its
+/// next delivery only once the last one is settled passes.
 ///
 /// A delivery of a batch is copied as on [`carries`], from its payload and headers through the
 /// publisher `make_publisher` builds, and the batch the copy comes in must lend the same value.
@@ -574,6 +576,8 @@ async fn publish_copy<Pub: Publisher, M: IncomingMessage>(
 
 /// Two values go out together until a batch carries both; the batch's first delivery is
 /// requeued and the second acked, and what comes back must lend the value the batch lent first.
+/// A batch of one shows no order and is acked before the next is read, so a subscription that
+/// hands out its next delivery only once the last one is settled passes.
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
@@ -603,36 +607,35 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
             .await
             .expect("publishing a value failed");
         }
-        let mut pages = Vec::new();
+        let mut shared = None;
         let mut delivered = 0;
         while delivered < 2 {
-            let page = next_page(
+            let (lent, deliveries) = next_page(
                 &mut *stream,
                 DEFAULT_TIMEOUT,
                 LABEL,
                 "both published values must arrive",
             )
             .await;
-            delivered += page.1.len();
-            pages.push(page);
-        }
-        let Some(index) = pages.iter().position(|(lent, _)| lent.len() > 1) else {
-            for (_, deliveries) in pages {
+            delivered += deliveries.len();
+            if lent.len() > 1 {
+                shared = Some((lent, deliveries));
+            } else {
                 for msg in deliveries {
                     ack_or_unsupported(msg, LABEL).await;
                 }
             }
+        }
+        let Some((lent, deliveries)) = shared else {
             continue;
         };
-        let first = pages[index].0[0].clone();
+        let first = lent[0].clone();
         let mut requeued = false;
-        for (at, (_, deliveries)) in pages.into_iter().enumerate() {
-            for (element, msg) in deliveries.into_iter().enumerate() {
-                if at == index && element == 0 {
-                    requeued = nack_requeue(msg, LABEL).await;
-                } else {
-                    ack_or_unsupported(msg, LABEL).await;
-                }
+        for (element, msg) in deliveries.into_iter().enumerate() {
+            if element == 0 {
+                requeued = nack_requeue(msg, LABEL).await;
+            } else {
+                ack_or_unsupported(msg, LABEL).await;
             }
         }
         if !requeued {
@@ -664,7 +667,8 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
 /// decode policy drops it, and what comes back must lend that value: the delivery without one sat
 /// past the end of the slice. A subscription that never puts the two in one batch, or a transport
 /// that answers the requeue with [`AckError::Unsupported`], leaves the position unchecked; every
-/// batch is still held to lending nothing for the delivery without a value.
+/// batch is still held to lending nothing for the delivery without a value. A batch of one is
+/// settled before the next is read, as in [`pages_keep_their_order`].
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
@@ -712,41 +716,49 @@ async fn values_go_before_deliveries_without_one<
         )
         .await
         .expect("publishing a value failed");
-        let mut pages = Vec::new();
+        let mut lent_by_all = Vec::new();
+        let mut shared = None;
         let mut delivered = 0;
         while delivered < 2 {
-            let page = next_page(
+            let (lent, deliveries) = next_page(
                 &mut *stream,
                 DEFAULT_TIMEOUT,
                 LABEL,
                 "both deliveries must arrive",
             )
             .await;
-            delivered += page.1.len();
-            pages.push(page);
-        }
-        let lent: Vec<&Value> = pages.iter().flat_map(|(lent, _)| lent).collect();
-        assert!(
-            lent == [value],
-            "{LABEL}: a delivery without a value must be lent none: it goes past the end of the \
-             slice, where the runtime settles it by the decode-failure policy; the batches lent \
-             {lent:?} for one value and one delivery without a value",
-        );
-        let shared = pages.iter().any(|(_, deliveries)| deliveries.len() > 1);
-        let mut requeued = false;
-        for (lent, deliveries) in pages {
-            for (element, msg) in deliveries.into_iter().enumerate() {
-                if element >= lent.len() {
-                    drop_unread(msg, LABEL).await;
-                } else if shared && element == 0 {
-                    requeued = nack_requeue(msg, LABEL).await;
-                } else {
-                    ack_or_unsupported(msg, LABEL).await;
+            delivered += deliveries.len();
+            lent_by_all.extend(lent.iter().cloned());
+            if deliveries.len() > 1 {
+                shared = Some((lent, deliveries));
+            } else {
+                for (element, msg) in deliveries.into_iter().enumerate() {
+                    if element >= lent.len() {
+                        drop_unread(msg, LABEL).await;
+                    } else {
+                        ack_or_unsupported(msg, LABEL).await;
+                    }
                 }
             }
         }
-        if !shared {
+        assert!(
+            lent_by_all == slice::from_ref(value),
+            "{LABEL}: a delivery without a value must be lent none: it goes past the end of the \
+             slice, where the runtime settles it by the decode-failure policy; the batches lent \
+             {lent_by_all:?} for one value and one delivery without a value",
+        );
+        let Some((lent, deliveries)) = shared else {
             continue;
+        };
+        let mut requeued = false;
+        for (element, msg) in deliveries.into_iter().enumerate() {
+            if element >= lent.len() {
+                drop_unread(msg, LABEL).await;
+            } else if element == 0 {
+                requeued = nack_requeue(msg, LABEL).await;
+            } else {
+                ack_or_unsupported(msg, LABEL).await;
+            }
         }
         if !requeued {
             return;

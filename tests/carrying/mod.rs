@@ -17,6 +17,7 @@
 
 use std::future::{Future, ready};
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
@@ -30,6 +31,7 @@ use ruststream::{
     HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
     Subscriber, SubscriptionSource,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::yield_now;
 
 /// The value a delivery carries: the service's own struct, with no serde model.
@@ -95,6 +97,9 @@ pub(crate) enum Fault {
     /// Every page comes back empty, each a moment after it is asked for: a client that answers
     /// every poll with nothing, so no read of the batch stream ever times out.
     EmptyPages,
+    /// Within the contract: a page holds one delivery, and the next page comes only once that
+    /// delivery is settled, as from a subscription with a prefetch of one.
+    OneInFlight,
 }
 
 /// The subscription descriptor: one subject of the in-memory bus, read as rows.
@@ -172,7 +177,12 @@ impl<Log: LogMode> RowSubscriber<Log> {
             (Fault::PlaceholderForGone, None) => Some(Row::new(0, "placeholder")),
             (_, row) => row,
         };
-        RowDelivery { inner, row, fault }
+        RowDelivery {
+            inner,
+            row,
+            fault,
+            slot: None,
+        }
     }
 }
 
@@ -208,7 +218,18 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
                         deliveries: Vec::new(),
                     })
                 })
-                .left_stream();
+                .boxed();
+        }
+        if fault == Fault::OneInFlight {
+            let pages = self.inner.batches(NonZeroUsize::MIN).boxed();
+            let in_flight = Arc::new(Semaphore::new(1));
+            return stream::unfold((pages, in_flight), async move |(mut pages, in_flight)| {
+                let slot = Arc::clone(&in_flight).acquire_owned().await.ok()?;
+                let page = pages.next().await?;
+                let page = page.map(|page| RowBatch::read(page, Fault::OneInFlight).holding(slot));
+                Some((page, (pages, in_flight)))
+            })
+            .boxed();
         }
         let size = if fault == Fault::OnePerPage {
             NonZeroUsize::MIN
@@ -218,7 +239,7 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
         self.inner
             .batches(size)
             .map(move |batch| batch.map(|page| RowBatch::read(page, fault)))
-            .right_stream()
+            .boxed()
     }
 }
 
@@ -237,6 +258,9 @@ pub(crate) struct RowDelivery<Log = Discarding> {
     inner: MemoryMessage<Log>,
     row: Option<Row>,
     fault: Fault,
+    /// The subscription's one slot for a delivery in flight, where it has one: given back once
+    /// the delivery is settled.
+    slot: Option<OwnedSemaphorePermit>,
 }
 
 impl<Log> Carries<Row> for RowDelivery<Log> {
@@ -262,14 +286,23 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     }
 
     fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
-        self.inner.ack()
+        let settled = self.inner.ack();
+        let slot = self.slot;
+        async move {
+            let settled = settled.await;
+            drop(slot);
+            settled
+        }
     }
 
     fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send {
         let unsupported = requeue && self.fault == Fault::NoRequeue;
         let settled = self.inner.nack(requeue && !unsupported);
+        let slot = self.slot;
         async move {
-            settled.await?;
+            let settled = settled.await;
+            drop(slot);
+            settled?;
             if unsupported {
                 return Err(AckError::Unsupported);
             }
@@ -282,7 +315,13 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     }
 
     fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + Send {
-        self.inner.nack_after(delay)
+        let settled = self.inner.nack_after(delay);
+        let slot = self.slot;
+        async move {
+            let settled = settled.await;
+            drop(slot);
+            settled
+        }
     }
 }
 
@@ -306,6 +345,7 @@ impl<Log: LogMode> RowBatch<Log> {
                         inner,
                         row: None,
                         fault,
+                        slot: None,
                     });
                 }
                 None if fault == Fault::GoneFirst => {
@@ -313,12 +353,14 @@ impl<Log: LogMode> RowBatch<Log> {
                         inner,
                         row: None,
                         fault,
+                        slot: None,
                     });
                 }
                 None => gone.push(RowDelivery {
                     inner,
                     row: None,
                     fault,
+                    slot: None,
                 }),
             }
         }
@@ -332,6 +374,14 @@ impl<Log: LogMode> RowBatch<Log> {
             _ => {}
         }
         Self { rows, deliveries }
+    }
+
+    /// The same page, its one delivery holding the subscription's slot until it is settled.
+    fn holding(mut self, slot: OwnedSemaphorePermit) -> Self {
+        if let Some(delivery) = self.deliveries.first_mut() {
+            delivery.slot = Some(slot);
+        }
+        self
     }
 }
 
