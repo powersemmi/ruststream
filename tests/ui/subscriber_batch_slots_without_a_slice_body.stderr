@@ -9,7 +9,7 @@ help: the trait `ruststream::runtime::CapsBatches` is not implemented for `handl
    |
 13 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-   = note: the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), with or without a reply and `Out` slots; a single-message body takes no batch, and how many of those are in flight at once is `workers(n)` instead
+   = note: the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`); a single-message body takes no batch, and how many of those are in flight at once is `workers(n)` instead
    = help: the following other types implement trait `ruststream::runtime::CapsBatches`:
              HandleValue<BatchCarried<T>, R, O, C, H, Doc>
              HandleValue<BatchDeserialized<F>, R, O, C, H, Doc>

@@ -438,9 +438,9 @@ impl<Def, Src, W, F, P, B, DC> StartAtStep<P> for SubscriberBuilder<Def, Src, (W
 #[diagnostic::on_unimplemented(
     message = "this subscriber has no batches to size",
     label = "`batch(..)` sizes the batches a batch body is handed",
-    note = "the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`), \
-            with or without a reply and `Out` slots; a single-message body takes no batch, and \
-            how many of those are in flight at once is `workers(n)` instead"
+    note = "the batch size belongs to a batch body (`&[T]`, `&[F<'_>]`, `&[Message<H, P>]`); a \
+            single-message body takes no batch, and how many of those are in flight at once is \
+            `workers(n)` instead"
 )]
 #[doc(hidden)]
 pub trait CapsBatches {}
