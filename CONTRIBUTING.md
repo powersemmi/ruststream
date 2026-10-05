@@ -100,15 +100,22 @@ A change to the surface the brokers use goes like this:
 These suites run on each broker's in-process transport. A change to the broker contract is also
 checked against a real broker. In the broker's repository, `just test-brokers` starts its
 Compose stand and runs the live suite against the core from crates.io. Against the local core,
-start the stand with `just brokers-up`, then point the lock file at the local core. The patch
-alone does not replace the release the lock file pins:
+the live suite runs like this:
 
 ```bash
+just brokers-up
+saved="$(mktemp)" && cp Cargo.lock "$saved"
 cargo update -p ruststream --config "patch.crates-io.ruststream.path='../ruststream'"
+# the live suite
+cp "$saved" Cargo.lock && rm "$saved"
+just brokers-down
 ```
 
-Run the command `test-brokers` runs with the same `--config` added to `cargo test`. Then put the
-lock file back with `git checkout Cargo.lock` and stop the stand with `just brokers-down`.
+The live suite is the command `test-brokers` runs, with the same `--config` added to
+`cargo test`. The patch alone does not replace the release the lock file pins, so `cargo update`
+points the lock file at the local core first. Copying the saved file back restores the lock file
+as it was, uncommitted edits included. A broker without a lock file gets one from
+`cargo update`: delete it instead of copying back.
 
 ## Pull requests
 
