@@ -362,6 +362,35 @@ impl<'a> SubscriberAssertions<'a> {
     /// contributes its elements, so the list is flat whether the handler takes one value or a
     /// slice.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(all(feature = "testing", feature = "memory"))]
+    /// # mod demo {
+    /// use ruststream::memory::MemoryBroker;
+    /// use ruststream::runtime::HandlerOutcome;
+    /// use ruststream::testing::TestApp;
+    ///
+    /// /// A row a broker's driver reads, with the fields a test compares.
+    /// #[derive(Debug, Clone, PartialEq)]
+    /// pub struct Row {
+    ///     pub id: u64,
+    /// }
+    ///
+    /// pub fn the_page_reached_the_handler(tb: &TestApp<()>) {
+    ///     let broker = tb.broker::<MemoryBroker>();
+    ///     assert_eq!(
+    ///         broker.subscriber("rows").received_values::<Row>(),
+    ///         [Row { id: 7 }, Row { id: 8 }],
+    ///     );
+    ///     broker
+    ///         .subscriber("rows")
+    ///         .assert_batch_sizes(&[2])
+    ///         .settled(HandlerOutcome::ack());
+    /// }
+    /// # }
+    /// ```
+    ///
     /// # Panics
     ///
     /// Panics if a delivery lent no `T`: the handler takes no carried value, or a delivery
