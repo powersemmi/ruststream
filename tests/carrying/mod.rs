@@ -73,12 +73,24 @@ pub(crate) enum Fault {
     /// Every delivery lends the first row the subscription read: a value cached past its
     /// delivery.
     StaleValue,
-    /// A delivery whose row is gone lends a placeholder row instead of nothing.
+    /// A delivery whose row is gone lends a placeholder row instead of nothing; a page lends one
+    /// for it, at its place past the rows it read.
     PlaceholderForGone,
     /// A page lends its rows in the reverse order of its deliveries.
     ReversedPage,
     /// A page lends one row more than it delivers.
     ExtraRow,
+    /// A page keeps a delivery whose row is gone in front of the deliveries with one, in the
+    /// order they arrived, instead of moving it past the end of the slice.
+    GoneFirst,
+    /// A delivery answers its payload with no bytes, so a copy the runtime publishes of it (a
+    /// retry copy, a dead letter) carries nothing to read the row from.
+    EmptyPayload,
+    /// Within the contract: every page holds one delivery, so no page shows an order.
+    OnePerPage,
+    /// Within the contract: the transport cannot requeue, so a nack with requeue drops the
+    /// delivery and answers that it is unsupported.
+    NoRequeue,
 }
 
 /// The subscription descriptor: one subject of the in-memory bus, read as rows.
@@ -156,7 +168,7 @@ impl<Log: LogMode> RowSubscriber<Log> {
             (Fault::PlaceholderForGone, None) => Some(Row::new(0, "placeholder")),
             (_, row) => row,
         };
-        RowDelivery { inner, row }
+        RowDelivery { inner, row, fault }
     }
 }
 
@@ -183,6 +195,11 @@ impl<Log: LogMode> BatchSubscriber for RowSubscriber<Log> {
         size: NonZeroUsize,
     ) -> impl Stream<Item = Result<RowBatch<Log>, Self::Error>> + Send + '_ {
         let fault = self.fault;
+        let size = if fault == Fault::OnePerPage {
+            NonZeroUsize::MIN
+        } else {
+            size
+        };
         self.inner
             .batches(size)
             .map(move |batch| batch.map(|page| RowBatch::read(page, fault)))
@@ -203,6 +220,7 @@ impl Seekable for RowSubscriber<Retaining> {
 pub(crate) struct RowDelivery<Log = Discarding> {
     inner: MemoryMessage<Log>,
     row: Option<Row>,
+    fault: Fault,
 }
 
 impl<Log> Carries<Row> for RowDelivery<Log> {
@@ -213,6 +231,9 @@ impl<Log> Carries<Row> for RowDelivery<Log> {
 
 impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     fn payload(&self) -> &[u8] {
+        if self.fault == Fault::EmptyPayload {
+            return &[];
+        }
         self.inner.payload()
     }
 
@@ -229,7 +250,15 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
     }
 
     fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send {
-        self.inner.nack(requeue)
+        let unsupported = requeue && self.fault == Fault::NoRequeue;
+        let settled = self.inner.nack(requeue && !unsupported);
+        async move {
+            settled.await?;
+            if unsupported {
+                return Err(AckError::Unsupported);
+            }
+            Ok(())
+        }
     }
 
     fn supports_nack_after(&self) -> bool {
@@ -257,10 +286,28 @@ impl<Log: LogMode> RowBatch<Log> {
             match Row::read(inner.payload()) {
                 Some(row) => {
                     rows.push(row);
-                    deliveries.push(RowDelivery { inner, row: None });
+                    deliveries.push(RowDelivery {
+                        inner,
+                        row: None,
+                        fault,
+                    });
                 }
-                None => gone.push(RowDelivery { inner, row: None }),
+                None if fault == Fault::GoneFirst => {
+                    deliveries.push(RowDelivery {
+                        inner,
+                        row: None,
+                        fault,
+                    });
+                }
+                None => gone.push(RowDelivery {
+                    inner,
+                    row: None,
+                    fault,
+                }),
             }
+        }
+        if fault == Fault::PlaceholderForGone {
+            rows.extend(gone.iter().map(|_| Row::new(0, "placeholder")));
         }
         deliveries.extend(gone);
         match fault {

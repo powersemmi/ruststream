@@ -1,8 +1,10 @@
-//! The carried lane's suites: a delivery lends the value that was published, a delivery without
-//! one lends none, and a batch lends its values in the order it yields its deliveries.
+//! The carried lane's suites: a delivery lends the value that was published, a copy made from
+//! its payload and headers lends it again, a delivery without one lends none, and a batch lends
+//! its values in the order it yields its deliveries, the deliveries without one last.
 
 use std::fmt;
 use std::num::NonZeroUsize;
+use std::slice;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
@@ -16,7 +18,7 @@ use crate::conformance::helpers::unique_subject;
 use crate::conformance::lifecycle::shutdown_within;
 use crate::{
     AckError, BatchSubscriber, Broker, Carries, CarriesBatch, Connected, IncomingMessage,
-    Subscriber, SubscriptionSource,
+    OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -26,17 +28,23 @@ const ROUNDS: usize = 5;
 /// publishes at once.
 const BATCH: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
-/// Verifies the [`Carries`] contract: a delivery lends the value that was published, and a
-/// delivery without one lends none.
+/// Verifies the [`Carries`] contract: a delivery lends the value that was published, a copy made
+/// from its payload and headers lends the same value, and a delivery without one lends none.
 ///
 /// The suite opens a subscription from `make_source(subject)`, publishes each of `values` through
 /// `publish`, and reads them back: every delivery lends one of them, each exactly once. Order is
-/// not part of the claim. It then makes one delivery whose value is gone through
-/// `publish_without_value` (a claimed id whose row was deleted) and expects that delivery to
-/// lend nothing: the runtime settles it by the subscription's decode-failure policy, and a value
-/// lent in its place would reach a handler as if it were real. The suite drops it with
-/// `nack(false)`, the way that policy's default does; a transport with no settlement answers
-/// [`AckError::Unsupported`], which passes.
+/// not part of the claim.
+///
+/// It then copies one delivery the way the runtime copies a delivery it retries or sends to a
+/// dead letter: its payload and headers, published to the same subject through the publisher
+/// `make_publisher` builds. The copy must lend the value the delivery lent, so a delivery's
+/// payload holds the message's bytes, from which the broker reads the value again.
+///
+/// Last, it makes one delivery whose value is gone through `publish_without_value` (a claimed id
+/// whose row was deleted) and expects that delivery to lend nothing: the runtime settles it by
+/// the subscription's decode-failure policy, and a value lent in its place would reach a handler
+/// as if it were real. The suite drops it with `nack(false)`, the way that policy's default does;
+/// a transport with no settlement answers [`AckError::Unsupported`], which passes.
 ///
 /// `values` holds at least two distinct values, so a delivery that lends one value twice shows.
 ///
@@ -96,6 +104,7 @@ const BATCH: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 ///     capabilities::carries(
 ///         MemoryBroker::new,
 ///         |name| Rows(name.to_owned()),
+///         ConnectedMemoryBroker::publisher,
 ///         async |connected: &ConnectedMemoryBroker, subject: &str, row: &Row| {
 ///             let msg = OutgoingMessage::new(subject, row.0.as_bytes());
 ///             connected.publisher().publish(msg, None).await
@@ -118,9 +127,22 @@ const BATCH: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
-pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone, GoneError>(
+pub async fn carries<
+    B,
+    Value,
+    MkBroker,
+    Src,
+    MkSrc,
+    Pub,
+    MkPub,
+    Publish,
+    PublishError,
+    Gone,
+    GoneError,
+>(
     make_broker: MkBroker,
     make_source: MkSrc,
+    make_publisher: MkPub,
     publish: Publish,
     publish_without_value: Gone,
     values: &[Value],
@@ -131,6 +153,8 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
     Src::Subscriber: Send,
     SubscriberMessage<Src::Subscriber>: Carries<Value>,
     MkSrc: Fn(&str) -> Src,
+    Pub: Publisher,
+    MkPub: Fn(&Connected<B>) -> Pub,
     Publish: AsyncFn(&Connected<B>, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     Gone: AsyncFn(&Connected<B>, &str) -> Result<(), GoneError>,
@@ -176,6 +200,16 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
         ack_or_unsupported(msg, LABEL).await;
     }
 
+    a_copy_lends_the_value(
+        &connected,
+        &make_publisher(&connected),
+        &publish,
+        &mut stream,
+        &subject,
+        &values[0],
+    )
+    .await;
+
     within(
         publish_without_value(&connected, &subject),
         "carries: publishing a delivery without a value",
@@ -201,7 +235,8 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
 }
 
 /// Verifies the [`CarriesBatch`] contract: a batch lends one value per delivery, in the order it
-/// yields its deliveries, and never more values than it delivers.
+/// yields its deliveries, with the deliveries without a value last, and never more values than it
+/// delivers.
 ///
 /// The suite opens a batch subscription from `make_source(subject)` and publishes each of
 /// `values` through `publish`. Across the batches that come back, every value is lent exactly
@@ -215,9 +250,15 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
 /// batch in five rounds is within its contract, and a transport that answers the requeue with
 /// [`AckError::Unsupported`] has nothing to bring back; the order goes unchecked for either.
 ///
-/// Last, one delivery whose value is gone (through `publish_without_value`) must come in a batch
-/// that lends no value for it: it sits past the end of the slice, where the runtime settles it by
-/// the decode-failure policy.
+/// A delivery of a batch is copied as on [`carries`], from its payload and headers through the
+/// publisher `make_publisher` builds, and the batch the copy comes in must lend the same value.
+///
+/// Last, a delivery whose value is gone (through `publish_without_value`) goes out in front of a
+/// value, again until a batch carries both. No batch may lend a value for it, and the batch's
+/// first delivery, requeued, must come back lending the value: a broker moves the deliveries
+/// without a value past the end of the slice, where the runtime settles them by the
+/// decode-failure policy. A delivery kept in its place would take the next delivery's value, and
+/// the last delivery with one would be dropped.
 ///
 /// # Examples
 ///
@@ -286,6 +327,7 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
 ///     capabilities::carries_batch(
 ///         MemoryBroker::new,
 ///         |name| Rows(name.to_owned()),
+///         ConnectedMemoryBroker::publisher,
 ///         async |connected: &ConnectedMemoryBroker, subject: &str, row: &Row| {
 ///             let msg = OutgoingMessage::new(subject, row.0.as_bytes());
 ///             connected.publisher().publish(msg, None).await
@@ -308,9 +350,22 @@ pub async fn carries<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
-pub async fn carries_batch<B, Value, MkBroker, Src, MkSrc, Publish, PublishError, Gone, GoneError>(
+pub async fn carries_batch<
+    B,
+    Value,
+    MkBroker,
+    Src,
+    MkSrc,
+    Pub,
+    MkPub,
+    Publish,
+    PublishError,
+    Gone,
+    GoneError,
+>(
     make_broker: MkBroker,
     make_source: MkSrc,
+    make_publisher: MkPub,
     publish: Publish,
     publish_without_value: Gone,
     values: &[Value],
@@ -321,6 +376,8 @@ pub async fn carries_batch<B, Value, MkBroker, Src, MkSrc, Publish, PublishError
     Src::Subscriber: BatchSubscriber + Send,
     <Src::Subscriber as BatchSubscriber>::Batch: CarriesBatch<Value>,
     MkSrc: Fn(&str) -> Src,
+    Pub: Publisher,
+    MkPub: Fn(&Connected<B>) -> Pub,
     Publish: AsyncFn(&Connected<B>, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     Gone: AsyncFn(&Connected<B>, &str) -> Result<(), GoneError>,
@@ -376,32 +433,143 @@ pub async fn carries_batch<B, Value, MkBroker, Src, MkSrc, Publish, PublishError
     }
 
     pages_keep_their_order(&connected, &publish, &mut stream, &subject, values).await;
-
-    within(
-        publish_without_value(&connected, &subject),
-        "carries_batch: publishing a delivery without a value",
-    )
-    .await
-    .expect("making a delivery without a value failed");
-    let (lent, deliveries) = next_page(
+    a_batch_copy_lends_the_value(
+        &connected,
+        &make_publisher(&connected),
+        &publish,
         &mut stream,
-        DEFAULT_TIMEOUT,
-        LABEL,
-        "the delivery without a value must arrive",
+        &subject,
+        &values[0],
     )
     .await;
-    assert!(
-        lent.len() < deliveries.len(),
-        "{LABEL}: a delivery without a value must be lent none: it goes past the end of the \
-         slice, where the runtime settles it by the decode-failure policy; the batch lent \
-         {lent:?} for {} deliveries",
-        deliveries.len(),
-    );
-    for msg in deliveries {
-        drop_unread(msg, LABEL).await;
-    }
+    values_go_before_deliveries_without_one(
+        &connected,
+        &publish,
+        &publish_without_value,
+        &mut stream,
+        &subject,
+        &values[0],
+    )
+    .await;
 
     shutdown_within(connected, LABEL).await;
+}
+
+/// One value goes out, and its delivery is copied the way the runtime copies a delivery it
+/// retries or dead-letters: its payload and headers, published to the same subject before the
+/// delivery itself is acknowledged. The copy must lend the value the delivery lent.
+// A check is awaited on the test's own task and never spawned, so the caller's factories and
+// values need not be `Send` or `Sync`.
+#[allow(clippy::future_not_send)]
+async fn a_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, M, E>(
+    connected: &Conn,
+    publisher: &Pub,
+    publish: &Publish,
+    stream: &mut S,
+    subject: &str,
+    value: &Value,
+) where
+    Pub: Publisher,
+    Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
+    PublishError: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage + Carries<Value>,
+    E: fmt::Debug,
+    Value: PartialEq + fmt::Debug,
+{
+    const LABEL: &str = "carries: a copy of a delivery lends its value";
+
+    within(publish(connected, subject, value), "carries: a publish")
+        .await
+        .expect("publishing a value failed");
+    let msg = expect_within(
+        stream,
+        DEFAULT_TIMEOUT,
+        LABEL,
+        "the published value must arrive",
+    )
+    .await;
+    publish_copy(publisher, subject, &msg, LABEL).await;
+    ack_or_unsupported(msg, LABEL).await;
+    let copy = expect_within(stream, DEFAULT_TIMEOUT, LABEL, "the copy must arrive").await;
+    assert_eq!(
+        copy.carried(),
+        Some(value),
+        "{LABEL}: a copy of a delivery, published from its payload and headers the way the \
+         runtime publishes a retry copy or a dead letter, must lend the value the delivery lent",
+    );
+    ack_or_unsupported(copy, LABEL).await;
+}
+
+/// The same for a batch: one value goes out, the delivery that brings it is copied from its
+/// payload and headers before it is acknowledged, and the batch the copy comes in must lend the
+/// value again.
+// A check is awaited on the test's own task and never spawned, so the caller's factories and
+// values need not be `Send` or `Sync`.
+#[allow(clippy::future_not_send)]
+async fn a_batch_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, Batch, M, E>(
+    connected: &Conn,
+    publisher: &Pub,
+    publish: &Publish,
+    stream: &mut S,
+    subject: &str,
+    value: &Value,
+) where
+    Pub: Publisher,
+    Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
+    PublishError: fmt::Debug,
+    S: Stream<Item = Result<Batch, E>> + Unpin,
+    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    M: IncomingMessage,
+    E: fmt::Debug,
+    Value: PartialEq + Clone + fmt::Debug,
+{
+    const LABEL: &str = "carries_batch: a copy of a delivery lends its value";
+
+    within(
+        publish(connected, subject, value),
+        "carries_batch: a publish",
+    )
+    .await
+    .expect("publishing a value failed");
+    let (_, deliveries) = next_page(
+        &mut *stream,
+        DEFAULT_TIMEOUT,
+        LABEL,
+        "the published value must arrive",
+    )
+    .await;
+    for msg in deliveries {
+        publish_copy(publisher, subject, &msg, LABEL).await;
+        ack_or_unsupported(msg, LABEL).await;
+    }
+    let (lent, deliveries) =
+        next_page(&mut *stream, DEFAULT_TIMEOUT, LABEL, "the copy must arrive").await;
+    assert_eq!(
+        lent,
+        slice::from_ref(value),
+        "{LABEL}: a copy of a delivery, published from its payload and headers the way the \
+         runtime publishes a retry copy or a dead letter, must lend the value the delivery lent",
+    );
+    for msg in deliveries {
+        ack_or_unsupported(msg, LABEL).await;
+    }
+}
+
+/// Publishes a copy of `msg` to `subject` the way the runtime does: its payload and its headers.
+async fn publish_copy<Pub: Publisher, M: IncomingMessage>(
+    publisher: &Pub,
+    subject: &str,
+    msg: &M,
+    label: &str,
+) {
+    let copy = OutgoingMessage::new(subject, msg.payload()).with_headers(msg.headers().clone());
+    within(
+        publisher.publish(copy, None),
+        &format!("{label}: publishing a copy"),
+    )
+    .await
+    .expect("publishing a copy failed");
 }
 
 /// Two values go out together until a batch carries both; the batch's first delivery is
@@ -483,6 +651,119 @@ async fn pages_keep_their_order<Conn, Value, Publish, PublishError, S, Batch, M,
             "{LABEL}: the value at index `i` must belong to the `i`-th delivery: the first \
              delivery was nacked with requeue, and what came back must lend the value the batch \
              lent first",
+        );
+        for msg in deliveries {
+            ack_or_unsupported(msg, LABEL).await;
+        }
+        return;
+    }
+}
+
+/// A delivery without a value goes out in front of one with a value until a batch carries both.
+/// The batch lends the one value; its first delivery is requeued and the other dropped the way the
+/// decode policy drops it, and what comes back must lend that value: the delivery without one sat
+/// past the end of the slice. A subscription that never puts the two in one batch, or a transport
+/// that answers the requeue with [`AckError::Unsupported`], leaves the position unchecked; every
+/// batch is still held to lending nothing for the delivery without a value.
+// A check is awaited on the test's own task and never spawned, so the caller's factories and
+// values need not be `Send` or `Sync`.
+#[allow(clippy::future_not_send)]
+async fn values_go_before_deliveries_without_one<
+    Conn,
+    Value,
+    Publish,
+    PublishError,
+    Gone,
+    GoneError,
+    S,
+    Batch,
+    M,
+    E,
+>(
+    connected: &Conn,
+    publish: &Publish,
+    publish_without_value: &Gone,
+    stream: &mut S,
+    subject: &str,
+    value: &Value,
+) where
+    Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
+    PublishError: fmt::Debug,
+    Gone: AsyncFn(&Conn, &str) -> Result<(), GoneError>,
+    GoneError: fmt::Debug,
+    S: Stream<Item = Result<Batch, E>> + Unpin,
+    Batch: CarriesBatch<Value> + IntoIterator<Item = M>,
+    M: IncomingMessage,
+    E: fmt::Debug,
+    Value: PartialEq + Clone + fmt::Debug,
+{
+    const LABEL: &str = "carries_batch: a delivery without a value goes last";
+
+    for _ in 0..ROUNDS {
+        within(
+            publish_without_value(connected, subject),
+            "carries_batch: publishing a delivery without a value",
+        )
+        .await
+        .expect("making a delivery without a value failed");
+        within(
+            publish(connected, subject, value),
+            "carries_batch: a publish",
+        )
+        .await
+        .expect("publishing a value failed");
+        let mut pages = Vec::new();
+        let mut delivered = 0;
+        while delivered < 2 {
+            let page = next_page(
+                &mut *stream,
+                DEFAULT_TIMEOUT,
+                LABEL,
+                "both deliveries must arrive",
+            )
+            .await;
+            delivered += page.1.len();
+            pages.push(page);
+        }
+        let lent: Vec<&Value> = pages.iter().flat_map(|(lent, _)| lent).collect();
+        assert!(
+            lent == [value],
+            "{LABEL}: a delivery without a value must be lent none: it goes past the end of the \
+             slice, where the runtime settles it by the decode-failure policy; the batches lent \
+             {lent:?} for one value and one delivery without a value",
+        );
+        let shared = pages.iter().any(|(_, deliveries)| deliveries.len() > 1);
+        let mut requeued = false;
+        for (lent, deliveries) in pages {
+            for (element, msg) in deliveries.into_iter().enumerate() {
+                if element >= lent.len() {
+                    drop_unread(msg, LABEL).await;
+                } else if shared && element == 0 {
+                    requeued = nack_requeue(msg, LABEL).await;
+                } else {
+                    ack_or_unsupported(msg, LABEL).await;
+                }
+            }
+        }
+        if !shared {
+            continue;
+        }
+        if !requeued {
+            return;
+        }
+        let (lent, deliveries) = next_page(
+            &mut *stream,
+            REDELIVERY_TIMEOUT,
+            LABEL,
+            "the delivery nacked with requeue must come back",
+        )
+        .await;
+        assert_eq!(
+            lent,
+            slice::from_ref(value),
+            "{LABEL}: a delivery without a value must come after every delivery with one: the \
+             batch's first delivery was nacked with requeue, and what came back must lend the \
+             value the batch lent",
         );
         for msg in deliveries {
             ack_or_unsupported(msg, LABEL).await;

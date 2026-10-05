@@ -44,6 +44,7 @@ async fn a_carrying_subscription_passes_carries() {
     capabilities::carries(
         MemoryBroker::new,
         |name| Rows::new(name),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
@@ -57,6 +58,7 @@ async fn a_delivery_lending_a_stale_value_fails_carries() {
     capabilities::carries(
         MemoryBroker::new,
         |name| Rows::new(name).faulty(Fault::StaleValue),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
@@ -70,6 +72,7 @@ async fn a_delivery_lending_a_placeholder_fails_carries() {
     capabilities::carries(
         MemoryBroker::new,
         |name| Rows::new(name).faulty(Fault::PlaceholderForGone),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
@@ -82,6 +85,7 @@ async fn a_carrying_subscription_passes_carries_batch() {
     capabilities::carries_batch(
         MemoryBroker::new,
         |name| Rows::new(name),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
@@ -95,6 +99,7 @@ async fn a_batch_lending_its_values_out_of_order_fails_carries_batch() {
     capabilities::carries_batch(
         MemoryBroker::new,
         |name| Rows::new(name).faulty(Fault::ReversedPage),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
@@ -108,6 +113,89 @@ async fn a_batch_lending_more_values_than_deliveries_fails_carries_batch() {
     capabilities::carries_batch(
         MemoryBroker::new,
         |name| Rows::new(name).faulty(Fault::ExtraRow),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a delivery without a value must come after every delivery with one")]
+async fn a_batch_keeping_a_delivery_without_a_value_in_front_fails_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::GoneFirst),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a delivery without a value must be lent none")]
+async fn a_batch_lending_a_placeholder_fails_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::PlaceholderForGone),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_that_never_groups_its_deliveries_passes_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::OnePerPage),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_transport_that_cannot_requeue_passes_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::NoRequeue),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a copy of a delivery, published from its payload and headers")]
+async fn a_delivery_whose_copy_loses_its_value_fails_carries() {
+    capabilities::carries(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::EmptyPayload),
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a copy of a delivery, published from its payload and headers")]
+async fn a_batch_whose_copies_lose_their_values_fails_carries_batch() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| Rows::new(name).faulty(Fault::EmptyPayload),
+        ConnectedMemoryBroker::publisher,
         publish_row,
         publish_gone,
         &rows(),
