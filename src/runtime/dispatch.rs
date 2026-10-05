@@ -1500,7 +1500,7 @@ where
 /// [`attempt_of`]): the broker's own where it keeps one, the framework's header otherwise, never
 /// both. A delivery at the cap goes to the declared dead-letter destination or is rejected,
 /// exactly as on the copy path.
-/// Where the broker moves a spent delivery itself the cap is not read here at all: the
+/// Where the broker moves a spent delivery itself the cap is not read on this path: the
 /// declaration is the subscription descriptor's to map onto the broker's own mechanism.
 ///
 /// Without native support this captures the message, drops the original, and schedules a copy of it
@@ -1519,6 +1519,11 @@ where
 /// `QoS` 0, `ZeroMQ`, or Redis pub/sub) still gets the copy: there is no original to drop and no
 /// redelivery of the broker's own to fall back on, so the copy is the only form the retry can
 /// take.
+///
+/// Where the broker moves the subscription's deliveries itself and cannot hold one back, the
+/// delivery is requeued at once, and a warning says the delay is dropped. A delivery the
+/// declaration sends elsewhere (its attempts are spent, or a destination takes every copy) gets
+/// the same requeue without the warning: the broker moves it on that requeue, so no delay was due.
 ///
 /// # Errors
 ///
@@ -1588,12 +1593,19 @@ where
     }
 
     let Some(retry) = delivery.retry.as_ref() else {
-        warn!(
-            target: "ruststream::dispatch",
-            subscription = %name,
-            "retry_after on a broker with neither native delayed redelivery nor a copy path of \
-             its own; requeuing immediately (the delay is dropped)",
-        );
+        // A delivery the declaration sends elsewhere is the broker's to move, and this requeue is
+        // what moves it, so it was never due a delay. Only one that comes back loses its delay.
+        if matches!(
+            redelivery_of(slot.get(), &delivery.declaration),
+            Redelivery::Subscription
+        ) {
+            warn!(
+                target: "ruststream::dispatch",
+                subscription = %name,
+                "retry_after on a broker with neither native delayed redelivery nor a copy path \
+                 of its own; requeuing immediately (the delay is dropped)",
+            );
+        }
         return slot.take().nack(true).await;
     };
 
