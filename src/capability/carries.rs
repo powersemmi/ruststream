@@ -6,13 +6,20 @@
 /// Some brokers hand over a value rather than bytes: a database queue reads a row through its
 /// driver, a client decodes a frame of its own format. A handler taking `&T` reads that value
 /// straight from the delivery, with no codec and no copy. The broker implements this on its
-/// delivery type, and its crate's derive puts `T` on the carried input lane; a `T` that derives
-/// `Deserialize` rides the codec instead.
+/// delivery type, and its crate's derive puts `T` on the carried input lane by writing
+/// `impl Input for T { type Axis = SoloCarried<T>; }` (both from [`runtime`](crate::runtime));
+/// a `T` that derives `Deserialize` rides the codec instead. The lane asks of `T`
+/// `Clone + Send + Sync + 'static`; `Clone` because the test harness keeps a clone of each value.
 ///
 /// `None` is a delivery whose value is gone, such as a claimed id whose row was deleted. The
 /// runtime settles it by the subscription's decode-failure policy
 /// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a payload that
 /// does not decode.
+///
+/// The delivery answers [`payload`](crate::IncomingMessage::payload) with the message's bytes,
+/// the ones the value is read from. A copy the runtime publishes of it, a retry copy or a dead
+/// letter, carries those bytes and the headers, and the broker reads the same value from that
+/// copy; `conformance::capabilities::carries` checks it.
 ///
 /// # Examples
 ///
@@ -26,8 +33,10 @@
 ///     to: String,
 /// }
 ///
-/// /// A claimed row: the row itself while it is still there.
+/// /// A claimed row: the bytes the table stores, and the row read from them while it is still
+/// /// there.
 /// struct Claimed {
+///     bytes: Vec<u8>,
 ///     headers: HeaderMap,
 ///     row: Option<SendEmail>,
 /// }
@@ -40,7 +49,7 @@
 ///
 /// impl IncomingMessage for Claimed {
 ///     fn payload(&self) -> &[u8] {
-///         &[]
+///         &self.bytes
 ///     }
 ///     fn headers(&self) -> &HeaderMap {
 ///         &self.headers
@@ -54,6 +63,7 @@
 /// }
 ///
 /// let claimed = Claimed {
+///     bytes: b"ops@example.com".to_vec(),
 ///     headers: HeaderMap::new(),
 ///     row: Some(SendEmail { to: "ops@example.com".to_owned() }),
 /// };
@@ -98,14 +108,15 @@ pub trait Carries<T> {
 ///     to: String,
 /// }
 ///
-/// /// The claim that settles one row.
+/// /// The claim that settles one row, with the bytes the table stores for it.
 /// struct Claim {
+///     bytes: Vec<u8>,
 ///     headers: HeaderMap,
 /// }
 ///
 /// impl IncomingMessage for Claim {
 ///     fn payload(&self) -> &[u8] {
-///         &[]
+///         &self.bytes
 ///     }
 ///     fn headers(&self) -> &HeaderMap {
 ///         &self.headers
@@ -141,7 +152,10 @@ pub trait Carries<T> {
 ///
 /// let page = Page {
 ///     rows: vec![SendEmail { to: "ops@example.com".to_owned() }],
-///     claims: vec![Claim { headers: HeaderMap::new() }],
+///     claims: vec![Claim {
+///         bytes: b"ops@example.com".to_vec(),
+///         headers: HeaderMap::new(),
+///     }],
 /// };
 /// assert_eq!(page.carried()[0].to, "ops@example.com");
 /// assert_eq!(page.into_iter().count(), 1);

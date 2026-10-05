@@ -55,7 +55,8 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// This is the routing contract and nothing else. A capability
 /// ([`BatchSubscriber`](crate::BatchSubscriber),
 /// [`RequestReply`](crate::RequestReply), [`TransactionalPublisher`](crate::TransactionalPublisher),
-/// [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`](crate::Seekable)) has a suite of
+/// [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`](crate::Seekable),
+/// [`Carries`](crate::Carries), [`CarriesBatch`](crate::CarriesBatch)) has a suite of
 /// its own in [`capabilities`](super::capabilities), which the broker calls for each capability it
 /// implements: none of them can be folded in here, because the bound would either exclude every
 /// broker that declines the capability or demand the in-process transport implement it. So a

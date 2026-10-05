@@ -10,11 +10,11 @@
 //! timing, `Kafka` offsets, `RabbitMQ` exchanges); for those, use the corresponding broker
 //! crate.
 //!
-//! Every capability trait has a native implementation here, on the broker's own in-process
-//! semantics: request / reply via
-//! [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
-//! [`MemoryPublisher`], partition keys on [`MemoryMessage`], and log repositioning through
-//! [`MemorySeeker`] over the per-name publish log.
+//! These capabilities have native implementations here, on the broker's own in-process
+//! semantics: request / reply via [`MemoryRequester`], batch consumption on
+//! [`MemorySubscriber`], transactions on [`MemoryPublisher`], partition keys on
+//! [`MemoryMessage`], and log repositioning through [`MemorySeeker`] over the per-name publish
+//! log.
 //!
 //! A [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome is this broker's own
 //! affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is

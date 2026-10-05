@@ -5,21 +5,24 @@
 //! [`TransactionalPublisher`](crate::TransactionalPublisher),
 //! [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`], [`Carries`](crate::Carries),
 //! [`CarriesBatch`](crate::CarriesBatch)) runs the matching suite to prove the implementation
-//! honours the trait contract; brokers without the capability simply do not call it. Like [`harness::lifecycle`](super::harness::lifecycle), every suite is built from
-//! caller-supplied factories so it stays broker-agnostic, and the in-memory broker is the
-//! executable reference that passes all of them.
+//! honours the trait contract; brokers without the capability simply do not call it. Like
+//! [`harness::lifecycle`](super::harness::lifecycle), every suite is built from caller-supplied
+//! factories so it stays broker-agnostic. The in-memory broker is the executable reference: it
+//! passes the suite of every capability it implements, and the examples of [`carries`] and
+//! [`carries_batch`] read its deliveries as rows, the way a database driver hands them over.
 //!
 //! Every suite names its subject through [`unique_subject`](super::helpers::unique_subject)
 //! rather than fixing one, so a run reads only its own messages. A fixed subject would pass once
-//! and fail on the second run against any broker that keeps what the first left: a retained log, a durable queue, a key namespace. The
-//! suites are therefore re-runnable against one server, and two of them can run at once in one
-//! process.
+//! and fail on the second run against any broker that keeps what the first left: a retained log,
+//! a durable queue, a key namespace. The suites are therefore re-runnable against one server, and
+//! two of them can run at once in one process.
 //!
-//! Each suite also calls the capability the way a service reaches it: from a current-thread
-//! runtime on a thread of its own that stops right after the call (a handler on a dedicated
-//! thread), and through a handle that outlives the broker's shutdown. What the broker starts on
-//! such a call has to run on the runtime it connected on, and a call after shutdown has to return
-//! an error at once, because a silent success there is a lost message.
+//! [`request_reply`], [`transactions`], [`owned_transactions`] and [`seeking`] also call the
+//! capability the way a service reaches it: from a current-thread runtime on a thread of its own
+//! that stops right after the call (a handler on a dedicated thread), and through a handle that
+//! outlives the broker's shutdown; [`batches`] settles a batch from such a runtime. What the
+//! broker starts on such a call has to run on the runtime it connected on, and a call after
+//! shutdown has to return an error at once, because a silent success there is a lost message.
 
 use std::{fmt, future::Future, time::Duration};
 

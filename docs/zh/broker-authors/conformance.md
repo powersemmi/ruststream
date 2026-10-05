@@ -301,8 +301,8 @@ async fn in_process_matches_the_server() {
 ## 能力套件 { #capability-suites }
 
 如果你的 Broker 实现了某个能力 trait，就从 `conformance::capabilities` 跑对应的套件，它证明这份
-实现遵守该 trait 的契约。不具备该能力的 Broker 不调用它。每个套件的工厂形状与 `lifecycle` 相同，
-也会执行一次真实的 `connect`，所以用同样的环境变量控制它是否运行。套件发出的每一次调用都有时限，
+实现遵守该 trait 的契约。不具备该能力的 Broker 不调用它。每个套件都和 `lifecycle` 一样，用工厂
+构造 Broker 和订阅，也会执行一次真实的 `connect`，所以用同样的环境变量控制它是否运行。套件发出的每一次调用都有时限，
 卡住的 Broker 会让套件失败，而不是让它挂起：
 
 | 套件 | 要求 | 断言内容 |
@@ -314,6 +314,8 @@ async fn in_process_matches_the_server() {
 | `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，`commit`、直接发布以及此时打开的事务都返回错误 |
 | `capabilities::seeking` | `Seekable`，且消息实现 `Positioned` | 回退到从某条已投递消息上取得的位置，会重新投递恰好那一条消息以及它之后按顺序排列的后缀；向前跳转会略过目标之前排队的投递；重新定位之后，订阅继续投递新的发布；新订阅在第一次投递之前跳转到之前的订阅取得的位置，就从这条消息开始；在一个已经停止的运行时里发起的跳转仍然生效；Broker 关闭之后的跳转返回错误 |
 | `capabilities::seeking_unknown_position` | `Seekable`，以及由 Broker 构造的位置 | 跳转到订阅日志里不存在的位置（已被保留策略淘汰，或者从未存在）返回错误，订阅不会移动，也不会从别处读取；流上的错误不会结束检查，检查会继续读下一次投递 |
+| `capabilities::carries` | 订阅的投递实现 `Carries` | 已发布值的每次投递都借出这个值，每个值恰好借出一次；按运行时发布重试副本或死信的方式，用一次投递的载荷和消息头发布的副本，借出同一个值；值已经不在的投递不借出任何值，运行时按 `on_failure(decode = ..)` 策略处理它 |
+| `capabilities::carries_batch` | `BatchSubscriber`，其批实现 `CarriesBatch` | 每个已发布的值在这些批里恰好借出一次，任何一批借出的值都不多于它的投递；两个值如果在五轮之内有一次落进同一批，带重新入队的 `nack` 让这一批的第一次投递回来，回来的投递借出的是该批最先借出的值（从不把它们合进一批的订阅，以及对重新入队回答 `AckError::Unsupported` 的传输，都能通过，顺序对它们不做检查）；批里一次投递的副本借出同一个值，与 `carries` 相同；值已经不在的投递发布在一个值之前，批不为它借出值，并把它排到有值的投递之后、切片末尾之外，同样用重新入队来检查 |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust
@@ -340,8 +342,9 @@ async fn passes_request_reply() {
 套件为此调用 `conformance::helpers::unique_subject`。你自己的端到端测试集有同样的问题，也有
 同样的解法。
 
-内存 Broker 原生实现了每一项能力，七个套件都在进程内通过（见
-[内存 Broker](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明每个套件究竟期望什么。
+内存 Broker 原生实现了请求-响应、批、事务和重新定位这几项能力，它们的七个套件都在进程内通过（见
+[内存 Broker](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明这些套件究竟期望什么。
+`Carries` 和 `CarriesBatch` 的套件面向投递本身已经持有解码值的 Broker，比如数据库里的队列。
 
 ## 作者检查清单
 

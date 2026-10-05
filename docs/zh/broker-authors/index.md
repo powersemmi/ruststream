@@ -595,6 +595,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 | `Partitioned` | 给出站消息设定分区键 |
 | `Seekable` / `Seeker` | 在可重放的日志中重新定位一个活的订阅 |
 | `Positioned` | 报告一次投递在日志中的位置 |
+| `Carries` / `CarriesBatch` | 借出一次投递已经持有的解码值，或者把一批的值作为一个切片借出 |
 | `DescribeServer` | 为 AsyncAPI 报告一个 `ServerSpec` |
 
 `Seekable` 在 `stream` 借用订阅者之前交出 `Seeker` 句柄，因此可以从分发循环之外重新定位一个正在
@@ -624,6 +625,20 @@ ack 记账。
 四种发布者能力，每一种在 arena 条目上都有自己的类型化形态：发布构建器、事务作用域、拥有式事务、带
 关联的请求。这些形态建立在挂载点的编解码器和标记的字典之上。服务要用到它们，只需你在活的发布者上
 实现对应的 trait。
+
+有些 Broker 的投递本身已经持有解码好的值，比如数据库驱动读出的一行。这样的投递通过
+`Carries<T>` 借出这个值，接受 `&T` 的处理器就在原处读取它，中间没有编解码器。值已经不在时，
+`carried` 返回 `None`，运行时按 `on_failure(decode = ..)` 策略处理这次投递，与处理无法解码的载荷
+一样。
+
+- 把值放在同一个缓冲区里的批，通过 `CarriesBatch<T>` 以一个切片借出它们。第 `i` 个值属于第 `i`
+  次投递，所以没有值的投递要排在最后：切片末尾之后的投递没有值。
+- 带值的投递仍用 `payload()` 返回消息的字节。运行时把这些字节连同消息头复制进重试副本或死信，你的
+  Broker 要能从这样的副本里读回同一个值。
+- 你的 crate 的 derive 宏写下 `impl Input for Row { type Axis = SoloCarried<Row>; }`，类型由此走上
+  携带值这条路径。该类型实现 `Clone`，不实现 `Deserialize`。
+- 你的批量上下文还要为批类型实现 `BuildBatchContext`：在这条路径上，运行时从整个批构建上下文。
+- `capabilities::carries` 和 `capabilities::carries_batch` 检查这两个 trait。
 
 ### 批：`BatchSubscriber` {#batches-batchsubscriber}
 
@@ -810,7 +825,8 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 
 批量订阅另有自己的上下文，因为一批横跨多次投递。把整条*订阅*共享的东西（seek 句柄、流的名字、
 消费者组）攒成第二个结构体，在它上面实现 `BuildBatchContext`，再发布若干 `Field` 键，好让批量主体
-用 `ctx.context(..)` 读它。运行时按批构造一个值，取自这一批的第一次投递。
+用 `ctx.context(..)` 读它。运行时按批构造一个值，取自这一批的第一次投递；批以一个切片借出值时
+（`CarriesBatch`），取自整个批。
 
 逐次投递的字段不放进去：位置属于某一次投递，所以由批从元素上读。把两个结构体分开，正是让这条规则
 在编译期成立的办法：投递上下文不实现 `BuildBatchContext`，批量主体也就写不出它。

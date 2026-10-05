@@ -662,6 +662,7 @@ assemble batches on the client.
 | `Partitioned` | a partition key on outgoing messages |
 | `Seekable` / `Seeker` | repositioning a live subscription in a replayable log |
 | `Positioned` | reporting a delivery's own position in the log |
+| `Carries` / `CarriesBatch` | lending the decoded value a delivery already holds, or a batch's values as one slice |
 | `DescribeServer` | reporting a `ServerSpec` for AsyncAPI |
 
 `Seekable` hands out its `Seeker` handle before `stream` borrows the subscriber, so a running
@@ -696,6 +697,24 @@ Under each of the four publisher capabilities the arena entry also offers that c
 form over the mount site's codec and the marker's dictionary: the publish builder, a transaction
 scope, an owned transaction, a correlated request. Implementing the trait on your live publisher is
 all a service needs to reach them.
+
+A broker whose deliveries hold a decoded value, such as a row a database driver read, lends it
+through `Carries<T>`. A handler taking `&T` reads it where it lies, with no codec. `carried`
+answers `None` where the value is gone, and the runtime settles that delivery by the
+decode-failure policy.
+
+- A batch that keeps its values in one buffer lends them through `CarriesBatch<T>` as one slice.
+  Value `i` belongs to delivery `i`, so put the deliveries without a value last: a delivery past
+  the end of the slice has none.
+- A carried delivery answers `payload()` with the message's bytes. The runtime copies them, with
+  the headers, into a retry copy or a dead letter, and your broker reads the same value from such
+  a copy.
+- Your crate's derive makes the type a carried input with
+  `impl Input for Row { type Axis = SoloCarried<Row>; }`. The type is `Clone` and does not
+  implement `Deserialize`.
+- A batch context of yours implements `BuildBatchContext` for your batch type as well: for a
+  carried batch the runtime builds it from the whole batch.
+- `capabilities::carries` and `capabilities::carries_batch` check both traits.
 
 ### Batches: `BatchSubscriber`
 
@@ -904,7 +923,8 @@ A broker with no per-delivery fields uses `()`.
 Batch subscriptions get a context of their own, because a batch spans many deliveries. Build a
 second struct out of what the whole *subscription* shares (a seek handle, a stream name, a consumer
 group), implement `BuildBatchContext` on it, and publish `Field` keys so a batch body reads it with
-`ctx.context(..)`. The runtime builds one value per batch from the batch's first delivery.
+`ctx.context(..)`. The runtime builds one value per batch from the batch's first delivery, or
+from the batch itself where the batch lends its values as one slice (`CarriesBatch`).
 
 Per-delivery fields stay out of it: a position belongs to one delivery, so a batch reads it off the
 elements. Keeping the two structs apart is what makes that a compile-time rule, since a

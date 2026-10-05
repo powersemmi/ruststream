@@ -89,7 +89,7 @@ runtime dispatches messages through the same path.
 
 ## Capabilities
 
-Every capability trait is implemented over this broker's own in-process semantics:
+These capability traits are implemented over this broker's own in-process semantics:
 
 - **Request / reply.** `broker.requester()` gives you a `MemoryRequester`: its `request` publishes
   the message and names a unique in-process reply topic in the `reply-to` header, and completes

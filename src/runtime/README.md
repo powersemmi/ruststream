@@ -9,13 +9,13 @@ under [Macro or manual](#macro-or-manual).
 
 # Subscribers
 
-A handler is an `async fn` whose first parameter is a reference to the decoded payload: `&T`
-handles one message, `&[T]` a whole batch. An optional `&mut Context` comes second. Any
-further parameter is an extractor the runtime resolves before the body runs: [`State<T>`]
-for a field of the shared state, [`Ctx<K>`] for a broker per-delivery field, [`Headers<T>`]
-for the typed header contract, or a type of your own implementing [`FromContext`]. A
-parameter written `Out(out): Out<impl Publisher>` is not an extractor but an injected
-publisher, described under [Publishing](#publishing).
+A handler is an `async fn` whose first parameter is a reference to the message: `&T` handles one
+message, `&[T]` a whole batch. An optional `&mut Context` comes second. Any further parameter is
+an extractor the runtime resolves before the body runs: [`State<T>`] for a field of the shared
+state, [`Ctx<K>`] for a broker per-delivery field, [`Headers<T>`] for the typed header contract,
+or a type of your own implementing [`FromContext`]. A parameter written
+`Out(out): Out<impl Publisher>` is not an extractor but an injected publisher, described under
+[Publishing](#publishing).
 
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
@@ -172,6 +172,129 @@ compile. A constructor that rejects the bytes settles the delivery by the decode
 same mnemonic holds on the way out: a reply or a published value deriving
 [`Serialized`](macro@crate::Serialized) produces its own bytes and meets no codec. The
 [`codec`](crate::codec) module has the lanes in full, `#[wire(prost)]` included.
+
+## Values the broker already holds
+
+Some brokers hand over a value rather than bytes: a database queue reads each row through its
+driver. A handler takes that value as it is, with no codec and no copy. `&SendEmail` reads the
+value one delivery holds, and `&[SendEmail]` the values of a batch, as the one slice the broker
+keeps them in. The broker crate's derive puts the type on this lane.
+
+```
+# #[cfg(all(feature = "macros", feature = "memory"))]
+# mod demo {
+# mod db_queue {
+#     // The broker crate's side: its broker, its descriptor, its deliveries and pages of rows.
+#     use std::num::NonZeroUsize;
+#     use futures::Stream;
+#     use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
+#     use ruststream::runtime::{Input, SoloCarried};
+#     use ruststream::{AckError, AddressedCopies, BatchSubscriber, Carries, CarriesBatch};
+#     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed};
+#     use ruststream::{Subscriber, SubscriptionSource};
+#     use super::SendEmail;
+#     pub mod prelude {
+#         pub use ruststream::prelude::*;
+#         pub use super::{QueueBroker, QueueTable};
+#     }
+#     pub type QueueBroker = ruststream::memory::MemoryBroker;
+#     #[derive(Clone)]
+#     pub struct QueueTable(&'static str);
+#     impl QueueTable { pub fn new(table: &'static str) -> Self { Self(table) } }
+#     pub struct Claims;
+#     pub struct Claimed { bytes: Vec<u8>, headers: HeaderMap, row: Option<SendEmail> }
+#     pub struct Page { rows: Vec<SendEmail>, claims: Vec<Claimed> }
+#     impl SubscriptionSource<ConnectedMemoryBroker> for QueueTable {
+#         type Subscriber = Claims;
+#         type Copies = AddressedCopies;
+#         fn name(&self) -> &str { self.0 }
+#         async fn subscribe(self, _: &ConnectedMemoryBroker) -> Result<Claims, MemoryError> {
+#             Ok(Claims)
+#         }
+#     }
+#     impl RedeliveryAddressed<ConnectedMemoryBroker> for QueueTable {
+#         async fn redelivery_address(&self, _: &ConnectedMemoryBroker)
+#             -> Result<RedeliveryAddress, MemoryError> {
+#             Ok(RedeliveryAddress::new(self.0))
+#         }
+#     }
+#     impl Subscriber for Claims {
+#         type Message = Claimed;
+#         type Error = MemoryError;
+#         fn stream(&mut self) -> impl Stream<Item = Result<Claimed, MemoryError>> + Send + '_ {
+#             futures::stream::empty()
+#         }
+#     }
+#     impl BatchSubscriber for Claims {
+#         type Batch = Page;
+#         fn batches(&mut self, _: NonZeroUsize)
+#             -> impl Stream<Item = Result<Page, MemoryError>> + Send + '_ {
+#             futures::stream::empty()
+#         }
+#     }
+#     impl Carries<SendEmail> for Claimed {
+#         fn carried(&self) -> Option<&SendEmail> { self.row.as_ref() }
+#     }
+#     impl CarriesBatch<SendEmail> for Page {
+#         fn carried(&self) -> &[SendEmail] { &self.rows }
+#     }
+#     impl IntoIterator for Page {
+#         type Item = Claimed;
+#         type IntoIter = std::vec::IntoIter<Claimed>;
+#         fn into_iter(self) -> Self::IntoIter { self.claims.into_iter() }
+#     }
+#     impl IncomingMessage for Claimed {
+#         fn payload(&self) -> &[u8] { &self.bytes }
+#         fn headers(&self) -> &HeaderMap { &self.headers }
+#         async fn ack(self) -> Result<(), AckError> { Ok(()) }
+#         async fn nack(self, _: bool) -> Result<(), AckError> { Ok(()) }
+#     }
+#     // What the broker crate's derive writes.
+#     impl Input for SendEmail { type Axis = SoloCarried<Self>; }
+# }
+use db_queue::prelude::*;
+
+/// One row of the queue table, as the database driver reads it.
+// The broker crate's derive, beside `Clone`, puts the type on this lane.
+#[derive(Clone)]
+struct SendEmail {
+    to: String,
+}
+
+#[subscriber(QueueTable::new("email_jobs"))]
+async fn send(email: &SendEmail) -> HandlerOutcome {
+    tracing::info!(to = %email.to, "sent");
+    HandlerOutcome::ack()
+}
+
+/// One SMTP session per page of rows.
+#[subscriber(QueueTable::new("newsletter_jobs"))]
+async fn send_newsletter(emails: &[SendEmail]) -> HandlerOutcome {
+    tracing::info!(count = emails.len(), "sent a page");
+    HandlerOutcome::ack()
+}
+
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("mailer", "0.1.0")).with_broker(QueueBroker::new(), |b| {
+        b.include(send);
+        b.include(send_newsletter.batch(nonzero!(64)));
+    })
+}
+# }
+# fn main() {}
+```
+
+A delivery whose value is gone, such as a claimed id whose row was deleted, settles by the
+decode policy, like a payload that does not decode. A handler of one value mounts in every form:
+plain, with a reply, with `Out` slots, or with both. A handler of a batch mounts in the plain form
+only, with no reply and no `Out` slots. Mounting such a handler on a subscription that does not
+carry its type does not compile, and the error names the subscription and the type.
+
+The type derives `Clone`, because the test harness keeps a copy of each value (see
+[`testing`](crate::testing)). It does not derive `Deserialize`: a type that deserializes rides
+the codec. The generated document describes it through its `JsonSchema` derive, as it describes
+a decoded payload (see [`asyncapi`](crate::asyncapi#schemas)). A broker author implements
+[`Carries`](crate::Carries) and [`CarriesBatch`](crate::CarriesBatch).
 
 ## Workers
 
@@ -1032,9 +1155,10 @@ orchestrator to restart on. A decode failure is bad input, so `decode = drop` na
 message without requeue and keeps consuming. The values are [`FailurePolicy::FailFast`],
 [`Drop`](FailurePolicy::Drop), [`Retry`](FailurePolicy::Retry),
 [`RetryAfter`](FailurePolicy::RetryAfter) and [`Skip`](FailurePolicy::Skip), which acks the
-failed message to move past it. The decode key also settles a violated header contract and a
-self-decoding payload that rejects its bytes. A panic is caught with `catch_unwind`, so a
-build with `panic = "abort"` applies no panic policy at all.
+failed message to move past it. The decode key also settles a violated header contract, a
+self-decoding payload that rejects its bytes, and a delivery whose value is gone (see
+[Values the broker already holds](#values-the-broker-already-holds)). A panic is caught with
+`catch_unwind`, so a build with `panic = "abort"` applies no panic policy at all.
 
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]

@@ -19,7 +19,8 @@ alwaysApply: false
 - A task the broker starts on its own behalf (a delayed-redelivery timer, a reply dispatcher, a
   commit window) runs on the runtime `connect` ran on: keep `Handle::current()` from `connect` in
   the connected form and spawn through it, never `tokio::spawn` from a publish, settle or request
-  path. `harness::lifecycle` and the `capabilities::*` suites call from a runtime that stops.
+  path. `harness::lifecycle` and the `request_reply`, `batches`, `transactions`,
+  `owned_transactions` and `seeking` suites call from a runtime that stops.
 - What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
   broker must surface an error when used after shutdown, never a silent success against a dead
   connection. `shutdown` never blocks or panics; do all fallible teardown there.
@@ -93,6 +94,15 @@ alwaysApply: false
   Declining it is still right where batching breaks a guarantee the transport carries (a ZeroMQ
   `ROUTER` answers each peer at its own address, and a batch's replies share one context); say so
   in your crate's docs.
+- A delivery that already holds a decoded value (a row a database driver read) implements
+  `Carries<T>`, answering `None` where the value is gone so the runtime settles it by the decode
+  policy; a batch that keeps its values in one buffer implements `CarriesBatch<T>`, value `i`
+  belonging to delivery `i` and value-less deliveries last. Such a delivery answers `payload()`
+  with the message's bytes: the runtime's retry and dead-letter copies carry them and the headers,
+  and your broker reads the same value back from a copy. Your derive writes the type's `Input`
+  impl with the `SoloCarried` axis; the type needs `Clone` and no `Deserialize`. On this lane a
+  batch context of yours is built from the batch (`BuildBatchContext<YourBatch>`) and, for retry
+  copies, from each delivery. Run `capabilities::carries` and `capabilities::carries_batch`.
 - Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
   types (unit structs with an associated `Context` and owned `Value`), so handlers can take
   `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path. A position that is
@@ -475,11 +485,11 @@ impl ContextField for Partition {
 
 Batch subscriptions take a second, separate struct: what the whole *subscription* shares (a seek
 handle, a stream name), with `BuildBatchContext` on it - the runtime builds one per batch from the
-batch's first delivery - plus `Field` keys a batch body reads with `ctx.context(..)`. Per-delivery
-fields stay off it (a batch spans many deliveries, so a position rides the elements instead), and
-keeping the two structs apart is what enforces that: a per-delivery context does not implement
-`BuildBatchContext`, so a batch body cannot name it. Nothing subscription-scoped to offer means no
-impl at all - `()` is the default.
+batch's first delivery, or from the batch itself on the carried lane - plus `Field` keys a batch
+body reads with `ctx.context(..)`. Per-delivery fields stay off it (a batch spans many deliveries,
+so a position rides the elements instead), and keeping the two structs apart is what enforces
+that: a per-delivery context does not implement `BuildBatchContext`, so a batch body cannot name
+it. Nothing subscription-scoped to offer means no impl at all - `()` is the default.
 
 ## Conformance
 
