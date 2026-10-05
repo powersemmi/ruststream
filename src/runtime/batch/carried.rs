@@ -69,6 +69,8 @@ type Lane<Src, Conn, T> = PhantomData<fn() -> (Src, Conn, T)>;
 /// the body runs.
 pub(crate) struct Lent<Src, Conn, Batch, T> {
     batch: Batch,
+    /// The copies of the lent values the harness records, made once while a harness watches.
+    recorded: LentValues,
     _lane: Lane<Src, Conn, T>,
 }
 
@@ -84,14 +86,18 @@ where
     }
 
     // The deliveries are unread until the body returns, so a panic leaves the lent values to
-    // stand for them.
+    // stand for them. The settlement records the same copies, so a value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&self) -> Vec<crate::testing::coordinator::Delivered> {
-        Src::lend(&self.batch)
+    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered> {
+        self.recorded = Src::lend(&self.batch)
+            .iter()
+            .map(|value| Arc::new(value.clone()) as crate::testing::coordinator::RecordedValue)
+            .collect();
+        self.recorded
             .iter()
             .map(|value| crate::testing::coordinator::Delivered {
                 raw: bytes::Bytes::new(),
-                value: Some(Arc::new(value.clone())),
+                value: Some(Arc::clone(value)),
                 settle: None,
             })
             .collect()
@@ -152,6 +158,7 @@ where
     fn take(batch: Batch) -> Self::Taken {
         Lent {
             batch,
+            recorded: LentValues::default(),
             _lane: PhantomData,
         }
     }
@@ -164,20 +171,11 @@ where
     ) {
         let subscription = ctx.subscription();
         let delivery = ctx.delivery();
-        let Lent { batch, .. } = taken;
+        let Lent {
+            batch, recorded, ..
+        } = taken;
         let values = Src::lend(&batch);
         let lent = values.len();
-        #[cfg(feature = "testing")]
-        let recorded: LentValues = if delivery.hooks.coordinator().is_some() {
-            values
-                .iter()
-                .map(|value| Arc::new(value.clone()) as crate::testing::coordinator::RecordedValue)
-                .collect()
-        } else {
-            LentValues::new()
-        };
-        #[cfg(not(feature = "testing"))]
-        let recorded: LentValues = ();
         // A batch that lends nothing never reaches the body, as a batch that decodes to nothing
         // never does on the other lanes.
         let result = if lent == 0 {

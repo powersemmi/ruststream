@@ -432,6 +432,35 @@ async fn a_batch_delivery_without_a_value_settles_by_the_decode_policy()
     Ok(())
 }
 
+/// Refuses every page by panicking, under the default panic policy that stops the service.
+#[subscriber(Rows::new("rows"))]
+async fn explode(rows: &[Row]) -> HandlerOutcome {
+    // The pages here are never empty, so this assertion always fails (panics).
+    assert!(rows.is_empty(), "the page is refused");
+    HandlerOutcome::ack()
+}
+
+/// A page whose body panics settles nothing, and the harness still records the rows it lent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_carried_batch_whose_body_panics_is_recorded_with_its_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let broker = holding(&["1:ann", "2:bob"]).await?;
+    let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
+        b.include(explode.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+    });
+    let tb = TestApp::start(app).await?;
+    tb.settle().await?;
+
+    let broker = tb.broker::<MemoryBroker<Retaining>>();
+    assert_eq!(
+        broker.subscriber("rows").received_values::<Row>(),
+        [Row::new(1, "ann"), Row::new(2, "bob")],
+    );
+    broker.subscriber("rows").assert_called_once().panicked();
+    tb.assert_shut_down();
+    Ok(())
+}
+
 /// Acknowledges a page only when the page's own context counts the rows the body was lent.
 #[subscriber(Rows::new("rows"))]
 async fn count(rows: &[Row], ctx: &mut Context<'_, PageContext>) -> HandlerOutcome {

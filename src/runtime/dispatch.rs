@@ -1250,16 +1250,19 @@ async fn run_batch<H, Batch, C, St>(
         .with_decode_policy(failure.policies.decode);
     // See `dispatch`: the harness scope attributes `Out` publishes to their slot, and lets the
     // batch settle path record the batch it applied.
-    // A panicking batch settles nothing, so what it carried is captured here (the handler owns
-    // the deliveries and a panic consumes them) to record the call the settle path never reached.
-    #[cfg(feature = "testing")]
-    let unsettled = batch.unsettled();
     // A batch settles its own deliveries inside the handler (a panic settles them by dropping
     // them), so the last decrement lands before the batch record and the fail-fast signal below.
     // One extra in-flight token spans the whole dispatch, so a harness driving to quiescence
     // cannot return into that window.
     #[cfg(feature = "testing")]
     let watcher = delivery.hooks.coordinator().cloned();
+    // A panicking batch settles nothing, so what it carried is captured here (the handler owns
+    // the deliveries and a panic consumes them) to record the call the settle path never reached.
+    // Only a harness reads that record, so a dispatch no harness watches captures nothing.
+    #[cfg(feature = "testing")]
+    let mut batch = batch;
+    #[cfg(feature = "testing")]
+    let unsettled = watcher.as_ref().map(|_| batch.unsettled());
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
         coordinator.enqueued();
@@ -1297,12 +1300,12 @@ async fn run_batch<H, Batch, C, St>(
                 "batch handler panicked",
             );
             #[cfg(feature = "testing")]
-            if let Some(coordinator) = delivery.hooks.coordinator() {
+            if let (Some(coordinator), Some(deliveries)) = (&watcher, unsettled) {
                 coordinator.record(Record {
                     scope_id: delivery.scope_id,
                     subscription: delivery.subscription,
                     name: name.to_owned(),
-                    deliveries: unsettled,
+                    deliveries,
                     panicked: true,
                     decode_failed: false,
                 });
@@ -1761,6 +1764,8 @@ where
     Ok(())
 }
 
+#[cfg(all(test, feature = "testing", feature = "memory"))]
+mod harness_tests;
 mod pool;
 #[cfg(all(test, feature = "memory"))]
 mod tests;

@@ -286,9 +286,11 @@ pub(crate) trait TakenBatch<C>: Send {
     /// The batch's context, or `None` for a batch with nothing in it: such a batch runs nothing.
     fn context(&self) -> Option<C>;
 
-    /// The deliveries a panicking handler left unsettled, as the harness records them.
+    /// The deliveries a panicking handler left unsettled, as the harness records them. Taken only
+    /// while a harness watches the dispatch; a batch that lends its values keeps the copies it
+    /// makes here for the record of its settlement, so each value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&self) -> Vec<crate::testing::coordinator::Delivered>;
+    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered>;
 }
 
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
@@ -302,7 +304,7 @@ where
     }
 
     #[cfg(feature = "testing")]
-    fn unsettled(&self) -> Vec<crate::testing::coordinator::Delivered> {
+    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered> {
         self.iter()
             .map(|msg| crate::testing::coordinator::Delivered {
                 raw: bytes::Bytes::copy_from_slice(msg.payload()),
