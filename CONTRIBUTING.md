@@ -49,6 +49,7 @@ done
 | `just deny` | cargo-deny | `cargo install cargo-deny --locked` |
 | `just cov` | cargo-llvm-cov | `cargo install cargo-llvm-cov --locked` |
 | `just bench` | valgrind and the benchmark runner | the system package manager, then `cargo install --locked gungraun-runner --version =0.19.4` |
+| `just brokers` | jq | the system package manager |
 | the documentation site | Python 3.12 | `pip install -r docs/requirements.txt`, then `properdocs serve` |
 | a broker's live suite | Docker with Compose | the Docker documentation |
 
@@ -76,11 +77,17 @@ just brokers            # every broker cloned next to the core
 just brokers nats fred  # the named ones
 ```
 
-Each broker runs `cargo test --workspace --all-features`, the same command as its own
-`just test`, with its `ruststream` dependency patched to this checkout. The broker builds from
-its own working tree, on the branch it has checked out and with its uncommitted edits. Its lock
-file is restored after the run. The summary lists the brokers that passed and the ones that
-failed, and the recipe fails when any did.
+The brokers are found next to the core's main checkout, so the recipe also runs from a git
+worktree elsewhere. Each broker runs `cargo test --workspace --all-features`, the same command as
+its own `just test`, against this working tree. For the run, its lock file takes `ruststream` from
+this tree instead of the release it pins, and the lock file is restored afterwards. A broker whose
+`ruststream` requirement does not accept this tree's version fails rather than test a release. The
+broker builds from its own working tree, on the branch it has checked out and with its uncommitted
+edits.
+
+The summary lists the brokers that passed, the ones that failed, and the repositories skipped for
+having no crate or no `ruststream` dependency. The recipe fails when any broker failed, when a
+named one cannot be tested, and when it finds no broker.
 
 A change to the surface the brokers use goes like this:
 
@@ -93,9 +100,22 @@ A change to the surface the brokers use goes like this:
 These suites run on each broker's in-process transport. A change to the broker contract is also
 checked against a real broker. In the broker's repository, `just test-brokers` starts its
 Compose stand and runs the live suite against the core from crates.io. Against the local core,
-start the stand with `just brokers-up`, run the command `test-brokers` runs with
-`--config "patch.crates-io.ruststream.path='../ruststream'"` added to `cargo test`, and stop the
-stand with `just brokers-down`.
+the live suite runs like this:
+
+```bash
+just brokers-up
+saved="$(mktemp)" && cp Cargo.lock "$saved"
+cargo update -p ruststream --config "patch.crates-io.ruststream.path='../ruststream'"
+# the live suite
+cp "$saved" Cargo.lock && rm "$saved"
+just brokers-down
+```
+
+The live suite is the command `test-brokers` runs, with the same `--config` added to
+`cargo test`. The patch alone does not replace the release the lock file pins, so `cargo update`
+points the lock file at the local core first. Copying the saved file back restores the lock file
+as it was, uncommitted edits included. A broker without a lock file gets one from
+`cargo update`: delete it instead of copying back.
 
 ## Pull requests
 

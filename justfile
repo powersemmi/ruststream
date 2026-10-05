@@ -112,43 +112,90 @@ clean:
 
 ci: check test
 
-# Each `ruststream-*` repository next to this one runs `cargo test --workspace --all-features`
-# with its `ruststream` dependency patched to this checkout, on whatever branch it has checked
-# out, so a core change and the broker adaptations it needs are tested together before either is
-# committed. A broker's lock file is put back afterwards, so the run leaves its tree as it found
-# it. `just brokers nats fred` runs the named ones; with no names it runs every one it finds.
+# Each `ruststream-*` repository next to the main checkout of this one runs
+# `cargo test --workspace --all-features` against this working tree, on whatever branch it has
+# checked out, so a core change and the broker adaptations it needs are tested together before
+# either is committed. A worktree of the core finds the brokers through the main checkout. For the
+# run, a broker's lock file takes `ruststream` from this tree instead of the release it pins, and
+# is put back afterwards; a broker that would still build a release fails. `just brokers nats fred`
+# runs the named ones and fails on one it cannot test; with no names it runs every broker it finds
+# and lists the repositories it skips (no crate, no `ruststream` dependency). The run fails when it
+# tests no broker. Needs jq.
 # Every broker crate's test suite against this working tree of the core.
 brokers *names:
     #!/usr/bin/env bash
     set -uo pipefail
+    command -v jq > /dev/null || { echo "error: just brokers needs jq" >&2; exit 1; }
     core="$(pwd)"
-    root="$(dirname "$core")"
+    main="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+    root="$(dirname "$main")"
+    version="$(cargo metadata --format-version 1 --no-deps \
+        | jq -r '.packages[] | select(.name == "ruststream") | .version')"
+    patch="patch.crates-io.ruststream.path='$core'"
+    # One broker's suite against this tree, in a subshell, so its lock file goes back on any exit.
+    test_broker() (
+        cd "$1" || exit 1
+        saved="$(mktemp)" || exit 1
+        if [ -f Cargo.lock ]; then
+            cp Cargo.lock "$saved"
+            trap 'cp "$saved" Cargo.lock; rm -f "$saved"' EXIT
+        else
+            trap 'rm -f Cargo.lock "$saved"' EXIT
+        fi
+        # The patch alone leaves the release the lock file pins in place.
+        cargo update --config "$patch" -p ruststream || exit 1
+        resolved="$(cargo metadata --format-version 1 --all-features --locked --config "$patch" \
+            | jq -r '.packages[] | select(.name == "ruststream") | .manifest_path')" || exit 1
+        if [ "$resolved" != "$core/Cargo.toml" ]; then
+            echo "error: ruststream comes from ${resolved:-nowhere}, not from this tree" \
+                "(ruststream $version): the patch is unused" >&2
+            exit 1
+        fi
+        cargo test --workspace --all-features --locked --config "$patch"
+    )
     if [ -n "{{ names }}" ]; then
+        named=true
         repos=()
         for name in {{ names }}; do repos+=("$root/ruststream-$name"); done
     else
+        named=false
+        shopt -s nullglob
         repos=("$root"/ruststream-*)
     fi
     passed=()
     failed=()
+    skipped=()
     for repo in "${repos[@]}"; do
         name="$(basename "$repo")"
-        # The dashboard repository has no crate.
-        [ -f "$repo/Cargo.toml" ] || continue
-        echo "==> $name ($(git -C "$repo" branch --show-current))"
-        lock="$(mktemp)"
-        had_lock=false
-        if [ -f "$repo/Cargo.lock" ]; then cp "$repo/Cargo.lock" "$lock"; had_lock=true; fi
-        if (cd "$repo" && cargo test --workspace --all-features \
-            --config "patch.crates-io.ruststream.path='$core'"); then
-            passed+=("$name")
-        else
+        # The dashboard repository has no crate, and a crate without the core has nothing to test
+        # against it.
+        if [ ! -d "$repo" ]; then
+            unfit="not found"
+        elif [ ! -f "$repo/Cargo.toml" ]; then
+            unfit="no crate"
+        elif ! manifest="$(cd "$repo" && cargo metadata --format-version 1 --no-deps)"; then
             failed+=("$name")
+            continue
+        elif jq -e 'any(.packages[].dependencies[]; .name == "ruststream")' <<< "$manifest" \
+            > /dev/null; then
+            unfit=""
+        else
+            unfit="no ruststream dependency"
         fi
-        if $had_lock; then cp "$lock" "$repo/Cargo.lock"; else rm -f "$repo/Cargo.lock"; fi
-        rm -f "$lock"
+        if [ -n "$unfit" ]; then
+            # A name on the command line is a broker the run was asked to test.
+            if $named; then failed+=("$name ($unfit)"); else skipped+=("$name ($unfit)"); fi
+            continue
+        fi
+        echo "==> $name ($(git -C "$repo" branch --show-current))"
+        if test_broker "$repo"; then passed+=("$name"); else failed+=("$name"); fi
     done
     echo
     echo "passed: ${passed[*]:-none}"
     echo "failed: ${failed[*]:-none}"
+    echo "skipped: ${skipped[*]:-none}"
+    if [ $((${#passed[@]} + ${#failed[@]})) -eq 0 ]; then
+        echo "error: no broker crate next to $main" >&2
+        exit 1
+    fi
     [ ${#failed[@]} -eq 0 ]
