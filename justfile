@@ -86,7 +86,9 @@ test:
 # document is measured at, a larger count buys a steadier number for a longer run
 # (`just bench 5000`). The benches read it at build time, so a new count rebuilds them. The other
 # arguments reach the benchmark runner: `just bench --save-baseline=main` records a baseline,
-# `just bench --baseline=main` measures against it.
+# `just bench --baseline=main` measures against it. The runner also holds every run to the
+# previous one, and totals over another count are not comparable, so each count keeps its runs
+# and baselines in a directory of its own, `target/gungraun/<count>`.
 [positional-arguments]
 bench *ARGS:
     #!/usr/bin/env bash
@@ -103,7 +105,8 @@ bench *ARGS:
     if [ "$installed" != "gungraun-runner $version" ]; then
         cargo install --locked --root "$runner" gungraun-runner --version "=$version"
     fi
-    export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages"
+    export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages" \
+        GUNGRAUN_HOME="$PWD/target/gungraun/$messages"
     cargo bench {{ cost_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
         -- --output-format=json "$@" > target/bench-summary.json
