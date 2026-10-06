@@ -233,8 +233,8 @@ for each delivery of a batch. A delivery that reports an error is settled by the
 and the warning names the error. A batch that lends its values as one slice has no value for such a
 delivery, so put it past the end of the slice.
 
-There is no broker to point at for "overrides nothing": every broker in this workspace overrides
-these methods. So the core pins the behaviour with a test:
+Three brokers override none of the five defaulted methods: `ruststream-rumqttc`,
+`ruststream-sea-file` and `ruststream-zeromq`. A test in the core pins what the defaults answer:
 
 ```rust
 --8<-- "src/message.rs:incoming_defaults"
