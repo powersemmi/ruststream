@@ -22,6 +22,11 @@ output itself:
   frame, and a frame that stops matching (inlining, a rename) leaves the run reporting the cost
   of the process exit and nothing else. That reads as a spectacular improvement rather than as
   the broken measurement it is.
+
+A benchmark that breaches one of its limits fails the run, and in this output format the runner
+says nothing more about it: what went over is recorded in the summary alone. So every breach is
+printed under the table, the value the run was compared against next to the new one, and a
+summary that cannot be converted still prints its breaches before it stops.
 """
 
 import argparse
@@ -184,13 +189,9 @@ def metric(summary, tool, name):
     return None
 
 
-def measurements(path):
-    """Every benchmark in the run, keyed by `file/function/id`.
-
-    The file is part of the key because one scenario per file means the same two function names
-    in every one of them.
-    """
-    found = {}
+def summaries(path):
+    """Every benchmark summary the run wrote, one per line, in the layout this script reads."""
+    found = []
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line:
@@ -200,15 +201,81 @@ def measurements(path):
         if version != SUMMARY_VERSION:
             sys.exit(
                 f"the benchmark summary has layout version {version}, and this script reads "
-                f"version {SUMMARY_VERSION}: read the new layout in `metric` and raise "
-                "SUMMARY_VERSION"
+                f"version {SUMMARY_VERSION}: read the new layout in `metric` and `breaches` "
+                "and raise SUMMARY_VERSION"
             )
-        scenario = Path(summary["benchmark_file"]).stem
-        key = f"{scenario}/{summary['function_name']}/{summary['id']}"
-        found[key] = {
+        found.append(summary)
+    return found
+
+
+def benchmark(summary):
+    """The `file/function` a summary belongs to, which is how a scenario names its benchmark."""
+    return f"{Path(summary['benchmark_file']).stem}/{summary['function_name']}"
+
+
+def measurements(runs):
+    """Every benchmark in the run, keyed by `file/function/id`.
+
+    The file is part of the key because one scenario per file means the same two function names
+    in every one of them.
+    """
+    found = {}
+    for summary in runs:
+        found[f"{benchmark(summary)}/{summary['id']}"] = {
             "instructions": metric(summary, "Callgrind", "Ir"),
             "allocations": metric(summary, "DHAT", "TotalBlocks"),
         }
+    return found
+
+
+# The two metrics the table reads, by the names it gives them. A limit on any other metric is
+# reported under the runner's own name for it.
+METRIC_NAMES = {("Callgrind", "Ir"): "instructions", ("Dhat", "TotalBlocks"): "allocations"}
+
+
+def run_name(run):
+    """A benchmark id as the number of deliveries its run handled."""
+    counts = {COLD: 1, COUNTS[0]: MESSAGES, COUNTS[1]: 2 * MESSAGES}
+    if run not in counts:
+        return run
+    return "one delivery" if counts[run] == 1 else f"{counts[run]} deliveries"
+
+
+def as_text(value):
+    """A metric value as a breach line writes it: a count as it is, a fraction in short form."""
+    return str(value) if isinstance(value, int) else f"{value:g}"
+
+
+def breach(regression, metrics):
+    """One limit a run went over: the metric, the value it was compared against, the new one.
+
+    A limit in percent holds the run to the one it is compared against, and the regression
+    carries both values. A plain number is a ceiling the run is held to on its own, and the value
+    it was compared against is the one the metric records next to the new one, where there is one.
+    """
+    [(kind, detail)] = regression.items()
+    [(tool, name)] = detail["metric"].items()
+    label = METRIC_NAMES.get((tool, name), f"{tool} {name}")
+    if kind == "Soft":
+        return (
+            f"{label} {as_text(detail['old'])} -> {as_text(detail['new'])}, "
+            f"{float(detail['diff_pct']):+.2f}% against a limit of +{float(detail['limit']):g}%"
+        )
+    old = metrics.get(name, {}).get("values", {}).get("old")
+    change = "" if old is None else f"{as_text(old)} -> "
+    return f"{label} {change}{as_text(detail['new'])} against a limit of {as_text(detail['limit'])}"
+
+
+def breaches(runs):
+    """Every limit the run breached, one line each, named by its scenario and its run."""
+    names = {scenario.framework: scenario.name for scenario in SCENARIOS}
+    found = []
+    for summary in runs:
+        where = f"{names.get(benchmark(summary), benchmark(summary))}, {run_name(summary['id'])}"
+        for profile in summary["profiles"]:
+            total = profile["data"]["total"]
+            for regression in total["regressions"]:
+                found.append(f"{where}: {breach(regression, total['metrics'])}")
     return found
 
 
@@ -440,7 +507,10 @@ def totals(found, key, count, floor=None):
         floor = FLOOR
     full = f"{key}/{count}"
     if full not in found:
-        sys.exit(f"benchmark {full} is not in the run: rename it here or in benches/")
+        sys.exit(
+            f"benchmark {full} is not in the run: it failed before it wrote a summary, or it was "
+            "renamed (then rename it here or in benches/)"
+        )
     measured = found[full]
     if measured["instructions"] is None or measured["instructions"] < floor:
         sys.exit(
@@ -516,6 +586,16 @@ def report(rows):
     print("the service and handling the first delivery cost once")
 
 
+def report_breaches(lines):
+    """The limits the run breached, which is why it fails, each with both values it compared."""
+    if not lines:
+        return
+    print()
+    print("limits breached (totals of one run, old -> new):")
+    for line in lines:
+        print(f"  {line}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path, help="the JSON the benchmark run wrote")
@@ -529,6 +609,17 @@ def main():
     args = parser.parse_args()
     configure(args.messages)
 
+    runs = summaries(args.summary)
+    breached = breaches(runs)
+    try:
+        code = build(measurements(runs))
+    except SystemExit:
+        # One failure does not hide another: a summary that cannot be converted still shows what
+        # the run breached.
+        report_breaches(breached)
+        sys.stdout.flush()
+        raise
+
     version = crate_version()
     document = {
         "schema": 2,
@@ -540,11 +631,12 @@ def main():
         # No `scenarios`: that section is a comparison against a broker's own client, and this
         # crate has no broker of its own to compare on. An empty list would claim a measurement
         # that is not coming.
-        "code": build(measurements(args.summary)),
+        "code": code,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(document, indent=2) + "\n")
     report(document["code"])
+    report_breaches(breached)
 
 
 if __name__ == "__main__":

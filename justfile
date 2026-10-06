@@ -90,6 +90,10 @@ test:
 # `just bench --baseline=main` measures against it. The runner also holds every run to the
 # previous one, and totals over another count are not comparable, so each count keeps its runs
 # and baselines in a directory of its own, `target/gungraun/<count>`.
+#
+# A benchmark that breaches a limit fails the run, and the run still goes to the end: the table
+# prints, every breach under it with the value it was compared against beside the new one, and
+# the recipe fails after that. A build error stops it before anything runs.
 [positional-arguments]
 bench *ARGS:
     #!/usr/bin/env bash
@@ -109,12 +113,17 @@ bench *ARGS:
     unset GUNGRAUN_RUNNER
     export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages" \
         GUNGRAUN_HOME="$PWD/target/gungraun/$messages"
+    cargo bench {{ cost_benches }} --bench wall_clock --no-run \
+        --no-default-features --features {{ bench_features }}
+    status=0
     cargo bench {{ cost_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
-        -- --output-format=json "$@" > target/bench-summary.json
-    cargo bench --bench wall_clock --no-default-features --features {{ bench_features }}
+        -- --output-format=json "$@" > target/bench-summary.json || status=$?
+    cargo bench --bench wall_clock --no-default-features --features {{ bench_features }} \
+        || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json
+    exit "$status"
 
 fmt:
     cargo fmt --all
