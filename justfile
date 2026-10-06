@@ -82,14 +82,20 @@ test:
 # the first run and after the library moves, and puts it first on PATH, where the benchmarks look
 # the runner up.
 #
-# Extra arguments reach the benchmark runner: `just bench --save-baseline=main` records a
-# baseline, `just bench --baseline=main` measures against it.
-# `messages` is the deliveries per measured run: the default is what the published document is
-# measured at, a larger count buys a steadier number for a longer run
-# (`just bench 5000`). The benches read it at build time, so a new count rebuilds them.
-bench messages="1000" *ARGS:
+# A leading number is the deliveries per measured run: the default of 1000 is what the published
+# document is measured at, a larger count buys a steadier number for a longer run
+# (`just bench 5000`). The benches read it at build time, so a new count rebuilds them. The other
+# arguments reach the benchmark runner: `just bench --save-baseline=main` records a baseline,
+# `just bench --baseline=main` measures against it.
+[positional-arguments]
+bench *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
+    messages=1000
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        messages="$1"
+        shift
+    fi
     version="$(cargo pkgid gungraun)"
     version="${version##*@}"
     runner="$PWD/target/gungraun-runner"
@@ -97,12 +103,12 @@ bench messages="1000" *ARGS:
     if [ "$installed" != "gungraun-runner $version" ]; then
         cargo install --locked --root "$runner" gungraun-runner --version "=$version"
     fi
-    export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES={{ messages }}
+    export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages"
     cargo bench {{ cost_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
-        -- --output-format=json {{ ARGS }} > target/bench-summary.json
+        -- --output-format=json "$@" > target/bench-summary.json
     cargo bench --bench wall_clock --no-default-features --features {{ bench_features }}
-    python3 scripts/bench_results.py --messages {{ messages }} target/bench-summary.json \
+    python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \
         docs/benchmarks/results.json
 
 fmt:
