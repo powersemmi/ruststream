@@ -7,9 +7,9 @@ two measurements that answer different questions.
 The first is throughput against the raw client, on a real broker, doing the same work on the same
 machine. It says what a deployed service pays.
 
-The second is the cost of the framework's own code: instructions and allocations per message, with
-no broker in the number. It says what changed when the framework changed, and it is precise enough
-to fail a pull request that makes a message more expensive.
+The second is the cost of the code: instructions and allocations per message. In `ruststream` it is
+the framework's own code, with no broker in the number. It says what changed when the code changed,
+and it is precise enough to fail a pull request that makes a message more expensive.
 
 Each crate measures itself and publishes its own numbers. This page loads them from the `main`
 branch of each crate's repository and shows them together. A new measurement appears in the tables
@@ -30,9 +30,10 @@ over the client it wraps, and what the runtime costs on top of that.
 
 ### Cost of the code
 
-Instructions and allocations per message in the steady state, measured on the in-process
-transport. These are absolute figures for the framework's own code, not a comparison: what the
-framework costs over a broker's own client is the table above, where the client is a real one.
+Instructions and allocations per message in the steady state. These are absolute figures, not a
+comparison: what the framework costs over a broker's own client is the table above. `ruststream`
+measures its own code on the in-process transport. A broker crate measures over its real
+transport, and its benchmarks page says what its number covers.
 
 <div id="benchmark-code"></div>
 
@@ -63,27 +64,32 @@ lower bound on the cost of dispatch, not a measurement of it, and you cannot rea
 
 ### The cost of the code
 
-An instruction count is exact. Two runs of the same binary give the same number, and a machine
-twice as fast gives the same number too, so the rows of this table are comparable with each other
-and with the same row measured on another machine. What it does not tell you is time: the same
-count costs more where it misses the cache.
+An instruction count is exact. In `ruststream` two runs of the same binary give the same number,
+and a machine twice as fast gives the same number too, so its rows are comparable with each other
+and with the same row measured on another machine. What a count does not tell you is time: the
+same count costs more where it misses the cache.
 
 In `ruststream` the number is the crate's own work and nothing else: the service a user writes,
 over the in-process queue, decoding the payload into a type, reading a field and settling the
 delivery. No broker is in it, so the figure moves when the framework's code moves and at no other
-time, which is what lets two percent count as a defect rather than as noise. A broker crate's
-benchmarks page says what its number covers and which limit it is held to.
+time, which is what lets two percent count as a defect rather than as noise.
 
 Every per-message figure is the steady state. Starting a service costs what it costs once - the
 connect, the subscription, the first allocations behind them - and dividing that over the messages
-of a run would publish it as a price per message it is not. So a scenario is measured over a
-thousand deliveries and over two thousand, and what a message costs is the difference between the
-two runs; the cold start is measured on its own, over a single delivery.
+of a run would publish it as a price per message it is not. So a scenario is measured over two
+runs, the second twice as long as the first, and what a message costs is the difference between
+them; the cold start is measured on its own, over a single delivery. In `ruststream` the two runs
+are a thousand deliveries and two thousand.
 
-Allocations are counted per message, and on the delivery path the figure is zero: once the service
-is running, a message goes from the queue to the handler body without the framework asking the
-allocator for anything. On the publish path the figure is what the broker takes to own the message
-it is handed, and nothing above it.
+Allocations are counted per message. In `ruststream` the figure on the delivery path is zero: once
+the service is running, a message goes from the queue to the handler body without the framework
+asking the allocator for anything. On its publish path the figure is what the broker takes to own
+the message it is handed, and nothing above it.
+
+A broker crate measures over its real transport, which in most crates is the broker in its compose
+file, so its number also holds the client's work and moves a little from run to run. Its benchmarks
+page says what the number covers, how far it moves, which delivery counts it uses and which limit it
+is held to.
 
 ## Methodology
 
@@ -167,22 +173,25 @@ runner pinned to the version the crate depends on. `just bench 5000` measures ev
 run, while the published document stays at the default.
 
 - **Every scenario is the service a user writes**, started through the real runtime with the test
-  harness compiled out, so what is measured is the code that ships. The numbers are absolute: the
-  framework's own cost. The comparison against a client someone else wrote is the first table,
-  and the broker crates produce it.
-- **The transport is in process.** The framework's own code is the subject, so the numbers must not
-  move with a socket, a server's load or a network. Both halves pay the same transport cost anyway,
-  and it cancels in the difference.
+  harness compiled out, so what is measured is the code that ships. The numbers are absolute, and
+  in `ruststream` they are the framework's own cost. The comparison against a client someone else
+  wrote is the first table, and the broker crates produce it.
+- **In `ruststream` the transport is in process.** The framework's own code is the subject, so the
+  numbers must not move with a socket, a server's load or a network. Both halves pay the same
+  transport cost anyway, and it cancels in the difference. A broker crate measures over its real
+  transport, and its benchmarks page says what that adds to the number.
 - **The queue is filled before the measured region opens.** What a scenario measures is
   steady-state delivery, never the connect, the subscription open or the first allocation behind
   them.
 - **Collection covers the measured region and nothing around it.** Setup and teardown run in the
   same process and through the same framework code, so a measurement that counted them would report
   the queue being filled as the cost of draining it.
-- **Three runs per scenario, and what they are for.** One delivery, a thousand, and two thousand.
-  The difference between the last two is what a message costs once the service is running; the
-  single delivery is the cold start. Nothing has to be switched off part way through a run, which
-  is what makes this work for the allocation counter, whose counting cannot be toggled at all.
+- **Three runs per scenario, and what they are for.** One delivery, then two longer runs, the second
+  twice the first: a thousand and two thousand deliveries in `ruststream`, and the counts a broker
+  crate's benchmarks page gives. The difference between the last two is what a message costs once
+  the service is running; the single delivery is the cold start. Nothing has to be switched off
+  part way through a run, which is what makes this work for the allocation counter, whose counting
+  cannot be toggled at all.
 - **Two numbers per scenario.** Instructions from callgrind, which is exact and compared;
   allocations from DHAT, which is exact and held to the floor the scenario declares. In
   `ruststream`, a separate benchmark measures wall time on scenarios of its own. `just bench`
