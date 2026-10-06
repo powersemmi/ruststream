@@ -1,0 +1,219 @@
+{
+  "schema": 2,
+  "crate": "ruststream",
+  "crate_version": "0.7.0",
+  "core_version": "0.7.0",
+  "measured_at": "2026-10-06",
+  "environment": {
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "architecture": "x86_64 (x86-64-v4)",
+    "cpu_frequency": "base unknown, min 427 MHz, max 5912 MHz",
+    "cores": "12 physical, 24 logical",
+    "memory": "62.4 GiB",
+    "memory_speed": "4800 MT/s, 6000 MT/s, DDR5",
+    "os": "Linux 7.2.9-x64v3-xanmod1-1",
+    "rustc": "1.99.0",
+    "valgrind": "3.25.1",
+    "profile": "bench, inheriting release (opt-level = 3, lto = fat, codegen-units = 16, debug = line-tables-only)",
+    "features": "--no-default-features --features memory,macros,json",
+    "rustflags": ""
+  },
+  "code": [
+    {
+      "name": "consume, JSON decode into a small struct",
+      "messages": 1000,
+      "framework": {
+        "instructions": 1673.0,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 15079,
+        "allocations": 26
+      },
+      "gated": true
+    },
+    {
+      "name": "consume, JSON decode of a 1 KB body",
+      "messages": 1000,
+      "framework": {
+        "instructions": 17402.8,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 30936,
+        "allocations": 26
+      },
+      "gated": true
+    },
+    {
+      "name": "consume on the byte lane, no codec",
+      "messages": 1000,
+      "framework": {
+        "instructions": 826.0,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 14192,
+        "allocations": 26
+      },
+      "gated": true
+    },
+    {
+      "name": "consume through a pool of four workers",
+      "messages": 1000,
+      "framework": {
+        "instructions": 3092.1,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 27005,
+        "allocations": 43
+      },
+      "gated": true
+    },
+    {
+      "name": "consume on four dedicated threads",
+      "messages": 1000,
+      "framework": {
+        "instructions": 457.1,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 55119,
+        "allocations": 133
+      },
+      "gated": true
+    },
+    {
+      "name": "consume through a middleware stack of one",
+      "messages": 1000,
+      "framework": {
+        "instructions": 1723.0,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 15205,
+        "allocations": 26
+      },
+      "gated": true
+    },
+    {
+      "name": "consume through a middleware stack of four",
+      "messages": 1000,
+      "framework": {
+        "instructions": 1768.0,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 15252,
+        "allocations": 26
+      },
+      "gated": true
+    },
+    {
+      "name": "consume in batches of 64",
+      "messages": 1000,
+      "framework": {
+        "instructions": 1529.5,
+        "allocations": 0.016
+      },
+      "cold": {
+        "instructions": 16432,
+        "allocations": 29
+      },
+      "gated": true
+    },
+    {
+      "name": "reply, encoded to a declared destination",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2641.0,
+        "allocations": 2.0
+      },
+      "cold": {
+        "instructions": 16787,
+        "allocations": 29
+      },
+      "gated": true
+    },
+    {
+      "name": "reply to a transport that reads the payload",
+      "messages": 1000,
+      "framework": {
+        "instructions": 2106.0,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 16294,
+        "allocations": 29
+      },
+      "gated": true
+    },
+    {
+      "name": "publish through an Out slot with one transform",
+      "messages": 1000,
+      "framework": {
+        "instructions": 3768.0,
+        "allocations": 6.0
+      },
+      "cold": {
+        "instructions": 18540,
+        "allocations": 33
+      },
+      "gated": true
+    },
+    {
+      "name": "publish with a typed header contract",
+      "messages": 1000,
+      "framework": {
+        "instructions": 3632.0,
+        "allocations": 5.0
+      },
+      "cold": {
+        "instructions": 17990,
+        "allocations": 32
+      },
+      "gated": true
+    },
+    {
+      "name": "read a typed header contract, then publish",
+      "messages": 1000,
+      "framework": {
+        "instructions": 4004.9,
+        "allocations": 2.0
+      },
+      "cold": {
+        "instructions": 17762,
+        "allocations": 29
+      },
+      "gated": true
+    },
+    {
+      "name": "request and reply, one round trip",
+      "messages": 1000,
+      "framework": {
+        "instructions": 9361.6,
+        "allocations": 13.0
+      },
+      "cold": {
+        "instructions": 23358,
+        "allocations": 39
+      },
+      "gated": true
+    },
+    {
+      "name": "a delivery that asks to be redelivered, and the copy",
+      "messages": 1000,
+      "framework": {
+        "instructions": 3157.7,
+        "allocations": 0.0
+      },
+      "cold": {
+        "instructions": 16662,
+        "allocations": 26
+      },
+      "gated": false,
+      "note": "cold path: measured and reported, never gated"
+    }
+  ]
+}

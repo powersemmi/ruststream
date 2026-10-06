@@ -1,0 +1,2245 @@
+
+<!doctype html>
+<html lang="ru" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Async messaging framework for Rust - broker-agnostic traits, router, codecs, and a conformance harness for broker authors.">
+      
+      
+      
+        <link rel="canonical" href="https://powersemmi.github.io/ruststream/0.7/ru/broker-authors/conformance/">
+      
+      
+        <link rel="prev" href="../example-nats/">
+      
+      
+        <link rel="next" href="../templates/">
+      
+      
+        
+          <link rel="alternate" href="../../../broker-authors/conformance/" hreflang="en">
+        
+          <link rel="alternate" href="./" hreflang="ru">
+        
+          <link rel="alternate" href="../../../zh/broker-authors/conformance/" hreflang="zh">
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Conformance - RustStream</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#conformance" class="md-skip">
+          Перейти к содержанию
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Верхний колонтитул">
+    <a href="../../" title="RustStream" class="md-header__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            RustStream
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Conformance
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Выберите язык">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../broker-authors/conformance/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="ru" class="md-select__link">
+              Russian
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../../zh/broker-authors/conformance/" hreflang="zh" class="md-select__link">
+              Chinese
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Поиск" placeholder="Поиск" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Поиск">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Очистить" aria-label="Очистить" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Инициализация поиска
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/powersemmi/ruststream" title="Перейти к репозиторию" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Навигация" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../" title="RustStream" class="md-nav__button md-logo" aria-label="RustStream" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    RustStream
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/powersemmi/ruststream" title="Перейти к репозиторию" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    powersemmi/ruststream
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Главная
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Начало работы
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Начало работы
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Установка
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Быстрый старт
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Учебник: собираем первый сервис
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../brokers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Брокеры
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Брокеры
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../brokers/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-fred/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Redis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-lapin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RabbitMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rdkafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-amqp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AMQP 1.0
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-gcp-pubsub/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google Cloud Pub/Sub
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sqs-sns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS SQS / SNS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-pulsar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Pulsar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-rumqttc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MQTT 5
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-zeromq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ZeroMQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-sea-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stream files / stdio
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://powersemmi.github.io/ruststream-kinesis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Kinesis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Бенчмарки
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Авторам брокеров
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Авторам брокеров
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../example-nats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Разбор примера: адаптация библиотеки брокера NATS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conformance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#набор-проверок-маршрутизации" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Набор проверок маршрутизации
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Набор проверок маршрутизации">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#что-именно-он-проверяет" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что именно он проверяет
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#проверка-жизненного-цикла" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверка жизненного цикла
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#остановка-и-разделяемые-дескрипторы" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Остановка и разделяемые дескрипторы
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#те-же-наборы-внутри-процесса" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Те же наборы внутри процесса
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#набор-проверок-подтверждения" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Набор проверок подтверждения
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retry-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверки повторов
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#транспорт-внутри-процесса-против-сервера" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Транспорт внутри процесса против сервера
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#что-несёт-сообщение" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что несёт сообщение
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-suites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Наборы проверок для совместимостей
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#чеклист-автора" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Чеклист автора
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Контракт шаблонов
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Справочник API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#набор-проверок-маршрутизации" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Набор проверок маршрутизации
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Набор проверок маршрутизации">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#что-именно-он-проверяет" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что именно он проверяет
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#проверка-жизненного-цикла" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверка жизненного цикла
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#остановка-и-разделяемые-дескрипторы" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Остановка и разделяемые дескрипторы
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#те-же-наборы-внутри-процесса" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Те же наборы внутри процесса
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#набор-проверок-подтверждения" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Набор проверок подтверждения
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retry-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверки повторов
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#транспорт-внутри-процесса-против-сервера" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Транспорт внутри процесса против сервера
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#что-несёт-сообщение" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Что несёт сообщение
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-suites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Наборы проверок для совместимостей
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#чеклист-автора" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Чеклист автора
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/powersemmi/ruststream/edit/main/docs/ru/broker-authors/conformance.md" title="Редактировать страницу" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="conformance">Conformance<a class="headerlink" href="#conformance" title="Permanent link">&para;</a></h1>
+<div class="admonition info i18n-banner">
+<p class="admonition-title">Нормативная версия документации - английская</p>
+<p>Эта страница переведена с английского языковой моделью. При любом расхождении верен <a href="../../../broker-authors/conformance/">английский оригинал</a>.</p>
+</div>
+
+<p>Обвязка conformance доказывает, что брокер соблюдает контракт ядра. Каждый брокер проходит две
+проверки:</p>
+<ul>
+<li><code>harness::run_suite</code> проверяет <strong>поверхность маршрутизации</strong> в
+  <a href="../#test-support">режиме работы внутри процесса</a>. Она строит ваш рабочий брокер и
+  подключает его через <code>InProcess::connect_in_process</code>. Так проверяются гарантии диспетчеризации.</li>
+<li><code>harness::lifecycle</code> проверяет <strong>последовательность переходов жизненного цикла</strong> на настоящем
+  брокере: <code>new</code> -&gt; <code>connect(self)</code> -&gt; подписка -&gt; публикация -&gt; ack -&gt; <code>shutdown(self)</code>.</li>
+</ul>
+<p>Обе проверки паникуют с внятным сообщением на первом же нарушении контракта. Подключите фичу
+<code>conformance</code> в dev-зависимостях:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[dev-dependencies]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">ruststream</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"0.7"</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"conformance"</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Фича <code>conformance</code> включает <code>testing</code>. Поэтому один режим работы внутри процесса служит и
+<code>run_suite</code>, и обвязке <a href="https://docs.rs/ruststream/latest/ruststream/testing/index.html"><code>TestApp</code></a>,
+на которой пишут тесты пользователи.</p>
+<h2 id="набор-проверок-маршрутизации">Набор проверок маршрутизации<a class="headerlink" href="#набор-проверок-маршрутизации" title="Permanent link">&para;</a></h2>
+<p><code>harness::run_suite</code> проверяет гарантии маршрутизации ядра, общие для всех брокеров. Так его
+прогоняет эталонный in-memory брокер:</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_self.rs">tests/conformance_self.rs</a></span><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="sd">/// The suites that read a broker's publish log back - the routing contract's log check and the</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="sd">/// seeking capability - need a broker that keeps one.</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">fn</span><span class="w"> </span><span class="nf">replaying</span><span class="p">()</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">MemoryBroker</span><span class="o">&lt;</span><span class="n">Retaining</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">retaining</span><span class="p">(</span><span class="n">Retention</span><span class="p">::</span><span class="n">Messages</span><span class="p">(</span><span class="n">nonzero</span><span class="o">!</span><span class="p">(</span><span class="mi">64</span><span class="p">)))</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">}</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_passes_conformance_suite</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">run_suite</span><span class="p">(</span><span class="n">replaying</span><span class="p">).</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Фабрика.</strong> Подставьте в неё конструктор своего брокера с теми настройками, с которыми его собирает
+сервис. Фабрика синхронная (<code>Fn() -&gt; B</code>) и строит свежий рабочий брокер для каждого сценария.
+Поэтому сценарии не видят состояния друг друга.</p>
+<p><strong>Подключение.</strong> Каждый сценарий подключает брокер через <code>connect_in_process</code>. Подключённая форма
+реализует <code>TestableBroker</code> и <code>Subscribe</code>.</p>
+<p><strong>Что остаётся вам.</strong> Семантику своего брокера (возобновление с durable-курсора, повторную доставку
+по таймауту, назначение партиций) вы проверяете сквозным набором тестов против настоящего сервера.</p>
+<p><strong>Совместимости.</strong> У каждой совместимости свой набор, они описаны ниже. Только
+<code>capabilities::batches</code> проверяет, что пакет не больше размера, с которым его открыли, поэтому
+одного <code>run_suite</code> для пакетов мало.</p>
+<h3 id="что-именно-он-проверяет">Что именно он проверяет<a class="headerlink" href="#что-именно-он-проверяет" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Сценарий</th>
+<th>Что утверждается</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>порядок доставки</td>
+<td>сообщения доставляются в порядке публикации</td>
+</tr>
+<tr>
+<td>публикация до подписки</td>
+<td>сообщение, опубликованное до открытия подписки, приходит первым, если брокер объявляет <code>Backlog::Delivered</code>, и не приходит вовсе, если он объявляет <code>Backlog::Missed</code> (по умолчанию); сообщение, опубликованное после, приходит в обоих случаях</td>
+</tr>
+<tr>
+<td>ack поглощает доставку</td>
+<td>подтверждённое сообщение не доставляется повторно</td>
+</tr>
+<tr>
+<td>nack с requeue доставляет заново</td>
+<td><code>nack(requeue = true)</code> доставляет сообщение ещё раз</td>
+</tr>
+<tr>
+<td>nack без requeue отбрасывает</td>
+<td>после <code>nack(requeue = false)</code> повторной доставки нет</td>
+</tr>
+<tr>
+<td>заголовки передаются</td>
+<td>заголовки сообщения приходят к подписчику без изменений</td>
+</tr>
+<tr>
+<td>лог публикаций фиксирует публикации</td>
+<td><code>published(name)</code> записывает каждое опубликованное сообщение</td>
+</tr>
+<tr>
+<td>лог публикаций фиксирует ваш издатель</td>
+<td>то, что отправил ваш издатель по умолчанию, лежит в <code>published(name)</code> рядом с тем, что внедрил тест, в порядке публикации и с заголовками (для брокера, зарегистрированного через <code>register_testable_broker!</code>)</td>
+</tr>
+<tr>
+<td>две подписки на одно имя</td>
+<td>каждое сообщение приходит ровно в те подписки, которые называет <code>TestableBroker::routes</code>, и в каждую по одному разу: при рассылке во все подписки, при конкурирующих потребителях в ту, которую выбирает брокер</td>
+</tr>
+<tr>
+<td>счётчики обвязки сходятся</td>
+<td>на остановленных часах, так, как их ведёт <code>TestApp</code>: доставка учитывается до возврата из публикации и снимается один раз при завершении, возврат в очередь учитывает её снова, публикация без получателей не учитывается, отложенная повторная доставка учитывается, когда истекает её таймер</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Транспорт без подтверждений.</strong> ZeroMQ, MQTT <code>QoS 0</code>, Redis pub/sub и Core NATS не умеют
+подтверждать доставку. Их <code>ack</code> и <code>nack</code> возвращают <code>AckError::Unsupported</code>, и набор принимает
+этот ответ везде, где сам завершает доставку. Внутрипроцессный транспорт отвечает так же, как
+настоящий, и не заявляет подтверждения, которого в бою нет.</p>
+<p><strong>Повторная доставка.</strong> Ответ <code>Unsupported</code> на <code>nack(requeue = true)</code> заканчивает этот сценарий:
+транспорт ничего не забрал обратно, и наблюдать нечего. Остальные сценарии идут как обычно, включая
+отбрасывание: доставка, которую никто не может завершить, всё равно не приходит снова.</p>
+<p><strong>Ответ на подтверждение.</strong> <code>run_suite</code> проверяет ответ на каждое подтверждение отдельно: одна
+адаптация может отвечать по-разному в зависимости от типа подписки. У Kafka возврат в очередь
+работает при одном режиме коммитов и недоступен при другом. У MQTT подписка с QoS 1 получает
+подтверждение, а подписка с QoS 0 - нет.</p>
+<p>Неизменно одно: <code>Ok(())</code> из <code>nack(requeue = true)</code> означает, что сообщение будет доставлено
+повторно. На этот ответ опирается механизм повторов рантайма.</p>
+<h2 id="проверка-жизненного-цикла">Проверка жизненного цикла<a class="headerlink" href="#проверка-жизненного-цикла" title="Permanent link">&para;</a></h2>
+<p><code>harness::lifecycle</code> проводит настоящий брокер через жизненный цикл так же, как сервис.
+Проверка не зависит от брокера: она принимает три фабрики.</p>
+<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">};</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">passes_lifecycle</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">(</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span><span class="w"> </span><span class="c1">// sync construction (no I/O)</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">        </span><span class="o">|</span><span class="n">subject</span><span class="o">|</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">subject</span><span class="p">),</span><span class="w"> </span><span class="c1">// the broker's SubscriptionSource</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// a publisher from the connected form</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>make_broker</code></strong> - <strong>синхронная</strong> (<code>Fn() -&gt; B</code>) и <code>Send + Sync + 'static</code>. Проверка вызывает её
+  в отдельном потоке, который может бросить, поэтому зависший конструктор проваливает проверку, а
+  не вешает её. Замыкание, которое захватывает локальную переменную (например, адрес сервера),
+  пишется с <code>move</code>. Брокер, который строится только асинхронно, сюда не подходит: конструируйте
+  дёшево, а подключайтесь в <code>Broker::connect</code>.</li>
+<li><strong><code>make_source</code></strong> строит дескриптор подписки на субъект (путь макро-подписчика).</li>
+<li><strong><code>make_publisher</code></strong> создаёт издателя из подключённой формы.</li>
+</ul>
+<p>Проверка идёт на настоящем <code>Broker</code> в пять шагов:</p>
+<ol>
+<li>синхронное конструирование без ввода-вывода;</li>
+<li><code>connect</code>, который поглощает <code>self</code> и возвращает типизированную подключённую форму;</li>
+<li>подписку через собственный <code>SubscriptionSource</code> брокера;</li>
+<li>публикацию, которую подписка получает и подтверждает;</li>
+<li><code>shutdown</code>, который поглощает <code>self</code> и возвращает терминального свидетеля.</li>
+</ol>
+<p><code>lifecycle</code> выполняет настоящий <code>connect</code>. Запускайте её против живого сервера и включайте только
+при заданной переменной окружения, например <code>NATS_TEST_URL</code>.</p>
+<p>Каждый шаг проверка выполняет оттуда, откуда к брокеру обращается сервис:</p>
+<ul>
+<li><strong>Конструктор</strong> вызывается в обычном потоке без рантайма Tokio и возвращает управление за
+  секунду. Конструктор, который порождает задачу, вызывает <code>Handle::current</code> или ждёт сети, проверку
+  не проходит. Если конструктор так и не вернул управление, проверка проваливается через эту
+  секунду, а его поток продолжает работать в фоне.</li>
+<li><strong>Подписка, первая публикация и каждое подтверждение</strong> выполняются в однопоточном рантайме на
+  отдельном потоке. Затем проверка останавливает этот рантайм. Подписка продолжает получать
+  сообщения. Издатель первого сообщения публикует ещё раз, из рантайма брокера и из нового рантайма,
+  и оба сообщения доходят. <code>nack(requeue = true)</code>, ответивший <code>Ok</code>, возвращает сообщение, а
+  <code>nack(requeue = false)</code> - нет. Так проверка требует, чтобы внутренние задачи брокера выполнялись в
+  рантайме, где он подключился (см. <a href="../">Как написать адаптацию библиотеки брокера</a>).</li>
+<li><strong><code>nack_after</code></strong>, если доставка его умеет, откладывает сообщение на 1,5 с. Сообщение возвращается
+  не раньше этого срока и не позже чем через десять секунд после него. Брокер, который пропускает
+  задержку, округляет её вниз или отсчитывает в рантайме вызывающего потока, проверку не проходит.</li>
+<li><strong>Сроки:</strong> <code>connect</code> и <code>shutdown</code> завершаются за десять секунд каждый, а открытие подписки,
+  публикация и подтверждение - за две. Зависший брокер проваливает проверку, а не останавливает её.</li>
+</ul>
+<p>Брокер без семантики ack (Core NATS) проходит проверку, возвращая из <code>ack</code> значение
+<code>AckError::Unsupported</code>: проверка принимает и его, и успешный ack.</p>
+<p>До последовательности переходов, на отдельном соединении, проверка смотрит, что доносит ваш
+издатель:</p>
+<ul>
+<li>тридцать два сообщения, опубликованные одно за другим, приходят в одну подписку, в любом порядке.
+  Секционированный транспорт раскладывает сообщения без ключа по разным секциям, а порядок
+  проверяет <code>keyed_order</code>;</li>
+<li>ещё четыре сообщения несут заголовки: много записей, пустое значение, значение не в UTF-8 и
+  собственные заголовки фреймворка со счётчиком повторов и контекстом трассировки. Каждый заголовок
+  возвращается байт в байт, иначе публикация с ним возвращает ошибку, и такое сообщение не приходит
+  вовсе, даже после остальных. Заголовок, потерянный или изменённый по пути, проваливает проверку.</li>
+</ul>
+<p>После остановки проверка смотрит на <strong>контракт разделяемых дескрипторов</strong>. Владелец подключённой
+формы обратиться к ней не может: такой код не компилируется. Поэтому проверяются дескрипторы:</p>
+<ul>
+<li>публикация после остановки возвращает ошибку через любого издателя, созданного до неё: ни разу не
+  использованного, использованного только в рантайме брокера и использованного из остановленных
+  рантаймов;</li>
+<li>доставка, полученная до остановки и возвращённая в очередь после неё, возвращает ошибку или
+  приходит снова.</li>
+</ul>
+<p>Дескриптор подписки, подписчик, издатель и доставка переходят в другие потоки, поэтому все они
+<code>'static</code>.</p>
+<h2 id="остановка-и-разделяемые-дескрипторы">Остановка и разделяемые дескрипторы<a class="headerlink" href="#остановка-и-разделяемые-дескрипторы" title="Permanent link">&para;</a></h2>
+<p>Две проверки смотрят, что происходит при остановке. Им нужен ответ, который знает только ваш
+брокер, поэтому крейт вызывает каждую из них сам: внутри процесса и против настоящего сервера.</p>
+<p><strong><code>lifecycle::shutdown_flushes</code></strong> принимает ответ брокера <code>Backlog</code>. Она проверяет, что остановка
+доводит до конца подтверждение и публикацию, сделанные прямо перед <code>shutdown</code>:</p>
+<ul>
+<li>подтверждённое сообщение не приходит снова на новом соединении;</li>
+<li>опубликованное сообщение доходит до другого соединения. При <code>Backlog::Delivered</code> это новое
+  соединение, при <code>Backlog::Missed</code> - подписанное заранее;</li>
+<li>подтверждение, отправленное после остановки и ответившее <code>Ok</code>, тоже действует;</li>
+<li><code>shutdown</code> завершается за десять секунд.</li>
+</ul>
+<p><strong><code>lifecycle::shared_handle_closes</code></strong> принимает подключённую форму с <code>Clone</code>. После остановки
+оригинала любое обращение через копию возвращает ошибку. Это касается издателя, созданного из
+копии до остановки или после, и подписки, которую копия открывает: она получает отказ или сразу
+завершается.</p>
+<p><code>shutdown_flushes</code> подключается несколько раз. Поэтому <code>make_broker</code> каждый раз ведёт к одному и
+тому же брокеру: против сервера - к серверу, внутри процесса - к одному общему миру для всех
+построенных брокеров. Брокер в памяти в собственном прогоне делит одну шину между копиями:</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_self.rs">tests/conformance_self.rs</a></span><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">testing</span><span class="p">::</span><span class="n">Backlog</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1">// Every broker the factory builds is a clone of one bus, so the second connection reaches what the</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1">// first one published, the way two connections reach one server.</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_flushes_at_shutdown</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">bus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">lifecycle</span><span class="p">::</span><span class="n">shutdown_flushes</span><span class="p">(</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">bus</span><span class="p">.</span><span class="n">clone</span><span class="p">(),</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">        </span><span class="o">|</span><span class="n">broker</span><span class="o">|</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="n">Backlog</span><span class="p">::</span><span class="n">Missed</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="p">}</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="c1">// The connected form is a cheap, cloneable handle on the bus.</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_clones_close_with_the_original</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="w">    </span><span class="n">lifecycle</span><span class="p">::</span><span class="n">shared_handle_closes</span><span class="p">(</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="w">        </span><span class="o">|</span><span class="n">broker</span><span class="o">|</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="те-же-наборы-внутри-процесса">Те же наборы внутри процесса<a class="headerlink" href="#те-же-наборы-внутри-процесса" title="Permanent link">&para;</a></h2>
+<p>Наборы проверок можно прогнать и без сервера. <code>lifecycle</code>, <code>redelivery_address</code> и наборы для
+совместимостей подключают брокер через <code>Broker::connect</code>. Оберните рабочий брокер в
+<code>harness::InProcessBroker</code>, и они подключат его через <code>connect_in_process</code>. Каждый набор выполнится
+второй раз, на ваших собственных дескрипторах и политиках публикации.</p>
+<p>Прогоняйте оба варианта. Прогон внутри процесса держит честным режим работы внутри процесса, а
+прогон против сервера проверяет настоящий транспорт.</p>
+<p>В примере брокер, чей <code>connect</code> обращается к серверу, проходит внутри процесса набор маршрутизации
+и проверку жизненного цикла:</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/in_process.rs">tests/in_process.rs</a></span><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">// The routing suite connects the production broker in process.</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_routing_suite_connects_the_broker_in_process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">run_suite</span><span class="p">(</span><span class="n">Dialling</span><span class="p">::</span><span class="n">default</span><span class="p">).</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1">// The suites that connect with `connect` run in process through the adapter, over the production</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1">// broker's own descriptor and publisher.</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_ladder_suite_runs_in_process_through_the_adapter</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">    </span><span class="n">harness</span><span class="p">::</span><span class="n">lifecycle</span><span class="p">(</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">InProcessBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">Dialling</span><span class="p">::</span><span class="n">default</span><span class="p">()),</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="набор-проверок-подтверждения">Набор проверок подтверждения<a class="headerlink" href="#набор-проверок-подтверждения" title="Permanent link">&para;</a></h2>
+<p><code>settlement::suite</code> проверяет, что каждый способ завершить доставку делает то, что обещает. Набор
+работает на транспорте брокера, в том числе на живом сервере.</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/src/conformance/settlement/tests.rs">src/conformance/settlement/tests.rs</a></span><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1">// `make_source` stays a closure: its bound is higher-ranked, so a bare constructor path would bind</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1">// one concrete lifetime and fail to type-check.</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="cp">#[allow(clippy::redundant_closure)]</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_broker_answers_alike_in_process</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c1">// Clones of one broker: the second connection of a check reaches what the first one left.</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">broker</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">();</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="n">matches_in_process</span><span class="p">(</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">broker</span><span class="p">.</span><span class="n">clone</span><span class="p">(),</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">        </span><span class="n">ConnectedMemoryBroker</span><span class="p">::</span><span class="n">publisher</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">        </span><span class="c1">// The bus hands an unsettled delivery back at once.</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">        </span><span class="n">Duration</span><span class="p">::</span><span class="n">ZERO</span><span class="p">,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>make_broker</code></strong> вызывается на каждое соединение, а соединений два. Все брокеры, которые она
+  возвращает, обращаются к одному серверу: на живом сервере к тому же адресу, внутри процесса к
+  клонам одного брокера.</li>
+<li><strong><code>make_source</code></strong> открывает одну и ту же подписку на обоих соединениях: durable-потребителя,
+  очередь или группу потребителей, если они у брокера есть. Подписка допускает три доставки в
+  обработке одновременно.</li>
+<li><strong>Время повторной доставки</strong> - срок, после которого брокер повторно доставляет неподтверждённое
+  сообщение. Это ack wait, visibility timeout или ack deadline, заданный дескриптором. Если брокер
+  доставляет такое сообщение повторно только при закрытии соединения, передайте <code>Duration::ZERO</code>.</li>
+</ul>
+<p>Набор проверяет пять способов:</p>
+<ul>
+<li><strong>ack поглощает доставку:</strong> подтверждённое сообщение не доставляется повторно ни за время
+  повторной доставки, ни на новом соединении с той же подпиской;</li>
+<li><strong>nack без возврата отбрасывает:</strong> то же после <code>nack(requeue = false)</code>;</li>
+<li><strong>nack с возвратом возвращает:</strong> <code>Ok(())</code> из <code>nack(requeue = true)</code> приводит сообщение обратно;</li>
+<li><strong>подтверждение не по порядку:</strong> из трёх сообщений в обработке подтверждено третье, а первые два
+  отпущены без подтверждения. Первые два возвращаются: в ту же подписку, в неё же, открытую заново,
+  или на новом соединении с ней;</li>
+<li><strong>отпущенная доставка:</strong> сообщение, отпущенное без подтверждения из рантайма, который сразу
+  останавливается, возвращается.</li>
+</ul>
+<p><strong>Ответ <code>Unsupported</code>.</strong> Завершение, ответившее <code>AckError::Unsupported</code>, проверка не ограничивает:
+транспорт ничего не выполнил, и сообщение может вернуться на своей подписке или на новом
+соединении. Если <code>nack(requeue = true)</code> отвечает <code>AckError::Unsupported</code>, две последние проверки
+заканчиваются: такой транспорт ничего не забирает обратно, и повторной доставки не видно.</p>
+<p><strong>Дубликаты.</strong> Лог, который фиксирует непрерывный префикс, может вместе с первыми двумя сообщениями
+доставить повторно и подтверждённое третье. Дубликат проверку проходит, потеря - нет.</p>
+<p><strong>Сверка с сервером.</strong> <code>settlement::suite</code> возвращает ответ каждого способа завершения. Пример выше
+вызывает <code>settlement::matches_in_process</code>: он прогоняет набор против сервера и через
+<code>harness::InProcessBroker</code> и паникует, если ответы расходятся. Внутрипроцессный транспорт, который
+заявляет подтверждение, отвергнутое сервером, пропускает в тесте повтор обработчика, а в продакшене
+теряет сообщение.</p>
+<h2 id="retry-checks">Проверки повторов<a class="headerlink" href="#retry-checks" title="Permanent link">&para;</a></h2>
+<p><code>type Copies</code> дескриптора говорит, как регистрация повторяет доставку. Два ответа что-то обещают
+сервису: копию по адресу дескриптора и перекладку силами брокера. <code>conformance::retry</code> проверяет
+оба обещания.</p>
+<p><strong>Копия по адресу.</strong> <code>harness::redelivery_address</code> принимает дескриптор с <code>AddressedCopies</code> и
+проверяет, что копия по его адресу доходит до подписки:</p>
+<ol>
+<li>Проверка открывает по дескриптору две подписки, как две реплики сервиса читают одну подписку.</li>
+<li>Она публикует копию по адресу, который называет дескриптор. Копия уходит из однопоточного
+   рантайма, который сразу останавливается: так копию для <code>retry_after</code> публикует обработчик на
+   выделенных потоках.</li>
+<li>Копия доходит ровно до одной подписки группы (или до каждой, если транспорт отдаёт каждой
+   подписке всё). Заголовки и <code>RETRY_COUNT_HEADER</code> приходят без изменений.</li>
+<li>Проверка дважды возвращает копию в очередь. Каждая повторная доставка сохраняет оба заголовка,
+   а доставка, которая сообщает <code>redelivery_count</code>, насчитывает 1, 2 и 3.</li>
+</ol>
+<p>Если ваша подключённая форма отвечает <code>Subscribe::Copies = AddressedCopies</code>, прогоните проверку ещё
+раз с голым источником <code>Name</code>. Этот ответ и есть адрес каждой регистрации <code>#[subscriber("orders")]</code>.</p>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/src/conformance/retry/tests.rs">src/conformance/retry/tests.rs</a></span><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="cp">#[allow(clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_descriptor_passes</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="n">redelivery_address</span><span class="p">(</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="p">}</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="cp">#[allow(clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">the_memory_bare_name_passes</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">    </span><span class="n">redelivery_address</span><span class="p">(</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">Name</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">.</span><span class="n">to_owned</span><span class="p">()),</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Перекладка брокером.</strong> <code>retry::broker_moves</code> принимает дескриптор с <code>BrokerMoves</code>:</p>
+<ol>
+<li>Проверка объявляет <code>max_attempts(n)</code> и адрес DLQ.</li>
+<li>Она возвращает сообщение в очередь, пока предел не исчерпан.</li>
+<li>Сообщение приходит в DLQ ровно один раз и ровно после <code>n</code> доставок.</li>
+</ol>
+<p>Если возврат в очередь отвечает <code>AckError::Unsupported</code>, проверка на этом заканчивается: транспорт
+ничего не доставляет повторно, и считать нечего. Каждую половину объявления по отдельности брокер
+отклоняет на старте.</p>
+<p>Передайте <code>n</code>, который ваш брокер принимает. <code>make_source(name)</code> открывает и адрес DLQ,
+поэтому создаёт всё, что нужно для публикации в <code>name</code>.</p>
+<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">harness</span><span class="p">::</span><span class="n">InProcessBroker</span><span class="p">;</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">retry</span><span class="p">;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">nonzero</span><span class="p">;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_lapin</span><span class="p">::{</span><span class="n">LapinBroker</span><span class="p">,</span><span class="w"> </span><span class="n">LapinPublish</span><span class="p">,</span><span class="w"> </span><span class="n">RabbitQuorumQueue</span><span class="p">};</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">a_quorum_queue_dead_letters_at_the_cap</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="n">retry</span><span class="p">::</span><span class="n">broker_moves</span><span class="p">(</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">InProcessBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">LapinBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">"amqp://localhost:5672"</span><span class="p">).</span><span class="n">declare_topology</span><span class="p">(</span><span class="kc">true</span><span class="p">)),</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">RabbitQuorumQueue</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">LapinPublish</span><span class="p">::</span><span class="n">default</span><span class="p">()),</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">        </span><span class="n">nonzero</span><span class="o">!</span><span class="p">(</span><span class="mi">2</span><span class="k">u32</span><span class="p">),</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="транспорт-внутри-процесса-против-сервера">Транспорт внутри процесса против сервера<a class="headerlink" href="#транспорт-внутри-процесса-против-сервера" title="Permanent link">&para;</a></h2>
+<p>Транспорт внутри процесса должен отвечать так же, как сервер. <code>conformance::in_process</code> сверяет
+одно с другим. Оба его набора подключают брокер дважды на каждую пробу: через <code>Broker::connect</code> и
+через <code>connect_in_process</code>. Поэтому запускайте их там же, где проверки против сервера:</p>
+<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">in_process</span><span class="p">::{</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">Refusal</span><span class="p">};</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">CoreSubject</span><span class="p">,</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">NatsPublish</span><span class="p">};</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">in_process_matches_the_server</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="n">in_process</span><span class="p">::</span><span class="n">backlog_matches_server</span><span class="p">(</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">NatsPublish</span><span class="p">),</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="n">in_process</span><span class="p">::</span><span class="n">refuses_like_the_server</span><span class="p">(</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(</span><span class="n">NatsPublish</span><span class="p">),</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">        </span><span class="p">[</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">PayloadOver</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">"conformance.payload"</span><span class="p">.</span><span class="n">to_owned</span><span class="p">(),</span><span class="w"> </span><span class="n">limit</span><span class="p">:</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">Publish</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">"conformance.bad subject"</span><span class="p">.</span><span class="n">to_owned</span><span class="p">()</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="w">            </span><span class="n">Refusal</span><span class="p">::</span><span class="n">Subscription</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">source</span><span class="p">:</span><span class="w"> </span><span class="nc">CoreSubject</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="s">"conformance..empty"</span><span class="p">)</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="w">        </span><span class="p">],</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong><code>backlog_matches_server</code></strong> проверяет, что происходит с сообщением, опубликованным до подписки. На
+обоих транспортах набор публикует сообщение под новым именем, открывает подписку на это имя и
+публикует ещё одно.</p>
+<ul>
+<li>При <code>Backlog::Delivered</code> в <code>TestableBroker::backlog</code> первое сообщение приходит первым. При
+  <code>Backlog::Missed</code> оно не приходит вовсе.</li>
+<li>Если сервер отвергает первую публикацию (очередь или тему никто не объявил), транспорт внутри
+  процесса отвергает её тоже.</li>
+<li>После этого подписка на обоих транспортах всё равно открывается и получает второе сообщение.</li>
+</ul>
+<p><strong><code>refuses_like_the_server</code></strong> проверяет, что оба транспорта отказывают одинаково. Набор принимает
+известные вам отказы, каждый в виде <code>Refusal</code>: полезная нагрузка на байт больше предела, отвергнутое
+назначение, отвергнутая подписка, подписка, отвергнутая рядом с другой.</p>
+<ul>
+<li>Каждый отказ дают оба транспорта. Проба, которую сервер принимает, считается ошибкой: она ничего
+  не доказывает.</li>
+<li>Затем на каждом транспорте открываются две подписки на одно имя и одна на другое. Транспорт в
+  процессе принимает ровно те, которые принимает сервер.</li>
+</ul>
+<h2 id="что-несёт-сообщение">Что несёт сообщение<a class="headerlink" href="#что-несёт-сообщение" title="Permanent link">&para;</a></h2>
+<p>Четырём проверкам из <code>conformance::message_shape</code> нужны данные, которые знает только ваш брокер.
+Поэтому ваш крейт вызывает их сам, против сервера и внутри процесса, как и остальные наборы:</p>
+<ul>
+<li><strong><code>keyed_order</code>.</strong> Вы передаёте субъект и место ключа: заголовок или поле параметров публикации.
+  Каждая доставка возвращает из <code>partition_key</code> ключ, с которым её опубликовали, а сообщения одного
+  ключа приходят в порядке публикации.</li>
+<li><strong><code>publish_options</code>.</strong> Вы передаёте субъект, политику публикации, набор случаев и способ прочитать
+  настройку из доставки. Проверка требует трёх вещей:</li>
+<li>публикация без параметров получает настройку политики;</li>
+<li>параметры вызова перекрывают её только для этого вызова;</li>
+<li>значение, которое транспорт не может выполнить, даёт ошибку публикации, и сообщение не
+    приходит, даже после следующей публикации.</li>
+<li><strong><code>publishes_without_credentials</code>.</strong> Вы передаёте политику публикации, настроенную с паролем. Ни
+  один биндинг, который политика добавляет в документ, не содержит пароля.</li>
+<li><strong><code>describes_addresses_without_credentials</code>.</strong> Вы передаёте брокер, построенный из нескольких
+  адресов с пользователем и паролем. Описание сервера не содержит этих учётных данных.</li>
+</ul>
+<div class="highlight"><span class="filename"><a href="https://github.com/powersemmi/ruststream/blob/main/tests/conformance_message_shape.rs">tests/conformance_message_shape.rs</a></span><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1">// `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked, so a bare</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="c1">// method path, which binds one concrete lifetime, would not type-check.</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="cp">#[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">memory_broker_keeps_keys_and_their_order</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="n">message_shape</span><span class="p">::</span><span class="n">keyed_order</span><span class="p">(</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">        </span><span class="n">MemoryBroker</span><span class="p">::</span><span class="n">new</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">        </span><span class="o">&amp;</span><span class="n">unique_subject</span><span class="p">(</span><span class="s">"conformance.keyed"</span><span class="p">),</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">        </span><span class="o">|</span><span class="n">name</span><span class="o">|</span><span class="w"> </span><span class="n">MemorySource</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">        </span><span class="c1">// Where a key goes on this broker: a header here, a field of the options elsewhere.</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">        </span><span class="o">|</span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">headers</span><span class="o">|</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">            </span><span class="n">headers</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">PARTITION_KEY_HEADER</span><span class="p">,</span><span class="w"> </span><span class="n">Bytes</span><span class="p">::</span><span class="n">copy_from_slice</span><span class="p">(</span><span class="n">key</span><span class="p">));</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">            </span><span class="nb">None</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">        </span><span class="p">},</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="p">}</span>
+</code></pre></div>
+<p>Транспорт без ключей не вызывает <code>keyed_order</code>: <code>None</code> для него честный ответ.</p>
+<p>Политику для <code>publish_options</code> настройте на значение, отличное от умолчания транспорта. Иначе
+издатель, который забыл про политику, пройдёт проверку, случайно попав в умолчание.</p>
+<h2 id="capability-suites">Наборы проверок для совместимостей<a class="headerlink" href="#capability-suites" title="Permanent link">&para;</a></h2>
+<p>У каждой трейт-совместимости есть свой набор в <code>conformance::capabilities</code>. Набор доказывает, что
+реализация соблюдает контракт трейта. Запустите набор для каждой совместимости, которую реализует
+ваш брокер.</p>
+<p>Наборы, как и <code>lifecycle</code>, строят брокер и подписку из фабрик и выполняют настоящий <code>connect</code>.
+Поэтому включайте их по той же переменной окружения:</p>
+<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream</span><span class="p">::</span><span class="n">conformance</span><span class="p">::</span><span class="n">capabilities</span><span class="p">;</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">use</span><span class="w"> </span><span class="n">ruststream_nats</span><span class="p">::{</span><span class="n">NatsBroker</span><span class="p">,</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">};</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="cp">#[tokio::test(flavor = </span><span class="s">"multi_thread"</span><span class="cp">, worker_threads = 2)]</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="cp">#[ignore = </span><span class="s">"needs a running nats-server; set NATS_TEST_URL"</span><span class="cp">]</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="k">async</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">passes_request_reply</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="p">::</span><span class="n">env</span><span class="p">::</span><span class="n">var</span><span class="p">(</span><span class="s">"NATS_TEST_URL"</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="n">capabilities</span><span class="p">::</span><span class="n">request_reply</span><span class="p">(</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">        </span><span class="o">||</span><span class="w"> </span><span class="n">NatsBroker</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">url</span><span class="p">.</span><span class="n">clone</span><span class="p">()),</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">        </span><span class="o">|</span><span class="n">subject</span><span class="o">|</span><span class="w"> </span><span class="n">SubscribeOptions</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">subject</span><span class="p">),</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// the RequestReply publisher under test</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">        </span><span class="o">|</span><span class="n">connected</span><span class="o">|</span><span class="w"> </span><span class="n">connected</span><span class="p">.</span><span class="n">publisher</span><span class="p">(),</span><span class="w"> </span><span class="c1">// the plain publisher the responder replies through</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="p">)</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="p">;</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>Каждый вызов набора ограничен по времени: зависший брокер проваливает набор, а не останавливает
+его.</p>
+<p>Ниже наборы и их требования.</p>
+<p><strong><code>capabilities::request_reply</code></strong> требует <code>RequestReply</code>:</p>
+<ul>
+<li>запрос доходит до отвечающей стороны с пригодным заголовком <code>reply-to</code>, а соотнесённый ответ
+  завершает запрос;</li>
+<li>запрос без ответа возвращает ошибку по истечении своего таймаута;</li>
+<li>запрос, сделанный после того, как предыдущий пришёл из уже остановленного рантайма, всё равно
+  завершается;</li>
+<li>два одновременных запроса получают каждый свой ответ;</li>
+<li>ответ, пришедший после таймаута своего запроса, не завершает следующий запрос;</li>
+<li>запрос после остановки брокера сразу возвращает ошибку.</li>
+</ul>
+<p><strong><code>capabilities::batches</code></strong> требует <code>BatchSubscriber</code>:</p>
+<ul>
+<li>каждое опубликованное сообщение приходит в порядке публикации, распределённое по непустым
+  пакетам;</li>
+<li>если сообщения, которые уже ждут к моменту чтения потока, хотя бы раз за пять попыток попадают в
+  один пакет, элементы этого пакета подтверждаются по отдельности: <code>nack</code> с возвратом в очередь
+  возвращает только этот элемент. Подписка, которая никогда не объединяет их, проходит проверку, и
+  раздельное подтверждение для неё не проверяется;</li>
+<li>пакет, подтверждённый из уже остановленного рантайма, подтверждается так же.</li>
+</ul>
+<p><strong><code>capabilities::batch_seeking</code></strong> требует <code>BatchSubscriber</code> и <code>Seekable</code>, сообщения <code>Positioned</code>.
+Перемотка назад на позицию, снятую с сообщения из пакета, начинает следующие пакеты с этого
+сообщения, а за ним по порядку идёт всё остальное.</p>
+<p><strong><code>capabilities::transactions</code></strong> требует <code>TransactionalPublisher</code>:</p>
+<ul>
+<li>ничто внутри транзакции не видно до <code>commit</code>;</li>
+<li><code>commit</code> публикует буфер по порядку, <code>abort</code> его отбрасывает;</li>
+<li>неверный вызов возвращает ошибку: <code>commit</code> или <code>abort</code> без открытой транзакции, второй
+  <code>begin_transaction</code> при уже открытой (он оставляет её нетронутой);</li>
+<li><code>commit</code> из уже остановленного рантайма всё равно публикует буфер;</li>
+<li>после остановки брокера <code>commit</code> оставшейся открытой транзакции и обычная публикация возвращают
+  ошибку.</li>
+</ul>
+<p><strong><code>capabilities::owned_transactions</code></strong> требует <code>OwnedTransactions</code> и его <code>Transaction</code>:</p>
+<ul>
+<li>ничто опубликованное в открытую транзакцию не видно до <code>commit</code>;</li>
+<li><code>commit</code> доставляет весь буфер в порядке публикации, <code>abort</code> его отбрасывает;</li>
+<li>две транзакции, открытые одновременно на одном издателе, завершаются независимо, а сам издатель
+  продолжает публиковать напрямую, пока одна из них открыта;</li>
+<li><code>commit</code> из уже остановленного рантайма всё равно публикует буфер;</li>
+<li>после остановки брокера ошибку возвращают <code>commit</code>, прямая публикация и транзакция, открытая
+  после остановки.</li>
+</ul>
+<p><strong><code>capabilities::seeking</code></strong> требует <code>Seekable</code>, сообщения <code>Positioned</code>:</p>
+<ul>
+<li>перемотка назад на позицию, снятую с доставленного сообщения, повторно доставляет именно это
+  сообщение и всё, что идёт за ним, по порядку;</li>
+<li>перемотка вперёд пропускает доставки, стоявшие в очереди до цели;</li>
+<li>после перемотки подписка продолжает доставлять новые публикации;</li>
+<li>новая подписка, которая до первой доставки перематывается на позицию, снятую предыдущей
+  подпиской, начинает с этого сообщения;</li>
+<li>перемотка из уже остановленного рантайма всё равно срабатывает, а перемотка после остановки
+  брокера возвращает ошибку.</li>
+</ul>
+<p><strong><code>capabilities::seeking_unknown_position</code></strong> требует <code>Seekable</code> и позицию, которую строит брокер.
+Перемотка на позицию, которой нет в журнале подписки (вытеснена по сроку хранения или не
+существовала), возвращает ошибку и не сдвигает подписку: ничего не читается из другого места.
+Ошибка в потоке не завершает проверку, и она читает следующую доставку.</p>
+<p><strong><code>capabilities::carries</code></strong> требует <code>Carries</code> на доставках подписки:</p>
+<ul>
+<li>каждая доставка опубликованного значения отдаёт это значение, и каждое значение приходит ровно
+  один раз;</li>
+<li>там, где копии подписки публикует сервис (<code>AddressedCopies</code>, <code>NamedCopies</code>), копия доставки,
+  опубликованная из её полезной нагрузки и заголовков так же, как рантайм публикует копию для
+  переобработки или для DLQ, отдаёт то же значение. На подписке с <code>BrokerMoves</code> набор ничего не
+  копирует;</li>
+<li>доставка без значения (строку уже удалили) не отдаёт ничего, и рантайм поступает с ней по
+  политике <code>on_failure(decode = ..)</code>.</li>
+</ul>
+<p><strong><code>capabilities::carries_batch</code></strong> требует <code>BatchSubscriber</code> и <code>CarriesBatch</code> на его пакетах:</p>
+<ul>
+<li>пакеты отдают каждое опубликованное значение ровно один раз, и ни один пакет не отдаёт больше
+  значений, чем в нём доставок;</li>
+<li>если два значения хотя бы раз за пять попыток попадают в один пакет, первая доставка этого пакета
+  возвращается в очередь через <code>nack</code> и при повторной доставке отдаёт значение, которое пакет отдал
+  первым. Подписка, которая никогда не объединяет значения, и транспорт, который отвечает на возврат
+  в очередь ошибкой <code>AckError::Unsupported</code>, проходят проверку, и порядок для них не проверяется;</li>
+<li>там, где копии публикует сервис, копия доставки из пакета отдаёт то же значение, как и в
+  <code>carries</code>;</li>
+<li>доставку без значения публикуют перед доставкой со значением. Пакет не отдаёт для неё значения и
+  ставит её после доставки со значением, за конец среза. Это проверяется так же, через возврат
+  первой доставки в очередь.</li>
+</ul>
+<p>Каждый прогон набора берёт новый субъект из <code>conformance::helpers::unique_subject</code> и читает только
+то, что опубликовал сам. С фиксированным субъектом набор проходит на свежем сервере, но не проходит
+на втором прогоне у брокера, который хранит оставленное первым: удерживаемый лог воспроизведёт в
+одну подписку оба прогона, durable-очередь ещё держит ранние сообщения, пространство ключей - ранний
+тип. Ваш сквозной набор тестов решает ту же проблему тем же способом.</p>
+<p>In-memory брокер нативно реализует request-reply, пакеты, транзакции и перемотку и проходит их
+семь наборов прямо в процессе (см. <a href="../../brokers/memory/#capabilities">Memory</a>). Это исполняемый
+эталон того, чего ждёт каждый из них. Наборы для <code>Carries</code> и <code>CarriesBatch</code> предназначены для
+брокеров, доставки которых уже хранят декодированное значение, например очереди в базе данных.</p>
+<h2 id="чеклист-автора">Чеклист автора<a class="headerlink" href="#чеклист-автора" title="Permanent link">&para;</a></h2>
+<p>Прежде чем публиковать адаптацию библиотеки брокера, проверьте:</p>
+<p><strong>Трейты</strong></p>
+<ul>
+<li>[ ] Реализованы <code>Broker</code>, <code>ConnectedBroker</code>, <code>Subscribe</code> (или <code>SubscriptionSource</code>), <code>Subscriber</code>,
+      <code>IncomingMessage</code>, <code>Publisher</code> и конструирующая его <code>PublishPolicy</code>.</li>
+<li>[ ] <code>shutdown</code> выполняет всё освобождение ресурсов, которое может вернуть ошибку, не блокирует и
+      не паникует.</li>
+<li>[ ] Ack поглощает <code>self</code>, nack учитывает флаг <code>requeue</code>.</li>
+<li>[ ] Крейт владеет своим <code>Config</code>, а поля без разумного умолчания не получают <code>Default</code>.</li>
+<li>[ ] Трейты-совместимости реализованы только там, где брокер их действительно поддерживает.</li>
+<li>[ ] Каждая реализованная совместимость проходит свой набор из <code>conformance::capabilities</code>.</li>
+</ul>
+<p><strong>Режим работы внутри процесса</strong></p>
+<ul>
+<li>[ ] Режим поставляется под фичей <code>testing</code>: <code>InProcess</code> на брокере, <code>TestableBroker</code> на его
+      подключённой форме и <code>register_testable_broker!(YourBroker)</code>.</li>
+<li>[ ] Внутрипроцессный транспорт берёт все настройки у рабочего брокера и отказывает везде, где
+      отказывает настоящий брокер.</li>
+</ul>
+<p><strong>Проверки</strong></p>
+<ul>
+<li>[ ] <code>harness::run_suite</code> проходит.</li>
+<li>[ ] Остальные наборы проходят и внутри процесса через <code>harness::InProcessBroker</code>, и против
+      настоящего сервера.</li>
+<li>[ ] <code>harness::lifecycle</code> проходит против настоящего сервера и включается по переменной окружения.</li>
+<li>[ ] <code>lifecycle::shutdown_flushes</code> проходит с ответом брокера <code>Backlog</code>.</li>
+<li>[ ] <code>lifecycle::shared_handle_closes</code> проходит там, где подключённая форма реализует <code>Clone</code>.</li>
+<li>[ ] <code>settlement::matches_in_process</code> проходит против настоящего сервера и включается по той же
+      переменной.</li>
+<li>[ ] <code>harness::redelivery_address</code> проходит для каждого дескриптора с <code>AddressedCopies</code> и для
+      голого <code>Name</code>, если <code>Subscribe::Copies</code> равен <code>AddressedCopies</code>.</li>
+<li>[ ] <code>retry::broker_moves</code> проходит для каждого дескриптора с <code>BrokerMoves</code>.</li>
+<li>[ ] Если у транспорта есть ключи или настройки отдельного сообщения, <code>message_shape::keyed_order</code>
+      и <code>message_shape::publish_options</code> проходят внутри процесса и против настоящего сервера.</li>
+<li>[ ] Сквозной набор тестов покрывает семантику конкретного брокера и включается по той же
+      переменной.</li>
+</ul>
+<p><strong>Публикация</strong></p>
+<ul>
+<li>[ ] Метаданные <code>Cargo.toml</code> заполнены полностью (<code>description</code>, <code>license</code>, <code>repository</code>,
+      <code>keywords</code>, <code>categories</code>), а CI проверяет <code>--no-default-features</code> и <code>--all-features</code>.</li>
+</ul>
+<p>Контракт трейтов описан в разделе <a href="../">Как написать адаптацию библиотеки брокера</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  К началу
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache-2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/powersemmi/ruststream" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.top", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.action.edit", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0432 \u0431\u0443\u0444\u0435\u0440", "clipboard.copy": "\u041a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0432 \u0431\u0443\u0444\u0435\u0440", "search.result.more.one": "\u0415\u0449\u0451 1 \u043d\u0430 \u044d\u0442\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435", "search.result.more.other": "\u0415\u0449\u0451 # \u043d\u0430 \u044d\u0442\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435", "search.result.none": "\u0421\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e", "search.result.one": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e 1 \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0435", "search.result.other": "\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u0441\u043e\u0432\u043f\u0430\u0434\u0435\u043d\u0438\u0439: #", "search.result.placeholder": "\u041d\u0430\u0447\u043d\u0438\u0442\u0435 \u043f\u0435\u0447\u0430\u0442\u0430\u0442\u044c \u0434\u043b\u044f \u043f\u043e\u0438\u0441\u043a\u0430", "search.result.term.missing": "\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442", "select.version": "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0432\u0435\u0440\u0441\u0438\u044e"}, "version": {"provider": "mike"}}</script>
+    
+    
+  
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../assets/benchmarks.js"></script>
+      
+    
+  
+  <script src="https://context7.com/widget.js" data-library="/powersemmi/ruststream"></script>
+
+  </body>
+</html>
