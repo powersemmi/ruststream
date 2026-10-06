@@ -2,9 +2,9 @@
 """Turn a benchmark run into the document the benchmarks page reads.
 
 Input is the machine-readable summary `cargo bench -- --output-format=json` writes, one JSON
-object per benchmark. Output is `docs/benchmarks/results.json` (schema 2): the `code` section,
-one entry per scenario, with instructions and allocations per message, plus what starting the
-service cost once.
+object per benchmark, in the summary layout gungraun 0.20 writes (its version 7). Output is
+`docs/benchmarks/results.json` (schema 2): the `code` section, one entry per scenario, with
+instructions and allocations per message, plus what starting the service cost once.
 
 Every scenario is measured three times: over one delivery, over MESSAGES of them, and over twice
 MESSAGES. The slope between the last two is the steady-state cost of a message - everything that
@@ -36,6 +36,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+# The summary layout read below. Every summary states its layout in `version`, and a gungraun
+# release that changes the layout changes the number, so a summary of another version stops the
+# conversion with a message naming both rather than with a missing field.
+SUMMARY_VERSION = "7"
 
 # Deliveries per measured run, the default of the suite's `MESSAGES` constant. Every published
 # number is per message, so the totals are divided by it. `just bench N` builds the
@@ -168,16 +173,14 @@ SCENARIOS = [
 
 
 def metric(summary, tool, name):
-    """The new value of one metric, out of the nested summary the runner emits."""
+    """The new value of one metric: the total of one tool's run, as the runner reports it."""
     for profile in summary["profiles"]:
-        metrics = profile["summaries"]["parts"][0]["metrics_summary"].get(tool)
-        if not metrics or name not in metrics:
+        if profile["tool"] != tool:
             continue
-        values = metrics[name]["metrics"]
-        # A benchmark with nothing to compare against - a first run, or one whose baseline was
-        # taken before it existed - reports the new value alone under a different key.
-        entry = values["Both"][0] if "Both" in values else next(iter(values.values()))
-        return int(entry["Int"])
+        values = profile["data"]["total"]["metrics"].get(name, {}).get("values", {})
+        # A run compared against a baseline carries the old value next to the new one.
+        new = values.get("new")
+        return None if new is None else int(new)
     return None
 
 
@@ -193,11 +196,18 @@ def measurements(path):
         if not line:
             continue
         summary = json.loads(line)
+        version = summary.get("version")
+        if version != SUMMARY_VERSION:
+            sys.exit(
+                f"the benchmark summary has layout version {version}, and this script reads "
+                f"version {SUMMARY_VERSION}: read the new layout in `metric` and raise "
+                "SUMMARY_VERSION"
+            )
         scenario = Path(summary["benchmark_file"]).stem
         key = f"{scenario}/{summary['function_name']}/{summary['id']}"
         found[key] = {
             "instructions": metric(summary, "Callgrind", "Ir"),
-            "allocations": metric(summary, "Dhat", "TotalBlocks"),
+            "allocations": metric(summary, "DHAT", "TotalBlocks"),
         }
     return found
 

@@ -48,7 +48,7 @@ done
 | --- | --- | --- |
 | `just deny` | cargo-deny | `cargo install cargo-deny --locked` |
 | `just cov` | cargo-llvm-cov | `cargo install cargo-llvm-cov --locked` |
-| `just bench` | valgrind and the benchmark runner | the system package manager, then `cargo install --locked gungraun-runner --version =0.19.4` |
+| `just bench` | valgrind | the system package manager; the recipe installs the benchmark runner itself, at the release `Cargo.lock` pins |
 | `just brokers` | jq | the system package manager |
 | the documentation site | Python 3.12 | `pip install -r docs/requirements.txt`, then `properdocs serve` |
 | a broker's live suite | Docker with Compose | the Docker documentation |
