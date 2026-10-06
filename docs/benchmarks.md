@@ -67,10 +67,11 @@ twice as fast gives the same number too, so the rows of this table are comparabl
 and with the same row measured on another machine. What it does not tell you is time: the same
 count costs more where it misses the cache.
 
-The number is this crate's own work and nothing else: the service a user writes, over the
-in-process queue, decoding the payload into a type, reading a field and settling the delivery. No
-broker is in it, so the figure moves when the framework's code moves and at no other time, which is
-what lets two percent count as a defect rather than as noise.
+In `ruststream` the number is the crate's own work and nothing else: the service a user writes,
+over the in-process queue, decoding the payload into a type, reading a field and settling the
+delivery. No broker is in it, so the figure moves when the framework's code moves and at no other
+time, which is what lets two percent count as a defect rather than as noise. A broker crate's
+benchmarks page says what its number covers and which limit it is held to.
 
 Every per-message figure is the steady state. Starting a service costs what it costs once - the
 connect, the subscription, the first allocations behind them - and dividing that over the messages
@@ -158,9 +159,10 @@ yields, whether deliveries arrive in batches, how back-pressure reaches the cons
 
 ### The code measurement
 
-`just bench` in the crate's repository produces the second table. It needs valgrind and the
-benchmark runner pinned to the version the crate depends on. `just bench 5000` measures
-every scenario over five thousand deliveries instead of a thousand: a steadier number for a longer
+Each crate produces its rows of the second table with a benchmark recipe of its own, which its
+benchmarks page names: `just bench` in `ruststream`. The recipe needs valgrind and the benchmark
+runner pinned to the version the crate depends on. `just bench 5000` measures every scenario of
+`ruststream` over five thousand deliveries instead of a thousand: a steadier number for a longer
 run, while the published document stays at the default.
 
 - **Every scenario is the service a user writes**, started through the real runtime with the test
@@ -184,11 +186,13 @@ run, while the published document stays at the default.
   allocations from DHAT, which is exact and held to the floor the scenario declares. In
   `ruststream`, a separate benchmark measures wall time on scenarios of its own. `just bench`
   prints those times, which are noisy and informational.
-- **A comparison, not a threshold.** `just bench --baseline=main` measures a branch against the
-  same benchmarks run on the branch it targets and reports more than two percent of instructions
-  in a scenario as a failure, and so an allocation above what the scenario declares. The author of
-  a pull request runs it and cites its numbers, and a change that lowers a scenario lowers its
-  declared floor in the same pull request.
+- **A comparison, not a threshold.** Run with `--baseline=main`, the recipe measures a branch
+  against the same benchmarks run on the branch it targets, and fails when a scenario's
+  instructions grow past the crate's own limit: two percent in `ruststream`, and in a broker crate
+  the limit its benchmarks page states. The limit is relative, so it applies only against a
+  baseline. Allocations are held to what the scenario declares on every run, with a baseline or
+  without. The author of a pull request runs the comparison and cites its numbers, and a change
+  that lowers a scenario lowers its declared floor in the same pull request.
   The same rules apply to the cold start.
 
 ## Publishing results
@@ -283,10 +287,10 @@ Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays
 
 `code` is the second table, one entry per scenario. `framework` is per message in the steady state;
 `cold` is the whole cost of starting the service and taking the first delivery, not divided by
-anything. `gated` says whether a regression in it fails `just bench --baseline=main`. A crate that publishes `scenarios`
-alone declares `schema` 1 and keeps its row in the first table. A crate that measures no broker of
-its own leaves `scenarios` out instead of publishing it empty, and appears in the second table
-only.
+anything. `gated` says whether a regression in it fails the crate's benchmark recipe. A crate that
+publishes `scenarios` alone declares `schema` 1 and keeps its row in the first table. A crate that
+measures no broker of its own leaves `scenarios` out instead of publishing it empty, and appears in
+the second table only.
 
 A crate that measures its code apart from the comparison records that run in `code_measured`: its
 `measured_at`, `crate_version` and `core_version`. The second table takes its date from there, and
