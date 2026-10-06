@@ -173,8 +173,9 @@ plugins:
             Broker authors: Broker 作者
             API reference: API 参考
 
-# The benchmarks page builds its table in the browser from the results each broker publishes with
-# its own site. The script is a no-op on every other page.
+# The benchmarks page builds its tables in the browser. The script reads each crate's results
+# document, the core's included, from the main branch of that crate's repository. It is a no-op on
+# every other page.
 extra_javascript:
   - assets/benchmarks.js
 

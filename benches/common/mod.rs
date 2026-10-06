@@ -20,18 +20,19 @@
 //! allocations behind them, and whatever the first delivery touches for the first time. Dividing
 //! that over the messages of a run would report it as a per-message price it is not.
 //!
-//! So every scenario is measured twice in the same binary, over [`MESSAGES`] deliveries and over
-//! twice as many, and the two totals are read as a line:
+//! So every scenario is measured three times in the same binary: over one delivery, over
+//! [`MESSAGES`] deliveries and over twice as many. The two longer totals are read as a line:
 //!
 //! ```text
 //! per message = (total(2M) - total(M)) / M
-//! cold        = total(M) - M * per message
 //! ```
 //!
 //! Everything that happens once is in both totals and cancels in the subtraction, so the
-//! per-message figure is the steady state and the remainder is the cold start, reported on its
-//! own. No warm-up run is needed, and nothing has to be switched off part way through - which
-//! matters for DHAT, whose counting cannot be toggled at all.
+//! per-message figure is the steady state. The one-delivery run is the cold start: starting the
+//! service and handling the first delivery, measured on its own rather than read off the line,
+//! whose intercept carries the noise of two totals of several million. No warm-up run is needed,
+//! and nothing has to be switched off part way through - which matters for DHAT, whose counting
+//! cannot be toggled at all.
 //!
 //! What a body measures is therefore the start and the drain, in two regions, with the queue
 //! filled between them and never counted: producing the messages is not what the scenario is
@@ -52,7 +53,7 @@
 //! entering a matching frame flips collection, so a framework function calling another framework
 //! function switches counting back off one frame deeper. What comes out is the parity of the
 //! nesting rather than the framework's work - here it dropped the whole JSON decode from a
-//! scenario that had a layer in its stack and reported that as a 40 percent saving. The same
+//! scenario that had a layer in its stack and reported that as a 40 percent saving.
 //!
 //! Toggling on the benchmark function, which is the harness default, is the second. A body that
 //! hands a closure to a generic function - `block_on` in every scenario here - makes the compiler
@@ -195,11 +196,12 @@ const fn messages(configured: Option<&str>) -> usize {
 ///
 /// `steady` is what one delivery allocates in the steady state and `cold` what starting the
 /// service and taking the first delivery allocate once; together they are the hard limit the
-/// longest run of the scenario (twice the default count of deliveries) is held to, so the run
-/// fails when the path allocates more than it does today. That is what turns "no allocation on
-/// the hot path" into something CI can hold the code to. The instruction limit is relative, and
-/// `just bench` sets it only for a run against a named baseline: `just bench --save-baseline=main`
-/// records one, and `just bench --baseline=main` fails on two percent more instructions than it.
+/// longest run of the scenario (twice [`MESSAGES`] deliveries) is held to, so the run fails when
+/// the path allocates more than it does today. That is what turns "no allocation on the hot
+/// path" into a limit every run of `just bench` holds the code to. The instruction limit is
+/// relative, and `just bench` sets it only for a run against a named baseline:
+/// `just bench --save-baseline=main` records one, and `just bench --baseline=main` fails on two
+/// percent more instructions than it.
 ///
 /// On a consume scenario `steady` is zero and `cold` is all there is. On a publish scenario it
 /// is what the message costs the transport underneath, with nothing of the framework's above it.

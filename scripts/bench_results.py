@@ -74,16 +74,14 @@ def configure(messages):
 
 class Scenario:
     """One published row: what it is called, which benchmark measured it, and whether a
-    regression in it fails CI.
+    regression in it fails a run against a baseline.
 
-    `key` is the short name a narrow report writes instead of the sentence: the chart in the
-    pull request comment is read in one column, and a scenario has to be recognisable in ten
-    characters. The sentence stays everywhere there is room for it.
+    The flag is what the document publishes. The limits themselves are held by the recipe's
+    benchmark lists and by the configuration the benchmark declares.
     """
 
-    def __init__(self, name, key, framework, gated=True, note=None):
+    def __init__(self, name, framework, gated=True, note=None):
         self.name = name
-        self.key = key
         self.framework = framework
         self.gated = gated
         self.note = note
@@ -99,77 +97,62 @@ COUNTS = ("base", "twice")
 SCENARIOS = [
     Scenario(
         "consume, JSON decode into a small struct",
-        "json",
         "consume_json/service",
     ),
     Scenario(
         "consume, JSON decode of a 1 KB body",
-        "json-1kb",
         "consume_json_kilobyte/service",
     ),
     Scenario(
         "consume on the byte lane, no codec",
-        "lane",
         "consume_lane/service",
     ),
     Scenario(
         "consume through a pool of four workers",
-        "pool4",
         "consume_pool/service",
     ),
     Scenario(
         "consume on four dedicated threads",
-        "threads4",
         "consume_threads/service",
     ),
     Scenario(
         "consume through a middleware stack of one",
-        "mw1",
         "middleware/service_one",
     ),
     Scenario(
         "consume through a middleware stack of four",
-        "mw4",
         "middleware/service_four",
     ),
     Scenario(
         "consume in batches of 64",
-        "batch64",
         "batch/service",
     ),
     Scenario(
         "reply, encoded to a declared destination",
-        "reply",
         "reply/service",
     ),
     Scenario(
         "reply to a transport that reads the payload",
-        "reply-lent",
         "reply_lending/service",
     ),
     Scenario(
         "publish through an Out slot with one transform",
-        "out-slot",
         "out_slot/service",
     ),
     Scenario(
         "publish with a typed header contract",
-        "hdr-write",
         "typed_headers_write/service",
     ),
     Scenario(
         "read a typed header contract, then publish",
-        "hdr-read",
         "typed_headers_read/service",
     ),
     Scenario(
         "request and reply, one round trip",
-        "req-reply",
         "request_reply/service",
     ),
     Scenario(
         "a delivery that asks to be redelivered, and the copy",
-        "retry",
         "retry_copy/service",
         gated=False,
         note="cold path: measured and reported, never gated",
@@ -286,18 +269,6 @@ def rounded(figure):
     message, one allocation for the whole run" does not read as a flat zero.
     """
     return round(figure, 3) if abs(figure) < 1 else round(figure, 1)
-
-
-def per_message(value):
-    """A run total as a per-message figure, rounded the way a reader reads it."""
-    if value is None:
-        return None
-    figure = value / MESSAGES
-    if figure < 1:
-        # A fixed cost spread over the run rather than a per-message one: shown to three places
-        # so that "nothing per message, one allocation for the run" does not read as a flat zero.
-        return round(figure, 3)
-    return round(figure, 2 if figure < 10 else 1)
 
 
 def command(*args):
@@ -520,14 +491,12 @@ def totals(found, key, count, floor=None):
     return measured
 
 
-def half(found, key):
-    """The steady state and the cold start of one half of a pair.
+def figures(found, key):
+    """The steady state and the cold start of one scenario.
 
     The slope between the two counts is what a message costs once the service is running; the
     one-delivery run is what starting it and taking that delivery cost.
     """
-    if key is None:
-        return None, None
     base = totals(found, key, COUNTS[0])
     twice = totals(found, key, COUNTS[1])
     if twice["instructions"] <= base["instructions"]:
@@ -547,7 +516,7 @@ def half(found, key):
 def build(found):
     rows = []
     for scenario in SCENARIOS:
-        framework, cold = half(found, scenario.framework)
+        framework, cold = figures(found, scenario.framework)
         row = {
             "name": scenario.name,
             "messages": MESSAGES,
@@ -562,7 +531,7 @@ def build(found):
 
 
 def report(rows):
-    """The same table the page publishes, for a terminal and for a CI job summary."""
+    """The same table the page publishes, for the terminal."""
     header = (
         f"{'scenario':<52}{'instructions':>14}{'allocations':>13}"
         f"{'cold instr':>12}{'cold alloc':>12}"

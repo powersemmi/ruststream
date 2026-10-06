@@ -72,8 +72,8 @@ test:
     cargo test --workspace --doc
     cargo test --workspace --doc --no-default-features
 
-# What a change costs per message: instructions and allocations through valgrind, then the
-# wall-clock pair, then the document the benchmarks page publishes.
+# What a change costs per message: instructions and allocations through valgrind, then wall-clock
+# times printed for reference, then the document the benchmarks page publishes.
 #
 # RUSTFLAGS is emptied on purpose. A machine-specific `-C target-cpu=native` makes the numbers
 # incomparable with anyone else's, and valgrind aborts outright on the instructions a recent CPU
