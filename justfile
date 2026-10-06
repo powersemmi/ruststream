@@ -80,7 +80,8 @@ test:
 # The benchmarks hand the measurement to gungraun's runner, which has to be the release of the
 # library the lock file pins. The recipe installs that release into `target/gungraun-runner` on
 # the first run and after the library moves, and puts it first on PATH, where the benchmarks look
-# the runner up.
+# the runner up. A `GUNGRAUN_RUNNER` in the environment would win over PATH when the benchmarks
+# build, so the recipe clears it.
 #
 # A leading number is the deliveries per measured run: the default of 1000 is what the published
 # document is measured at, a larger count buys a steadier number for a longer run
@@ -105,6 +106,7 @@ bench *ARGS:
     if [ "$installed" != "gungraun-runner $version" ]; then
         cargo install --locked --root "$runner" gungraun-runner --version "=$version"
     fi
+    unset GUNGRAUN_RUNNER
     export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages" \
         GUNGRAUN_HOME="$PWD/target/gungraun/$messages"
     cargo bench {{ cost_benches }} --no-fail-fast \
