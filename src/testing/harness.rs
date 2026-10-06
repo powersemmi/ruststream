@@ -5,6 +5,7 @@
 
 use std::any::{TypeId, type_name};
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant as WallClock};
 
@@ -267,8 +268,9 @@ pub struct TestApp<State> {
     entries: Vec<BrokerEntry>,
     mode: Mode,
     coordinator: Coordinator,
-    #[allow(dead_code)]
-    state: Arc<State>,
+    // The dispatch tasks own the app's state; the marker gives this type the auto traits of the
+    // `Arc<State>` they share.
+    _state: PhantomData<Arc<State>>,
     shutdown: Shutdown,
     handles: Vec<JoinHandle<()>>,
     continuations: TaskTracker,
@@ -613,7 +615,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             entries,
             mode,
             coordinator,
-            state,
+            _state: PhantomData,
             shutdown,
             handles,
             continuations,

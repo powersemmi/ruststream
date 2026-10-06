@@ -3,19 +3,16 @@
 
 use super::dispatch::Workers;
 use super::failure::FailurePolicies;
-// Kept in scope for the `[`Handler`]` intra-doc links; the trait no longer bounds `type Handler`.
-#[allow(unused_imports)]
-use super::handler::Handler;
 use super::input::InputKind;
 use super::metadata::HandlerMetadata;
 
 /// A handler definition produced by the `#[subscriber]` macro (with or without `raw`).
 ///
-/// It bundles a [`Handler`] with the subscription [`Source`](Self::Source) it binds to, so
-/// [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire decoding without the
-/// caller repeating anything. The source is a [`Name`](crate::Name) for `#[subscriber("topic")]`, or
-/// a broker descriptor for `#[subscriber(RedisStream::new(..))]`. The generated type is itself the
-/// handler, so [`Handler`](Self::Handler) is usually `Self`.
+/// It bundles a [`Handler`](super::Handler) with the subscription [`Source`](Self::Source) it
+/// binds to, so [`BrokerScope::include`](super::BrokerScope::include) can subscribe and wire
+/// decoding without the caller repeating anything. The source is a [`Name`](crate::Name) for
+/// `#[subscriber("topic")]`, or a broker descriptor for `#[subscriber(RedisStream::new(..))]`. The
+/// generated type is itself the handler, so [`Handler`](Self::Handler) is usually `Self`.
 pub trait SubscriberDef: Sized {
     /// The input kind the handler consumes ([`Decoded<T>`](super::Decoded) for a typed `&T`
     /// parameter, [`RawBytes`](super::RawBytes) for a raw `&[u8]` one).
@@ -30,7 +27,7 @@ pub trait SubscriberDef: Sized {
     ///
     /// The handler bound is enforced where the def is mounted (against the app's state type `St`),
     /// not on the trait: a handler that reads typed application state is
-    /// [`Handler<Target, Context, St>`](Handler) only for its declared `St`, while one that
+    /// [`Handler<Target, Context, St>`](super::Handler) only for its declared `St`, while one that
     /// ignores state is generic over it.
     type Handler;
 

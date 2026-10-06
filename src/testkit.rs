@@ -10,11 +10,9 @@
 /// Records the fields of every tracing event emitted while the guard is alive, so a test can
 /// assert on a diagnostic's content rather than on its mere existence.
 ///
-/// Needs a tracing subscriber, hence the `logging` feature gate.
-#[cfg(feature = "logging")]
-// Its callers sit behind broker and codec features of their own, so a build with `logging`
-// alone compiles the capture with nobody reaching for it.
-#[allow(dead_code)]
+/// It compiles where its callers do: with a tracing subscriber and the in-memory broker their
+/// modules need.
+#[cfg(all(feature = "logging", feature = "memory"))]
 pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::fmt::Debug;

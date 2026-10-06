@@ -84,10 +84,8 @@ pub use handle::{
 pub use handler::IntoOutcome;
 pub use handler::{Handler, HandlerOutcome};
 pub use main_runtime::MainRuntime;
-// The status half of `HandlerOutcome`, for the crate's own policies, dispatch and test seams.
-// The consumers outside `runtime` are all feature-gated (metrics, otel, testing), so a minimal
-// build leaves this re-export unused.
-#[allow(unused_imports)]
+// The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
+#[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 pub(crate) use handler::HandlerResult;
 pub use inject::Out;
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
