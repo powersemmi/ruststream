@@ -18,7 +18,7 @@ use opentelemetry::metrics::Histogram;
 use opentelemetry::{KeyValue, global};
 // Only the test-only `typed_batch` constructor still names the bound directly; the adapters
 // reach decoding through `DecodeWith`.
-#[cfg(test)]
+#[cfg(all(test, feature = "memory", feature = "json"))]
 use serde::de::DeserializeOwned;
 use tracing::{error, warn};
 
@@ -347,7 +347,7 @@ pub(crate) trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
 /// Hands `handler` one batch of deliveries the way the dispatch loop does once it took them off
 /// the subscription: collected, the shape every decoding batch adapter takes. The adapter tests'
 /// entry point, which names the batch type the trait leaves open.
-#[cfg(test)]
+#[cfg(all(test, feature = "memory", feature = "json"))]
 pub(crate) async fn handled<H, M, C, S>(
     handler: &H,
     batch: Vec<M>,
@@ -365,7 +365,7 @@ pub(crate) async fn handled<H, M, C, S>(
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
 /// as `&[T]` to `inner`. The adapter tests' constructor; the mounts name the input kind
 /// explicitly instead.
-#[cfg(test)]
+#[cfg(all(test, feature = "memory", feature = "json"))]
 pub(crate) fn typed_batch<M, T, C, H>(
     codec: C,
     inner: H,

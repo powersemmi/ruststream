@@ -31,15 +31,16 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use super::helpers::unique_subject;
 #[cfg(feature = "asyncapi")]
+use crate::ConnectedBroker;
+#[cfg(feature = "asyncapi")]
 use crate::DescribeServer;
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::build_spec;
 #[cfg(feature = "asyncapi")]
 use crate::runtime::{AppInfo, RustStream};
 use crate::{
-    AckError, Broker, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingFor,
-    OutgoingMessage, PublishPolicy, Publisher, Subscriber, SubscriptionSource,
-    runtime::RETRY_COUNT_HEADER,
+    AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage,
+    PublishPolicy, Publisher, Subscriber, SubscriptionSource, runtime::RETRY_COUNT_HEADER,
 };
 
 /// How long a check waits for a delivery it expects. Long enough for a live consumer that joins a

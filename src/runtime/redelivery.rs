@@ -129,7 +129,7 @@ where
 
 /// The retry publisher of a registration that named neither a transform nor a middleware: what a
 /// bare mount produces, for tests that drive the dispatch functions directly.
-#[cfg(test)]
+#[cfg(all(test, feature = "memory"))]
 pub(crate) fn bare_retry_publisher<Cx, P>(live: P) -> Arc<dyn ErasedRetryPublisher<Cx>>
 where
     Cx: Send + Sync + 'static,

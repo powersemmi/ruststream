@@ -8,6 +8,12 @@ export PATH := env("HOME") + "/.cargo/bin:" + env("HOME") + "/.local/bin:" + env
 # `CARGO_INCREMENTAL=1 just test`.
 export CARGO_INCREMENTAL := env("CARGO_INCREMENTAL", "0")
 
+# A rustc warning fails every build here, so a feature combination that clippy never lints cannot
+# collect dead code unseen. Cargo's `build.warnings` does it without touching the build
+# fingerprint, where `-D warnings` in RUSTFLAGS would rebuild every dependency. Cargo honours it
+# from 1.97 on. A loop that tolerates warnings runs `CARGO_BUILD_WARNINGS=warn just test`.
+export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
+
 # What the benchmarks are built with: the production surface of a service that consumes JSON over
 # the in-memory broker, and nothing else. `testing` in particular is a compile error in the
 # benchmarks - it compiles a recording branch into every delivery.
@@ -26,8 +32,8 @@ check:
     # production feature set, and the harness feature is a compile error in them. Their own leg
     # follows.
     cargo clippy --workspace --lib --bins --tests --examples --all-features -- -D warnings
-    # Compilation only: this feature combination has lints of its own that no gate has ever run,
-    # and cleaning them is not what a benchmark change is for.
+    # No clippy here: this feature combination has clippy lints of its own that no gate has ever
+    # run, and cleaning them is not what a benchmark change is for.
     cargo check --benches --no-default-features --features {{ bench_features }}
     cargo check --workspace --lib --bins --tests --examples --all-features
     cargo check --workspace --no-default-features
@@ -126,6 +132,8 @@ brokers *names:
     #!/usr/bin/env bash
     set -uo pipefail
     command -v jq > /dev/null || { echo "error: just brokers needs jq" >&2; exit 1; }
+    # A broker's own warnings are for its own gates to judge.
+    unset CARGO_BUILD_WARNINGS
     core="$(pwd)"
     main="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
     root="$(dirname "$main")"

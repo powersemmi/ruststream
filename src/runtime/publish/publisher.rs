@@ -48,7 +48,7 @@ impl<P, C, PL, BL> TypedPublisher<P, C, PL, BL> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "json"))]
 impl<P, C> TypedPublisher<P, C, PublishTransformIdentity, BatchTransformIdentity> {
     /// The live stack of a wiring that named a codec and no transforms. The crate's own dispatch
     /// tests drive this shape directly, without a mount site to build it for them.

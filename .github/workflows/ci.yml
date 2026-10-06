@@ -144,9 +144,12 @@ jobs:
 
       # The benchmarks are not in the all-features lints: they are built with the production
       # feature set, and the harness feature is a compile error in them. CI only keeps them
-      # compiling; `just bench` runs them.
+      # compiling; `just bench` runs them. A rustc warning fails their build, through cargo's
+      # `build.warnings` as in the justfile, which leaves the build fingerprint alone.
       - name: cargo clippy
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: |
           cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
             -- -D warnings
@@ -205,9 +208,12 @@ jobs:
 
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
-      # one without --locked.
+      # one without --locked. A feature that leaves code unreached on its own fails on the
+      # warning.
       - name: cargo hack check (each feature)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: cargo hack check --workspace --each-feature --no-dev-deps
 
       # Minimal versions is one chain: each step runs only when the one before it succeeded, since
@@ -301,10 +307,17 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # The stable builds and tests below fail on a rustc warning, through cargo's
+      # `build.warnings` as in the justfile. The instrumented run is left out: clippy lints its
+      # all-features build.
       - name: cargo check (no default features)
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: cargo check --locked --workspace --no-default-features
 
       - name: cargo check (all features)
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: |
           cargo check --locked --workspace --lib --bins --tests --examples --all-features
           cargo check --locked --benches --no-default-features --features memory,macros,json
@@ -313,6 +326,8 @@ jobs:
       # on, so neither the all-features build nor the all-features tests ever compile them. Build
       # each single-codec configuration so the alias and its default-codec call sites stay valid.
       - name: cargo check (single-codec default fallbacks)
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: |
           cargo check --locked --no-default-features --features cbor,memory,macros
           cargo check --locked --no-default-features --features msgpack,memory,macros
@@ -382,6 +397,7 @@ jobs:
         env:
           RUN_UI_TESTS: '1'
           REQUIRE_UI_TESTS: '1'
+          CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --no-default-features --lib
           cargo check --locked --workspace --no-default-features --features testing,memory,macros
@@ -394,11 +410,15 @@ jobs:
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only
       # this run notices one that does not: the legs above all pick their features explicitly.
       - name: cargo test (default features)
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: cargo test --locked --workspace --no-fail-fast
 
       # All-features hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it.
       - name: cargo test --doc (feature edges)
+        env:
+          CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --workspace --doc
           cargo test --locked --workspace --doc --no-default-features

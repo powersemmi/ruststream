@@ -148,7 +148,7 @@ pub(crate) mod unreadable {
 /// It stays below `TestApp` on purpose: its callers test an adapter's handling of one delivery,
 /// which `TestApp` never exposes, since it drives the whole dispatch around the adapter.
 /// Behaviour a service can observe is tested through the harness.
-#[cfg(feature = "memory")]
+#[cfg(all(feature = "memory", feature = "json"))]
 pub(crate) mod delivery {
     use futures::StreamExt;
 

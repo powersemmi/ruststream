@@ -210,8 +210,8 @@ pub trait IncomingMessage: Send + Sync {
 策略结算，与无法解码的载荷相同：处理器看不到它，警告会写明这个错误。以一个切片借出值的批没有这次投
 递的值，因此要把它排在切片末尾之后。
 
-“什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
-法。所以这份行为由核心的一个测试固定下来：
+这五个带默认实现的方法，有三个 Broker 一个都没有覆盖：`ruststream-rumqttc`、`ruststream-sea-file`
+和 `ruststream-zeromq`。默认实现的行为由核心的一个测试固定下来：
 
 ```rust
 --8<-- "src/message.rs:incoming_defaults"
