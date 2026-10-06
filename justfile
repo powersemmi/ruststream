@@ -19,10 +19,12 @@ export CARGO_BUILD_WARNINGS := env("CARGO_BUILD_WARNINGS", "deny")
 # benchmarks - it compiles a recording branch into every delivery.
 bench_features := "memory,macros,json"
 
-# The scenarios that count instructions and allocations, one benchmark file each. The wall-clock
-# one is not in the list: it runs under a different harness, which takes none of the arguments
-# below.
-cost_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply --bench retry_copy"
+# The scenarios that count instructions and allocations, one benchmark file each. A run against a
+# baseline holds the gated ones to an instruction limit; the ungated one is measured and reported,
+# and held to no number. The wall-clock one is in neither list: it runs under a different harness,
+# which takes none of the arguments below.
+gated_benches := "--bench consume_json --bench consume_json_kilobyte --bench consume_lane --bench consume_pool --bench consume_threads --bench middleware --bench batch --bench reply --bench reply_lending --bench out_slot --bench typed_headers_write --bench typed_headers_read --bench request_reply"
+ungated_benches := "--bench retry_copy"
 
 default: check
 
@@ -87,9 +89,14 @@ test:
 # document is measured at, a larger count buys a steadier number for a longer run
 # (`just bench 5000`). The benches read it at build time, so a new count rebuilds them. The other
 # arguments reach the benchmark runner: `just bench --save-baseline=main` records a baseline,
-# `just bench --baseline=main` measures against it. The runner also holds every run to the
-# previous one, and totals over another count are not comparable, so each count keeps its runs
-# and baselines in a directory of its own, `target/gungraun/<count>`.
+# `just bench --baseline=main` measures against it. Totals over another count are not comparable,
+# so each count keeps its runs and baselines in a directory of its own, `target/gungraun/<count>`.
+#
+# A run against a baseline, named with `--baseline` or in `GUNGRAUN_BASELINE`, fails on two
+# percent more instructions than the baseline in a gated scenario. The limit is relative, so it
+# applies only there: a plain run would be held to the previous run, and the dedicated-threads
+# scenario counts more or fewer instructions with the machine's load. The allocation limits are
+# absolute, and every run is held to them.
 #
 # A benchmark that breaches a limit fails the run, and the run still goes to the end: the table
 # prints, every breach under it with the value it was compared against beside the new one, and
@@ -113,12 +120,24 @@ bench *ARGS:
     unset GUNGRAUN_RUNNER
     export PATH="$runner/bin:$PATH" RUSTFLAGS="" RUSTSTREAM_BENCH_MESSAGES="$messages" \
         GUNGRAUN_HOME="$PWD/target/gungraun/$messages"
-    cargo bench {{ cost_benches }} --bench wall_clock --no-run \
+    # A baseline named on the command line or in the environment brings the instruction limit.
+    baseline="${GUNGRAUN_BASELINE:-}"
+    for arg in "$@"; do
+        case "$arg" in --baseline | --baseline=*) baseline="$arg" ;; esac
+    done
+    limits=()
+    if [ -n "$baseline" ]; then
+        limits=(--callgrind-limits='ir=2.0%')
+    fi
+    cargo bench {{ gated_benches }} {{ ungated_benches }} --bench wall_clock --no-run \
         --no-default-features --features {{ bench_features }}
     status=0
-    cargo bench {{ cost_benches }} --no-fail-fast \
+    cargo bench {{ gated_benches }} --no-fail-fast \
         --no-default-features --features {{ bench_features }} \
-        -- --output-format=json "$@" > target/bench-summary.json || status=$?
+        -- --output-format=json "${limits[@]}" "$@" > target/bench-summary.json || status=$?
+    cargo bench {{ ungated_benches }} --no-fail-fast \
+        --no-default-features --features {{ bench_features }} \
+        -- --output-format=json "$@" >> target/bench-summary.json || status=$?
     cargo bench --bench wall_clock --no-default-features --features {{ bench_features }} \
         || status=$?
     python3 scripts/bench_results.py --messages "$messages" target/bench-summary.json \

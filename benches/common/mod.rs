@@ -66,9 +66,14 @@
 //!
 //! # Reading the numbers
 //!
-//! Instruction counts are exact and repeat to the digit between runs on one binary. They do move
-//! by a fraction of a percent when unrelated code in the same binary changes what the optimizer
-//! inlines, which is why the gate sits at two percent and not at zero.
+//! Instruction counts are exact, and a scenario that runs on one thread repeats them to the digit
+//! between runs on one binary. The dedicated-threads scenario is the exception: its loop hands
+//! every delivery to another thread, the cost of the hand-over depends on how the threads
+//! interleave, and that follows the machine's load. On a loaded machine its count per message
+//! falls by as much as a fifth. Every count also moves by a fraction of a percent when unrelated
+//! code in the same binary changes what the optimizer inlines. So the instruction limit sits at
+//! two percent rather than at zero, and it holds a run to a named baseline rather than to the run
+//! before it.
 
 // Each benchmark target compiles this module on its own and uses the part it needs; what another
 // target uses looks unused here.
@@ -82,7 +87,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::convert::Infallible;
 
-use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, EventKind, LibraryBenchmarkConfig};
+use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublisher};
 use ruststream::runtime::{BrokerScope, Identity, RunningApp};
@@ -192,9 +197,9 @@ const fn messages(configured: Option<&str>) -> usize {
 /// service and taking the first delivery allocate once; together they are the hard limit the
 /// longest run of the scenario (twice the default count of deliveries) is held to, so the run
 /// fails when the path allocates more than it does today. That is what turns "no allocation on
-/// the hot path" into something CI can hold the code to. The instruction limit is relative, so
-/// it needs a baseline to compare against (`--save-baseline` on the branch below,
-/// `--baseline` on the pull request); without one the run only reports.
+/// the hot path" into something CI can hold the code to. The instruction limit is relative, and
+/// `just bench` sets it only for a run against a named baseline: `just bench --save-baseline=main`
+/// records one, and `just bench --baseline=main` fails on two percent more instructions than it.
 ///
 /// On a consume scenario `steady` is zero and `cold` is all there is. On a publish scenario it
 /// is what the message costs the transport underneath, with nothing of the framework's above it.
@@ -213,7 +218,7 @@ pub fn config(steady: u64, cold: u64) -> LibraryBenchmarkConfig {
 pub fn config_every(steady: u64, per: u64, cold: u64) -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config
-        .tool(callgrind().soft_limits([(EventKind::Ir, 2f64)]))
+        .tool(callgrind())
         .tool(dhat().hard_limits([(DhatMetric::TotalBlocks, blocks(steady, per, cold))]));
     config
 }
@@ -227,8 +232,9 @@ const fn blocks(steady: u64, per: u64, cold: u64) -> u64 {
     cold + (steady * 2 * MESSAGES as u64).div_ceil(per)
 }
 
-/// The same configuration without the allocation gate, for a path that is measured and reported
-/// but not held to a number.
+/// The same configuration without the allocation limit, for a path that is measured and reported
+/// but held to no number. Its benchmark goes in the recipe's ungated list, which a run against a
+/// baseline measures without the instruction limit.
 pub fn config_ungated() -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
     config.tool(callgrind()).tool(dhat());
