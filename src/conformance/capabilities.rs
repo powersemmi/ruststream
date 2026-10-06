@@ -66,6 +66,8 @@ mod seeking;
 mod transactions;
 
 pub use batches::{batch_seeking, batches};
+#[doc(hidden)]
+pub use carries::CopyPathCheck;
 pub use carries::{carries, carries_batch};
 pub use request_reply::request_reply;
 pub use seeking::{seeking, seeking_unknown_position};

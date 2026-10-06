@@ -17,11 +17,14 @@
 //! deliveries.
 //!
 //! A row is written `id:name` (`7:alice`). A [`Fault`] breaks the subscription in one way, for the
-//! conformance checks that must fail against it. Each test binary that names this module uses
-//! part of it, hence the `dead_code` allowance.
+//! conformance checks that must fail against it. The descriptor declares [`AddressedCopies`];
+//! [`Rows::copy_path`] declares another copy path, for the checks that hold only where the runtime
+//! publishes copies. Each test binary that names this module uses part of it, hence the
+//! `dead_code` allowance.
 #![allow(dead_code)]
 
 use std::future::{Future, ready};
+use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,8 +37,8 @@ use ruststream::memory::{
 };
 use ruststream::runtime::{Input, IntoSource, SoloCarried};
 use ruststream::{
-    AckError, AddressedCopies, BatchSubscriber, BuildBatchContext, Carries, CarriesBatch, Field,
-    HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
+    AckError, AddressedCopies, BatchSubscriber, BuildBatchContext, Carries, CarriesBatch, CopyPath,
+    Field, HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed, Seekable, Subscribe,
     Subscriber, SubscriptionSource,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -108,8 +111,9 @@ pub(crate) enum Fault {
     /// A page keeps a delivery whose row is gone in front of the deliveries with one, in the
     /// order they arrived, instead of moving it past the end of the slice.
     GoneFirst,
-    /// A delivery answers its payload with no bytes, so a copy the runtime publishes of it (a
-    /// retry copy, a dead letter) carries nothing to read the row from.
+    /// A delivery answers its payload with no bytes, so a copy published of it carries nothing to
+    /// read the row from. A fault where the runtime publishes copies (a retry copy, a dead
+    /// letter); within the contract where the broker moves a delivery itself.
     EmptyPayload,
     /// Within the contract: every page holds one delivery, so no page shows an order.
     OnePerPage,
@@ -124,11 +128,13 @@ pub(crate) enum Fault {
     OneInFlight,
 }
 
-/// The subscription descriptor: one subject of the in-memory bus, read as rows.
+/// The subscription descriptor: one subject of the in-memory bus, read as rows, whose copies take
+/// the copy path `Copies`.
 #[derive(Debug, Clone)]
-pub(crate) struct Rows {
+pub(crate) struct Rows<Copies = AddressedCopies> {
     name: String,
     fault: Fault,
+    copies: PhantomData<fn() -> Copies>,
 }
 
 impl Rows {
@@ -136,17 +142,29 @@ impl Rows {
         Self {
             name: name.into(),
             fault: Fault::None,
+            copies: PhantomData,
         }
     }
+}
 
+impl<Copies> Rows<Copies> {
     /// The same subscription, broken in one way.
     pub(crate) fn faulty(self, fault: Fault) -> Self {
         Self { fault, ..self }
     }
+
+    /// The same subscription, declaring the copy path `Path`.
+    pub(crate) fn copy_path<Path: CopyPath>(self) -> Rows<Path> {
+        Rows {
+            name: self.name,
+            fault: self.fault,
+            copies: PhantomData,
+        }
+    }
 }
 
 // What lets a body mount on the descriptor by value, `subscriber(Rows::new(..), body)`.
-impl IntoSource for Rows {
+impl<Copies> IntoSource for Rows<Copies> {
     type Source = Self;
 
     fn into_source(self) -> Self {
@@ -154,9 +172,11 @@ impl IntoSource for Rows {
     }
 }
 
-impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for Rows {
+impl<Log: LogMode, Copies: CopyPath> SubscriptionSource<ConnectedMemoryBroker<Log>>
+    for Rows<Copies>
+{
     type Subscriber = RowSubscriber<Log>;
-    type Copies = AddressedCopies;
+    type Copies = Copies;
 
     fn name(&self) -> &str {
         &self.name

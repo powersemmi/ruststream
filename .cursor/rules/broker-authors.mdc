@@ -102,9 +102,11 @@ alwaysApply: false
 - A delivery that already holds a decoded value (a row a database driver read) implements
   `Carries<T>`, answering `None` where the value is gone so the runtime settles it by the decode
   policy; a batch that keeps its values in one buffer implements `CarriesBatch<T>`, value `i`
-  belonging to delivery `i` and value-less deliveries last. Such a delivery answers `payload()`
-  with the message's bytes: the runtime's retry and dead-letter copies carry them and the headers,
-  and your broker reads the same value back from a copy. Your derive writes the type's `Input`
+  belonging to delivery `i` and value-less deliveries last. Where the service publishes the
+  copies (`AddressedCopies`, `NamedCopies`), such a delivery answers `payload()` with the
+  message's bytes: the runtime's retry and dead-letter copies carry them and the headers, and your
+  broker reads the same value back from a copy; on `BrokerMoves` the broker moves the delivery
+  itself and the runtime publishes no copy. Your derive writes the type's `Input`
   impl with the `SoloCarried` axis; the type needs `Clone` and no `Deserialize`. On this lane a
   batch context of yours is built from the batch (`BuildBatchContext<YourBatch>`) and, for retry
   copies, from each delivery. Run `capabilities::carries` and `capabilities::carries_batch`.

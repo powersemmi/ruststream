@@ -645,8 +645,9 @@ ack 记账。
 
 - 把值放在同一个缓冲区里的批，通过 `CarriesBatch<T>` 以一个切片借出它们。第 `i` 个值属于第 `i`
   次投递，所以没有值的投递要排在最后：切片末尾之后的投递没有值。
-- 带值的投递仍用 `payload()` 返回消息的字节。运行时把这些字节连同消息头复制进重试副本或死信，你的
-  Broker 要能从这样的副本里读回同一个值。
+- 在由本进程发布订阅副本的地方（`AddressedCopies`、`NamedCopies`），带值的投递仍用 `payload()`
+  返回消息的字节。运行时把这些字节连同消息头复制进重试副本或死信，你的 Broker 要能从这样的副本里
+  读回同一个值。在 `BrokerMoves` 的订阅上，投递由 Broker 自己搬走，运行时不为它发布副本。
 - 你的 crate 的 derive 宏写下 `impl Input for Row { type Axis = SoloCarried<Row>; }`，类型由此走上
   携带值这条路径。该类型实现 `Clone`，不实现 `Deserialize`。
 - 你的批量上下文还要为批类型实现 `BuildBatchContext`：在这条路径上，运行时从整个批构建上下文。

@@ -314,8 +314,8 @@ async fn in_process_matches_the_server() {
 | `capabilities::owned_transactions` | `OwnedTransactions` 及其 `Transaction` | 发布进一个打开着的事务里的内容在 `commit` 之前不可见，`commit` 按发布顺序投递整个缓冲区，`abort` 把它丢弃，同一个发布者上同时打开的两个事务各自独立结算，并且其中一个打开着时该发布者仍能直接发布；在一个已经停止的运行时里 `commit` 仍然会发布，Broker 关闭之后，`commit`、直接发布以及此时打开的事务都返回错误 |
 | `capabilities::seeking` | `Seekable`，且消息实现 `Positioned` | 回退到从某条已投递消息上取得的位置，会重新投递恰好那一条消息以及它之后按顺序排列的后缀；向前跳转会略过目标之前排队的投递；重新定位之后，订阅继续投递新的发布；新订阅在第一次投递之前跳转到之前的订阅取得的位置，就从这条消息开始；在一个已经停止的运行时里发起的跳转仍然生效；Broker 关闭之后的跳转返回错误 |
 | `capabilities::seeking_unknown_position` | `Seekable`，以及由 Broker 构造的位置 | 跳转到订阅日志里不存在的位置（已被保留策略淘汰，或者从未存在）返回错误，订阅不会移动，也不会从别处读取；流上的错误不会结束检查，检查会继续读下一次投递 |
-| `capabilities::carries` | 订阅的投递实现 `Carries` | 已发布值的每次投递都借出这个值，每个值恰好借出一次；按运行时发布重试副本或死信的方式，用一次投递的载荷和消息头发布的副本，借出同一个值；值已经不在的投递不借出任何值，运行时按 `on_failure(decode = ..)` 策略处理它 |
-| `capabilities::carries_batch` | `BatchSubscriber`，其批实现 `CarriesBatch` | 每个已发布的值在这些批里恰好借出一次，任何一批借出的值都不多于它的投递；两个值如果在五轮之内有一次落进同一批，带重新入队的 `nack` 让这一批的第一次投递回来，回来的投递借出的是该批最先借出的值（从不把它们合进一批的订阅，以及对重新入队回答 `AckError::Unsupported` 的传输，都能通过，顺序对它们不做检查）；批里一次投递的副本借出同一个值，与 `carries` 相同；值已经不在的投递发布在一个值之前，批不为它借出值，并把它排到有值的投递之后、切片末尾之外，同样用重新入队来检查 |
+| `capabilities::carries` | 订阅的投递实现 `Carries` | 已发布值的每次投递都借出这个值，每个值恰好借出一次；在由本进程发布订阅副本的地方（`AddressedCopies`、`NamedCopies`），按运行时发布重试副本或死信的方式，用一次投递的载荷和消息头发布的副本，借出同一个值，而在 `BrokerMoves` 的订阅上，套件不复制任何投递；值已经不在的投递不借出任何值，运行时按 `on_failure(decode = ..)` 策略处理它 |
+| `capabilities::carries_batch` | `BatchSubscriber`，其批实现 `CarriesBatch` | 每个已发布的值在这些批里恰好借出一次，任何一批借出的值都不多于它的投递；两个值如果在五轮之内有一次落进同一批，带重新入队的 `nack` 让这一批的第一次投递回来，回来的投递借出的是该批最先借出的值（从不把它们合进一批的订阅，以及对重新入队回答 `AckError::Unsupported` 的传输，都能通过，顺序对它们不做检查）；在由本进程发布副本的地方，批里一次投递的副本借出同一个值，与 `carries` 相同；值已经不在的投递发布在一个值之前，批不为它借出值，并把它排到有值的投递之后、切片末尾之外，同样用重新入队来检查 |
 
 <!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
 ```rust

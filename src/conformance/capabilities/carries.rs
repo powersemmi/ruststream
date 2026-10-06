@@ -1,6 +1,7 @@
 //! The carried lane's suites: a delivery lends the value that was published, a copy made from
-//! its payload and headers lends it again, a delivery without one lends none, and a batch lends
-//! its values in the order it yields its deliveries, the deliveries without one last.
+//! its payload and headers lends it again wherever the runtime publishes copies, a delivery
+//! without one lends none, and a batch lends its values in the order it yields its deliveries,
+//! the deliveries without one last.
 
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -17,8 +18,9 @@ use super::{
 use crate::conformance::helpers::unique_subject;
 use crate::conformance::lifecycle::shutdown_within;
 use crate::{
-    AckError, BatchSubscriber, Broker, Carries, CarriesBatch, Connected, IncomingMessage,
-    OutgoingMessage, Publisher, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, Broker, BrokerMoves, Carries, CarriesBatch,
+    Connected, IncomingMessage, NamedCopies, OutgoingMessage, Publisher, Subscriber,
+    SubscriptionSource,
 };
 
 /// How many rounds the batch suite gives the broker to put two waiting values in one batch.
@@ -28,17 +30,50 @@ const ROUNDS: usize = 5;
 /// publishes at once.
 const BATCH: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
-/// Verifies the [`Carries`] contract: a delivery lends the value that was published, a copy made
-/// from its payload and headers lends the same value, and a delivery without one lends none.
+/// The copy check a descriptor's copy path owes the carried suites.
+///
+/// The two paths this process publishes on owe it, because there the runtime makes a retry copy
+/// or a dead letter from a delivery's payload and headers; [`BrokerMoves`] owes none, because the
+/// broker moves the delivery itself. Machinery; never named directly.
+#[doc(hidden)]
+pub trait CopyPathCheck {
+    /// The check, or `None` where this process publishes no copy for the subscription.
+    fn copy_check<Check>(check: Check) -> Option<Check>;
+}
+
+impl CopyPathCheck for AddressedCopies {
+    fn copy_check<Check>(check: Check) -> Option<Check> {
+        Some(check)
+    }
+}
+
+impl CopyPathCheck for NamedCopies {
+    fn copy_check<Check>(check: Check) -> Option<Check> {
+        Some(check)
+    }
+}
+
+impl CopyPathCheck for BrokerMoves {
+    fn copy_check<Check>(_check: Check) -> Option<Check> {
+        None
+    }
+}
+
+/// Verifies the [`Carries`] contract: a delivery lends the value that was published, a copy the
+/// runtime publishes of it lends that value again, and a delivery without one lends none.
 ///
 /// The suite opens a subscription from `make_source(subject)`, publishes each of `values` through
 /// `publish`, and reads them back: every delivery lends one of them, each exactly once. Order is
 /// not part of the claim.
 ///
-/// It then copies one delivery the way the runtime copies a delivery it retries or sends to a
-/// dead letter: its payload and headers, published to the same subject through the publisher
-/// `make_publisher` builds. The copy must lend the value the delivery lent, so a delivery's
-/// payload holds the message's bytes, from which the broker reads the value again.
+/// Where the runtime publishes the subscription's copies (the descriptor declares
+/// [`AddressedCopies`] or [`NamedCopies`]), the suite then copies one delivery the way the runtime
+/// copies a delivery it retries or sends to a dead letter: its payload and headers, published to
+/// the same subject through the publisher `make_publisher` builds. The copy must lend the value
+/// the delivery lent, so a delivery's payload holds the message's bytes, from which the broker
+/// reads the value again. On a [`BrokerMoves`] descriptor the broker moves a spent delivery itself
+/// and the runtime publishes no copy of it, so the suite copies nothing there and leaves
+/// `make_publisher` unused.
 ///
 /// Last, it makes one delivery whose value is gone through `publish_without_value` (a claimed id
 /// whose row was deleted) and expects that delivery to lend nothing: the runtime settles it by
@@ -151,6 +186,7 @@ pub async fn carries<
     MkBroker: Fn() -> B,
     Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: Send,
+    Src::Copies: CopyPathCheck,
     SubscriberMessage<Src::Subscriber>: Carries<Value>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -200,15 +236,17 @@ pub async fn carries<
         ack_or_unsupported(msg, LABEL).await;
     }
 
-    a_copy_lends_the_value(
+    let copy = a_copy_lends_the_value(
         &connected,
-        &make_publisher(&connected),
+        &make_publisher,
         &publish,
         &mut stream,
         &subject,
         &values[0],
-    )
-    .await;
+    );
+    if let Some(copy) = <Src::Copies as CopyPathCheck>::copy_check(copy) {
+        copy.await;
+    }
 
     within(
         publish_without_value(&connected, &subject),
@@ -254,8 +292,10 @@ pub async fn carries<
 /// next, so a subscription that hands out its next delivery only once the last one is settled
 /// passes.
 ///
-/// A delivery of a batch is copied as on [`carries`], from its payload and headers through the
-/// publisher `make_publisher` builds, and the batch the copy comes in must lend the same value.
+/// Where the runtime publishes the subscription's copies, a delivery of a batch is copied as on
+/// [`carries`], from its payload and headers through the publisher `make_publisher` builds, and
+/// the batch the copy comes in must lend the same value. On a [`BrokerMoves`] descriptor the suite
+/// copies nothing and leaves `make_publisher` unused, as on [`carries`].
 ///
 /// Last, a delivery whose value is gone (through `publish_without_value`) goes out in front of a
 /// value, again until a batch carries both. No batch may lend a value for it, and the batch's
@@ -378,6 +418,7 @@ pub async fn carries_batch<
     MkBroker: Fn() -> B,
     Src: SubscriptionSource<Connected<B>> + Send,
     Src::Subscriber: BatchSubscriber + Send,
+    Src::Copies: CopyPathCheck,
     <Src::Subscriber as BatchSubscriber>::Batch: CarriesBatch<Value>,
     MkSrc: Fn(&str) -> Src,
     Pub: Publisher,
@@ -439,15 +480,17 @@ pub async fn carries_batch<
     }
 
     pages_keep_their_order(&connected, &publish, &mut stream, &subject, pair).await;
-    a_batch_copy_lends_the_value(
+    let copy = a_batch_copy_lends_the_value(
         &connected,
-        &make_publisher(&connected),
+        &make_publisher,
         &publish,
         &mut stream,
         &subject,
         &values[0],
-    )
-    .await;
+    );
+    if let Some(copy) = <Src::Copies as CopyPathCheck>::copy_check(copy) {
+        copy.await;
+    }
     values_go_before_deliveries_without_one(
         &connected,
         &publish,
@@ -462,20 +505,22 @@ pub async fn carries_batch<
 }
 
 /// One value goes out, and its delivery is copied the way the runtime copies a delivery it
-/// retries or dead-letters: its payload and headers, published to the same subject before the
-/// delivery itself is acknowledged. The copy must lend the value the delivery lent.
+/// retries or dead-letters: its payload and headers, published to the same subject through the
+/// publisher `make_publisher` builds, before the delivery itself is acknowledged. The copy must
+/// lend the value the delivery lent.
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
-async fn a_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, M, E>(
+async fn a_copy_lends_the_value<Conn, Value, Pub, MkPub, Publish, PublishError, S, M, E>(
     connected: &Conn,
-    publisher: &Pub,
+    make_publisher: &MkPub,
     publish: &Publish,
     stream: &mut S,
     subject: &str,
     value: &Value,
 ) where
     Pub: Publisher,
+    MkPub: Fn(&Conn) -> Pub,
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<M, E>> + Unpin,
@@ -485,6 +530,7 @@ async fn a_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, M, E
 {
     const LABEL: &str = "carries: a copy of a delivery lends its value";
 
+    let publisher = make_publisher(connected);
     within(publish(connected, subject, value), "carries: a publish")
         .await
         .expect("publishing a value failed");
@@ -495,7 +541,7 @@ async fn a_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, M, E
         "the published value must arrive",
     )
     .await;
-    publish_copy(publisher, subject, &msg, LABEL).await;
+    publish_copy(&publisher, subject, &msg, LABEL).await;
     ack_or_unsupported(msg, LABEL).await;
     let copy = expect_within(stream, DEFAULT_TIMEOUT, LABEL, "the copy must arrive").await;
     assert_eq!(
@@ -513,15 +559,27 @@ async fn a_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, M, E
 // A check is awaited on the test's own task and never spawned, so the caller's factories and
 // values need not be `Send` or `Sync`.
 #[allow(clippy::future_not_send)]
-async fn a_batch_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S, Batch, M, E>(
+async fn a_batch_copy_lends_the_value<
+    Conn,
+    Value,
+    Pub,
+    MkPub,
+    Publish,
+    PublishError,
+    S,
+    Batch,
+    M,
+    E,
+>(
     connected: &Conn,
-    publisher: &Pub,
+    make_publisher: &MkPub,
     publish: &Publish,
     stream: &mut S,
     subject: &str,
     value: &Value,
 ) where
     Pub: Publisher,
+    MkPub: Fn(&Conn) -> Pub,
     Publish: AsyncFn(&Conn, &str, &Value) -> Result<(), PublishError>,
     PublishError: fmt::Debug,
     S: Stream<Item = Result<Batch, E>> + Unpin,
@@ -532,6 +590,7 @@ async fn a_batch_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S
 {
     const LABEL: &str = "carries_batch: a copy of a delivery lends its value";
 
+    let publisher = make_publisher(connected);
     within(
         publish(connected, subject, value),
         "carries_batch: a publish",
@@ -546,7 +605,7 @@ async fn a_batch_copy_lends_the_value<Conn, Value, Pub, Publish, PublishError, S
     )
     .await;
     for msg in deliveries {
-        publish_copy(publisher, subject, &msg, LABEL).await;
+        publish_copy(&publisher, subject, &msg, LABEL).await;
         ack_or_unsupported(msg, LABEL).await;
     }
     let (lent, deliveries) =
