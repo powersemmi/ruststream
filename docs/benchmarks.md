@@ -11,9 +11,9 @@ The second is the cost of the framework's own code: instructions and allocations
 no broker in the number. It says what changed when the framework changed, and it is precise enough
 to fail a pull request that makes a message more expensive.
 
-Each crate measures itself and publishes its own numbers. This page loads them and shows them
-together. Nothing is copied here, so a crate that remeasures itself changes the tables below the
-next time it publishes its documentation.
+Each crate measures itself and publishes its own numbers. This page loads them from the `main`
+branch of each crate's repository and shows them together. A new measurement appears in the tables
+below as soon as it is merged.
 
 ## Results
 
@@ -65,8 +65,7 @@ lower bound on the cost of dispatch, not a measurement of it, and you cannot rea
 An instruction count is exact. Two runs of the same binary give the same number, and a machine
 twice as fast gives the same number too, so the rows of this table are comparable with each other
 and with the same row measured on another machine. What it does not tell you is time: the same
-count costs more where it misses the cache, which is what the wall-clock pair below the table is
-for.
+count costs more where it misses the cache.
 
 The number is this crate's own work and nothing else: the service a user writes, over the
 in-process queue, decoding the payload into a type, reading a field and settling the delivery. No
@@ -181,15 +180,16 @@ run, while the published document stays at the default.
   The difference between the last two is what a message costs once the service is running; the
   single delivery is the cold start. Nothing has to be switched off part way through a run, which
   is what makes this work for the allocation counter, whose counting cannot be toggled at all.
-- **Three numbers per scenario.** Instructions from callgrind, which is exact and compared;
-  allocations from DHAT, which is exact and held to the floor the scenario declares; wall time from
-  a separate run, which is noisy and informational.
+- **Two numbers per scenario.** Instructions from callgrind, which is exact and compared;
+  allocations from DHAT, which is exact and held to the floor the scenario declares. In
+  `ruststream`, a separate benchmark measures wall time on scenarios of its own. `just bench`
+  prints those times, which are noisy and informational.
 - **A comparison, not a threshold.** `just bench --baseline=main` measures a branch against the
   same benchmarks run on the branch it targets and reports more than two percent of instructions
   in a scenario as a failure, and so an allocation above what the scenario declares. The author of
   a pull request runs it and cites its numbers, and a change that lowers a scenario lowers its
   declared floor in the same pull request.
-  The cold start and the wall clock only print.
+  The same rules apply to the cold start.
 
 ## Publishing results
 
