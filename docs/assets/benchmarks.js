@@ -274,12 +274,17 @@ function machine(published, labels) {
   const list = document.createElement("ul");
   for (const { broker, results } of published) {
     const environment = results.environment || {};
+    // A crate that measures its code apart from the comparison against the raw client dates that
+    // run in `code_measured`, and the top-level date then belongs to the comparison. The machine
+    // is the document's either way: the code run records only its date and versions there, and
+    // its valgrind release in the document's `environment`.
+    const run = results.code_measured || results;
     const parts = MACHINE.map((field) => environment[field]).filter(Boolean);
     const item = document.createElement("li");
     item.appendChild(text("strong", broker.name));
     item.appendChild(
       document.createTextNode(
-        " - " + parts.join(", ") + ". " + labels.measured + " " + results.measured_at + ".",
+        " - " + parts.join(", ") + ". " + labels.measured + " " + run.measured_at + ".",
       ),
     );
     list.appendChild(item);

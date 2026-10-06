@@ -239,5 +239,9 @@ https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/result
 `scenarios` 的 crate 声明 `schema` 为 1，仍然保留自己在第一张表里的行。自己不测量 Broker 的
 crate 则根本不写 `scenarios`，而不是留下一个空数组，它只出现在第二张表里。
 
+有的 crate 在与裸客户端对照之外，单独运行一次代码测量。
+这样的 crate 会把这次运行的日期和版本写进 `code_measured`：`measured_at`、`crate_version` 和
+`core_version`。第二张表的日期取自这里；文档里没有这一字段时，取顶层的 `measured_at`。
+
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。

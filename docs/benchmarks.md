@@ -288,6 +288,10 @@ alone declares `schema` 1 and keeps its row in the first table. A crate that mea
 its own leaves `scenarios` out instead of publishing it empty, and appears in the second table
 only.
 
+A crate that measures its code apart from the comparison records that run in `code_measured`: its
+`measured_at`, `crate_version` and `core_version`. The second table takes its date from there, and
+from the top-level `measured_at` in a document without it.
+
 A document that does not load, or that declares a `schema` this page does not know, leaves its
 broker in the "no results published yet" line. A broken publish is visible instead of silently
 missing.
