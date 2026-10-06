@@ -29,7 +29,7 @@ use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
     ForReply, PublishContext, PublishIdentity, PublishPipeline, PublishTransform, TypedPublisher,
 };
-use super::typed::unmaterialized;
+use super::typed::{refused, unmaterialized};
 
 /// The reply-wiring axis: how a handler's reply value leaves the service.
 ///
@@ -419,6 +419,11 @@ where
         // The publishing path: decode, run, publish the reply, then ack. A body's `Err` outcome
         // (with any `and_after` continuation it carries) settles the delivery directly. What the
         // delivery materialized into lives on this stack frame and the handler borrows its view.
+        if let Some(outcome) =
+            refused::<Def::Input, DecodeCodec, Msg, Def::Context, State>(msg, self.decode, ctx)
+        {
+            return outcome;
+        }
         let held =
             match <Def::Input as Materialize<DecodeCodec, Msg>>::materialize(&self.codec, msg) {
                 Ok(held) => held,

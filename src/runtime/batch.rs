@@ -29,7 +29,7 @@ use super::dispatch::{Delivery, Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
-use super::input::{DecodeWith, InputKind};
+use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
 
 /// The settlement of one dispatched batch.
@@ -546,6 +546,10 @@ where
         // (index into `batch`, its settlement); empty on the happy path, so nothing allocates.
         let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
         for (index, msg) in batch.iter().enumerate() {
+            if let Some(outcome) = reported(msg, std::any::type_name::<F>(), self.decode, ctx) {
+                rejected.push((index, outcome));
+                continue;
+            }
             match F::from_payload(msg.payload()) {
                 Ok(value) => values.push(value),
                 Err(err) => {
@@ -892,6 +896,10 @@ where
     // delivered, so the accepted deliveries cost nothing to carry.
     let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
     for (index, msg) in batch.iter().enumerate() {
+        if let Some(outcome) = reported(msg, Input::input_label(), decode, ctx) {
+            rejected.push((index, outcome));
+            continue;
+        }
         match Input::decode(codec, msg) {
             Ok(value) => values.push(value),
             Err(err) => {
@@ -937,10 +945,37 @@ where
     accepted
 }
 
-/// The settlement of one element the handler will never see, per the subscriber's decode policy.
-/// Shared by the payload decode and the header contract, which are the same class of bad external
-/// input. Not `async`: the outcome is decided before the delivery is settled, so the borrowed
-/// error never crosses an await.
+/// The settlement of a batch element its broker reports as undecodable
+/// ([`IncomingMessage::decode_error`]), logged with the subscription, the element type and the
+/// reported error; `None` where the broker reports nothing and the lane reads the element itself.
+///
+/// Every batch lane asks here before it reads an element, so the handler never sees one its broker
+/// refused. A broker that keeps the default reports nothing, and the check folds away.
+pub(crate) fn reported<M, C, S>(
+    msg: &M,
+    message_type: &str,
+    decode: FailurePolicy,
+    ctx: &Context<'_, C, S>,
+) -> Option<HandlerResult>
+where
+    M: IncomingMessage,
+{
+    let err = msg.decode_error()?;
+    warn!(
+        target: "ruststream::dispatch",
+        subscription = %ctx.subscription(),
+        message_type,
+        error = %err,
+        "{}",
+        REPORTED,
+    );
+    Some(rejection(err, "batch decode failed", decode, ctx))
+}
+
+/// The settlement of one delivery the handler will never see, per the subscriber's decode policy.
+/// Shared by the payload decode, the header contract and a delivery its broker could not read,
+/// single or in a batch, which are the same class of bad external input. Not `async`: the outcome
+/// is decided before the delivery is settled, so the borrowed error never crosses an await.
 pub(crate) fn rejection<C, S>(
     err: &impl fmt::Display,
     reason: &str,

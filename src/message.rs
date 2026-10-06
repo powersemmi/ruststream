@@ -5,6 +5,7 @@ use std::{future::Future, time::Duration};
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
 
+use crate::codec::CodecError;
 use crate::{AckError, HeaderMap, SerializeHeadersError};
 
 /// An owned snapshot of a message as it travels through the framework.
@@ -572,6 +573,91 @@ pub trait IncomingMessage: Send + Sync {
         None
     }
 
+    /// The error the broker met while reading this delivery, or `None` when it read the delivery
+    /// whole.
+    ///
+    /// A broker that reads a delivery into a value itself, such as a database queue reading a row
+    /// through its driver, can fail where no codec runs: a column whose type differs from the
+    /// field's. It reports that error here. The runtime asks before it materializes the handler's
+    /// input, on every input lane and for each delivery of a batch, and settles a delivery that
+    /// reports an error by the subscription's decode-failure policy
+    /// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a payload that
+    /// does not decode: the handler does not run, and the warning names the subscription, the
+    /// message type and the error.
+    ///
+    /// A batch that lends its values as one slice ([`CarriesBatch`](crate::CarriesBatch)) has no
+    /// value for such a delivery: the body reads the slice before the runtime reaches the
+    /// deliveries, so the batch puts the delivery past the end of the slice, with the deliveries
+    /// whose value is gone.
+    ///
+    /// Defaulted to `None`, which costs a broker that keeps it nothing: the check compiles to a
+    /// constant and folds away. A broker that overrides it pays one branch per delivery.
+    ///
+    /// # Examples
+    ///
+    /// A queue table's delivery keeps the row its driver read, or the error the driver met:
+    ///
+    /// ```
+    /// use std::str;
+    ///
+    /// use ruststream::codec::CodecError;
+    /// use ruststream::{AckError, Carries, HeaderMap, IncomingMessage};
+    ///
+    /// /// One row of the queue table.
+    /// struct SendEmail {
+    ///     to: String,
+    /// }
+    ///
+    /// /// A claimed row: the bytes the table stores, and the row read from them or the error met
+    /// /// reading it.
+    /// struct Claimed {
+    ///     bytes: Vec<u8>,
+    ///     headers: HeaderMap,
+    ///     row: Result<SendEmail, CodecError>,
+    /// }
+    ///
+    /// impl Claimed {
+    ///     /// Reads the row the way the driver does: the recipient column holds text.
+    ///     fn read(bytes: Vec<u8>, headers: HeaderMap) -> Self {
+    ///         let row = str::from_utf8(&bytes)
+    ///             .map(|to| SendEmail { to: to.to_owned() })
+    ///             .map_err(|err| CodecError::Decode(Box::new(err)));
+    ///         Self { bytes, headers, row }
+    ///     }
+    /// }
+    ///
+    /// impl Carries<SendEmail> for Claimed {
+    ///     fn carried(&self) -> Option<&SendEmail> {
+    ///         self.row.as_ref().ok()
+    ///     }
+    /// }
+    ///
+    /// impl IncomingMessage for Claimed {
+    ///     fn payload(&self) -> &[u8] {
+    ///         &self.bytes
+    ///     }
+    ///     fn headers(&self) -> &HeaderMap {
+    ///         &self.headers
+    ///     }
+    ///     fn decode_error(&self) -> Option<&CodecError> {
+    ///         self.row.as_ref().err()
+    ///     }
+    ///     async fn ack(self) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// // A recipient that is not text: the runtime settles this claim by the decode policy.
+    /// let claimed = Claimed::read(vec![0xff, 0xfe], HeaderMap::new());
+    /// assert!(claimed.decode_error().is_some());
+    /// ```
+    fn decode_error(&self) -> Option<&CodecError> {
+        None
+    }
+
     /// Acknowledges successful processing. Consumes the message handle.
     ///
     /// # Errors
@@ -738,6 +824,8 @@ mod tests {
         assert_eq!(stub.payload(), b"body");
         // The default partition_key is None (no key).
         assert!(stub.partition_key().is_none());
+        // The default reports no decode error, so the runtime reads every delivery itself.
+        assert!(stub.decode_error().is_none());
         // The default reports no native delayed redelivery, so the runtime uses its fallback.
         assert!(!stub.supports_nack_after());
         // The default nack_after signals "not honored" rather than silently degrading.

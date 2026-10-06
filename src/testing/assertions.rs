@@ -525,11 +525,12 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts the most recent delivery's payload failed to decode into the handler's input type.
+    /// Asserts the most recent delivery did not decode into the handler's input type, by the
+    /// codec's verdict or by its broker's report.
     ///
     /// # Panics
     ///
-    /// Panics if the subscriber was not called, or the payload decoded successfully.
+    /// Panics if the subscriber was not called, or the delivery decoded successfully.
     pub fn assert_last_failed_to_decode(self) {
         self.with_last("a decode failure", |record| {
             assert!(

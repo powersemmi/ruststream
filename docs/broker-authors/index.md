@@ -193,6 +193,12 @@ pub trait IncomingMessage: Send + Sync {
     // broker's redeliveries and not only the copies the runtime published.
     // The first delivery of a message answers 1.
     fn redelivery_count(&self) -> Option<u64>;
+
+    // Defaulted: None. Override where the broker reads a delivery into a
+    // value itself and can fail where no codec runs (a column whose type
+    // differs from the field's): the runtime settles such a delivery by the
+    // decode-failure policy before any handler sees it.
+    fn decode_error(&self) -> Option<&CodecError>;
 }
 ```
 
@@ -202,7 +208,7 @@ Delayed redelivery is two methods, and the runtime asks `supports_nack_after`. O
 `nack(true)`: a transport that cannot hold a message back has to say so, or the pause before a
 retry turns into a storm of redeliveries.
 
-A broker that overrides none of the four defaulted methods still works with every runtime feature.
+A broker that overrides none of the five defaulted methods still works with every runtime feature.
 Where there is no native delayed redelivery the runtime runs `retry_after` itself: it drops the
 delivery and, after the delay, publishes a copy through the registration's retry publisher, with an
 incremented retry-count header. That copy goes to the address
@@ -218,6 +224,14 @@ topic - and increment `RETRY_COUNT_HEADER` (exported from `ruststream::runtime`)
 only where the transport counts nothing. Where it counts, your copy is a new message and the broker
 counts it from one again, so a delivery that has been round the wait queue reaches the cap as a
 first attempt. That is the behaviour of your delay scheme: document it, and leave the header out.
+
+A broker that reads a delivery into a value itself can fail where no codec runs: a database queue
+reads a row through its driver, and a column's type may differ from the field's. Return that error
+from `decode_error`. The runtime asks before it builds the handler's input, on every input lane and
+for each delivery of a batch. A delivery that reports an error is settled by the subscription's
+`on_failure(decode = ..)` policy, as a payload that does not decode is: the handler never sees it,
+and the warning names the error. A batch that lends its values as one slice has no value for such a
+delivery, so put it past the end of the slice.
 
 There is no broker to point at for "overrides nothing": every broker in this workspace overrides
 these methods. So the core pins the behaviour with a test:
@@ -701,7 +715,8 @@ all a service needs to reach them.
 A broker whose deliveries hold a decoded value, such as a row a database driver read, lends it
 through `Carries<T>`. A handler taking `&T` reads it where it lies, with no codec. `carried`
 answers `None` where the value is gone, and the runtime settles that delivery by the
-decode-failure policy.
+decode-failure policy. A row your driver could not read reports its error through `decode_error`
+instead, and the warning names it.
 
 - A batch that keeps its values in one buffer lends them through `CarriesBatch<T>` as one slice.
   Value `i` belongs to delivery `i`, so put the deliveries without a value last: a delivery past
