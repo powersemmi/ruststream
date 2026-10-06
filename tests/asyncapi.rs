@@ -1052,6 +1052,39 @@ mod document_surface {
         assert_eq!(spec.default_content_type, None);
     }
 
+    /// A message no codec reads names no media type, and a reader takes the root default for it:
+    /// a protobuf frame in a JSON service would be documented as JSON. So the root field is left
+    /// out, and the decoded message keeps its own.
+    #[test]
+    fn a_message_no_codec_reads_leaves_the_document_without_a_default_media_type() {
+        /// A protobuf frame the type reads itself.
+        #[derive(Deserialized)]
+        struct Frame<'a>(&'a [u8]);
+
+        #[subscriber("frames")]
+        async fn frames(frame: &Frame<'_>) -> HandlerOutcome {
+            let _ = frame.0.len();
+            HandlerOutcome::ack()
+        }
+
+        let app = RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(
+            MemoryBroker::new(),
+            |b| {
+                b.include(confirm);
+                b.include(frames);
+            },
+        );
+        let spec = build_spec(&app);
+
+        assert_eq!(
+            spec.components.messages["A placed order"]
+                .content_type
+                .as_deref(),
+            Some("application/json"),
+        );
+        assert_eq!(spec.default_content_type, None);
+    }
+
     /// The attempt cap and the dead-letter destination ride the operation they belong to, so a
     /// reader tells a dead-letter channel from a business destination.
     #[test]

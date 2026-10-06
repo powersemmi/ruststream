@@ -303,6 +303,41 @@ fn the_document_describes_the_carried_type() {
     assert_eq!(row.content_type, None);
 }
 
+/// A carried message names no media type, so next to a decoded one the document states the media
+/// type per message and none at the root: a reader would take the root one for the row too.
+#[cfg(all(feature = "asyncapi", feature = "json"))]
+#[test]
+fn a_carried_message_leaves_the_document_without_a_default_media_type() {
+    use ruststream::asyncapi::build_spec;
+    use ruststream::schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// An order the JSON codec decodes.
+    #[derive(Deserialize, JsonSchema)]
+    struct Order {
+        id: u64,
+    }
+
+    #[subscriber("orders")]
+    async fn accept(order: &Order) -> HandlerOutcome {
+        tracing::info!(order.id, "accepted");
+        HandlerOutcome::ack()
+    }
+
+    let app =
+        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(greet);
+            b.include(accept);
+        });
+    let spec = build_spec(&app);
+
+    assert_eq!(
+        spec.components.messages["Order"].content_type.as_deref(),
+        Some("application/json"),
+    );
+    assert_eq!(spec.default_content_type, None);
+}
+
 /// A value-path registration is documented by default, and `.undocumented()` lifts the schema.
 #[cfg(feature = "asyncapi")]
 #[test]
