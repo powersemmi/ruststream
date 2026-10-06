@@ -32,8 +32,8 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 <div id="benchmark-code"></div>
 
 “冷启动”一列是启动服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一
-次，不按消息计。表格下面那一行是跑出这些数字的机器，一直写到内存：只有知道两台机器上编译的是
-同一份代码，指令数才能互相比较。
+次，不按消息计。表格下面那一行先写跑出这些数字的机器，一直写到内存，再写这次测量的 crate
+版本、`ruststream` 版本和测量日期。只有知道两台机器上编译的是同一份代码，指令数才能互相比较。
 
 ## 这些数字是什么 { #what-the-numbers-are }
 
@@ -247,7 +247,7 @@ https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/result
 
 有的 crate 在与裸客户端对照之外，单独运行一次代码测量。
 这样的 crate 会把这次运行的日期和版本写进 `code_measured`：`measured_at`、`crate_version` 和
-`core_version`。第二张表的日期取自这里；文档里没有这一字段时，取顶层的 `measured_at`。
+`core_version`。第二张表下面那一行的日期和版本取自这里；文档里没有这一字段时，取顶层的对应字段。
 
 无法加载的文档，或者 `schema` 无法识别的文档，会让自己的 Broker 留在“尚未公布结果”那一行。
 这样，公布环节一旦出问题就看得见，不会悄无声息地消失。

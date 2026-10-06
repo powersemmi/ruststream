@@ -38,8 +38,9 @@ framework costs over a broker's own client is the table above, where the client 
 
 `Cold start` is what starting the service and handling the first delivery cost together,
 instructions and allocations, and a service pays it once rather than per message. The line under
-the table is the machine the run was taken on, down to the memory, because an instruction count is
-comparable across machines only once you know they ran the same code.
+the table is the machine the run was taken on, down to the memory, then the versions of the crate
+and of `ruststream` it counted and the date it ran: an instruction count is comparable across
+machines only once you know they ran the same code.
 
 ## What the numbers are
 
@@ -293,8 +294,8 @@ measures no broker of its own leaves `scenarios` out instead of publishing it em
 the second table only.
 
 A crate that measures its code apart from the comparison records that run in `code_measured`: its
-`measured_at`, `crate_version` and `core_version`. The second table takes its date from there, and
-from the top-level `measured_at` in a document without it.
+`measured_at`, `crate_version` and `core_version`. The line under the second table takes its date
+and versions from there, and from the top-level fields in a document without it.
 
 A document that does not load, or that declares a `schema` this page does not know, leaves its
 broker in the "no results published yet" line. A broken publish is visible instead of silently

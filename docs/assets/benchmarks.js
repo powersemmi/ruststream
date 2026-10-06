@@ -275,16 +275,26 @@ function machine(published, labels) {
   for (const { broker, results } of published) {
     const environment = results.environment || {};
     // A crate that measures its code apart from the comparison against the raw client dates that
-    // run in `code_measured`, and the top-level date then belongs to the comparison. The machine
-    // is the document's either way: the code run records only its date and versions there, and
-    // its valgrind release in the document's `environment`.
+    // run in `code_measured`, and the top-level date and versions then belong to the comparison.
+    // The machine is the document's either way: the code run records only its date and versions
+    // there, and its valgrind release in the document's `environment`.
     const run = results.code_measured || results;
     const parts = MACHINE.map((field) => environment[field]).filter(Boolean);
+    // The code the run counted, since rows taken on different releases do not compare. The core's
+    // own row names one release: the crate it measures is the core.
+    const versions = [
+      run.crate_version && results.crate + " " + run.crate_version,
+      broker !== CORE && run.core_version && "ruststream " + run.core_version,
+    ].filter(Boolean);
     const item = document.createElement("li");
     item.appendChild(text("strong", broker.name));
     item.appendChild(
       document.createTextNode(
-        " - " + parts.join(", ") + ". " + labels.measured + " " + run.measured_at + ".",
+        " - " +
+          parts.join(", ") +
+          ". " +
+          [...versions, labels.measured + " " + run.measured_at].join(", ") +
+          ".",
       ),
     );
     list.appendChild(item);
