@@ -488,7 +488,7 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
 
 impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
     /// Builds an entry over an already-paired live value, for the crate's own unit tests.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "memory", feature = "json"))]
     pub(crate) fn wired(wired: W, codec: E, pipeline: Pipe) -> Self {
         Self {
             wired: SlotPublisher::new(wired),

@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::*;
-use crate::{
-    FixedName, MessageHeaders, NoHeaders, OutgoingDestination, OutgoingMessage, WithHeaders,
-};
+#[cfg(feature = "memory")]
+use crate::OutgoingMessage;
+use crate::{FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders};
 
 #[derive(Debug)]
 struct A;

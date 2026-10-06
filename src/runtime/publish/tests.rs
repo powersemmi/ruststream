@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 #[cfg(all(feature = "memory", feature = "json"))]
 use crate::PublishPolicy;
-#[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
+#[cfg(all(feature = "memory", feature = "json"))]
 use crate::Publisher;
 #[cfg(all(feature = "memory", feature = "json"))]
 use crate::codec::Codec;

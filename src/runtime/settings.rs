@@ -188,7 +188,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
 
     /// The wrapped definition on its own, so the crate's own tests can call the mount
     /// machinery's accessors on it without a surface in the way.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
     pub(crate) fn into_def(self) -> Def {
         self.def
     }

@@ -324,6 +324,7 @@ impl Routing {
     /// The same rule as the fanout's, over the names alone. A name with a wildcard token is a
     /// pattern, since a name subscription refuses one; a pattern that does not parse opened no
     /// subscription, so it reaches nothing.
+    #[cfg(any(test, feature = "testing"))]
     pub(super) fn routes(self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
         let exact: Vec<usize> = subscriptions
             .iter()

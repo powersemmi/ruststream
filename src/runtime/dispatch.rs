@@ -35,7 +35,7 @@ use super::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
 use super::poll_diagnostics::PollSampler;
 use super::publish::PublishContext;
-#[cfg(test)]
+#[cfg(all(test, feature = "memory"))]
 use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
 use super::shutdown::Shutdown;
@@ -395,7 +395,7 @@ impl<C> Delivery<C> {
 
     /// A delivery context publishing its retry copies through `publisher` at `destination`. For
     /// tests.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "memory"))]
     pub(crate) fn deferring_to(
         publisher: Arc<dyn ErasedRetryPublisher<C>>,
         destination: &str,
@@ -412,7 +412,7 @@ impl<C> Delivery<C> {
 
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
     /// `dead_letter(..)` leave it. For tests.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "memory"))]
     pub(crate) fn declaring(mut self, declaration: RetryDeclaration) -> Self {
         self.declaration = declaration;
         self
