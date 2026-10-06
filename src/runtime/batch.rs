@@ -611,6 +611,19 @@ async fn settle_split_batch<M, C>(
             results
         }
     };
+    // The body saw the accepted elements, so they are the call the harness records. A batch that
+    // refused every element never reached the body, and records nothing.
+    #[cfg(feature = "testing")]
+    let mut log = (accepted_len > 0).then(|| {
+        BatchLog::of(
+            batch
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| rejected.binary_search_by_key(index, |&(at, _)| at).is_err())
+                .map(|(_, msg)| msg),
+            LentValues::default(),
+        )
+    });
     let mut accepted_results = per_element.into_iter();
     let mut rejected = rejected.into_iter().peekable();
     for (index, msg) in batch.into_iter().enumerate() {
@@ -630,6 +643,10 @@ async fn settle_split_batch<M, C>(
             .next()
             .unwrap_or_else(HandlerOutcome::retry);
         let after = result.take_after();
+        #[cfg(feature = "testing")]
+        if let Some(log) = log.as_mut() {
+            log.settled(result.outcome());
+        }
         settle_outcome(
             &mut Slot::new(msg),
             result.outcome(),
@@ -641,6 +658,10 @@ async fn settle_split_batch<M, C>(
         if let Some(after) = after {
             delivery.spawn_after(after);
         }
+    }
+    #[cfg(feature = "testing")]
+    if let Some(log) = log {
+        log.record(subscription);
     }
 }
 
@@ -769,11 +790,14 @@ struct BatchLog {
 
 #[cfg(feature = "testing")]
 impl BatchLog {
-    fn of<M: IncomingMessage>(accepted: &[M], lent: LentValues) -> Self {
+    fn of<'m, M: IncomingMessage + 'm>(
+        accepted: impl IntoIterator<Item = &'m M>,
+        lent: LentValues,
+    ) -> Self {
         let mut lent = lent.into_iter();
         Self {
             deliveries: accepted
-                .iter()
+                .into_iter()
                 .map(|msg| crate::testing::coordinator::Delivered {
                     raw: bytes::Bytes::copy_from_slice(msg.payload()),
                     value: lent.next(),
