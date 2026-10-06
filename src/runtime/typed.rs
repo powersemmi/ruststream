@@ -14,10 +14,11 @@ use crate::codec::{Codec, CodecError};
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
+use super::batch::rejection;
 use super::context::Context;
 use super::failure::FailurePolicy;
 use super::handler::{Handler, HandlerOutcome};
-use super::input::{Decoded, Materialize};
+use super::input::{Decoded, Materialize, REPORTED};
 
 /// Build a `Handler<M>` that decodes the payload with `codec` into `T` and forwards `&T` to
 /// `inner`.
@@ -87,6 +88,9 @@ where
     Inner: Handler<Input::Target, Cx, St>,
 {
     async fn handle(&self, msg: &M, ctx: &mut Context<'_, Cx, St>) -> HandlerOutcome {
+        if let Some(outcome) = refused::<Input, DecodeCodec, M, Cx, St>(msg, self.decode, ctx) {
+            return outcome;
+        }
         // What the delivery materialized into lives on this stack frame and the handler borrows
         // its view, so the input path allocates nothing of its own (a raw input borrows the
         // payload, a carried one the delivery's own value).
@@ -99,6 +103,54 @@ where
             Err(err) => unmaterialized::<Input, DecodeCodec, M, Cx, St>(&err, self.decode, ctx),
         }
     }
+}
+
+/// The outcome that settles a delivery its broker reports as undecodable
+/// ([`IncomingMessage::decode_error`]) by the definition's decode policy, or `None` where the
+/// broker reports nothing and the adapter materializes the input.
+///
+/// Every single-delivery adapter asks here before it materializes its input, so the report is
+/// read on every input lane and every form alike, before the lane reads anything of the delivery.
+// Inlined, so that for a broker that keeps the default the report is a constant `None` in the
+// adapter's own code and the check folds away.
+#[inline]
+pub(crate) fn refused<Input, Decoder, M, Cx, St>(
+    msg: &M,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> Option<HandlerOutcome>
+where
+    Input: Materialize<Decoder, M>,
+    M: IncomingMessage,
+{
+    msg.decode_error()
+        .map(|err| refuse::<Input, Decoder, M, Cx, St>(err, decode, ctx))
+}
+
+/// Settles a delivery its broker could not read, with the diagnostic fields of
+/// [`unmaterialized`].
+// Out of line and cold, so the adapter's code for the deliveries it reads stays as it is.
+#[cold]
+#[inline(never)]
+fn refuse<Input, Decoder, M, Cx, St>(
+    err: &CodecError,
+    decode: FailurePolicy,
+    ctx: &mut Context<'_, Cx, St>,
+) -> HandlerOutcome
+where
+    Input: Materialize<Decoder, M>,
+{
+    warn!(
+        target: "ruststream::dispatch",
+        subscription = %ctx.name(),
+        message_type = Input::input_label(),
+        error = %err,
+        "{}",
+        REPORTED,
+    );
+    #[cfg(any(feature = "testing", feature = "otel"))]
+    ctx.mark_decode_failed();
+    rejection(err, "decode failed", decode, ctx).into()
 }
 
 /// Settles a delivery that did not materialize into the handler's input, by the definition's
@@ -276,6 +328,44 @@ mod tests {
         assert_eq!(
             decode_event.get("message_type").map(String::as_str),
             Some("u32")
+        );
+    }
+
+    // A delivery its broker could not read is refused before the codec runs, and the warning
+    // names the subscription, the input type and the error the broker reported (needs a tracing
+    // subscriber, hence the `logging` feature gate).
+    #[cfg(feature = "logging")]
+    #[tokio::test]
+    async fn a_reported_decode_error_is_logged_with_subscription_type_and_error() {
+        use crate::runtime::input::REPORTED;
+        use crate::testkit::log_capture;
+        use crate::testkit::unreadable::{REASON, Unreadable};
+
+        let (events, guard) = log_capture::start();
+        let seen = Arc::new(AtomicU32::new(0));
+        let handler = typed(JsonCodec, counting_inner(&seen));
+        let state = ();
+        let delivery = Delivery::empty();
+        let headers = HeaderMap::new();
+        let mut ctx = Context::new("orders.inbound", &headers, &state, (), &delivery);
+        // The payload decodes as a `u32`: only the broker's report refuses it.
+        let outcome = handler.handle(&Unreadable::new(b"7"), &mut ctx).await;
+        drop(guard);
+
+        assert_eq!(outcome.outcome(), HandlerResult::drop());
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "inner must not run");
+        let reported = log_capture::find(&events, REPORTED);
+        assert_eq!(
+            reported.get("subscription").map(String::as_str),
+            Some("orders.inbound")
+        );
+        assert_eq!(
+            reported.get("message_type").map(String::as_str),
+            Some("u32")
+        );
+        assert_eq!(
+            reported.get("error").map(String::as_str),
+            Some(format!("decode failed: {REASON}").as_str())
         );
     }
 

@@ -462,6 +462,36 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     );
 }
 
+/// A batch element its broker could not read settles by the decode policy, and the warning names
+/// the subscription, the element type and the error the broker reported. Every batch lane asks
+/// through the same place, so one element stands for all of them.
+#[cfg(feature = "logging")]
+#[test]
+fn a_reported_element_is_logged_with_its_subscription_type_and_error() {
+    use crate::runtime::input::REPORTED;
+    use crate::testkit::unreadable::{REASON, Unreadable};
+
+    let (events, guard) = log_capture::start();
+    let state = ();
+    let delivery = Delivery::empty();
+    let headers = HeaderMap::new();
+    let ctx = Context::new("diag-batch", &headers, &state, (), &delivery);
+    let outcome = reported(&Unreadable::new(b"7"), "u32", FailurePolicy::Skip, &ctx);
+    drop(guard);
+
+    assert_eq!(outcome, Some(HandlerResult::Ack));
+    let event = log_capture::find(&events, REPORTED);
+    assert_eq!(
+        event.get("subscription").map(String::as_str),
+        Some("diag-batch")
+    );
+    assert_eq!(event.get("message_type").map(String::as_str), Some("u32"));
+    assert_eq!(
+        event.get("error").map(String::as_str),
+        Some(format!("decode failed: {REASON}").as_str())
+    );
+}
+
 /// A self-deserializing element, for the deserialized batch adapter below: a view over the
 /// payload that rejects an empty one, so the construction-failure path is exercisable.
 struct Frame<'a>(&'a [u8]);

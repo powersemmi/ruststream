@@ -178,6 +178,12 @@ pub trait IncomingMessage: Send + Sync {
     // broker's redeliveries and not only the copies the runtime published.
     // The first delivery of a message answers 1.
     fn redelivery_count(&self) -> Option<u64>;
+
+    // Defaulted: None. Override where the broker reads a delivery into a
+    // value itself and can fail where no codec runs (a column whose type
+    // differs from the field's): the runtime settles such a delivery by the
+    // decode-failure policy before any handler sees it.
+    fn decode_error(&self) -> Option<&CodecError>;
 }
 ```
 
@@ -185,7 +191,7 @@ pub trait IncomingMessage: Send + Sync {
 `false`，运行时一次也不会调用这个覆盖。`nack_after` 的默认实现返回 `AckError::Unsupported`，而不是按
 一次普通的 `nack(true)` 结算：留不住消息的传输必须说出这一点，否则一次退避就变成一场重新投递的风暴。
 
-这四个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
+这五个带默认实现的方法一个都不覆盖的 Broker，仍然能配合运行时的每一项功能。没有原生延迟重新投递的地
 方，`retry_after` 由运行时自己完成：它丢弃这次投递，并在延迟之后经由这条注册的重试发布者发布一份副
 本，同时把重试计数消息头加一。这份副本发往[你的订阅给出的地址](#where-a-retry-copy-is-published)。
 按键分道的工作者池轮流分发没有键的消息。
@@ -197,6 +203,12 @@ pub trait IncomingMessage: Send + Sync {
 副本上把 `RETRY_COUNT_HEADER`（从 `ruststream::runtime` 导出）加一，但只在传输什么都不记的时候这样
 做。传输自己记次数时，你发布的副本是一条新消息，Broker 从一开始重新记，于是绕完等待队列回来的那次投
 递，在上限看来仍是第一次尝试。这是你这套延迟方案的行为：把它写进 crate 的文档，别去动那个消息头。
+
+有些 Broker 自己把投递读成一个值，这一步不经过编解码器，也可能出错。比如数据库队列用驱动读出一行，
+某一列的类型却与字段不符。把这个错误从 `decode_error` 返回。运行时在构建处理器的输入之前询问它，每
+一条输入路径都是如此，批里的每一次投递也是如此。报告了错误的投递按订阅的 `on_failure(decode = ..)`
+策略结算，与无法解码的载荷相同：处理器看不到它，警告会写明这个错误。以一个切片借出值的批没有这次投
+递的值，因此要把它排在切片末尾之后。
 
 “什么都不覆盖”会得到什么，没有哪个 Broker 可以拿来演示：这个工作区里的 Broker 个个都覆盖了这三个方
 法。所以这份行为由核心的一个测试固定下来：
@@ -629,7 +641,7 @@ ack 记账。
 有些 Broker 的投递本身已经持有解码好的值，比如数据库驱动读出的一行。这样的投递通过
 `Carries<T>` 借出这个值，接受 `&T` 的处理器就在原处读取它，中间没有编解码器。值已经不在时，
 `carried` 返回 `None`，运行时按 `on_failure(decode = ..)` 策略处理这次投递，与处理无法解码的载荷
-一样。
+一样。驱动读不出来的行，由投递通过 `decode_error` 返回它的错误，警告会写明这个错误。
 
 - 把值放在同一个缓冲区里的批，通过 `CarriesBatch<T>` 以一个切片借出它们。第 `i` 个值属于第 `i`
   次投递，所以没有值的投递要排在最后：切片末尾之后的投递没有值。

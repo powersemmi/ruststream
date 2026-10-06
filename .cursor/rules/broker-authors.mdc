@@ -55,6 +55,11 @@ alwaysApply: false
   published. The first delivery answers 1. That count is then the only one a cap reads, the
   framework's header never mixed in; increment `RETRY_COUNT_HEADER` on a copy your crate
   republishes (a wait queue, a retry topic) only where the transport counts nothing.
+- Override `IncomingMessage::decode_error` where your broker reads a delivery into a value itself
+  and can fail where no codec runs (a column whose type differs from the field's): return the
+  error, and the runtime settles the delivery by the subscription's decode policy before any
+  handler sees it, on every input lane and for each delivery of a batch. A batch that lends its
+  values as one slice has no value for such a delivery: put it past the end of the slice.
 - Publishers split into policy plus live form: ship a freely constructible policy type carrying the
   options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
   `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`

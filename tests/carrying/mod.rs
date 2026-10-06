@@ -10,6 +10,12 @@
 //! fetches a page of rows does, and lends the rows as one slice. Deliveries whose row is gone go
 //! last, past the end of that slice.
 //!
+//! A payload that holds the word [`UNREADABLE`] stands for a row whose columns do not decode: its
+//! delivery reports [`UNREADABLE_REASON`] as its decode error. On its own such a delivery still
+//! lends the row it read, which the runtime must not ask for. A page lends no row for it and puts
+//! it past the end of the slice, because the body reads the slice before the runtime reaches the
+//! deliveries.
+//!
 //! A row is written `id:name` (`7:alice`). A [`Fault`] breaks the subscription in one way, for the
 //! conformance checks that must fail against it. Each test binary that names this module uses
 //! part of it, hence the `dead_code` allowance.
@@ -21,6 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{Stream, StreamExt, stream};
+use ruststream::codec::CodecError;
 use ruststream::memory::{
     ConnectedMemoryBroker, Discarding, LogMode, MemoryError, MemoryMessage, MemorySeeker,
     MemorySubscriber, Retaining,
@@ -65,6 +72,21 @@ impl Row {
 // What a broker crate's derive writes for its row type: the type rides the carried lane.
 impl Input for Row {
     type Axis = SoloCarried<Self>;
+}
+
+/// The word that marks a payload whose row does not decode.
+pub(crate) const UNREADABLE: &str = "unreadable";
+
+/// What a delivery with a marked payload reports as its decode error.
+pub(crate) const UNREADABLE_REASON: &str =
+    "the column `amount` holds text, the field is an integer";
+
+/// The decode error a delivery with `payload` reports: the client met it reading the row.
+pub(crate) fn reported(payload: &[u8]) -> Option<CodecError> {
+    payload
+        .windows(UNREADABLE.len())
+        .any(|word| word == UNREADABLE.as_bytes())
+        .then(|| CodecError::Decode(UNREADABLE_REASON.into()))
 }
 
 /// One way a broker can break the carried lane.
@@ -178,6 +200,7 @@ impl<Log: LogMode> RowSubscriber<Log> {
             (_, row) => row,
         };
         RowDelivery {
+            error: reported(inner.payload()),
             inner,
             row,
             fault,
@@ -261,6 +284,8 @@ pub(crate) struct RowDelivery<Log = Discarding> {
     /// The subscription's one slot for a delivery in flight, where it has one: given back once
     /// the delivery is settled.
     slot: Option<OwnedSemaphorePermit>,
+    /// The error the client met reading the row, where the payload is marked unreadable.
+    error: Option<CodecError>,
 }
 
 impl<Log> Carries<Row> for RowDelivery<Log> {
@@ -279,6 +304,10 @@ impl<Log: LogMode> IncomingMessage for RowDelivery<Log> {
 
     fn headers(&self) -> &HeaderMap {
         self.inner.headers()
+    }
+
+    fn decode_error(&self) -> Option<&CodecError> {
+        self.error.as_ref()
     }
 
     fn redelivery_count(&self) -> Option<u64> {
@@ -338,7 +367,15 @@ impl<Log: LogMode> RowBatch<Log> {
         let mut deliveries = Vec::with_capacity(page.len());
         let mut gone = Vec::new();
         for inner in page {
-            match Row::read(inner.payload()) {
+            let error = reported(inner.payload());
+            // The body reads the slice before the runtime reaches the deliveries, so a delivery
+            // that reports a decode error lends no row: it goes past the end of the slice.
+            let row = if error.is_some() {
+                None
+            } else {
+                Row::read(inner.payload())
+            };
+            match row {
                 Some(row) => {
                     rows.push(row);
                     deliveries.push(RowDelivery {
@@ -346,6 +383,7 @@ impl<Log: LogMode> RowBatch<Log> {
                         row: None,
                         fault,
                         slot: None,
+                        error,
                     });
                 }
                 None if fault == Fault::GoneFirst => {
@@ -354,6 +392,7 @@ impl<Log: LogMode> RowBatch<Log> {
                         row: None,
                         fault,
                         slot: None,
+                        error,
                     });
                 }
                 None => gone.push(RowDelivery {
@@ -361,6 +400,7 @@ impl<Log: LogMode> RowBatch<Log> {
                     row: None,
                     fault,
                     slot: None,
+                    error,
                 }),
             }
         }

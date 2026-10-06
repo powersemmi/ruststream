@@ -308,7 +308,8 @@ pub enum Outcome {
     Nack,
     /// The handler dropped the message (nack without requeue).
     Drop,
-    /// The payload failed to decode into the handler's input type.
+    /// The delivery did not decode into the handler's input type, by the codec's verdict or by
+    /// its broker's report.
     DecodeFailed,
     /// The handler panicked (under the panic failure policy in effect).
     Panicked,
@@ -342,7 +343,7 @@ pub(crate) struct Record {
     pub(crate) deliveries: Vec<Delivered>,
     /// Whether the handler panicked.
     pub(crate) panicked: bool,
-    /// Whether the payload failed to decode before the handler ran.
+    /// Whether the delivery failed to decode before the handler ran.
     pub(crate) decode_failed: bool,
 }
 

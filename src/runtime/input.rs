@@ -22,6 +22,11 @@ use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
 #[cfg(feature = "testing")]
 use super::context::Context;
 
+/// What a delivery its broker reports as undecodable ([`IncomingMessage::decode_error`]) is logged
+/// as, beside the subscription, the type and the reported error. Every lane, single and batch,
+/// logs it the same way.
+pub(crate) const REPORTED: &str = "the broker reports the delivery does not decode";
+
 /// One kind of handler input: the owned element of a batch and the borrowed view lent to the
 /// handler.
 #[diagnostic::on_unimplemented(

@@ -317,3 +317,81 @@ async fn batch_handler_panic_fails_fast() {
         "a fail-fast batch panic must make run() return a dispatch error, got {result:?}",
     );
 }
+
+/// A frame that refuses an empty payload, so one element of a batch can fail to construct.
+struct Strict<'a>(&'a [u8]);
+
+impl Deserialized for Strict<'_> {
+    type Output<'a> = Strict<'a>;
+    type Error = &'static str;
+
+    fn from_payload(payload: &[u8]) -> Result<Strict<'_>, &'static str> {
+        if payload.is_empty() {
+            return Err("an empty frame");
+        }
+        Ok(Strict(payload))
+    }
+}
+
+impl Input for Strict<'_> {
+    type Axis = SoloDeserialized<Strict<'static>>;
+}
+
+#[subscriber("strict")]
+async fn store(frames: &[Strict<'_>]) -> HandlerOutcome {
+    let bytes: usize = frames.iter().map(|frame| frame.0.len()).sum();
+    tracing::info!(bytes, "stored");
+    HandlerOutcome::ack()
+}
+
+/// A self-deserializing batch whose element fails to construct still hands the body the rest,
+/// and the harness records that call: the frames the body saw, settled by its verdict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_self_deserializing_batch_is_recorded_around_a_refused_frame() {
+    // A retaining bus replays what it holds, so the subscription's first batch carries all three.
+    let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+    let publisher = broker.publisher();
+    for frame in [b"first".as_slice(), b"", b"third"] {
+        publisher
+            .message(&Wire::of(frame))
+            .to("strict")
+            .publish()
+            .await
+            .expect("publish");
+    }
+    let app = RustStream::new(AppInfo::new("strict", "0.1.0")).with_broker(broker, |b| {
+        b.include(store.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+    });
+    let tb = TestApp::start(app).await.expect("startup failed");
+    tb.settle().await.expect("the replayed batch settles");
+
+    let handle = tb.broker::<MemoryBroker<Retaining>>();
+    let frames = handle.subscriber("strict");
+    assert_eq!(
+        frames.batches_raw(),
+        [[b"first".as_slice(), b"third".as_slice()]],
+    );
+    frames.settled(HandlerOutcome::ack());
+    tb.assert_running();
+}
+
+/// A batch that refused every frame never reached the body, so the harness records no call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_self_deserializing_batch_of_refused_frames_records_no_call() {
+    let app =
+        RustStream::new(AppInfo::new("strict", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(store.batch(nonzero!(8)));
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    tb.message(&Wire::of(b""))
+        .to("strict")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("strict")
+        .assert_not_called();
+    tb.assert_running();
+}

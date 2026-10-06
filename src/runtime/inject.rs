@@ -21,7 +21,7 @@ use super::handler::{Handler, HandlerOutcome};
 use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::slot::DefaultSlot;
-use super::typed::unmaterialized;
+use super::typed::{refused, unmaterialized};
 
 /// The marker a handler signature uses to receive an injected publisher:
 /// `Out(out): Out<impl Publisher>` binds `out` to a live publisher inside the body.
@@ -280,6 +280,11 @@ where
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> HandlerOutcome {
+        if let Some(outcome) =
+            refused::<Def::Input, DecodeCodec, Msg, Def::Context, State>(msg, self.decode, ctx)
+        {
+            return outcome;
+        }
         // What the delivery materialized into lives on this stack frame and the handler borrows
         // its view, so the input path allocates nothing of its own (a raw input borrows the
         // payload, a carried one the delivery's own value).

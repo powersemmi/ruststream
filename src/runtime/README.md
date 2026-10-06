@@ -1156,9 +1156,11 @@ message without requeue and keeps consuming. The values are [`FailurePolicy::Fai
 [`Drop`](FailurePolicy::Drop), [`Retry`](FailurePolicy::Retry),
 [`RetryAfter`](FailurePolicy::RetryAfter) and [`Skip`](FailurePolicy::Skip), which acks the
 failed message to move past it. The decode key also settles a violated header contract, a
-self-decoding payload that rejects its bytes, and a delivery whose value is gone (see
-[Values the broker already holds](#values-the-broker-already-holds)). A panic is caught with
-`catch_unwind`, so a build with `panic = "abort"` applies no panic policy at all.
+self-decoding payload that rejects its bytes, a delivery whose value is gone (see
+[Values the broker already holds](#values-the-broker-already-holds)), and a delivery the
+broker could not read ([`decode_error`](crate::IncomingMessage::decode_error)). The handler
+never sees such a delivery, and the warning names the error the broker reported. A panic is
+caught with `catch_unwind`, so a build with `panic = "abort"` applies no panic policy at all.
 
 ```
 # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]

@@ -14,7 +14,9 @@
 /// `None` is a delivery whose value is gone, such as a claimed id whose row was deleted. The
 /// runtime settles it by the subscription's decode-failure policy
 /// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a payload that
-/// does not decode.
+/// does not decode. A row the driver could not read is reported through
+/// [`decode_error`](crate::IncomingMessage::decode_error) instead: the runtime asks it before the
+/// value, settles the delivery by the same policy, and logs the error the driver met.
 ///
 /// The delivery answers [`payload`](crate::IncomingMessage::payload) with the message's bytes,
 /// the ones the value is read from. A copy the runtime publishes of it, a retry copy or a dead
@@ -90,7 +92,9 @@ pub trait Carries<T> {
 /// A delivery past the end of the slice carries no value: the runtime settles it by the
 /// subscription's decode-failure policy
 /// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a single
-/// delivery whose [`Carries::carried`] answers `None`. A broker puts such deliveries last.
+/// delivery whose [`Carries::carried`] answers `None`. A broker puts such deliveries last. A
+/// delivery whose row it could not read goes there too, and reports the error through
+/// [`decode_error`](crate::IncomingMessage::decode_error), which the runtime logs.
 ///
 /// The batch's context ([`BuildBatchContext`](crate::BuildBatchContext)) is built from the batch
 /// itself on this lane, because the batch stays whole while the handler reads its slice; the

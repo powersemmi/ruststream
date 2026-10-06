@@ -87,6 +87,61 @@ pub(crate) mod log_capture {
     }
 }
 
+/// A delivery its broker could not read, for the unit tests of the places that ask
+/// [`IncomingMessage::decode_error`](crate::IncomingMessage::decode_error): its payload is
+/// whatever the test hands it, and it reports [`REASON`](unreadable::REASON) as its error.
+///
+/// Its callers read the warning it causes, so it compiles where they do: with a tracing subscriber
+/// and the in-memory broker and codec their modules need.
+#[cfg(all(feature = "logging", feature = "memory", feature = "json"))]
+pub(crate) mod unreadable {
+    use std::future::{Future, ready};
+
+    use crate::codec::CodecError;
+    use crate::{AckError, HeaderMap, IncomingMessage};
+
+    /// What the delivery reports, as the inner error of a [`CodecError::Decode`].
+    pub(crate) const REASON: &str = "the column `amount` holds text";
+
+    pub(crate) struct Unreadable {
+        payload: Vec<u8>,
+        headers: HeaderMap,
+        error: CodecError,
+    }
+
+    impl Unreadable {
+        pub(crate) fn new(payload: &[u8]) -> Self {
+            Self {
+                payload: payload.to_vec(),
+                headers: HeaderMap::new(),
+                error: CodecError::Decode(REASON.into()),
+            }
+        }
+    }
+
+    impl IncomingMessage for Unreadable {
+        fn payload(&self) -> &[u8] {
+            &self.payload
+        }
+
+        fn headers(&self) -> &HeaderMap {
+            &self.headers
+        }
+
+        fn decode_error(&self) -> Option<&CodecError> {
+            Some(&self.error)
+        }
+
+        fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send {
+            ready(Ok(()))
+        }
+
+        fn nack(self, _requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send {
+            ready(Ok(()))
+        }
+    }
+}
+
 /// Hands a unit test one real delivery of the in-memory broker, for the handler adapters that are
 /// driven with a message directly rather than through a dispatch loop.
 ///

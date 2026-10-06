@@ -24,7 +24,9 @@ use super::super::dispatch::{Slot, settle_outcome};
 use super::super::failure::FailurePolicy;
 #[cfg(feature = "otel")]
 use super::record_batch_size;
-use super::{BatchHandler, LentValues, SliceHandler, TakenBatch, rejection, settle_lent_batch};
+use super::{
+    BatchHandler, LentValues, SliceHandler, TakenBatch, rejection, reported, settle_lent_batch,
+};
 
 /// A subscription whose batches lend a slice of `T`: what a handler taking `&[T]` on the carried
 /// lane asks of the subscription it mounts on.
@@ -198,25 +200,28 @@ where
             );
         }
         // Deliveries past the end of the slice carry no value: they settle by the decode policy,
-        // the way a single delivery without one does.
+        // the way a single delivery without one does. One its broker could not read is among
+        // them, and is logged for the error the broker reported.
         let gone = if deliveries.len() > lent {
             deliveries.split_off(lent)
         } else {
             Vec::new()
         };
         for msg in gone {
-            warn!(
-                target: "ruststream::dispatch",
-                subscription = %subscription,
-                message_type = type_name::<T>(),
-                "the delivery carries no value",
-            );
-            let outcome = rejection(
-                &format_args!("the delivery carries no `{}`", type_name::<T>()),
-                "batch delivery carries no value",
-                self.decode,
-                ctx,
-            );
+            let outcome = reported(&msg, type_name::<T>(), self.decode, ctx).unwrap_or_else(|| {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %subscription,
+                    message_type = type_name::<T>(),
+                    "the delivery carries no value",
+                );
+                rejection(
+                    &format_args!("the delivery carries no `{}`", type_name::<T>()),
+                    "batch delivery carries no value",
+                    self.decode,
+                    ctx,
+                )
+            });
             settle_outcome(
                 &mut Slot::new(msg),
                 outcome,
