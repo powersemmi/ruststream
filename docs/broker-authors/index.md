@@ -721,9 +721,11 @@ instead, and the warning names it.
 - A batch that keeps its values in one buffer lends them through `CarriesBatch<T>` as one slice.
   Value `i` belongs to delivery `i`, so put the deliveries without a value last: a delivery past
   the end of the slice has none.
-- A carried delivery answers `payload()` with the message's bytes. The runtime copies them, with
-  the headers, into a retry copy or a dead letter, and your broker reads the same value from such
-  a copy.
+- Where the service publishes the subscription's copies (`AddressedCopies`, `NamedCopies`), a
+  carried delivery answers `payload()` with the message's bytes. The runtime copies them, with the
+  headers, into a retry copy or a dead letter, and your broker reads the same value from such a
+  copy. On a `BrokerMoves` subscription the broker moves the delivery itself, and the runtime
+  publishes no copy of it.
 - Your crate's derive makes the type a carried input with
   `impl Input for Row { type Axis = SoloCarried<Row>; }`. The type is `Clone` and does not
   implement `Deserialize`.

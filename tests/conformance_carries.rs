@@ -6,12 +6,13 @@
 
 mod carrying;
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use carrying::{Fault, Row, Rows};
 use ruststream::conformance::capabilities;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError};
-use ruststream::{OutgoingMessage, Publisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
+use ruststream::{BrokerMoves, NamedCopies, OutgoingMessage, Publisher};
 use tokio::time::timeout;
 
 /// How long a check that must fail at once may run before the test calls it a hang.
@@ -54,6 +55,14 @@ async fn publish_gone(connected: &ConnectedMemoryBroker, subject: &str) -> Resul
         .publisher()
         .publish(OutgoingMessage::new(subject, b"gone".as_slice()), None)
         .await
+}
+
+/// The plain publisher, noting in `built` that a suite asked for one.
+fn noting_publisher(built: &Cell<bool>) -> impl Fn(&ConnectedMemoryBroker) -> MemoryPublisher {
+    move |connected: &ConnectedMemoryBroker| {
+        built.set(true);
+        connected.publisher()
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -273,6 +282,86 @@ async fn a_batch_whose_copies_lose_their_values_fails_carries_batch() {
         &rows(),
     )
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a copy of a delivery, published from its payload and headers")]
+async fn a_delivery_whose_copy_loses_its_value_fails_carries_on_named_copies() {
+    capabilities::carries(
+        MemoryBroker::new,
+        |name| {
+            Rows::new(name)
+                .copy_path::<NamedCopies>()
+                .faulty(Fault::EmptyPayload)
+        },
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "a copy of a delivery, published from its payload and headers")]
+async fn a_batch_whose_copies_lose_their_values_fails_carries_batch_on_named_copies() {
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| {
+            Rows::new(name)
+                .copy_path::<NamedCopies>()
+                .faulty(Fault::EmptyPayload)
+        },
+        ConnectedMemoryBroker::publisher,
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_the_broker_moves_passes_carries_with_no_bytes_to_copy() {
+    let built = Cell::new(false);
+    capabilities::carries(
+        MemoryBroker::new,
+        |name| {
+            Rows::new(name)
+                .copy_path::<BrokerMoves>()
+                .faulty(Fault::EmptyPayload)
+        },
+        noting_publisher(&built),
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+    assert!(
+        !built.get(),
+        "carries built a publisher to copy deliveries the broker moves itself",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_the_broker_moves_passes_carries_batch_with_no_bytes_to_copy() {
+    let built = Cell::new(false);
+    capabilities::carries_batch(
+        MemoryBroker::new,
+        |name| {
+            Rows::new(name)
+                .copy_path::<BrokerMoves>()
+                .faulty(Fault::EmptyPayload)
+        },
+        noting_publisher(&built),
+        publish_row,
+        publish_gone,
+        &rows(),
+    )
+    .await;
+    assert!(
+        !built.get(),
+        "carries_batch built a publisher to copy deliveries the broker moves itself",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

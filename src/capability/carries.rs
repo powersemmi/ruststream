@@ -18,10 +18,13 @@
 /// [`decode_error`](crate::IncomingMessage::decode_error) instead: the runtime asks it before the
 /// value, settles the delivery by the same policy, and logs the error the driver met.
 ///
-/// The delivery answers [`payload`](crate::IncomingMessage::payload) with the message's bytes,
-/// the ones the value is read from. A copy the runtime publishes of it, a retry copy or a dead
-/// letter, carries those bytes and the headers, and the broker reads the same value from that
-/// copy; `conformance::capabilities::carries` checks it.
+/// Where this process publishes the subscription's copies (its descriptor declares
+/// [`AddressedCopies`](crate::AddressedCopies) or [`NamedCopies`](crate::NamedCopies)), the
+/// delivery answers [`payload`](crate::IncomingMessage::payload) with the message's bytes, the
+/// ones the value is read from. A copy the runtime publishes of it, a retry copy or a dead letter,
+/// carries those bytes and the headers, and the broker reads the same value from that copy;
+/// `conformance::capabilities::carries` checks it. On a [`BrokerMoves`](crate::BrokerMoves)
+/// subscription the broker moves a spent delivery itself, and the runtime publishes no copy of it.
 ///
 /// # Examples
 ///
