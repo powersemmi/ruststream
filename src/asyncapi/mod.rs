@@ -75,8 +75,9 @@
 //! * A header contract, from a `Headers<T>` parameter or from `#[outgoing(headers = ..)]`,
 //!   becomes the message's headers schema.
 //! * The media type comes from the codec that decodes or encodes the message,
-//!   [`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE). One format everywhere is also
-//!   the root `defaultContentType`; two formats leave the root field out.
+//!   [`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE), and a message no codec touches
+//!   names none. The root `defaultContentType` appears only when every message names the same
+//!   media type: a reader takes it for each message that names none of its own.
 //! * A retry cap, a dead-letter destination and a named retry destination appear on the
 //!   operation as the extension `x-ruststream-retry`, and each of the two destinations gets a
 //!   channel with a `send` operation: the registration publishes there. The address a
@@ -143,8 +144,9 @@ pub struct Spec {
     /// Servers (one per broker the service connects to), keyed by server name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub servers: BTreeMap<String, Server>,
-    /// The media type the service's messages carry, when every message agrees on one. A service
-    /// that decodes several formats leaves it out and states the media type per message.
+    /// The media type every message names, when all of them name the same one. A second format,
+    /// or a message no codec reads or writes, leaves it out; each codec-encoded message still
+    /// states its own.
     #[serde(rename = "defaultContentType", skip_serializing_if = "Option::is_none")]
     pub default_content_type: Option<String>,
     /// Channels, keyed by channel id (the name).
@@ -721,16 +723,15 @@ fn resolve_server<'a>(
     }
 }
 
-/// The media type every message in the document agrees on, for the root `defaultContentType`.
+/// The media type every message in the document names, for the root `defaultContentType`.
 ///
-/// Two codecs in one service means no default: a reader would take the root value for the whole
-/// document, and half the messages would be misdescribed.
+/// A reader applies the root value to the whole document, and `AsyncAPI` gives it to each message
+/// that names no media type of its own. So it stands only while every message names the same one:
+/// a second format, or a message no codec reads, would be misdescribed by it.
 fn agreed_content_type(messages: &BTreeMap<String, MessageObject>) -> Option<String> {
     let mut agreed: Option<&str> = None;
-    for content_type in messages
-        .values()
-        .filter_map(|message| message.content_type.as_deref())
-    {
+    for message in messages.values() {
+        let content_type = message.content_type.as_deref()?;
         match agreed {
             None => agreed = Some(content_type),
             Some(existing) if existing == content_type => {}
