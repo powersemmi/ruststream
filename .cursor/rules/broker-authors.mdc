@@ -406,6 +406,11 @@ impl<Def: Declared, W, F, P, Pg, Codec> MySubscriber
 }
 ```
 
+A step that depends on a core setting reads it off the builder rather than taking it again:
+`dispatch()` (a `Workers` with `count()`, `by_key()`, `placement()`), `batch_size()` (`None` until
+`batch(n)`), `subscription_name()`. It sees each value as fixed when the step is called: the
+attribute's settings always, a mount-site one only when chained before the step.
+
 One core setting changes the source type rather than a state slot: `start_at(..)` wraps your
 descriptor in `StartAt<MySubscribeOptions, Position>`, and your methods fall out of scope on every
 subscription that named a start position. Cover it with a second impl over the wrapped source,

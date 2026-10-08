@@ -321,6 +321,10 @@ name = "asyncapi"
 required-features = ["asyncapi", "memory", "macros"]
 
 [[test]]
+name = "settings_read"
+required-features = ["macros", "memory", "json"]
+
+[[test]]
 name = "batch_subscriber"
 required-features = ["macros", "memory", "json", "testing"]
 

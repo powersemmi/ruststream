@@ -531,6 +531,41 @@ where
 }
 ```
 
+### 读取调用链已固定的设置
+
+你的步骤可能依赖核心的某项设置：每个专用线程一份资源，或按批次大小确定的窗口。步骤直接从构建器读取这个值，
+用户无需把它写两遍。`dispatch()` 以 `Workers` 返回并发设置（`count()`、`by_key()`、`placement()`），
+`batch_size()` 在 `batch(n)` 指定之后返回批次大小，`subscription_name()` 返回源报告的名称。
+
+<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+```rust
+use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+
+pub trait NatsPull {
+    fn pull_window(self, per_delivery: usize) -> Self;
+}
+
+impl<Def, State, Codec> NatsPull for SubscriberBuilder<Def, SubscribeOptions, State, Codec>
+where
+    Def: Declared,
+{
+    fn pull_window(self, per_delivery: usize) -> Self {
+        let dispatch = self.dispatch();
+        // 每个专用线程使用自己的消费者，运行时上的工作者共用一个。
+        let consumers = match dispatch.placement() {
+            Placement::Threads => dispatch.count().get(),
+            _ => 1,
+        };
+        let batch = self.batch_size().map_or(1, |size| size.get());
+        let window = batch * per_delivery;
+        self.map_source(|source| source.consumers(consumers).max_ack_pending(window))
+    }
+}
+```
+
+步骤读到的是调用它那一刻的值。属性中的设置先于挂载点上的任何步骤固定，所以
+`#[subscriber(.., threads(4))]` 对步骤可见；在 `.threads(n)` 之前调用的步骤看到的是默认值，即顺序分发。
+
 ### 用你自己的词汇表达发布者配置
 
 发布这一侧是对称的。挂载点用 `.out(marker, policy)` 指定发布策略：标记 `Reply` 对应带

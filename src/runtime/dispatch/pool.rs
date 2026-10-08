@@ -134,7 +134,7 @@ where
     Cx: BuildContext<Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
-    let count = workers.count;
+    let count = workers.count.get();
     // Every worker is free at the start, so the queue of free ones is seeded with all of them;
     // it never holds more.
     let (free_side, free) = mpsc::channel(count);
@@ -188,7 +188,7 @@ where
     State: Send + Sync + 'static,
 {
     tokio::spawn(async move {
-        let count = workers.count;
+        let count = workers.count.get();
         let keyed = workers.by_key;
         let shared = Arc::new(Shared {
             handler,
