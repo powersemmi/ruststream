@@ -539,7 +539,7 @@ where
 
 <!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
 ```rust
-use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
 
 pub trait NatsPull {
     fn pull_window(self, per_delivery: usize) -> Self;
