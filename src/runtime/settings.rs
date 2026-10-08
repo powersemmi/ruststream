@@ -31,6 +31,7 @@
 //! ```
 
 mod forward;
+mod read;
 
 use std::borrow::Cow;
 use std::fmt;
