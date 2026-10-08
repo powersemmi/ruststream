@@ -125,7 +125,7 @@ jobs:
 
       - name: Install cargo-hack
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
-        uses: taiki-e/install-action@v2.87.24
+        uses: taiki-e/install-action@v2.87.25
         with:
           tool: cargo-hack
 
@@ -135,7 +135,7 @@ jobs:
 
       - name: Install cargo-generate
         if: "!cancelled() && env.TEMPLATES_CHANGED == 'true'"
-        uses: taiki-e/install-action@v2.87.24
+        uses: taiki-e/install-action@v2.87.25
         with:
           tool: cargo-generate
 
@@ -296,7 +296,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.87.24
+        uses: taiki-e/install-action@v2.87.25
         with:
           tool: cargo-llvm-cov
 
