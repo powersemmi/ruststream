@@ -176,7 +176,8 @@ ci: check test
 # checked out, so a core change and the broker adaptations it needs are tested together before
 # either is committed. A worktree of the core finds the brokers through the main checkout. For the
 # run, a broker's lock file takes `ruststream` from this tree instead of the release it pins, and
-# is put back afterwards; a broker that would still build a release fails. `just brokers nats fred`
+# is put back afterwards from a copy beside it (`Cargo.lock.just-brokers`, kept and named when the
+# restore fails); a broker that would still build a release fails. `just brokers nats fred`
 # runs the named ones and fails on one it cannot test; with no names it runs every broker it finds
 # and lists the repositories it skips (no crate, no `ruststream` dependency). The run fails when it
 # tests no broker. Needs jq.
@@ -196,12 +197,27 @@ brokers *names:
     # One broker's suite against this tree, in a subshell, so its lock file goes back on any exit.
     test_broker() (
         cd "$1" || exit 1
-        saved="$(mktemp)" || exit 1
+        backup="$PWD/Cargo.lock.just-brokers"
+        # A backup left by a killed run may be the only good copy of the lock file.
+        if [ -e "$backup" ]; then
+            echo "error: $backup is left from an earlier run: move it over Cargo.lock" \
+                "or delete it" >&2
+            exit 1
+        fi
         if [ -f Cargo.lock ]; then
-            cp Cargo.lock "$saved"
-            trap 'cp "$saved" Cargo.lock; rm -f "$saved"' EXIT
+            # The backup sits beside the lock file, on its filesystem, so a full /tmp cannot cut
+            # it, and the run stops before touching the lock unless the copy is whole.
+            if ! cp Cargo.lock "$backup" || ! cmp -s Cargo.lock "$backup"; then
+                rm -f "$backup"
+                echo "error: could not back up $PWD/Cargo.lock; it was left as it was" >&2
+                exit 1
+            fi
+            trap 'mv -f "$backup" Cargo.lock || {
+                echo "error: Cargo.lock was not restored; the original is at $backup" >&2
+                exit 1
+            }' EXIT
         else
-            trap 'rm -f Cargo.lock "$saved"' EXIT
+            trap 'rm -f Cargo.lock' EXIT
         fi
         # The patch alone leaves the release the lock file pins in place.
         cargo update --config "$patch" -p ruststream || exit 1
