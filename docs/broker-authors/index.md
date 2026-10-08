@@ -591,6 +591,44 @@ where
 }
 ```
 
+### Reading what the chain fixed
+
+A step of yours can depend on a core setting: a resource per dedicated thread, a window sized to
+the batch. It reads the value off the builder instead of asking the user to name it twice.
+`dispatch()` returns the concurrency as a `Workers` (`count()`, `by_key()`, `placement()`),
+`batch_size()` returns the batch size once `batch(n)` named it, and `subscription_name()` returns
+the name the source reports.
+
+<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+```rust
+use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
+
+pub trait NatsPull {
+    fn pull_window(self, per_delivery: usize) -> Self;
+}
+
+impl<Def, State, Codec> NatsPull for SubscriberBuilder<Def, SubscribeOptions, State, Codec>
+where
+    Def: Declared,
+{
+    fn pull_window(self, per_delivery: usize) -> Self {
+        let dispatch = self.dispatch();
+        // A dedicated thread pulls on a consumer of its own; workers on the runtime share one.
+        let consumers = match dispatch.placement() {
+            Placement::Threads => dispatch.count().get(),
+            _ => 1,
+        };
+        let batch = self.batch_size().map_or(1, |size| size.get());
+        let window = batch * per_delivery;
+        self.map_source(|source| source.consumers(consumers).max_ack_pending(window))
+    }
+}
+```
+
+A step sees each value as it stands when the step is called. The attribute's settings are fixed
+before any mount-site step, so `#[subscriber(.., threads(4))]` reaches it; a step chained before
+`.threads(n)` sees the default, sequential dispatch.
+
 ### Publisher settings in your own vocabulary
 
 The publish side is built the same way. The mount site names a policy with `.out(marker, policy)`:

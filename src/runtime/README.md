@@ -116,6 +116,66 @@ fn app(shard: u32) -> RustStream {
 # fn main() {}
 ```
 
+## Broker steps read the settings
+
+A broker crate adds mount steps of its own on the same builder. Such a step reads what the
+chain fixed before it: [`dispatch`](SubscriberBuilder::dispatch) for the concurrency (a
+[`Workers`] with its count, keying and [`Placement`]),
+[`batch_size`](SubscriberBuilder::batch_size) and
+[`subscription_name`](SubscriberBuilder::subscription_name). The attribute's settings are fixed
+before any mount-site step, so a step at the mount site sees them; a step chained before
+`.threads(n)` sees the default.
+
+```
+# #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+# mod demo {
+use ruststream::memory::prelude::*;
+use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+
+/// The broker crate's step: each dedicated thread opens a pool of `per_pool` connections.
+pub trait Pools: Declared {
+    fn pools(self, per_pool: usize) -> Self::Settings
+    where
+        Self::Settings: PoolStep,
+    {
+        self.declare().apply_pools(per_pool)
+    }
+}
+
+impl<Def: Declared> Pools for Def {}
+
+pub trait PoolStep: Sized {
+    fn apply_pools(self, per_pool: usize) -> Self;
+}
+
+impl<Def, State, DefCodec> PoolStep for SubscriberBuilder<Def, MemorySource, State, DefCodec> {
+    fn apply_pools(self, per_pool: usize) -> Self {
+        let dispatch = self.dispatch();
+        let pools = match dispatch.placement() {
+            Placement::Threads => dispatch.count().get(),
+            _ => 1,
+        };
+        tracing::info!(connections = pools * per_pool, "connection budget");
+        self
+    }
+}
+
+#[subscriber(MemorySource::new("scans"), threads(4))]
+async fn scan(order: &u64) -> HandlerOutcome {
+    tracing::info!(order, "scanned");
+    HandlerOutcome::ack()
+}
+
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("scans", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        // The attribute fixed four threads, so the step counts eight connections.
+        b.include(scan.pools(2));
+    })
+}
+# }
+# fn main() {}
+```
+
 ## Batches
 
 A `&[T]` parameter makes the handler a batch handler: it runs once per batch the broker

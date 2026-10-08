@@ -15,7 +15,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 ## Guides
 
-- [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, batches, values a broker's deliveries already hold, workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
+- [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, broker steps that read them, batches, values a broker's deliveries already hold, workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
 - [Publishing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing): replies, `Out` slots, publish transforms and the publish pipeline
 - [Routing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing): routers, per-router codecs and layers
 - [Context and state](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state): the per-delivery context and the shared application state
@@ -50,6 +50,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [ZeroMQ](https://docs.rs/ruststream-zeromq): `ruststream-zeromq`
 - [Stream files / stdio](https://docs.rs/ruststream-sea-file): `ruststream-sea-file`
 - [AWS Kinesis](https://docs.rs/ruststream-kinesis): `ruststream-kinesis`
+- [SQL databases through sqlx](https://github.com/powersemmi/ruststream-sqlx#readme): `ruststream-sqlx`, a transactional outbox over any broker, and task queues in Postgres, MySQL/MariaDB and SQLite tables, with statements checked at startup or at compile time
 
 ## Broker authors
 

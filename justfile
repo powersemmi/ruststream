@@ -176,10 +176,12 @@ ci: check test
 # checked out, so a core change and the broker adaptations it needs are tested together before
 # either is committed. A worktree of the core finds the brokers through the main checkout. For the
 # run, a broker's lock file takes `ruststream` from this tree instead of the release it pins, and
-# is put back afterwards; a broker that would still build a release fails. `just brokers nats fred`
-# runs the named ones and fails on one it cannot test; with no names it runs every broker it finds
-# and lists the repositories it skips (no crate, no `ruststream` dependency). The run fails when it
-# tests no broker. Needs jq.
+# is put back afterwards from a copy beside it (`Cargo.lock.just-brokers`, kept and named when the
+# restore fails); a broker that would still build a release fails. One run at a time owns a broker
+# checkout, and a run that finds it owned fails that broker, naming the owner.
+# `just brokers nats fred` runs the named ones and fails on one it cannot test; with no names it
+# runs every broker it finds and lists the repositories it skips (no crate, no `ruststream`
+# dependency). The run fails when it tests no broker. Needs jq.
 # Every broker crate's test suite against this working tree of the core.
 brokers *names:
     #!/usr/bin/env bash
@@ -196,23 +198,52 @@ brokers *names:
     # One broker's suite against this tree, in a subshell, so its lock file goes back on any exit.
     test_broker() (
         cd "$1" || exit 1
-        saved="$(mktemp)" || exit 1
-        if [ -f Cargo.lock ]; then
-            cp Cargo.lock "$saved"
-            trap 'cp "$saved" Cargo.lock; rm -f "$saved"' EXIT
-        else
-            trap 'rm -f Cargo.lock "$saved"' EXIT
+        backup="$PWD/Cargo.lock.just-brokers"
+        owner="$PWD/Cargo.lock.just-brokers.owner"
+        # One run owns a broker checkout from its backup to its restore, so overlapping runs from
+        # other worktrees never share a backup. The lock is on the directory itself: it leaves no
+        # file behind and dies with the run. A second run refuses rather than waits, because a
+        # suite takes minutes and the run it would wait on may be stuck.
+        exec 8< "$PWD" || exit 1
+        if ! flock -n 8; then
+            echo "error: $PWD is in use by another just brokers run" \
+                "($(cat "$owner" 2>/dev/null || echo "holder unknown"))" >&2
+            exit 1
         fi
-        # The patch alone leaves the release the lock file pins in place.
-        cargo update --config "$patch" -p ruststream || exit 1
+        printf 'core %s, pid %s, since %s\n' "$core" "$BASHPID" "$(date -Is)" > "$owner"
+        trap 'rm -f "$owner"' EXIT
+        # A backup left by a killed run may be the only good copy of the lock file.
+        if [ -e "$backup" ]; then
+            echo "error: $backup is left from an earlier run: move it over Cargo.lock" \
+                "or delete it" >&2
+            exit 1
+        fi
+        if [ -f Cargo.lock ]; then
+            # The backup sits beside the lock file, on its filesystem, so a full /tmp cannot cut
+            # it, and the run stops before touching the lock unless the copy is whole.
+            if ! cp Cargo.lock "$backup" || ! cmp -s Cargo.lock "$backup"; then
+                rm -f "$backup"
+                echo "error: could not back up $PWD/Cargo.lock; it was left as it was" >&2
+                exit 1
+            fi
+            trap 'rm -f "$owner"; mv -f "$backup" Cargo.lock || {
+                echo "error: Cargo.lock was not restored; the original is at $backup" >&2
+                exit 1
+            }' EXIT
+        else
+            trap 'rm -f "$owner" Cargo.lock' EXIT
+        fi
+        # The patch alone leaves the release the lock file pins in place. Cargo and the suite get
+        # no handle on the directory lock, so a process they leave behind cannot keep it.
+        cargo update --config "$patch" -p ruststream 8<&- || exit 1
         resolved="$(cargo metadata --format-version 1 --all-features --locked --config "$patch" \
-            | jq -r '.packages[] | select(.name == "ruststream") | .manifest_path')" || exit 1
+            8<&- | jq -r '.packages[] | select(.name == "ruststream") | .manifest_path')" || exit 1
         if [ "$resolved" != "$core/Cargo.toml" ]; then
             echo "error: ruststream comes from ${resolved:-nowhere}, not from this tree" \
                 "(ruststream $version): the patch is unused" >&2
             exit 1
         fi
-        cargo test --workspace --all-features --locked --config "$patch"
+        cargo test --workspace --all-features --locked --config "$patch" 8<&-
     )
     if [ -n "{{ names }}" ]; then
         named=true

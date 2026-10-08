@@ -619,6 +619,44 @@ where
 `StartAt::map_inner` отдаёт дескриптор изнутри обёртки и не трогает позицию. Поэтому каждый метод
 остаётся однострочным.
 
+### Что уже задала цепочка
+
+Шаг вашего крейта может зависеть от настройки ядра: ресурс на каждый выделенный поток, окно по
+размеру пакета. Такой шаг читает значение с билдера, и пользователю не нужно называть его дважды.
+`dispatch()` возвращает параллелизм в виде `Workers` (`count()`, `by_key()`, `placement()`).
+`batch_size()` возвращает размер пакета, если его уже задал `batch(n)`. `subscription_name()`
+возвращает имя, которое сообщает источник.
+
+<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+```rust
+use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
+
+pub trait NatsPull {
+    fn pull_window(self, per_delivery: usize) -> Self;
+}
+
+impl<Def, State, Codec> NatsPull for SubscriberBuilder<Def, SubscribeOptions, State, Codec>
+where
+    Def: Declared,
+{
+    fn pull_window(self, per_delivery: usize) -> Self {
+        let dispatch = self.dispatch();
+        // Выделенный поток читает через собственного потребителя, воркеры среды выполнения делят одного.
+        let consumers = match dispatch.placement() {
+            Placement::Threads => dispatch.count().get(),
+            _ => 1,
+        };
+        let batch = self.batch_size().map_or(1, |size| size.get());
+        let window = batch * per_delivery;
+        self.map_source(|source| source.consumers(consumers).max_ack_pending(window))
+    }
+}
+```
+
+Шаг видит значение таким, каким оно было в момент вызова шага. Настройки атрибута задаются раньше
+любого шага в точке монтирования, поэтому `#[subscriber(.., threads(4))]` шагу видно. Шаг,
+вызванный до `.threads(n)`, видит значение по умолчанию: последовательную обработку.
+
 ### Настройки издателя в терминах вашего брокера
 
 Издателя настраивают так же, как подписку. Точка монтирования называет политику через

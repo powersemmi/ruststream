@@ -119,14 +119,78 @@ fn current_retry_count(headers: &HeaderMap) -> u64 {
 /// The default is sequential dispatch (`workers(1)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Workers {
-    count: usize,
+    count: NonZeroUsize,
     by_key: bool,
     placement: Placement,
 }
 
-/// Where a subscription's concurrent deliveries run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Placement {
+/// Where a subscription's deliveries run, as [`Workers::placement`] reports it.
+///
+/// A broker's own mount step reads it when the placement decides a resource of its own: a
+/// connection pool per dedicated thread, say. Non-exhaustive, so a later placement is an
+/// additive change; a step matches the placement it cares about.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+///
+/// /// A broker crate's mount step: a thread opens a pool of its own, a delivery on the app's
+/// /// runtime shares one, and the database grants `limit` connections in all.
+/// pub trait Pools: Declared {
+///     fn pools(self, per_pool: usize, limit: usize) -> Result<Self::Settings, TooManyConnections>
+///     where
+///         Self::Settings: PoolStep,
+///     {
+///         self.declare().apply_pools(per_pool, limit)
+///     }
+/// }
+///
+/// impl<Def: Declared> Pools for Def {}
+///
+/// pub trait PoolStep: Sized {
+///     fn apply_pools(self, per_pool: usize, limit: usize) -> Result<Self, TooManyConnections>;
+/// }
+///
+/// impl<Def, State, DefCodec> PoolStep for SubscriberBuilder<Def, MemorySource, State, DefCodec> {
+///     fn apply_pools(self, per_pool: usize, limit: usize) -> Result<Self, TooManyConnections> {
+///         let dispatch = self.dispatch();
+///         let pools = match dispatch.placement() {
+///             Placement::Threads => dispatch.count().get(),
+///             _ => 1,
+///         };
+///         if pools * per_pool > limit {
+///             return Err(TooManyConnections(pools * per_pool));
+///         }
+///         Ok(self)
+///     }
+/// }
+///
+/// #[derive(Debug)]
+/// pub struct TooManyConnections(usize);
+///
+/// #[subscriber(MemorySource::new("scans"), threads(4))]
+/// async fn scan(order: &u64) -> HandlerOutcome {
+///     tracing::info!(order, "scanned");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> Result<RustStream, TooManyConnections> {
+///     // Four threads, two connections each: eight of the database's sixteen.
+///     let mounted = scan.pools(2, 16)?;
+///     Ok(RustStream::new(AppInfo::new("scans", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(mounted);
+///     }))
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Placement {
     /// As tasks of the runtime the app runs on.
     Runtime,
     /// On dedicated threads of the subscription's own.
@@ -138,7 +202,7 @@ impl Workers {
     #[must_use]
     pub const fn sequential() -> Self {
         Self {
-            count: 1,
+            count: NonZeroUsize::MIN,
             by_key: false,
             placement: Placement::Runtime,
         }
@@ -148,7 +212,7 @@ impl Workers {
     #[must_use]
     pub const fn pool(count: NonZeroUsize) -> Self {
         Self {
-            count: count.get(),
+            count,
             by_key: false,
             placement: Placement::Runtime,
         }
@@ -160,7 +224,7 @@ impl Workers {
     #[must_use]
     pub const fn keyed(count: NonZeroUsize) -> Self {
         Self {
-            count: count.get(),
+            count,
             by_key: true,
             placement: Placement::Runtime,
         }
@@ -208,7 +272,7 @@ impl Workers {
     #[must_use]
     pub const fn threads(count: NonZeroUsize) -> Self {
         Self {
-            count: count.get(),
+            count,
             by_key: false,
             placement: Placement::Threads,
         }
@@ -256,16 +320,187 @@ impl Workers {
     #[must_use]
     pub const fn threads_keyed(count: NonZeroUsize) -> Self {
         Self {
-            count: count.get(),
+            count,
             by_key: true,
             placement: Placement::Threads,
         }
     }
 
+    /// How many deliveries (or batches) are handled at once: the workers, the keyed lanes or the
+    /// dedicated threads. One for sequential dispatch.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    ///
+    /// /// A broker crate's mount step: one prefetch window per delivery in flight.
+    /// pub trait Prefetch: Declared {
+    ///     fn prefetch(self, per_delivery: usize) -> Self::Settings
+    ///     where
+    ///         Self::Settings: PrefetchStep,
+    ///     {
+    ///         self.declare().apply_prefetch(per_delivery)
+    ///     }
+    /// }
+    ///
+    /// impl<Def: Declared> Prefetch for Def {}
+    ///
+    /// pub trait PrefetchStep: Sized {
+    ///     fn apply_prefetch(self, per_delivery: usize) -> Self;
+    /// }
+    ///
+    /// impl<Def, State, DefCodec> PrefetchStep
+    ///     for SubscriberBuilder<Def, MemorySource, State, DefCodec>
+    /// {
+    ///     fn apply_prefetch(self, per_delivery: usize) -> Self {
+    ///         let window = self.dispatch().count().get() * per_delivery;
+    ///         tracing::info!(window, "prefetch window");
+    ///         self
+    ///     }
+    /// }
+    ///
+    /// #[subscriber(MemorySource)]
+    /// async fn audit(order: &u64) -> HandlerOutcome {
+    ///     tracing::info!(order, "audited");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         // The step sees the eight workers named before it: a window of 80.
+    ///         b.include(audit.name("orders").workers(nonzero!(8)).prefetch(10));
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub const fn count(&self) -> NonZeroUsize {
+        self.count
+    }
+
+    /// Whether deliveries go to sequential lanes by their
+    /// [`partition_key`](crate::IncomingMessage::partition_key) rather than to whichever worker
+    /// is free.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Declared, SubscriberBuilder};
+    ///
+    /// /// A broker crate's mount step: keyed lanes keep a key's order, so the broker can ask the
+    /// /// server for unordered delivery only when nothing reads the key.
+    /// pub trait Ordering: Declared {
+    ///     fn log_ordering(self) -> Self::Settings
+    ///     where
+    ///         Self::Settings: OrderingStep,
+    ///     {
+    ///         self.declare().apply_log_ordering()
+    ///     }
+    /// }
+    ///
+    /// impl<Def: Declared> Ordering for Def {}
+    ///
+    /// pub trait OrderingStep: Sized {
+    ///     fn apply_log_ordering(self) -> Self;
+    /// }
+    ///
+    /// impl<Def, State, DefCodec> OrderingStep
+    ///     for SubscriberBuilder<Def, MemorySource, State, DefCodec>
+    /// {
+    ///     fn apply_log_ordering(self) -> Self {
+    ///         let ordered = self.dispatch().by_key();
+    ///         tracing::info!(ordered, "per-key ordering");
+    ///         self
+    ///     }
+    /// }
+    ///
+    /// #[subscriber(MemorySource::new("orders"), workers(4, by_key))]
+    /// async fn audit(order: &u64) -> HandlerOutcome {
+    ///     tracing::info!(order, "audited");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(audit.log_ordering());
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub const fn by_key(&self) -> bool {
+        self.by_key
+    }
+
+    /// Where the deliveries run: as tasks of the app's runtime, or on dedicated threads of the
+    /// subscription's own.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
+    ///
+    /// /// A broker crate's mount step: a dedicated thread keeps a connection of its own.
+    /// pub trait Sessions: Declared {
+    ///     fn sessions(self) -> Self::Settings
+    ///     where
+    ///         Self::Settings: SessionStep,
+    ///     {
+    ///         self.declare().apply_sessions()
+    ///     }
+    /// }
+    ///
+    /// impl<Def: Declared> Sessions for Def {}
+    ///
+    /// pub trait SessionStep: Sized {
+    ///     fn apply_sessions(self) -> Self;
+    /// }
+    ///
+    /// impl<Def, State, DefCodec> SessionStep
+    ///     for SubscriberBuilder<Def, MemorySource, State, DefCodec>
+    /// {
+    ///     fn apply_sessions(self) -> Self {
+    ///         let per_thread = self.dispatch().placement() == Placement::Threads;
+    ///         tracing::info!(per_thread, "one session per thread");
+    ///         self
+    ///     }
+    /// }
+    ///
+    /// #[subscriber(MemorySource::new("images"), threads(2))]
+    /// async fn resize(image: &u64) -> HandlerOutcome {
+    ///     tracing::info!(image, "resized");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(resize.sessions());
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub const fn placement(&self) -> Placement {
+        self.placement
+    }
+
     /// One worker on the app's runtime is indistinguishable from the sequential loop; one
     /// dedicated thread is still a thread of its own.
     pub(crate) const fn is_sequential(&self) -> bool {
-        self.count <= 1 && matches!(self.placement, Placement::Runtime)
+        self.count.get() == 1 && matches!(self.placement, Placement::Runtime)
     }
 
     /// The same concurrency as tasks of the runtime the loop runs on: what a `threads(n)`
@@ -807,7 +1042,7 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count, workers.by_key, |own| {
+    let threads = Threads::start(&shared.name, workers.count.get(), workers.by_key, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared.delivery.on_thread(own);
         // One encode buffer per thread, for the reason the sequential loop has one.
@@ -921,7 +1156,7 @@ where
             if shutdown.is_cancelled() {
                 break;
             }
-            if tasks.len() >= workers.count {
+            if tasks.len() >= workers.count.get() {
                 // The pool is full: reap a finished worker before polling for more.
                 match reap(&mut tasks, cancelled.as_mut()).await {
                     Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
@@ -1032,7 +1267,7 @@ where
         delivery,
         failure,
     });
-    let threads = Threads::start(&shared.name, workers.count, false, |own| {
+    let threads = Threads::start(&shared.name, workers.count.get(), false, |own| {
         let shared = Arc::clone(&shared);
         let delivery = shared.delivery.on_thread(own);
         let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
