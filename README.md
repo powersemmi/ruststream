@@ -135,6 +135,7 @@ Full compiling example: `examples/testing.rs`.
 | ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) |
 | Files and stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) |
 | Amazon Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) |
+| SQL databases (Postgres, MySQL / MariaDB, SQLite) | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) |
 
 What each broker supports is on the
 [broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, see

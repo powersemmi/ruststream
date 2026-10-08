@@ -36,7 +36,7 @@ jobs:
     name: ${{ matrix.broker }}
     runs-on: ubuntu-latest
     strategy:
-      # Every broker gets its verdict: one broken broker must not hide the other eleven.
+      # Every broker gets its verdict: one broken broker must not hide the other twelve.
       fail-fast: false
       matrix:
         broker:
@@ -52,6 +52,7 @@ jobs:
           - ruststream-zeromq
           - ruststream-sea-file
           - ruststream-kinesis
+          - ruststream-sqlx
     steps:
       - name: Check out the core at the probed ref
         uses: actions/checkout@v7

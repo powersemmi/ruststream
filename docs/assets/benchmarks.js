@@ -32,6 +32,7 @@
     { name: "ZeroMQ", repo: "ruststream-zeromq" },
     { name: "Stream files / stdio", repo: "ruststream-sea-file" },
     { name: "AWS Kinesis", repo: "ruststream-kinesis" },
+    { name: "SQL databases", repo: "ruststream-sqlx" },
   ];
 
   // The core measures no broker of its own, so it appears in the second table only.

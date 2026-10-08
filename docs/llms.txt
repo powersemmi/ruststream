@@ -50,6 +50,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [ZeroMQ](https://docs.rs/ruststream-zeromq): `ruststream-zeromq`
 - [Stream files / stdio](https://docs.rs/ruststream-sea-file): `ruststream-sea-file`
 - [AWS Kinesis](https://docs.rs/ruststream-kinesis): `ruststream-kinesis`
+- [SQL databases through sqlx](https://github.com/powersemmi/ruststream-sqlx#readme): `ruststream-sqlx`, a transactional outbox over any broker, and task queues in Postgres, MySQL/MariaDB and SQLite tables, with statements checked at startup or at compile time
 
 ## Broker authors
 
