@@ -25,7 +25,7 @@
 | ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Без брокера очереди: PUSH/PULL, PUB/SUB и request-reply на DEALER/ROUTER поверх TCP и IPC | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
 | Файлы потоков / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | Долговечные воспроизводимые файлы потоков и конвейеры оболочки; нулевая инфраструктура, перемотка на любую позицию | [powersemmi.github.io/ruststream-sea-file](https://powersemmi.github.io/ruststream-sea-file/) |
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Потоки данных Kinesis (аренда шардов, контрольные точки, перемотка) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
-| SQL-базы данных | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | Очереди задач в собственных таблицах сервиса (Postgres, MySQL/MariaDB, SQLite) и транзакционный outbox поверх любого брокера; SQL-запросы проверяются при запуске или на этапе компиляции | [репозиторий](https://github.com/powersemmi/ruststream-sqlx#readme) |
+| SQL-базы данных | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | Очереди задач в собственных таблицах сервиса (Postgres, MySQL/MariaDB, SQLite) и транзакционный outbox поверх любого брокера; SQL-запросы проверяются при запуске или на этапе компиляции | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
 Как написать адаптацию библиотеки брокера для другого транспорта, объясняет раздел
 [Авторам брокеров](../broker-authors/index.md).

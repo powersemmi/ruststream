@@ -23,7 +23,7 @@
 | ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | 无 Broker 的 PUSH/PULL、PUB/SUB，以及基于 TCP 和 IPC 的 DEALER/ROUTER 请求-响应 | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
 | 流文件 / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | 持久、可重放的流文件与 shell 管道；零基础设施，支持完整的重新定位 | [powersemmi.github.io/ruststream-sea-file](https://powersemmi.github.io/ruststream-sea-file/) |
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis 数据流（分片租约、检查点、重新定位） | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
-| SQL 数据库 | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | 服务自有的 Postgres、MySQL/MariaDB 和 SQLite 表中的任务队列，以及基于任意 Broker 的事务性 outbox；SQL 语句在启动时或编译时检查 | [代码仓库](https://github.com/powersemmi/ruststream-sqlx#readme) |
+| SQL 数据库 | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | 服务自有的 Postgres、MySQL/MariaDB 和 SQLite 表中的任务队列，以及基于任意 Broker 的事务性 outbox；SQL 语句在启动时或编译时检查 | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
 要为别的传输实现 Broker，参见[编写一个 Broker](../broker-authors/index.md)。
 
