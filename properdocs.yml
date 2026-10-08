@@ -208,6 +208,7 @@ nav:
       - ZeroMQ: https://powersemmi.github.io/ruststream-zeromq/
       - Stream files / stdio: https://powersemmi.github.io/ruststream-sea-file/
       - AWS Kinesis: https://powersemmi.github.io/ruststream-kinesis/
+      - SQL databases: https://powersemmi.github.io/ruststream-sqlx/
   - Benchmarks: benchmarks.md
   - Broker authors:
       - broker-authors/index.md

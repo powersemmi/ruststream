@@ -1,6 +1,6 @@
 # Contributing to RustStream
 
-RustStream is the core crate in this repository plus twelve broker crates, each in a repository
+RustStream is the core crate in this repository plus thirteen broker crates, each in a repository
 of its own. This page covers the environment, the checks a change passes before review, and how a
 core change is tested on the broker crates.
 
@@ -22,6 +22,7 @@ RustStream/
   ruststream-rdkafka/
   ruststream-rumqttc/
   ruststream-sea-file/
+  ruststream-sqlx/
   ruststream-sqs-sns/
   ruststream-zeromq/
 ```
@@ -30,7 +31,7 @@ RustStream/
 mkdir RustStream && cd RustStream
 for repo in ruststream ruststream-amqp ruststream-fred ruststream-gcp-pubsub ruststream-kinesis \
     ruststream-lapin ruststream-nats ruststream-pulsar ruststream-rdkafka ruststream-rumqttc \
-    ruststream-sea-file ruststream-sqs-sns ruststream-zeromq; do
+    ruststream-sea-file ruststream-sqlx ruststream-sqs-sns ruststream-zeromq; do
   git clone "https://github.com/powersemmi/$repo.git"
 done
 ```

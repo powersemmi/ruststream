@@ -24,6 +24,7 @@ Each broker crate has its own documentation site, linked in the Docs column and 
 | ZeroMQ | [`ruststream-zeromq`](https://github.com/powersemmi/ruststream-zeromq) | Brokerless PUSH/PULL, PUB/SUB, and DEALER/ROUTER request/reply over TCP and IPC | [powersemmi.github.io/ruststream-zeromq](https://powersemmi.github.io/ruststream-zeromq/) |
 | Stream files / stdio | [`ruststream-sea-file`](https://github.com/powersemmi/ruststream-sea-file) | Persistent replayable stream files and shell pipelines; zero infrastructure, full repositioning | [powersemmi.github.io/ruststream-sea-file](https://powersemmi.github.io/ruststream-sea-file/) |
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis data streams (shard leasing, checkpointing, repositioning) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
+| SQL databases | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | Task queues in the service's own Postgres, MySQL/MariaDB and SQLite tables, and a transactional outbox over any broker; statements checked at startup or at compile time | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
 To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
 
