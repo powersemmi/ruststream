@@ -217,6 +217,5 @@ mod assert_options_default {
     // --8<-- [end:assert-options-default]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_published_options");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

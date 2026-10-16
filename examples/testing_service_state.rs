@@ -130,6 +130,5 @@ mod assert_shut_down {
     // --8<-- [end:assert-shut-down]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_service_state");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

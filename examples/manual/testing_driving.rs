@@ -588,6 +588,5 @@ mod drain {
     // --8<-- [end:drain]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example manual_testing_driving");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

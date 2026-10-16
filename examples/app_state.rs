@@ -88,6 +88,5 @@ mod any_struct {
     // --8<-- [end:state]
 }
 
-fn main() {
-    println!("the scenario is a test: cargo test --example app_state");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

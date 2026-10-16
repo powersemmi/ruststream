@@ -329,6 +329,5 @@ mod assert_batch_sizes {
     // --8<-- [end:assert_batch_sizes]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_subscriber_payloads");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

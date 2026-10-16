@@ -348,6 +348,5 @@ mod assert_last_failed_to_decode {
     // --8<-- [end:assert_last_failed_to_decode]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_subscriber_calls");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

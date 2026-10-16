@@ -145,6 +145,5 @@ mod announce {
     // --8<-- [end:announce]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example app_lifecycle");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

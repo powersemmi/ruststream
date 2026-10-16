@@ -272,6 +272,5 @@ mod shutdown {
     // --8<-- [end:shutdown]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_starting");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

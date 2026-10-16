@@ -144,6 +144,5 @@ mod received_values {
     // --8<-- [end:received_values]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example manual_testing_subscriber_carried");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

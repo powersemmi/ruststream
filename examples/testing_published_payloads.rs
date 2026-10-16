@@ -253,6 +253,5 @@ mod with_raw {
     // --8<-- [end:with-raw]
 }
 
-fn main() {
-    println!("the scenarios are tests: cargo test --example testing_published_payloads");
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}
