@@ -40,4 +40,5 @@ The batches come from a replayed log, as on the `batches` page.
 
 - [`batches`](./batches.md): the content of each batch.
 - [`assert_called(n)`](./assert-called.md): the number of calls.
+- [`settle`](../driving/settle.md): drive a batch built from a bare publisher.
 - [`SubscriberAssertions::assert_batch_sizes`](api:ruststream::testing::SubscriberAssertions::assert_batch_sizes)

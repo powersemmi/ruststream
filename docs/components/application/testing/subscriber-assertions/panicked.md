@@ -39,4 +39,5 @@ The test output carries the handler's panic message, and the test itself passes.
 
 - [`assert_outcome`](./assert-outcome.md): the check by outcome.
 - [`assert_last_failed_to_decode`](./assert-last-failed-to-decode.md): the other failure a call can end in.
+- [`assert_shut_down`](../service-state/assert-shut-down.md), [`run_result`](../service-state/run-result.md): what the panic did to the service.
 - [`SubscriberAssertions::panicked`](api:ruststream::testing::SubscriberAssertions::panicked), [`TestApp::assert_shut_down`](api:ruststream::testing::TestApp::assert_shut_down)

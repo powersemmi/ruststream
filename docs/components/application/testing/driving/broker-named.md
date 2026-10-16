@@ -39,4 +39,5 @@ A publish onto one broker reaches only that broker's subscriptions.
 
 - [`broker::<B>()`](./broker.md): address a broker by its type.
 - [`subscriber(name)`](../records/subscriber.md): the record each handle reads.
+- [`with`](../subscriber-assertions/with.md): the value the handler received.
 - [`TestApp::broker_named`](api:ruststream::testing::TestApp::broker_named), [`RustStream::with_broker_labeled`](api:ruststream::runtime::RustStream::with_broker_labeled)

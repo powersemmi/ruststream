@@ -41,4 +41,5 @@ On failure it panics with the number of calls it found.
 - [`assert_called_once`](./assert-called-once.md): the same check for one call.
 - [`assert_batch_sizes`](./assert-batch-sizes.md): the size of each call of a batch handler.
 - [`outcomes`](./outcomes.md): how each of those calls settled.
+- [Published `assert_called(n)`](../published-assertions/assert-called.md): the count of publishes.
 - [`SubscriberAssertions::assert_called`](api:ruststream::testing::SubscriberAssertions::assert_called)

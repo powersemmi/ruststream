@@ -42,4 +42,5 @@ With more than one broker it has no single target, so the publish fails with `Te
 - [`publish()`](./publish.md): send the input and drive the reaction.
 - [Publish shortcuts](./publish-shortcuts.md): a one-call publish of a value the test does not own.
 - [`broker::<B>()`](./broker.md), [`broker_named`](./broker-named.md): choose the broker.
+- [`with`](../subscriber-assertions/with.md): the value the handler received.
 - [`TestApp::message`](api:ruststream::testing::TestApp::message), [`BrokerHandle::message`](api:ruststream::testing::BrokerHandle::message)

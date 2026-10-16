@@ -40,4 +40,5 @@ The assertion fails when the service is still running.
 - [`assert_running`](./assert-running.md): the opposite assertion.
 - [`run_result`](./run-result.md): the failure as a value.
 - [`subscriber(name)`](../records/subscriber.md): the record that shows the panic.
+- [`panicked`](../subscriber-assertions/panicked.md): the call that panicked.
 - [`TestApp::assert_shut_down`](api:ruststream::testing::TestApp::assert_shut_down), [`TestError::ShutDown`](api:ruststream::testing::TestError::ShutDown)

@@ -40,4 +40,5 @@ It returns nothing, so it ends a chain.
 
 - [`assert_outcome`](./assert-outcome.md): the same verdict as `Outcome::DecodeFailed`.
 - [`panicked`](./panicked.md): the other failure a call can end in.
+- [`assert_running`](../service-state/assert-running.md): the service keeps running after a decode failure.
 - [`SubscriberAssertions::assert_last_failed_to_decode`](api:ruststream::testing::SubscriberAssertions::assert_last_failed_to_decode)

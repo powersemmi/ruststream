@@ -40,4 +40,5 @@ In live mode it waits until every subscription has handled what the harness saw 
 
 - [`publish()`](./publish.md): the publish that settles for you.
 - [`advance`](./advance.md): settle after a delay has passed.
+- [`assert_batch_sizes`](../subscriber-assertions/assert-batch-sizes.md): how the settled stream was cut into batches.
 - [`TestApp::settle`](api:ruststream::testing::TestApp::settle)

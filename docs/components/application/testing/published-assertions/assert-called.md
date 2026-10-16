@@ -38,4 +38,5 @@ The assertion panics with both numbers when they differ, and returns the record 
 
 - [`assert_called_once`](./assert-called-once.md), [`assert_not_called`](./assert-not-called.md)
 - [`messages`](./messages.md): the messages behind the count.
+- [Subscriber `assert_called(n)`](../subscriber-assertions/assert-called.md): the count of handler calls.
 - [`PublishedAssertions::assert_called`](api:ruststream::testing::PublishedAssertions::assert_called)

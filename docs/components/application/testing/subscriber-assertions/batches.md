@@ -41,4 +41,5 @@ The mount names the size, `batch(nonzero!(2))`, so three orders arrive as two an
 - [`batches_raw`](./batches-raw.md): the same batches as bytes.
 - [`assert_batch_sizes`](./assert-batch-sizes.md): only the sizes.
 - [`received`](./received.md): the same payloads as one flat list.
+- [`settle`](../driving/settle.md): drive a batch built from a bare publisher.
 - [`SubscriberAssertions::batches`](api:ruststream::testing::SubscriberAssertions::batches), [`SubscriberAssertions::batches_with`](api:ruststream::testing::SubscriberAssertions::batches_with), [`TestApp::settle`](api:ruststream::testing::TestApp::settle)

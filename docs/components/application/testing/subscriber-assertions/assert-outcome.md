@@ -40,4 +40,5 @@ Here the delayed copy waits for `tb.advance(..)` on the paused clock, so the rec
 - [`settled`](./settled.md): the check by `HandlerOutcome`.
 - [`outcomes`](./outcomes.md): the outcome of every call.
 - [`panicked`](./panicked.md), [`assert_last_failed_to_decode`](./assert-last-failed-to-decode.md): the two failures on their own.
+- [`advance`](../driving/advance.md): let a `retry_after` delay pass.
 - [`SubscriberAssertions::assert_outcome`](api:ruststream::testing::SubscriberAssertions::assert_outcome), [`Outcome`](api:ruststream::testing::Outcome)

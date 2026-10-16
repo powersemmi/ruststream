@@ -39,4 +39,5 @@ The batches come from a replayed log, as on the `batches` page.
 
 - [`batches`](./batches.md): the same batches decoded.
 - [`received_raw`](./received-raw.md): the same bytes as one flat list.
+- [`settle`](../driving/settle.md): drive a batch built from a bare publisher.
 - [`SubscriberAssertions::batches_raw`](api:ruststream::testing::SubscriberAssertions::batches_raw)

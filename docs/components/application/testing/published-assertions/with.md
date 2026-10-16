@@ -40,4 +40,5 @@ Both return the record, so further assertions chain.
 
 - [`decoded`](./decoded.md): every payload, not only the latest.
 - [`with_raw`](./with-raw.md): the latest payload as bytes.
+- [Subscriber `with`](../subscriber-assertions/with.md): the value a handler received.
 - [`PublishedAssertions::with`](api:ruststream::testing::PublishedAssertions::with), [`PublishedAssertions::with_codec`](api:ruststream::testing::PublishedAssertions::with_codec)

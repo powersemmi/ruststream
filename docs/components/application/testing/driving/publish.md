@@ -41,4 +41,5 @@ A publish after a fail-fast failure stopped the service fails with `TestError::S
 - [`message(&v)`](./message.md): build the input.
 - [`settle`](./settle.md): drive a reaction the test started some other way.
 - [`advance`](./advance.md): let a delayed redelivery come due.
+- [`with`](../subscriber-assertions/with.md): the value the handler received.
 - [`TestApp`](api:ruststream::testing::TestApp), [`TestError`](api:ruststream::testing::TestError)

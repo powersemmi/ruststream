@@ -39,4 +39,5 @@ On failure the assertion names the failure that stopped the service.
 
 - [`assert_shut_down`](./assert-shut-down.md): the opposite assertion.
 - [`run_result`](./run-result.md): the same state as a value.
+- [`assert_last_failed_to_decode`](../subscriber-assertions/assert-last-failed-to-decode.md): the delivery that did not decode.
 - [`TestApp::assert_running`](api:ruststream::testing::TestApp::assert_running), [`FailurePolicy`](api:ruststream::runtime::FailurePolicy)

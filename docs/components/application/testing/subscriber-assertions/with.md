@@ -41,4 +41,5 @@ The latest call must hold one delivery: on a batch of several it panics, and the
 - [`with_raw`](./with-raw.md): the same call as bytes.
 - [`received`](./received.md): every decoded payload, not only the latest.
 - [`with_value`](./with-value.md): the value a carrying delivery lent the handler.
+- [Published `with`](../published-assertions/with.md): the value a publish carried.
 - [`SubscriberAssertions::with`](api:ruststream::testing::SubscriberAssertions::with), [`SubscriberAssertions::with_codec`](api:ruststream::testing::SubscriberAssertions::with_codec), [`DefaultCodec`](api:ruststream::codec::DefaultCodec)

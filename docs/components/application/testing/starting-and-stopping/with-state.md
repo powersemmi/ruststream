@@ -41,4 +41,5 @@ The app's `on_startup` does not run; `after_startup` and everything else of star
 
 - [`TestApp::start`](./start.md): start with the app's own `on_startup`.
 - [`published::<T>(name)`](../records/published.md): what the state's publisher sent.
+- [`with`](../published-assertions/with.md): the value a publish carried.
 - [`TestApp::with_state`](api:ruststream::testing::TestApp::with_state), [`TestBrokers::broker`](api:ruststream::testing::TestBrokers::broker)
