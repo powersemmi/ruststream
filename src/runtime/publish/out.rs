@@ -273,7 +273,7 @@ impl<W> OutPipeline<W> for PublishIdentity {
         P: Publisher<Options = W::Options, Payload = W::Payload>,
     {
         #[cfg(feature = "testing")]
-        let recorded = PipelinePublish::capture(&msg);
+        let recorded = PipelinePublish::capture(&msg, options);
         let sent = leaf.publish(msg, options).await;
         #[cfg(feature = "testing")]
         if sent.is_ok() {

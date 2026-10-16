@@ -11,14 +11,14 @@
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
-use std::any::{Any, type_name};
+use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -27,6 +27,7 @@ use crate::runtime::HandlerResult;
 use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
+use super::attribution::{PublishedEntry, RecordedOptions, RuntimePublish, Span};
 
 tokio::task_local! {
     /// The harness driving the current dispatch task, so a slot publisher and the batch settle
@@ -134,48 +135,51 @@ pub(crate) fn record_slot_publish<Options, Payload>(
     });
 }
 
-/// Records a reply publish's per-message options against the harness driving the current dispatch
-/// task, if any. Called by the reply sink for every reply it sends; outside a harness-driven
-/// handler it is a no-op.
-///
-/// Only the options are kept: the reply's message reaches the broker's publish log on its own,
-/// and that log is what the channel assertions read.
-pub(crate) fn record_reply_publish<Options>(name: &str, options: Option<&Options>)
-where
-    Options: Clone + Send + Sync + 'static,
-{
-    let _ = HARNESS.try_with(|scope| {
-        scope
-            .coordinator
-            .record_reply(name, RecordedOptions::capture(options));
-    });
-}
-
-/// One message the app is handing a broker from a harness-driven task, captured where its publish
-/// pipeline hands it over, so the record holds what the broker is handed with every publish layer
-/// and transform applied. It enters the harness's record once the broker took it: a publish the
-/// broker refused was not published.
+/// One message the app is handing a broker from a harness-driven task, with the broker's
+/// per-message options it goes with, captured where its publish pipeline hands it over, so the
+/// record holds what the broker is handed with every publish layer and transform applied. It
+/// enters the harness's record once the broker took it: a publish the broker refused was not
+/// published.
 ///
 /// Outside a harness-driven task nothing is captured, and the calls cost a task-local lookup.
-/// The record is what a live test's `published` assertions read, and what a live settle waits for
-/// the subscriptions to handle.
+/// The record is what the `published` assertions read (the messages live, the options in both
+/// modes), and what a live settle waits for the subscriptions to handle.
 #[must_use]
-pub(crate) struct PipelinePublish(Option<(Coordinator, Origin, RawMessage)>);
+pub(crate) struct PipelinePublish(Option<(Coordinator, Origin, RuntimePublish)>);
 
 impl PipelinePublish {
-    /// Captures `msg` for the harness driving the current task, if any.
-    pub(crate) fn capture<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> Self {
+    /// Captures `msg` and the `options` it is published with for the harness driving the current
+    /// task, if any.
+    pub(crate) fn capture<Payload, Options>(
+        msg: &OutgoingMessage<'_, Payload>,
+        options: Option<&Options>,
+    ) -> Self
+    where
+        Payload: AsRef<[u8]>,
+        Options: Clone + Send + Sync + 'static,
+    {
         Self(
             HARNESS
-                .try_with(|scope| (scope.coordinator.clone(), publishing(), raw_of(msg)))
+                .try_with(|scope| {
+                    let publish = RuntimePublish {
+                        message: raw_of(msg),
+                        options: RecordedOptions::capture(options),
+                        span: Span {
+                            started: scope.coordinator.tick(),
+                            finished: 0,
+                        },
+                    };
+                    (scope.coordinator.clone(), publishing(), publish)
+                })
                 .ok(),
         )
     }
 
     /// Records the captured message: the broker took it.
     pub(crate) fn sent(self) {
-        if let Some((coordinator, origin, message)) = self.0 {
-            coordinator.record_sent(origin, message);
+        if let Some((coordinator, origin, mut publish)) = self.0 {
+            publish.span.finished = coordinator.tick();
+            coordinator.record_sent(origin, publish);
         }
     }
 }
@@ -184,54 +188,6 @@ impl PipelinePublish {
 fn raw_of<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> RawMessage {
     RawMessage::new(msg.name().to_owned(), msg.payload().as_ref().to_vec())
         .with_headers(msg.headers().clone())
-}
-
-/// The broker's per-message options one slot publish carried, copied and type-erased so the
-/// assertions can hand them back to a test as the broker's own type.
-///
-/// The slot wrapper is the one place the options are still typed: the broker's `publish` resolves
-/// them into whatever its protocol does with them, so the publish log underneath sees none.
-#[derive(Clone)]
-pub(crate) struct RecordedOptions {
-    /// The broker's options type, so a `with_options` naming another one fails by name.
-    pub(crate) type_name: &'static str,
-    /// `None` when the publish carried no options: no step ran, the policy's defaults applied.
-    pub(crate) value: Option<Arc<dyn Any + Send + Sync>>,
-}
-
-impl RecordedOptions {
-    fn capture<Options: Clone + Send + Sync + 'static>(options: Option<&Options>) -> Self {
-        Self {
-            type_name: type_name::<Options>(),
-            value: options.map(|options| Arc::new(options.clone()) as Arc<dyn Any + Send + Sync>),
-        }
-    }
-
-    /// The recorded options as `Options`, or `None` when the publish carried none.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the publish carried options of another type: the test named the wrong
-    /// broker's type, and the message says which one was recorded.
-    pub(crate) fn downcast<Options: 'static>(&self, channel: &str) -> Option<&Options> {
-        let value = self.value.as_ref()?;
-        Some(value.as_ref().downcast_ref::<Options>().unwrap_or_else(|| {
-            panic!(
-                "channel {channel:?} published with per-message options of type `{}`, not `{}`",
-                self.type_name,
-                type_name::<Options>(),
-            )
-        }))
-    }
-}
-
-impl fmt::Debug for RecordedOptions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RecordedOptions")
-            .field("type_name", &self.type_name)
-            .field("set", &self.value.is_some())
-            .finish()
-    }
 }
 
 /// Records one batch against the harness driving the current dispatch task, if any: the batch
@@ -464,6 +420,10 @@ impl fmt::Debug for Coordinator {
     }
 }
 
+/// How many publishes the record holds before it first grows: a test that counts what its own
+/// publishes allocate (each records one entry) measures the publishes, not the record's growth.
+const PUBLISHED_UP_FRONT: usize = 1024;
+
 struct Inner {
     in_flight: AtomicUsize,
     processed: AtomicUsize,
@@ -471,8 +431,9 @@ struct Inner {
     notify: tokio::sync::Notify,
     records: Mutex<Vec<Record>>,
     slot_records: Mutex<Vec<SlotRecord>>,
-    /// One entry per reply the runtime published, keyed by the channel it went to.
-    reply_records: Mutex<Vec<(String, RecordedOptions)>>,
+    /// The harness's clock: ticks once when a runtime publish is captured and once when the
+    /// broker took it, so the records tell which publishes were in flight at the same time.
+    clock: AtomicU64,
     /// Every publish the harness saw, in publish order: the test's own, and every message the
     /// app's publish pipeline handed a broker from a handler's dispatch.
     published: Mutex<Vec<Published>>,
@@ -489,7 +450,7 @@ struct Inner {
 /// the publisher was paired against.
 struct Published {
     scope_id: usize,
-    message: RawMessage,
+    entry: PublishedEntry,
 }
 
 /// A subscription a live settle waits on: its identity, the broker it belongs to, and its name.
@@ -552,8 +513,8 @@ impl Coordinator {
                 notify: tokio::sync::Notify::new(),
                 records: Mutex::new(Vec::new()),
                 slot_records: Mutex::new(Vec::new()),
-                reply_records: Mutex::new(Vec::new()),
-                published: Mutex::new(Vec::new()),
+                clock: AtomicU64::new(0),
+                published: Mutex::new(Vec::with_capacity(PUBLISHED_UP_FRONT)),
                 brokers: Mutex::new(Vec::new()),
                 redeliveries: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
@@ -736,20 +697,43 @@ impl Coordinator {
             .collect();
     }
 
-    /// Records one publish the test made onto the broker registered at `scope_id`.
-    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage) {
+    /// The clock as the test starts a publish of its own, for
+    /// [`record_published`](Self::record_published) once the broker took it.
+    pub(crate) fn test_publish_started(&self) -> u64 {
+        self.tick()
+    }
+
+    /// Records one publish the test made onto the broker registered at `scope_id`, started at
+    /// `started` on the harness's clock: the broker took it.
+    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage, started: u64) {
+        let span = Span {
+            started,
+            finished: self.tick(),
+        };
+        self.push_published(Published {
+            scope_id,
+            entry: PublishedEntry::Test { message, span },
+        });
+    }
+
+    fn push_published(&self, published: Published) {
         self.inner
             .published
             .lock()
             .expect("coordinator published mutex poisoned")
-            .push(Published { scope_id, message });
+            .push(published);
         self.inner.notify.notify_waiters();
+    }
+
+    /// The next reading of the harness's clock.
+    fn tick(&self) -> u64 {
+        self.inner.clock.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Records one publish the app handed a broker, on the broker its publisher was paired
     /// against. A publisher the runtime did not pair names no broker, and its publish is left out:
     /// the harness neither waits for it nor lists it.
-    fn record_sent(&self, origin: Origin, message: RawMessage) {
+    fn record_sent(&self, origin: Origin, publish: RuntimePublish) {
         let scope_id = origin.0.and_then(|address| {
             self.inner
                 .brokers
@@ -760,20 +744,25 @@ impl Coordinator {
                 .map(|(_, scope_id)| *scope_id)
         });
         if let Some(scope_id) = scope_id {
-            self.record_published(scope_id, message);
+            self.push_published(Published {
+                scope_id,
+                entry: PublishedEntry::Runtime(publish),
+            });
         }
     }
 
     /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
     /// publish order.
-    pub(crate) fn published(&self, scope_id: usize, name: &str) -> Vec<RawMessage> {
+    pub(crate) fn published(&self, scope_id: usize, name: &str) -> Vec<PublishedEntry> {
         self.inner
             .published
             .lock()
             .expect("coordinator published mutex poisoned")
             .iter()
-            .filter(|published| published.scope_id == scope_id && published.message.name() == name)
-            .map(|published| published.message.clone())
+            .filter(|published| {
+                published.scope_id == scope_id && published.entry.message().name() == name
+            })
+            .map(|published| published.entry.clone())
             .collect()
     }
 
@@ -816,7 +805,7 @@ impl Coordinator {
                     .iter()
                     .map(|&index| subscriptions[index].name.as_str())
                     .collect();
-                for position in routing(publish.scope_id, publish.message.name(), &names) {
+                for position in routing(publish.scope_id, publish.entry.message().name(), &names) {
                     if let Some(&index) = on.get(position) {
                         expected[index] += 1;
                     }
@@ -922,27 +911,6 @@ impl Coordinator {
                 message,
                 options,
             });
-    }
-
-    /// Records the per-message options one reply published to `name` carried.
-    pub(crate) fn record_reply(&self, name: &str, options: RecordedOptions) {
-        self.inner
-            .reply_records
-            .lock()
-            .expect("coordinator reply records mutex poisoned")
-            .push((name.to_owned(), options));
-    }
-
-    /// The per-message options of every reply published to `name`, in publish order.
-    pub(crate) fn reply_published(&self, name: &str) -> Vec<RecordedOptions> {
-        self.inner
-            .reply_records
-            .lock()
-            .expect("coordinator reply records mutex poisoned")
-            .iter()
-            .filter(|(channel, _)| channel == name)
-            .map(|(_, options)| options.clone())
-            .collect()
     }
 
     /// Every publish made through the `Out` slot named `slot`, in publish order.
@@ -1088,7 +1056,7 @@ mod tests {
             Some(HarnessScope::new(coordinator.clone(), consuming, 0)),
             publishing_to(origin, async {
                 let msg: OutgoingMessage<'_> = OutgoingMessage::new(name, b"{}".as_slice());
-                PipelinePublish::capture(&msg).sent();
+                PipelinePublish::capture::<_, ()>(&msg, None).sent();
             }),
         )
         .await;
@@ -1137,7 +1105,7 @@ mod tests {
         coordinator.record(handled(&subscriptions[1]));
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
         assert_eq!(coordinator.published(1, "orders").len(), 1);
-        assert_eq!(coordinator.published(0, "orders"), Vec::new());
+        assert!(coordinator.published(0, "orders").is_empty());
     }
 
     #[tokio::test]
@@ -1204,11 +1172,11 @@ mod tests {
         let subscriptions = mounted(&[(0, "orders")]);
         in_harness_scope(Some(HarnessScope::new(coordinator.clone(), 0, 0)), async {
             let msg: OutgoingMessage<'_> = OutgoingMessage::new("orders", b"{}".as_slice());
-            PipelinePublish::capture(&msg).sent();
+            PipelinePublish::capture::<_, ()>(&msg, None).sent();
         })
         .await;
         assert!(coordinator.owed(&subscriptions, &routing).is_none());
-        assert_eq!(coordinator.published(0, "orders"), Vec::new());
+        assert!(coordinator.published(0, "orders").is_empty());
     }
 
     #[test]

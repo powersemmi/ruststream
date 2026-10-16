@@ -340,7 +340,7 @@ async fn publish(&self, msg: OutgoingMessage<'_, &[u8]>, options: Option<&()>) -
 политики.
 
 **Настройки в тестах.** `Clone` и `'static` у `Options` нужны тестовой обвязке. Она снимает копию
-настроек через слот `Out` и отдаёт её тесту тем же типом. Тест проверяет значение, которое получил
+настроек с каждой публикации, которую делает среда исполнения, и отдаёт её тесту тем же типом. Тест проверяет значение, которое получил
 ваш `publish`, а не поле протокола. Выведите ещё `Debug` и `PartialEq`, и проверка запишется как
 `with_options(&YourOptions { .. })` ([проверки по слотам
 `Out`](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)).

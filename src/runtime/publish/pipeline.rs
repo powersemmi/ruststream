@@ -46,7 +46,7 @@ impl PublishPipeline for PublishIdentity {
         // into it in the form the publisher declared, and the map they filled moves with it.
         let msg = <P::Payload as PayloadForm>::leaving(out);
         #[cfg(feature = "testing")]
-        let recorded = PipelinePublish::capture(&msg);
+        let recorded = PipelinePublish::capture(&msg, options);
         let result = send
             .publish(msg, options)
             .await

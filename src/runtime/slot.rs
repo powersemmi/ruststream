@@ -550,7 +550,7 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         // A request reaches the broker directly rather than through the publish pipeline, so it
         // is recorded here for the channel view as well.
         #[cfg(feature = "testing")]
-        let recorded = PipelinePublish::capture(&msg);
+        let recorded = PipelinePublish::capture::<_, P::Options>(&msg, None);
         let reply = self.inner.request(msg, timeout).await;
         #[cfg(feature = "testing")]
         if reply.is_ok() {

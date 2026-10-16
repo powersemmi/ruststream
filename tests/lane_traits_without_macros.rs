@@ -6,6 +6,7 @@
 #![cfg(all(not(feature = "macros"), feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
+use std::future::{Future, ready};
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;
@@ -68,15 +69,15 @@ impl MessageHeaders for Export {
 struct Relay;
 
 impl<'p> Handle<Frame<'p>, Export> for Relay {
-    async fn handle(
+    fn handle(
         &self,
         frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<Export, HandlerOutcome> {
+    ) -> impl Future<Output = Result<Export, HandlerOutcome>> {
         let mut reply = frame.0.to_vec();
         reply.reverse();
-        Ok(Export(reply))
+        ready(Ok(Export(reply)))
     }
 }
 
@@ -84,14 +85,14 @@ impl<'p> Handle<Frame<'p>, Export> for Relay {
 struct Absorb;
 
 impl<'p> Handle<Frame<'p>> for Absorb {
-    async fn handle(
+    fn handle(
         &self,
         frame: &Frame<'p>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> Result<(), HandlerOutcome> {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let _ = frame.0.len();
-        Ok(())
+        ready(Ok(()))
     }
 }
 

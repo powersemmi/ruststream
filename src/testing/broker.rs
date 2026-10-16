@@ -150,9 +150,34 @@ pub trait TestableBroker: Send + Sync {
     /// it stores them rather than the test building a buffer for it.
     fn inject(&self, message: OutgoingMessage<'_>);
 
-    /// Returns every message published to `name` on this broker, in publish order. Backs the
-    /// harness's `published::<T>(name)` assertions and [`expect_published`].
+    /// Returns every message published to `name` on this broker, in publish order, after the
+    /// [`evicted`](Self::evicted) ones. Backs the harness's `published::<T>(name)` assertions and
+    /// [`expect_published`].
     fn published(&self, name: &str) -> Vec<RawMessage>;
+
+    /// How many of the oldest messages published to `name` this broker no longer holds, so
+    /// [`published`](Self::published) starts after them.
+    ///
+    /// The default, zero, is the answer of a log that keeps every message. A broker whose log
+    /// keeps only its newest messages answers how many it dropped: the harness pairs the
+    /// options of the publishes it recorded with what the log still holds, and needs to know
+    /// where the log starts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # struct BoundedBus { dropped: usize }
+    /// # impl BoundedBus {
+    /// /// A ring that keeps the newest messages of a name counts what it pushed out.
+    /// fn evicted(&self, _name: &str) -> usize {
+    ///     self.dropped
+    /// }
+    /// # }
+    /// ```
+    fn evicted(&self, name: &str) -> usize {
+        let _ = name;
+        0
+    }
 
     /// Which subscriptions of this broker a message published to `destination` is delivered to,
     /// as the broker's own routing picks them: the positions in `subscriptions` (the names the

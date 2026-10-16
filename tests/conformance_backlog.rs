@@ -5,7 +5,7 @@
 //! where it keeps a backlog, a subscription opened by name starts from the beginning of the bus's
 //! log, the way a queue keeps what reached it before its consumer came.
 
-#![cfg(all(feature = "testing", feature = "memory"))]
+#![cfg(all(feature = "testing", feature = "memory", feature = "conformance"))]
 
 use std::future::Future;
 

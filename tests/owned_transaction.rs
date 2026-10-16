@@ -117,8 +117,8 @@ async fn abort_discards_the_owned_buffer() {
 }
 
 /// The typed sugar (`PublishExt::owned_transaction`) over the same owned kind; the default codec
-/// needs a codec feature, hence the gate.
-#[cfg(feature = "json")]
+/// needs a codec feature and the message its `Outgoing` derive, hence the gate.
+#[cfg(all(feature = "json", feature = "macros"))]
 mod typed {
     use ruststream::codec::{Codec, DefaultCodec};
     use ruststream::memory::MemoryError;

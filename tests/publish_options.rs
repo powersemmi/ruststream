@@ -458,12 +458,10 @@ struct TtlOptions {
     ttl: Option<u8>,
 }
 
-/// The broker has consumed the options by the time its publish log records the message, so a
-/// channel the runtime only reached through a slot has none to read there, and the panic says
-/// where to ask instead.
+/// The broker's view reads the options of a slot publish too: the harness records them where the
+/// runtime hands the message over, before the broker resolves them into its protocol.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "recorded for a reply and for a slot publish")]
-async fn the_publish_log_sends_an_options_assertion_to_the_slot_view() {
+async fn the_broker_view_reads_the_options_of_a_slot_publish() {
     let tb = one_delivery().await;
 
     tb.broker::<MemoryBroker>()
@@ -682,6 +680,226 @@ async fn a_batch_transform_sets_the_options_of_every_reply() {
         .with(&Receipt { id: 3 })
         .with_header("priority", "4")
         .with_header("ttl", "2")
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+#[derive(OutSlot)]
+#[publishes(Receipt)]
+struct Followups;
+
+/// Publishes a receipt to the channel `acknowledge` replies on, at a priority of its own.
+#[subscriber("options.follow.in")]
+async fn follow_up(
+    order: &Order,
+    Out(followups): Out<impl Publisher<Options = PriorityOptions>, Followups>,
+) -> HandlerOutcome {
+    if followups
+        .message(&Receipt { id: order.id })
+        .to("options.reply.out")
+        .priority(9)
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    HandlerOutcome::ack()
+}
+
+/// A reply with options, then a slot publish to the same channel with other options: the
+/// channel view reads the options of the latest publish, whatever made it.
+async fn reply_then_slot_publish() -> TestApp<()> {
+    let app = RustStream::new(AppInfo::new("options-latest", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+            b.include(follow_up)
+                .out(Followups, PriorityPublish::default().priority(3))
+                .build();
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Order { id: 5 })
+        .to("options.follow.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_channel_view_reads_the_options_of_the_latest_publish() {
+    let tb = reply_then_slot_publish().await;
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called(2)
+        .with(&Receipt { id: 5 })
+        .with_options(&PriorityOptions {
+            priority: Some(9),
+            ttl: None,
+        });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "unexpected per-message options")]
+async fn the_options_of_an_earlier_reply_do_not_stand_for_a_later_publish() {
+    let tb = reply_then_slot_publish().await;
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called(2)
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+/// The test's own publish reaches no broker's options type, so a reply's options before it do
+/// not answer for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the test published")]
+async fn the_options_of_a_reply_do_not_stand_for_the_tests_own_publish() {
+    let app = RustStream::new(AppInfo::new("options-own", "0.1.0")).with_broker(
+        MemoryBroker::new(),
+        |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Receipt { id: 99 })
+        .to("options.reply.out")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called(2)
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+/// The same policy on a broker that retains its log.
+impl PublishPolicy<ConnectedMemoryBroker<Retaining>> for PriorityPublish {
+    type Live = PriorityPublisher;
+
+    async fn pair(
+        self,
+        connected: &ConnectedMemoryBroker<Retaining>,
+    ) -> Result<Self::Live, PairError> {
+        Ok(PriorityPublisher {
+            inner: Publish.pair(connected).await?,
+            default_priority: self.priority,
+            default_ttl: self.ttl,
+        })
+    }
+}
+
+/// A broker that keeps one message per channel: the test's own publish of the reply's bytes
+/// evicts the reply, and the reply's options do not pass to the message that replaced it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the test published")]
+async fn the_options_of_an_evicted_reply_do_not_stand_for_the_tests_own_publish() {
+    let app = RustStream::new(AppInfo::new("options-evicted", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(1))),
+        |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Receipt { id: 2 })
+        .to("options.reply.out")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker<Retaining>>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with(&Receipt { id: 2 })
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+/// Two brokers reply on a channel of the same name, one with a transform that sets options and
+/// one without: each broker's view reads its own replies' options.
+async fn two_brokers_one_channel_name() -> TestApp<()> {
+    let app = RustStream::new(AppInfo::new("options-brokers", "0.1.0"))
+        .with_broker_labeled("expedited", MemoryBroker::new(), |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+        })
+        .with_broker_labeled("plain", MemoryBroker::new(), |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9));
+        });
+    let tb = TestApp::start(app).await.expect("harness start");
+    for label in ["plain", "expedited"] {
+        tb.broker_named(label)
+            .message(&Order { id: 2 })
+            .to("options.reply.in")
+            .publish()
+            .await
+            .expect("publish");
+    }
+    tb
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_broker_reads_the_options_of_its_own_publishes() {
+    let tb = two_brokers_one_channel_name().await;
+
+    tb.broker_named("plain")
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .assert_options_default();
+    tb.broker_named("expedited")
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "published with the policy's default options")]
+async fn another_brokers_options_do_not_stand_for_this_brokers_publish() {
+    let tb = two_brokers_one_channel_name().await;
+
+    tb.broker_named("plain")
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
         .with_options(&PriorityOptions {
             priority: None,
             ttl: Some(2),

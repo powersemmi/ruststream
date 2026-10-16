@@ -41,6 +41,7 @@ pub struct Undocumented;
 )]
 pub trait Documentable {
     /// The serialized JSON Schema, captured once at registration.
+    #[must_use]
     fn schema_json() -> Option<String>;
 }
 
@@ -55,6 +56,7 @@ impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
 #[cfg(not(feature = "asyncapi"))]
 pub trait Documentable {
     /// No document is generated without the `asyncapi` feature.
+    #[must_use]
     fn schema_json() -> Option<String> {
         None
     }

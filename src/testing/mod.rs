@@ -3,6 +3,8 @@
 #[cfg(feature = "testing")]
 mod assertions;
 #[cfg(feature = "testing")]
+mod attribution;
+#[cfg(feature = "testing")]
 mod broker;
 #[cfg(feature = "testing")]
 pub(crate) mod coordinator;

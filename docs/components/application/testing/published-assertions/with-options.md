@@ -31,10 +31,11 @@ import TabItem from '@theme/TabItem';
 ## How it works
 
 Per-message settings are the broker's `Publisher::Options`; the memory broker's publisher has none, so the example wraps it with a priority, as a networked broker ships one.
-A slot record, `out::<M>()`, carries the settings of every publish through the slot.
-A destination record, `published::<T>(name)`, carries the settings of the replies the runtime published there.
-A message the test publishes itself carries none.
+The harness records the settings with every publish the runtime makes (a reply, a slot publish, a retry copy), on the broker it went to.
+Both records read them: a slot record, `out::<M>()`, and a destination record, `published::<T>(name)`.
+A message the test publishes itself carries no recorded settings.
 The assertion names the broker's own type and panics when the latest publish carried no settings, carried another type, or carried a different value.
+It also panics when it cannot tell which settings the latest publish carried: another publish to the destination had the same payload, and either their order is unknown or the harness never saw that publish.
 
 ## See also
 

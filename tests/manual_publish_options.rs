@@ -526,12 +526,10 @@ struct TtlOptions {
     ttl: Option<u8>,
 }
 
-/// The broker has consumed the options by the time its publish log records the message, so a
-/// channel the runtime only reached through a slot has none to read there, and the panic says
-/// where to ask instead.
+/// The broker's view reads the options of a slot publish too: the harness records them where the
+/// runtime hands the message over, before the broker resolves them into its protocol.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "recorded for a reply and for a slot publish")]
-async fn the_publish_log_sends_an_options_assertion_to_the_slot_view() {
+async fn the_broker_view_reads_the_options_of_a_slot_publish() {
     let tb = one_delivery().await;
 
     tb.broker::<MemoryBroker>()

@@ -121,8 +121,9 @@ the stream was cut; `panicked()` and `assert_last_failed_to_decode()` the failur
 `received::<T>()`, `received_raw()`, `batches::<T>()` and `outcomes()` return the lists for a
 check of your own. `published::<T>(name)` reads what was published there with the same
 vocabulary, plus `with_header(key, value)` for what a transform or a publish layer added.
-[`TestApp::out`] reads exactly what left through one `Out` slot, across brokers, and
-`with_options` and `assert_options_default` read the per-message settings a publish carried.
+[`TestApp::out`] reads exactly what left through one `Out` slot, across brokers. On both views
+`with_options` and `assert_options_default` read the per-message settings the latest publish
+carried.
 The decoding assertions use the default codec; a mounting with another codec passes it
 through the `with_codec`, `received_with` and `decoded_with` variants. A value a broker's
 delivery already holds never was bytes, so it has assertions of its own: `with_value(&value)`

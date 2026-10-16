@@ -191,7 +191,7 @@ where
         let payload = <Bare::Payload as PayloadForm>::serialized(reply, encode)?;
         let msg = OutgoingMessage::with_payload(name, payload);
         #[cfg(feature = "testing")]
-        let recorded = PipelinePublish::capture(&msg);
+        let recorded = PipelinePublish::capture::<_, Bare::Options>(&msg, None);
         let sent = self.publish(msg, None).await;
         #[cfg(feature = "testing")]
         if sent.is_ok() {
