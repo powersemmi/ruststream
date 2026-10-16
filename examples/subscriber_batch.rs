@@ -89,13 +89,13 @@ mod per_element {
             })
             .collect()
     }
+    // --8<-- [end:per_element]
 
     fn app(broker: MemoryBroker) -> impl App {
         RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(broker, |b| {
             b.include(reconcile.batch(nonzero!(64)));
         })
     }
-    // --8<-- [end:per_element]
 
     #[tokio::test(start_paused = true)]
     async fn only_the_uncleared_payment_comes_back() -> Result<(), Box<dyn Error>> {

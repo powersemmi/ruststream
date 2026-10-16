@@ -141,6 +141,7 @@ mod handler {
             sent.map_err(|_| HandlerOutcome::retry())
         }
     }
+    // --8<-- [end:handler]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -149,7 +150,6 @@ mod handler {
                 .build();
         })
     }
-    // --8<-- [end:handler]
 
     #[tokio::test]
     async fn the_contract_comes_in_and_goes_out() -> Result<(), Box<dyn Error>> {
@@ -203,13 +203,13 @@ mod message {
             ready(Ok(()))
         }
     }
+    // --8<-- [end:message]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("store", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("chunks", Store).build());
         })
     }
-    // --8<-- [end:message]
 
     #[tokio::test]
     async fn the_body_reads_the_headers_it_declared() -> Result<(), Box<dyn Error>> {

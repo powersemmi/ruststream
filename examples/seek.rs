@@ -30,12 +30,6 @@ mod start_at {
         HandlerOutcome::ack()
     }
 
-    fn app(broker: MemoryBroker<Retaining>) -> impl App {
-        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-            b.include(record);
-        })
-    }
-
     // --8<-- [start:retaining]
     /// Replaying reads what the broker kept, so this one keeps the last 64 entries of every name.
     /// `MemoryBroker::new()` keeps nothing, and a mount that seeks does not compile on it.
@@ -44,6 +38,12 @@ mod start_at {
     }
     // --8<-- [end:retaining]
     // --8<-- [end:start_at]
+
+    fn app(broker: MemoryBroker<Retaining>) -> impl App {
+        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
+            b.include(record);
+        })
+    }
 
     #[tokio::test]
     async fn the_history_is_replayed() -> Result<(), Box<dyn Error>> {
@@ -98,13 +98,13 @@ mod seek {
         tracing::info!(job.id, "processed");
         HandlerOutcome::ack()
     }
+    // --8<-- [end:seek]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
             b.include(work);
         })
     }
-    // --8<-- [end:seek]
 
     #[tokio::test]
     async fn the_poisoned_region_is_skipped() -> Result<(), Box<dyn Error>> {

@@ -66,6 +66,7 @@ mod single {
         HandlerOutcome::ack()
             .and_after(async move { notifier.send(format!("accepted {id}")).await })
     }
+    // --8<-- [end:single]
 
     fn app() -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -74,7 +75,6 @@ mod single {
                 b.include(accept);
             })
     }
-    // --8<-- [end:single]
 
     #[tokio::test]
     async fn the_notice_follows_the_ack() -> Result<(), Box<dyn Error>> {
@@ -118,6 +118,7 @@ mod batch {
             })
             .collect()
     }
+    // --8<-- [end:batch]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -126,7 +127,6 @@ mod batch {
                 b.include(accept.batch(nonzero!(3)).start_at(MemoryPosition::start()));
             })
     }
-    // --8<-- [end:batch]
 
     #[tokio::test]
     async fn only_the_acked_orders_are_announced() -> Result<(), Box<dyn Error>> {
@@ -173,6 +173,7 @@ mod hooks {
         }
         HandlerOutcome::ack()
     }
+    // --8<-- [end:hooks]
 
     fn app() -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -181,7 +182,6 @@ mod hooks {
                 b.include(accept);
             })
     }
-    // --8<-- [end:hooks]
 
     #[tokio::test]
     async fn each_hook_runs_on_its_own_settlement() -> Result<(), Box<dyn Error>> {

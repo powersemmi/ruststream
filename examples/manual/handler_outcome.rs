@@ -83,6 +83,7 @@ mod outcome {
             ready(Ok(()))
         }
     }
+    // --8<-- [end:outcome]
 
     fn app() -> impl App<State = Arc<Warehouse>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -95,7 +96,6 @@ mod outcome {
                 b.include(subscriber("orders", Reserve).build());
             })
     }
-    // --8<-- [end:outcome]
 
     #[tokio::test]
     async fn each_order_settles_by_what_the_body_returned() -> Result<(), Box<dyn Error>> {
@@ -136,13 +136,13 @@ mod unit {
             ready(Ok(()))
         }
     }
+    // --8<-- [end:unit]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Audit).build());
         })
     }
-    // --8<-- [end:unit]
 
     #[tokio::test]
     async fn a_body_returning_nothing_acks() -> Result<(), Box<dyn Error>> {
@@ -202,13 +202,13 @@ mod result {
             ready(priced.map_err(|_| HandlerOutcome::drop()))
         }
     }
+    // --8<-- [end:result]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("pricing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Price).build());
         })
     }
-    // --8<-- [end:result]
 
     #[tokio::test]
     async fn an_error_drops_the_order() -> Result<(), Box<dyn Error>> {
@@ -273,13 +273,13 @@ mod result_outcome {
             })
         }
     }
+    // --8<-- [end:result_outcome]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Ship).build());
         })
     }
-    // --8<-- [end:result_outcome]
 
     #[tokio::test]
     async fn the_inner_outcome_settles_the_order() -> Result<(), Box<dyn Error>> {

@@ -34,13 +34,13 @@ mod defaults {
         assert_ne!(order.id, 0, "an order without an id reached fulfilment");
         HandlerOutcome::ack()
     }
+    // --8<-- [end:defaults]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(fulfil);
         })
     }
-    // --8<-- [end:defaults]
 
     #[tokio::test]
     async fn bad_input_is_dropped_and_a_bug_stops_the_service() -> Result<(), Box<dyn Error>> {
@@ -78,13 +78,13 @@ mod skip {
         assert_ne!(order.id, 0, "an order without an id reached the audit");
         HandlerOutcome::ack()
     }
+    // --8<-- [end:skip]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(audit);
         })
     }
-    // --8<-- [end:skip]
 
     #[tokio::test]
     async fn the_audit_keeps_going_past_failures() -> Result<(), Box<dyn Error>> {
@@ -122,13 +122,13 @@ mod tuned {
         tracing::info!(order.id, "accepted");
         HandlerOutcome::ack()
     }
+    // --8<-- [end:tuned]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(accept);
         })
     }
-    // --8<-- [end:tuned]
 
     #[tokio::test(start_paused = true)]
     async fn an_unreadable_payload_comes_back_later() -> Result<(), Box<dyn Error>> {

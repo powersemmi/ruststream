@@ -84,6 +84,7 @@ mod retry_after {
             ready(Ok(()))
         }
     }
+    // --8<-- [end:retry_after]
 
     fn app() -> impl App<State = Arc<Ledger>> {
         RustStream::new(AppInfo::new("payments", "0.1.0"))
@@ -92,7 +93,6 @@ mod retry_after {
                 b.include(subscriber("payments", Reconcile).build());
             })
     }
-    // --8<-- [end:retry_after]
 
     #[tokio::test(start_paused = true)]
     async fn a_pending_payment_comes_back_after_the_delay() -> Result<(), Box<dyn Error>> {
@@ -151,6 +151,7 @@ mod batch_retry_after {
                 .collect()))
         }
     }
+    // --8<-- [end:batch_retry_after]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App<State = Arc<Ledger>> {
         RustStream::new(AppInfo::new("payments", "0.1.0"))
@@ -164,7 +165,6 @@ mod batch_retry_after {
                 );
             })
     }
-    // --8<-- [end:batch_retry_after]
 
     #[tokio::test(start_paused = true)]
     async fn only_the_pending_payment_comes_back() -> Result<(), Box<dyn Error>> {
