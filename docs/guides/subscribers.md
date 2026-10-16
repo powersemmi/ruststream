@@ -264,12 +264,15 @@ struct handler, and `HandlerMetadata`. Both forms below register the same handle
 <Tabs groupId="api">
 <TabItem value="macros" label="Macro">
 
-```rust reference="examples/subscribers.rs#contract"
+```rust title="https://github.com/powersemmi/ruststream/blob/docs/archive/v0.4/examples/subscribers.rs"
 use ruststream::subscriber;
 
-```
+#[subscriber("orders")]
+async fn handle(order: &Order) -> HandlerResult {
+    println!("got order {}", order.id);
+    HandlerResult::Ack
+}
 
-```rust
 // inside with_broker(...):
 b.include(handle);
 ```
