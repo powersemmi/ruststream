@@ -117,8 +117,6 @@ const config: Config = {
           exclude: [
             'ru/**',
             'zh/**',
-            'hooks/**',
-            'assets/**',
             'benchmarks/**',
           ],
         },
