@@ -1,0 +1,114 @@
+{
+  "docs": [
+    {
+      "type": "doc",
+      "id": "index",
+      "label": "Home"
+    },
+    {
+      "type": "category",
+      "label": "Getting started",
+      "collapsible": false,
+      "items": [
+        "getting-started/installation",
+        "getting-started/quickstart",
+        "getting-started/tutorial"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Writing services",
+      "collapsible": false,
+      "items": [
+        "guides/subscribers",
+        "guides/publishing",
+        "guides/routing",
+        "guides/codecs",
+        "guides/context",
+        "guides/lifespan",
+        "guides/middleware",
+        "guides/failure-policy"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Integrations",
+      "collapsible": false,
+      "items": [
+        "guides/http"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Observability",
+      "collapsible": false,
+      "items": [
+        "guides/logging",
+        "guides/metrics",
+        "guides/opentelemetry",
+        "guides/asyncapi"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Testing",
+      "collapsible": false,
+      "items": [
+        "guides/testing"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "CLI",
+      "collapsible": false,
+      "items": [
+        "guides/cli"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Brokers",
+      "collapsible": false,
+      "items": [
+        "brokers/index",
+        "brokers/memory",
+        {
+          "type": "link",
+          "label": "NATS",
+          "href": "https://powersemmi.github.io/ruststream-nats/"
+        },
+        {
+          "type": "link",
+          "label": "Redis",
+          "href": "https://powersemmi.github.io/ruststream-fred/"
+        },
+        {
+          "type": "link",
+          "label": "RabbitMQ",
+          "href": "https://powersemmi.github.io/ruststream-lapin/"
+        },
+        {
+          "type": "link",
+          "label": "Kafka",
+          "href": "https://powersemmi.github.io/ruststream-rdkafka/"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Broker authors",
+      "collapsible": false,
+      "items": [
+        "broker-authors/index",
+        "broker-authors/example-nats",
+        "broker-authors/conformance",
+        "broker-authors/templates"
+      ]
+    },
+    {
+      "type": "doc",
+      "id": "reference",
+      "label": "API reference"
+    }
+  ]
+}

@@ -13,8 +13,7 @@ Two architectural commitments shape the framework:
    defaults. Each broker crate owns its own `Config`, so an upstream change hits one broker crate,
    not the framework.
 
-```rust
---8<-- "examples/quickstart.rs"
+```rust reference="examples/quickstart.rs"
 ```
 
 `#[ruststream::app]` generates `main`, so `cargo run -- run` starts the service and
@@ -33,17 +32,13 @@ Two architectural commitments shape the framework:
 
 ## Where to go next
 
-<div class="grid cards" markdown>
-
-- :material-download: **[Installation](getting-started/installation.md)** - features and crate setup.
-- :material-rocket-launch: **[Quick start](getting-started/quickstart.md)** - scaffold a service with `cargo generate`.
-- :material-school: **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
-- :material-test-tube: **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
-- :material-web: **[HTTP frameworks](guides/http.md)** - run beside axum with a transactional outbox.
-- :material-transit-connection-variant: **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.
-- :material-server-network: **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
-
-</div>
+- **[Installation](getting-started/installation.md)** - features and crate setup.
+- **[Quick start](getting-started/quickstart.md)** - scaffold a service with `cargo generate`.
+- **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
+- **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
+- **[HTTP frameworks](guides/http.md)** - run beside axum with a transactional outbox.
+- **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.
+- **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
 
 ## Scope of this repository
 

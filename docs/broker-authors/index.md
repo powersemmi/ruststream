@@ -21,7 +21,7 @@ traits for the features your broker supports, and prove the result with the
 The broker is pure lifecycle: connect and shut down. It carries no subscriber or publisher type, so a
 single application can mix broker kinds.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/broker.rs (which carries Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/broker.rs (which carries Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Broker: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -44,7 +44,7 @@ with the synchronous `#[ruststream::app]` builder; the
 
 Implement `Subscribe` to support subscribing by name. This is what `#[subscriber("name")]` uses.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscribe: Broker {
     type Subscriber: Subscriber;
@@ -56,7 +56,7 @@ pub trait Subscribe: Broker {
 
 A subscriber is a `Stream` of incoming messages. Back-pressure comes for free from the stream.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscriber: Send {
     type Message: IncomingMessage;
@@ -73,7 +73,7 @@ which keeps it cancel-safe.
 A delivered message exposes its payload and headers, and is acked or nacked. Ack consumes `self`, so
 double-ack is a compile error.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
@@ -98,7 +98,7 @@ immediate requeue and keyed lanes rotating keyless messages.
 
 ### `Publisher`
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Publisher: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -114,7 +114,7 @@ pub trait Publisher: Send + Sync {
 group, a durable name, a delivery policy), expose a descriptor type that implements
 `SubscriptionSource`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait SubscriptionSource<B: Broker> {
     type Subscriber: Subscriber;
@@ -151,7 +151,7 @@ key types so handlers can bind single fields as parameters with the
 [`Ctx<K>` extractor](../guides/context.md#per-delivery-context). Keys are unit structs; values are
 owned. No type-map and no heap on the delivery path.
 
-<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+{/* inline-rust: sketch; the real trait lives in src/field.rs */}
 ```rust
 /// Per-delivery context of this broker.
 #[non_exhaustive]
@@ -207,8 +207,7 @@ end against a real server.
 
 The reference is `MemoryBroker`'s own implementation:
 
-```rust
---8<-- "src/memory/mod.rs:testable"
+```rust reference="src/memory/mod.rs#testable"
 ```
 
 The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and

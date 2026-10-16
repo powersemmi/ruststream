@@ -21,8 +21,7 @@ ruststream asyncapi gen --yaml
 In code, build the spec from the application with `build_spec`, then serialize it with `to_json` or
 `to_yaml`:
 
-```rust
---8<-- "examples/asyncapi_http.rs:generate"
+```rust reference="examples/asyncapi_http.rs#generate"
 ```
 
 `#[ruststream::app]` wires the `asyncapi gen` command to `build_spec` for you, so the CLI and a
@@ -33,8 +32,7 @@ hand-written call produce the same document.
 A handler's payload type appears as a schema when it derives `JsonSchema`. RustStream re-exports
 `schemars`, so you do not need a direct dependency:
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
+```rust reference="examples/asyncapi_http.rs#payload"
 ```
 
 A type without `JsonSchema` still works as a handler payload; it just contributes no schema to the
@@ -52,7 +50,7 @@ To control the metadata explicitly - including for types without `JsonSchema` - 
 `Message` trait, which takes precedence over the schema; or derive it, which uses the type's name
 and doc comment:
 
-<!-- inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema -->
+{/* inline-rust: minimal Message-derive sketch; the compiled form (asyncapi_http.rs:payload) also derives JsonSchema, which would obscure the point that Message takes precedence over the schema */}
 ```rust
 use ruststream::Message;
 
@@ -72,8 +70,7 @@ A manual `impl Message` can name the component differently from the Rust type
 Record the servers your service connects to so they appear in the document's `servers` section.
 Build a `ServerSpec` directly:
 
-```rust
---8<-- "examples/asyncapi_http.rs:server"
+```rust reference="examples/asyncapi_http.rs#server"
 ```
 
 A broker crate may also implement the `DescribeServer` capability, in which case
@@ -85,8 +82,7 @@ A broker crate may also implement the `DescribeServer` capability, in which case
 Declare how clients authenticate with `ServerSpec::with_security`; each scheme lands in
 `components.securitySchemes` and is referenced from the server's `security` list:
 
-```rust
---8<-- "examples/asyncapi_http.rs:security"
+```rust reference="examples/asyncapi_http.rs#security"
 ```
 
 `SecurityScheme` has constructors for the AsyncAPI 3.0 scheme kinds - `user_password`, `plain`,
@@ -109,7 +105,7 @@ the bytes; you mount them in whatever HTTP stack you already run (axum, actix, o
 For an interactive viewer, `render_viewer_html` returns a self-contained HTML page that loads the
 AsyncAPI React component and points it at your spec URL:
 
-<!-- inline-rust: two-line API-shape fragment; the compiled call lives in asyncapi_http.rs:generate -->
+{/* inline-rust: two-line API-shape fragment; the compiled call lives in asyncapi_http.rs:generate */}
 ```rust
 use ruststream::asyncapi::{render_viewer_html, ViewerOptions};
 
@@ -125,8 +121,7 @@ locked-down deployments (`with_title` sets the page title).
 The [`asyncapi_http`](https://github.com/powersemmi/ruststream/blob/main/examples/asyncapi_http.rs)
 example serves the document and the viewer with [axum](https://github.com/tokio-rs/axum). Run it with
 `cargo run --example asyncapi_http --features macros,memory,asyncapi`, then open
-<http://127.0.0.1:8080/>.
+[http://127.0.0.1:8080/](http://127.0.0.1:8080/).
 
-```rust
---8<-- "examples/asyncapi_http.rs"
+```rust reference="examples/asyncapi_http.rs"
 ```

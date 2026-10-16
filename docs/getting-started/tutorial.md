@@ -27,12 +27,11 @@ serde = { version = "1", features = ["derive"] }
 A handler is an `async fn` whose first parameter is the decoded payload. The `#[subscriber]` macro
 turns it into a mountable definition named after the function.
 
-```rust title="src/orders.rs"
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
---8<-- "examples/tutorial/orders.rs:order"
 ```
 
 A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, or a `nack` that drops
@@ -41,7 +40,7 @@ or requeues the message. Returning `()` or `Result<(), E>` also works - they con
 
 ## 3. Wire it into an app
 
-```rust title="src/main.rs"
+```rust title="src/main.rs" reference="examples/quickstart.rs#app"
 mod orders;
 
 use ruststream::memory::MemoryBroker;
@@ -49,16 +48,18 @@ use ruststream::runtime::{AppInfo, RustStream};
 
 use crate::orders::handle;
 
---8<-- "examples/quickstart.rs:app"
 ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
 
-!!! tip "Codec defaults"
-    `include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
-    `msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
-    once with `with_broker_codec(broker, codec, |b| ...)`. See
-    [Codecs](../guides/codecs.md) for the full resolution rules.
+:::tip[Codec defaults]
+
+`include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
+`msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
+once with `with_broker_codec(broker, codec, |b| ...)`. See
+[Codecs](../guides/codecs.md) for the full resolution rules.
+
+:::
 
 Run it:
 
@@ -70,13 +71,12 @@ cargo run -- run
 
 To publish a reply, return the reply value and name the destination with `publish(..)`:
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:confirm"
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
 ```
 
 Mount it with a publisher that carries the reply codec:
 
-<!-- inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
+{/* inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below */}
 ```rust
 use ruststream::runtime::TypedPublisher;
 
@@ -93,12 +93,10 @@ inside a handler.
 As handlers grow, keep them in their own module and collect them into a
 [`Router`](../guides/routing.md):
 
-```rust title="src/routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
+```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
 ```
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
 ```
 
 ## 6. Inspect the AsyncAPI document
@@ -119,11 +117,14 @@ is a one-line change: add the broker crate as a dependency and construct it ther
 and codecs are unchanged. The available brokers and the side-by-side swap for each of them are in
 [Brokers](../brokers/index.md#switching-brokers).
 
-!!! info "The complete service is a compiled example"
-    Every snippet on this page is embedded from
-    [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    in the repository, which CI builds on every change. Run it yourself with
-    `cargo run --example tutorial --features macros,memory,json -- run`.
+:::info[The complete service is a compiled example]
+
+Every snippet on this page is embedded from
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
+in the repository, which CI builds on every change. Run it yourself with
+`cargo run --example tutorial --features macros,memory,json -- run`.
+
+:::
 
 ## Next steps
 

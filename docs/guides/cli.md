@@ -31,11 +31,10 @@ a crate other than the working directory.
 `#[ruststream::app]` turns a builder function into a `main` that understands `run` and
 `asyncapi gen`, so there is no runtime boilerplate:
 
-```rust
+```rust reference="examples/quickstart.rs#app"
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, RustStream};
 
---8<-- "examples/quickstart.rs:app"
 ```
 
 Because the dispatch lives in the generated binary, both `ruststream run` and a plain

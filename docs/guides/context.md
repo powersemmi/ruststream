@@ -18,8 +18,7 @@ The shared application state is one typed value `S` (a struct you define, or `()
 needs none). It is produced by an `on_startup` hook - the value the hook returns becomes the state,
 fixing the app's state type:
 
-```rust
---8<-- "examples/context.rs:app"
+```rust reference="examples/context.rs#app"
 ```
 
 The state type is checked at compile time: a `#[subscriber]` handler that reads state names it as
@@ -37,8 +36,7 @@ mutex-guarded map) is the tool when a shared value must change at runtime. For d
 message rather than the whole service, use the [per-delivery context](#per-delivery-context)
 instead. See [Lifespan](lifespan.md) for the startup-hook contract.
 
-```rust
---8<-- "examples/context.rs:state"
+```rust reference="examples/context.rs#state"
 ```
 
 ## Injecting dependencies: extractor parameters
@@ -54,14 +52,12 @@ no extractor impl by hand. `State<T>` resolves for any field type (`T: FromRef<S
 from other crates (a broker publisher, a client pool) that a bare per-field impl could not cover
 under the orphan rule:
 
-```rust
---8<-- "examples/from_context.rs:state"
+```rust reference="examples/from_context.rs#state"
 ```
 
 The handler takes `State<FieldType>`, with no `ctx.state()` reach-through:
 
-```rust
---8<-- "examples/from_context.rs:handler"
+```rust reference="examples/from_context.rs#handler"
 ```
 
 A field that should not be injectable, or whose type another field already claims, opts out with
@@ -76,8 +72,7 @@ A `#[subscriber]` handler opts in by declaring a second parameter after the payl
 the handler needs nothing but the message. The macro resolves the type itself, so `Context` needs
 no import when it appears only in handler signatures:
 
-```rust
---8<-- "examples/context.rs:handler"
+```rust reference="examples/context.rs#handler"
 ```
 
 What the context exposes:
@@ -105,8 +100,7 @@ reads native delivery metadata - a stream id, an offset, a delivery handle - wit
 serializing it into the byte-only headers. A key implements `Field` only for the context types that
 carry its field, so an inapplicable key is a compile error rather than a runtime miss.
 
-```rust
---8<-- "examples/context_field.rs:field"
+```rust reference="examples/context_field.rs#field"
 ```
 
 The context type is built from the message by `BuildContext`, which the runtime calls once per
@@ -126,12 +120,10 @@ A field can also arrive as a handler argument, the way `State<T>` injects a stat
 value - so the handler needs no `&mut Context` parameter at all: the `#[subscriber]` macro projects
 the subscription's context type from the first `Ctx` key in the signature.
 
-```rust
---8<-- "examples/ctx_extractor.rs:key"
+```rust reference="examples/ctx_extractor.rs#key"
 ```
 
-```rust
---8<-- "examples/ctx_extractor.rs:handler"
+```rust reference="examples/ctx_extractor.rs#handler"
 ```
 
 Three things to know:
@@ -151,15 +143,13 @@ working copy that lives in the context. That makes it a scratchpad for the dispa
 middleware earlier in the chain can stamp values onto it with `headers_mut()`, and the handler
 reads the enriched result:
 
-```rust
---8<-- "examples/context.rs:enrich"
+```rust reference="examples/context.rs#enrich"
 ```
 
 Mounted globally, the layer runs before every handler, so `handle` above always finds
 `x-request-id`:
 
-```rust
---8<-- "examples/context.rs:app"
+```rust reference="examples/context.rs#app"
 ```
 
 Two boundaries to keep in mind:
@@ -185,8 +175,7 @@ Sometimes a handler needs a side effect to fire *after* the message has been set
 non-critical notification, slow follow-up work, a cache warm-up - without it gating the ack
 decision or affecting redelivery. Register one on the context:
 
-```rust
---8<-- "examples/context.rs:handler"
+```rust reference="examples/context.rs#handler"
 ```
 
 The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has

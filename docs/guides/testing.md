@@ -9,16 +9,19 @@ RustStream services are tested at two levels:
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
    the semantics only a real server has (durable consumers, redelivery timers, partitions).
 
-!!! warning "What the harness does and does not model"
-    The harness drives a broker's **in-process transport**: publishing fans a message out to the
-    subscribers whose subject matches, runs your handler through the real dispatch path, and records
-    the outcome and any downstream publishes. It does **not** model JetStream durable cursors,
-    `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or consumer groups, or
-    RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns; test them in the
-    [integration suite](#integration-tests-against-a-real-broker).
+:::warning[What the harness does and does not model]
 
-    `MemoryBroker` is a real broker (local in-process queues), not a test double - the harness drives
-    it through the same dispatch path the production runtime uses.
+The harness drives a broker's **in-process transport**: publishing fans a message out to the
+subscribers whose subject matches, runs your handler through the real dispatch path, and records
+the outcome and any downstream publishes. It does **not** model JetStream durable cursors,
+`ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or consumer groups, or
+RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns; test them in the
+[integration suite](#integration-tests-against-a-real-broker).
+
+`MemoryBroker` is a real broker (local in-process queues), not a test double - the harness drives
+it through the same dispatch path the production runtime uses.
+
+:::
 
 ## Unit-testing a service with `TestApp`
 
@@ -29,20 +32,21 @@ returns - then you assert.
 
 The handler under test (in a real service it lives in your handler module and the test imports it):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
+```rust reference="tests/doc_testing_memory.rs#handler"
 ```
 
 The test:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
+```rust reference="tests/doc_testing_memory.rs#test"
 ```
 
-!!! info "This test runs in this repository's CI"
-    The code above is embedded from
-    [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
-    which `cargo test --all-features` runs on every change - the example cannot silently rot.
+:::info[This test runs in this repository's CI]
+
+The code above is embedded from
+[`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
+which `cargo test --all-features` runs on every change - the example cannot silently rot.
+
+:::
 
 Enable the `testing` feature in your dev-dependencies:
 
@@ -92,17 +96,19 @@ The harness runs dispatch under the application's real `FailurePolicy`, so a neg
 first-class path. Under the default `panic = fail_fast`, a handler panic tears the service down just
 as in production:
 
-```rust
---8<-- "tests/testing_harness.rs:panic"
+```rust reference="tests/testing_harness.rs#panic"
 ```
 
 Under `on_failure(panic = skip)` the panic is acked and consumption continues, so `tb.assert_running()`
 holds. `run_result()` returns what the real [`run`](lifespan.md) would: `Ok` while healthy, an error
 once a fail-fast failure shut the service down.
 
-!!! note "Panic catching needs unwinding"
-    The harness rides the runtime's `catch_unwind`, so a deliberate panic does not kill the test
-    thread. A build compiled with `panic = "abort"` cannot catch handler panics.
+:::note[Panic catching needs unwinding]
+
+The harness rides the runtime's `catch_unwind`, so a deliberate panic does not kill the test
+thread. A build compiled with `panic = "abort"` cannot catch handler panics.
+
+:::
 
 ### Delayed redelivery (`retry_after`)
 
@@ -110,8 +116,7 @@ A handler that returns `retry_after(delay)` schedules a delayed redelivery. `pub
 immediate `NackAfter` settlement and returns; the redelivery is driven separately by advancing a
 paused clock:
 
-```rust
---8<-- "tests/testing_harness.rs:retry_after"
+```rust reference="tests/testing_harness.rs#retry_after"
 ```
 
 ## Integration tests against a real broker
@@ -119,7 +124,7 @@ paused clock:
 Behaviour that depends on real broker semantics belongs in a separate suite gated behind an
 environment variable, so the default `cargo test` stays fast and offline:
 
-<!-- inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here -->
+{/* inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here */}
 ```rust title="tests/integration_nats.rs"
 fn test_url() -> Option<String> {
     std::env::var("NATS_TEST_URL").ok()
@@ -146,8 +151,11 @@ This mirrors faststream's `with_real=True` split: handler logic on the in-memory
 semantics on the real one. Keep both suites over the same handler modules so the production code has
 a single source of truth.
 
-!!! note "Writing a broker crate?"
-    The machinery that makes `TestApp` work against a broker - the in-process transport and the
-    `TestableBroker` contract - is the broker author's side of this story. It lives in
-    [Broker authors: test support](../broker-authors/index.md#test-support) and
-    [Conformance](../broker-authors/conformance.md).
+:::note[Writing a broker crate?]
+
+The machinery that makes `TestApp` work against a broker - the in-process transport and the
+`TestableBroker` contract - is the broker author's side of this story. It lives in
+[Broker authors: test support](../broker-authors/index.md#test-support) and
+[Conformance](../broker-authors/conformance.md).
+
+:::

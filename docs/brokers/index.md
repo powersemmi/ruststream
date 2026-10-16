@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Brokers
 
 A broker connects RustStream to a message transport. The framework ships an in-memory broker for
@@ -24,86 +27,94 @@ Every broker constructs synchronously and connects lazily (the runtime calls `Br
 at startup), so the same handlers and routers run on any of them; only the broker construction
 differs by one line inside `with_broker`.
 
-=== "Memory"
+<Tabs groupId="broker">
+<TabItem value="memory" label="Memory">
 
-    <!-- inline-rust: side-by-side broker-switch comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel -->
-    ```rust
-    use ruststream::memory::MemoryBroker;
-    use ruststream::runtime::{AppInfo, RustStream};
+{/* inline-rust: side-by-side broker-switch comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel */}
+```rust
+use ruststream::memory::MemoryBroker;
+use ruststream::runtime::{AppInfo, RustStream};
 
-    #[ruststream::app]
-    fn app() -> RustStream {
-        RustStream::new(AppInfo::new("orders", "0.1.0"))
-            .with_broker(MemoryBroker::new(), |b| b.include_router(routes::orders()))
-    }
-    ```
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include_router(routes::orders()))
+}
+```
 
-=== "NATS"
+</TabItem>
+<TabItem value="nats" label="NATS">
 
-    <!-- inline-rust: NATS half of the broker-switch comparison; depends on the external ruststream-nats crate, no in-repo compiled home -->
-    ```rust
-    use ruststream::runtime::{AppInfo, RustStream};
-    use ruststream_nats::NatsBroker;
+{/* inline-rust: NATS half of the broker-switch comparison; depends on the external ruststream-nats crate, no in-repo compiled home */}
+```rust
+use ruststream::runtime::{AppInfo, RustStream};
+use ruststream_nats::NatsBroker;
 
-    #[ruststream::app]
-    fn app() -> RustStream {
-        RustStream::new(AppInfo::new("orders", "0.1.0"))
-            .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+            b.include_router(routes::orders())
+        })
+}
+```
+
+</TabItem>
+<TabItem value="redis" label="Redis">
+
+{/* inline-rust: Redis half of the broker-switch comparison; depends on the external ruststream-fred crate, no in-repo compiled home */}
+```rust
+use ruststream::runtime::{AppInfo, RustStream};
+use ruststream_fred::RedisBroker;
+
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(RedisBroker::standalone("redis://localhost:6379"), |b| {
+            b.include_router(routes::orders())
+        })
+}
+```
+
+</TabItem>
+<TabItem value="rabbitmq" label="RabbitMQ">
+
+{/* inline-rust: RabbitMQ half of the broker-switch comparison; depends on the external ruststream-lapin crate, no in-repo compiled home */}
+```rust
+use ruststream::runtime::{AppInfo, RustStream};
+use ruststream_lapin::LapinBroker;
+
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(LapinBroker::new("amqp://localhost:5672"), |b| {
+            b.include_router(routes::orders())
+        })
+}
+```
+
+</TabItem>
+<TabItem value="kafka" label="Kafka">
+
+{/* inline-rust: Kafka half of the broker-switch comparison; depends on the external ruststream-rdkafka crate, no in-repo compiled home */}
+```rust
+use ruststream::runtime::{AppInfo, RustStream};
+use ruststream_rdkafka::KafkaBroker;
+
+#[ruststream::app]
+fn app() -> RustStream {
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(
+            KafkaBroker::new(["localhost:9092"]).default_group("orders"),
+            |b| {
                 b.include_router(routes::orders())
-            })
-    }
-    ```
+            },
+        )
+}
+```
 
-=== "Redis"
-
-    <!-- inline-rust: Redis half of the broker-switch comparison; depends on the external ruststream-fred crate, no in-repo compiled home -->
-    ```rust
-    use ruststream::runtime::{AppInfo, RustStream};
-    use ruststream_fred::RedisBroker;
-
-    #[ruststream::app]
-    fn app() -> RustStream {
-        RustStream::new(AppInfo::new("orders", "0.1.0"))
-            .with_broker(RedisBroker::standalone("redis://localhost:6379"), |b| {
-                b.include_router(routes::orders())
-            })
-    }
-    ```
-
-=== "RabbitMQ"
-
-    <!-- inline-rust: RabbitMQ half of the broker-switch comparison; depends on the external ruststream-lapin crate, no in-repo compiled home -->
-    ```rust
-    use ruststream::runtime::{AppInfo, RustStream};
-    use ruststream_lapin::LapinBroker;
-
-    #[ruststream::app]
-    fn app() -> RustStream {
-        RustStream::new(AppInfo::new("orders", "0.1.0"))
-            .with_broker(LapinBroker::new("amqp://localhost:5672"), |b| {
-                b.include_router(routes::orders())
-            })
-    }
-    ```
-
-=== "Kafka"
-
-    <!-- inline-rust: Kafka half of the broker-switch comparison; depends on the external ruststream-rdkafka crate, no in-repo compiled home -->
-    ```rust
-    use ruststream::runtime::{AppInfo, RustStream};
-    use ruststream_rdkafka::KafkaBroker;
-
-    #[ruststream::app]
-    fn app() -> RustStream {
-        RustStream::new(AppInfo::new("orders", "0.1.0"))
-            .with_broker(
-                KafkaBroker::new(["localhost:9092"]).default_group("orders"),
-                |b| {
-                    b.include_router(routes::orders())
-                },
-            )
-    }
-    ```
+</TabItem>
+</Tabs>
 
 Each broker crate documents its own `Config` and connection options. Subscriptions that need
 broker-specific options (consumer groups, durable names) use that broker's descriptor in the
