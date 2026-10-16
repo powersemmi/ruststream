@@ -1,132 +1,244 @@
-//! Delayed redelivery written without the `macros` feature: `retry_after` for the not-ready-yet
-//! case, and per-element delays in a selective batch outcome.
+//! Redelivery on request, written without the `macros` feature: `retry_after` brings a delivery
+//! back after a delay, per element on a batch, and `max_attempts` with `dead_letter` ends a
+//! message that keeps coming back. The tests are the ones of `examples/retry.rs`.
 //!
 //! ```text
-//! cargo run --example manual_retry --no-default-features --features memory,json
+//! cargo test --example manual_retry --no-default-features --features testing,memory,json
 //! ```
 
-use std::error::Error;
-use std::future::{Future, ready};
-use std::time::Duration;
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use ruststream::codec::JsonCodec;
+use std::collections::HashSet;
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
+
 use ruststream::memory::prelude::*;
-// The derive and the pipeline's message type share the name in different namespaces: the derive
-// is the macro `ruststream::Outgoing`, the value flowing through a publish transform is the type
-// `ruststream::runtime::Outgoing`.
-use ruststream::runtime::{Outgoing, PublishContext};
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Payment {
     id: u64,
-    settled: bool,
 }
 
-// --8<-- [start:retry_after]
-/// The not-ready-yet case: the upstream has not settled this payment, so an immediate
-/// redelivery would just spin. Ask the broker to redeliver no sooner than five seconds from now.
-struct Reconcile;
+// `#[outgoing(name = "payments")]` by hand: the type fixes its destination.
+impl OutgoingDestination for Payment {
+    type Form = FixedName;
 
-impl Handle<Payment> for Reconcile {
-    fn handle(
-        &self,
-        payment: &Payment,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        if !payment.settled {
-            return ready(Err(HandlerOutcome::retry_after(Duration::from_secs(5))));
+    const DESTINATION: &'static str = "payments";
+}
+
+impl MessageHeaders for Payment {
+    type Contract = NoHeaders;
+}
+
+/// Stands in for the bank's ledger: which payments have cleared.
+#[derive(Default)]
+struct Ledger {
+    cleared: Mutex<HashSet<u64>>,
+}
+
+impl Ledger {
+    fn clear(&self, id: u64) {
+        if let Ok(mut cleared) = self.cleared.lock() {
+            cleared.insert(id);
         }
-        println!("payment {} settled", payment.id);
-        ready(Ok(()))
+    }
+
+    fn is_cleared(&self, id: u64) -> bool {
+        self.cleared
+            .lock()
+            .is_ok_and(|cleared| cleared.contains(&id))
     }
 }
-// --8<-- [end:retry_after]
 
-// --8<-- [start:batch_retry_after]
-/// Selective outcomes carry per-element delays: settled payments ack immediately, pending ones
-/// come back in thirty seconds without holding up the rest of the batch.
-struct ReconcileBatch;
+mod retry_after {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::future::{Future, ready};
+    use std::sync::Arc;
+    use std::time::Duration;
 
-impl Handle<[Payment]> for ReconcileBatch {
-    fn handle(
-        &self,
-        payments: &[Payment],
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(Err(payments
-            .iter()
-            .map(|payment| {
-                if payment.settled {
-                    HandlerOutcome::ack()
-                } else {
-                    HandlerOutcome::retry_after(Duration::from_secs(30))
-                }
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Ledger, Payment};
+
+    // --8<-- [start:retry_after]
+    const RECHECK: Duration = Duration::from_secs(5);
+
+    struct Reconcile;
+
+    impl Handle<Payment, (), (), (), Arc<Ledger>> for Reconcile {
+        fn handle(
+            &self,
+            payment: &Payment,
+            _outs: &(),
+            ctx: &mut Context<'_, (), Arc<Ledger>>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            if !ctx.state().is_cleared(payment.id) {
+                // The bank has not cleared it yet: an immediate redelivery would only spin.
+                return ready(Err(HandlerOutcome::retry_after(RECHECK)));
+            }
+            tracing::info!(payment.id, "reconciled");
+            ready(Ok(()))
+        }
+    }
+
+    fn app() -> impl App<State = Arc<Ledger>> {
+        RustStream::new(AppInfo::new("payments", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Ledger::default())))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(subscriber("payments", Reconcile).build());
             })
-            .collect()))
+    }
+    // --8<-- [end:retry_after]
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pending_payment_comes_back_after_the_delay() -> Result<(), Box<dyn Error>> {
+        let ledger = Arc::new(Ledger::default());
+        let tb = TestApp::with_state(app(), |_| Arc::clone(&ledger)).await?;
+        tb.message(&Payment { id: 7 }).publish().await?;
+        tb.broker::<MemoryBroker>()
+            .subscriber("payments")
+            .assert_called_once()
+            .settled(HandlerOutcome::retry_after(RECHECK));
+
+        ledger.clear(7);
+        tb.advance(RECHECK).await?;
+        tb.broker::<MemoryBroker>()
+            .subscriber("payments")
+            .assert_called(2)
+            .settled(HandlerOutcome::ack());
+        Ok(())
     }
 }
-// --8<-- [end:batch_retry_after]
 
-// --8<-- [start:mount]
-/// A transform on the retry position: it stamps every copy with the subscription the delivery
-/// came from, so a redelivery is recognisable downstream. Transforms here read the delivery being
-/// retried, the way a reply's do.
-struct DeferredStamp;
+mod batch_retry_after {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::future::{Future, ready};
+    use std::sync::Arc;
+    use std::time::Duration;
 
-impl<C, Options> PublishTransform<ForReply<C>, Options> for DeferredStamp {
-    type Destination = Reads;
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
 
-    fn apply(
-        &self,
-        out: &mut Outgoing<'_>,
-        _options: &mut Option<Options>,
-        cx: &PublishContext<'_, C>,
-    ) {
-        out.headers_mut()
-            .insert("x-retried-from", cx.name().to_owned());
+    use super::{Ledger, Payment};
+
+    // --8<-- [start:batch_retry_after]
+    const RECHECK: Duration = Duration::from_secs(30);
+
+    /// One outcome per element: a cleared payment is acked, a pending one alone comes back.
+    struct Reconcile;
+
+    impl Handle<[Payment], (), (), (), Arc<Ledger>> for Reconcile {
+        fn handle(
+            &self,
+            payments: &[Payment],
+            _outs: &(),
+            ctx: &mut Context<'_, (), Arc<Ledger>>,
+        ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+            ready(Err(payments
+                .iter()
+                .map(|payment| {
+                    if ctx.state().is_cleared(payment.id) {
+                        HandlerOutcome::ack()
+                    } else {
+                        HandlerOutcome::retry_after(RECHECK)
+                    }
+                })
+                .collect()))
+        }
+    }
+
+    fn app(broker: MemoryBroker<Retaining>) -> impl App<State = Arc<Ledger>> {
+        RustStream::new(AppInfo::new("payments", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Ledger::default())))
+            .with_broker(broker, |b| {
+                b.include(
+                    subscriber("payments", Reconcile)
+                        .batch(nonzero!(2))
+                        .start_at(MemoryPosition::start())
+                        .build(),
+                );
+            })
+    }
+    // --8<-- [end:batch_retry_after]
+
+    #[tokio::test(start_paused = true)]
+    async fn only_the_pending_payment_comes_back() -> Result<(), Box<dyn Error>> {
+        // The log already holds both payments, so the subscription reads them as one batch.
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
+        let publisher = broker.publisher();
+        for id in [1, 2] {
+            publisher.message(&Payment { id }).publish().await?;
+        }
+        let ledger = Arc::new(Ledger::default());
+        ledger.clear(1);
+        let tb = TestApp::with_state(app(broker), |_| Arc::clone(&ledger)).await?;
+        tb.settle().await?;
+
+        tb.advance(RECHECK).await?;
+        let batches = tb
+            .broker::<MemoryBroker<Retaining>>()
+            .subscriber("payments")
+            .assert_called(2)
+            .batches::<Payment>();
+        assert_eq!(batches[1], [Payment { id: 2 }]);
+        Ok(())
     }
 }
 
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("retry", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        // --8<-- [start:declaration]
-        // A poison message is one that never settles, and the cap is what ends it: after five
-        // deliveries the payment goes to the dead-letter subject instead of coming back.
-        b.include(subscriber("payments", Reconcile).build())
-            .max_attempts(nonzero!(5u32))
-            .dead_letter("payments.dead");
-        // --8<-- [end:declaration]
-        // --8<-- [start:named]
-        // Where a subscription's descriptor addresses nothing - a wildcard, a filter, a pattern -
-        // the mount site names where a copy goes, right after the publisher it belongs to.
-        b.include(subscriber("payments.settled", Reconcile).build())
-            .max_attempts(nonzero!(5u32))
-            .out_retry(Publish)
-            .to("payments.retry");
-        // --8<-- [end:named]
-        // Batches dispatch per batch rather than per delivery, and the batch input is what says
-        // so; the batch size is the one parameter the mount owes the broker. Every registration
-        // already has a publisher for its copies, taken from the broker's default policy, and
-        // naming one replaces it: another policy, another codec, a transform.
-        b.include(
-            subscriber("payments", ReconcileBatch)
-                .batch(nonzero!(64))
-                .build(),
-        )
-        .max_attempts(nonzero!(5u32))
-        .dead_letter("payments.dead")
-        .out_retry(Publish)
-        .codec(JsonCodec)
-        .transform(DeferredStamp);
-    })
-}
-// --8<-- [end:mount]
+mod declaration {
+    use std::error::Error;
+    use std::future::{Future, ready};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::Payment;
+
+    // --8<-- [start:declaration]
+    /// The gateway rejects this payment every time, so on its own it would never stop coming back.
+    struct Charge;
+
+    impl Handle<Payment> for Charge {
+        fn handle(
+            &self,
+            payment: &Payment,
+            _outs: &(),
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            tracing::warn!(payment.id, "gateway refused the charge");
+            ready(Err(HandlerOutcome::retry()))
+        }
+    }
+
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            // Three deliveries, then the payment goes to the dead-letter subject.
+            b.include(subscriber("payments", Charge).build())
+                .max_attempts(nonzero!(3u32))
+                .dead_letter("payments.dead");
+        })
+    }
+    // --8<-- [end:declaration]
+
+    #[tokio::test]
+    async fn the_third_failure_goes_to_the_dead_letter_subject() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        tb.message(&Payment { id: 7 }).publish().await?;
+
+        let broker = tb.broker::<MemoryBroker>();
+        broker.subscriber("payments").assert_called(3);
+        broker
+            .published::<Payment>("payments.dead")
+            .assert_called_once()
+            .with(&Payment { id: 7 });
+        Ok(())
+    }
 }
+
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

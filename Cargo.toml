@@ -96,7 +96,14 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_retry"
 path = "examples/manual/retry.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_handler_outcome"
+path = "examples/manual/handler_outcome.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_failure_policy"
@@ -106,7 +113,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_post_settle"
 path = "examples/manual/post_settle.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_routing"
@@ -225,7 +233,13 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "retry"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "handler_outcome"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "failure_policy"
@@ -233,7 +247,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "post_settle"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "routing"
