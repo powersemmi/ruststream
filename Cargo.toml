@@ -388,6 +388,39 @@ path = "examples/manual/testing_service_state.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
+[[example]]
+name = "testing_subscriber_calls"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_subscriber_calls"
+path = "examples/manual/testing_subscriber_calls.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "testing_subscriber_payloads"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_subscriber_payloads"
+path = "examples/manual/testing_subscriber_payloads.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "testing_subscriber_carried"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_subscriber_carried"
+path = "examples/manual/testing_subscriber_carried.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
