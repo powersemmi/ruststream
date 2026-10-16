@@ -14,6 +14,18 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/): a running service scaffolded with `cargo generate`
 - [Tutorial](https://powersemmi.github.io/ruststream/latest/guides/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
 
+## Components
+
+- [Application](https://powersemmi.github.io/ruststream/latest/components/application/): the `RustStream` value, `#[ruststream::app]`, lifecycle hooks, running the service and the `ruststream` command
+- [State](https://powersemmi.github.io/ruststream/latest/components/application/state/): shared application state, and dependency injection containers wired into it
+- [Testing](https://powersemmi.github.io/ruststream/latest/components/application/testing/): `TestApp`, the test client that runs a service's production app in process, one page per function
+- [Starting and stopping](https://powersemmi.github.io/ruststream/latest/components/application/testing/starting-and-stopping/): `TestApp::start`, `start_live`, `with_state`, `shutdown`
+- [Driving](https://powersemmi.github.io/ruststream/latest/components/application/testing/driving/): `broker::<B>()`, `broker_named`, `message`, `publish`, `settle`, `advance`, `drain`
+- [Service state](https://powersemmi.github.io/ruststream/latest/components/application/testing/service-state/): `run_result`, `assert_running`, `assert_shut_down`
+- [Records](https://powersemmi.github.io/ruststream/latest/components/application/testing/records/): `subscriber(name)`, `published::<T>(name)`, `out::<M>()`
+- [Subscriber assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/subscriber-assertions/): what a handler received and how it settled
+- [Published assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/published-assertions/): what was published, with its headers and per-message settings
+
 ## Module overviews on docs.rs
 
 - [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, broker steps that read them, batches, values a broker's deliveries already hold, workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
