@@ -41,5 +41,305 @@
   },
   "versions.label": {
     "message": "版本"
+  },
+  "landing.meta.title": {
+    "message": "Rust 的异步消息框架"
+  },
+  "landing.meta.description": {
+    "message": "RustStream 是 Rust 的异步消息框架：在与 Broker 无关的核心之上编写 #[subscriber] 处理器，配有十三个 Broker crate、AsyncAPI 生成和进程内测试。"
+  },
+  "landing.arch.broker": {
+    "message": "Broker"
+  },
+  "landing.arch.broker.role": {
+    "message": "Broker crate 封装一个客户端，并遵守 conformance 套件检查的契约；核心不依赖任何 Broker。"
+  },
+  "landing.arch.subscription": {
+    "message": "订阅"
+  },
+  "landing.arch.subscription.role": {
+    "message": "订阅说明要消费什么，在启动时针对已连接的 Broker 解析一次。"
+  },
+  "landing.arch.codec": {
+    "message": "编解码器"
+  },
+  "landing.arch.codec.role": {
+    "message": "编解码器把消息内容转换成处理器的类型：JSON、MessagePack 或 CBOR 在编译时选定，原始字节则完全不需要编解码器。"
+  },
+  "landing.arch.middleware": {
+    "message": "中间件"
+  },
+  "landing.arch.middleware.role": {
+    "message": "消费层和发布层包裹每一次投递：日志、指标、追踪，或者你自己的层。"
+  },
+  "landing.arch.handler": {
+    "message": "处理器"
+  },
+  "landing.arch.handler.role": {
+    "message": "标注 #[subscriber] 的异步函数；它的返回值决定投递的确认结果，或者成为回复。"
+  },
+  "landing.arch.reply": {
+    "message": "回复"
+  },
+  "landing.arch.reply.role": {
+    "message": "回复类型派生 Outgoing 并声明发往何处；运行时负责编码和发布。"
+  },
+  "landing.arch.publisher": {
+    "message": "发布者"
+  },
+  "landing.arch.publisher.role": {
+    "message": "发布策略与已连接的 Broker 配对而成；处理器还可以通过有类型的 Out 槽发布。"
+  },
+  "landing.arch.asyncapi.role": {
+    "message": "同一组声明生成 AsyncAPI 3.1 文档，因此文档不会与代码脱节。"
+  },
+  "landing.arch.testapp.role": {
+    "message": "测试以进程内的 Broker 启动生产环境的应用，驱动真实的分发流程，不需要服务器。"
+  },
+  "landing.arch.eyebrow": {
+    "message": "架构"
+  },
+  "landing.arch.title": {
+    "message": "一条消息的路径"
+  },
+  "landing.arch.lede": {
+    "message": "投递从 Broker 出发，经过订阅和编解码器到达你的处理器，回复沿原路返回。每个环节都是编译器检查的类型。"
+  },
+  "landing.arch.diagramLabel": {
+    "message": "消息经过的各个环节示意图"
+  },
+  "landing.brokers.files": {
+    "message": "文件 / stdio"
+  },
+  "landing.brokers.sql": {
+    "message": "SQL 数据库"
+  },
+  "landing.brokers.memory": {
+    "message": "进程内存"
+  },
+  "landing.brokers.label": {
+    "message": "一个处理器，十四种传输"
+  },
+  "landing.next.installation": {
+    "message": "安装"
+  },
+  "landing.next.installation.body": {
+    "message": "各项 feature 和 crate 的引入方式。"
+  },
+  "landing.next.tutorial": {
+    "message": "教程"
+  },
+  "landing.next.tutorial.body": {
+    "message": "一步步构建一个服务。"
+  },
+  "landing.next.testing": {
+    "message": "测试"
+  },
+  "landing.next.testing.body": {
+    "message": "在进程内测试处理器，不需要服务器。"
+  },
+  "landing.next.http": {
+    "message": "HTTP 框架"
+  },
+  "landing.next.http.body": {
+    "message": "与 axum 并行运行，配合事务性 outbox。"
+  },
+  "landing.next.reference": {
+    "message": "API 参考"
+  },
+  "landing.next.reference.body": {
+    "message": "docs.rs 上的全部类型。"
+  },
+  "landing.next.benchmarks": {
+    "message": "基准测试"
+  },
+  "landing.next.benchmarks.body": {
+    "message": "代码的开销，以及每个 Broker 与其原生客户端的对比。"
+  },
+  "landing.cta.title": {
+    "message": "从{accent}开始"
+  },
+  "landing.cta.titleAccent": {
+    "message": "一个处理器"
+  },
+  "landing.cta.lede": {
+    "message": "用 {command} 一分钟生成一个服务，或者向文档提问。"
+  },
+  "landing.hero.quickStart": {
+    "message": "快速上手"
+  },
+  "landing.hero.badge": {
+    "message": "开源 · Apache-2.0 · 100% 安全 Rust"
+  },
+  "landing.hero.title": {
+    "message": "Rust 异步消息，{accent}"
+  },
+  "landing.hero.titleAccent": {
+    "message": "任意 Broker"
+  },
+  "landing.hero.subtitle": {
+    "message": "{subscriber} 处理器只写一次，就能运行在 Kafka、NATS、RabbitMQ 以及另外十种 Broker 上；误用在上线之前就由编译器拦下。"
+  },
+  "landing.hero.canvasLabel": {
+    "message": "动画：消息离开各个 Broker，经过 RustStream 核心，到达处理器。"
+  },
+  "landing.hero.legendBrokers": {
+    "message": "Broker"
+  },
+  "landing.hero.legendHandlers": {
+    "message": "处理器"
+  },
+  "landing.numbers.json": {
+    "message": "消费一条消息，并把 JSON 解码为结构体"
+  },
+  "landing.numbers.bytes": {
+    "message": "消费原始字节，不经过编解码器"
+  },
+  "landing.numbers.middleware": {
+    "message": "经过四层中间件消费"
+  },
+  "landing.numbers.reply": {
+    "message": "编码并发布一条回复"
+  },
+  "landing.numbers.eyebrow": {
+    "message": "每条消息的开销"
+  },
+  "landing.numbers.title": {
+    "message": "每条消息{accent}"
+  },
+  "landing.numbers.titleAccent": {
+    "message": "零次内存分配"
+  },
+  "landing.numbers.lede": {
+    "message": "框架自身代码在稳定状态下处理一条消息的开销，每次改动都由基准测试计数。Broker 客户端不计入这些数字。"
+  },
+  "landing.numbers.instructions": {
+    "message": "条指令"
+  },
+  "landing.numbers.allocations": {
+    "message": "{count} 次内存分配"
+  },
+  "landing.numbers.note": {
+    "message": "测量环境：{version}，{date}，{cpu}。基准测试页面列出了{link}，包括会分配内存的路径。"
+  },
+  "landing.numbers.link": {
+    "message": "全部场景和测量方法"
+  },
+  "landing.compare.eyebrow": {
+    "message": "同一个消费者，写两遍"
+  },
+  "landing.compare.title": {
+    "message": "写{accent}，不写循环"
+  },
+  "landing.compare.titleAccent": {
+    "message": "处理器"
+  },
+  "landing.compare.lede": {
+    "message": "两个程序都从 Kafka 读取订单、解码并打印编号。左边手动驱动客户端，右边由运行时驱动。"
+  },
+  "landing.compare.oldLabel": {
+    "message": "手写循环"
+  },
+  "landing.compare.newLabel": {
+    "message": "RustStream 的写法"
+  },
+  "landing.compare.byHand": {
+    "message": "手写"
+  },
+  "landing.compare.old.config": {
+    "message": "客户端配置和提交方式，全靠手写"
+  },
+  "landing.compare.old.decode": {
+    "message": "解码和每一条错误分支，全靠手写"
+  },
+  "landing.compare.old.shutdown": {
+    "message": "信号处理和关闭，全靠手写"
+  },
+  "landing.compare.old.again": {
+    "message": "换一个主题、换一个 Broker，全部再写一遍"
+  },
+  "landing.compare.terminal": {
+    "message": "终端"
+  },
+  "landing.compare.caption": {
+    "message": "{example} 示例在本地 Kafka 上的一次真实运行，开启了 {feature} feature。"
+  },
+  "landing.compare.new.decode": {
+    "message": "用构建时选定的编解码器解码每条消息"
+  },
+  "landing.compare.new.settle": {
+    "message": "按处理器返回的结果确认每条消息"
+  },
+  "landing.compare.new.signals": {
+    "message": "收到 Ctrl+C 或 SIGTERM 时停止并关闭 Broker"
+  },
+  "landing.compare.new.docs": {
+    "message": "用 {command} 打印自己的 AsyncAPI 文档，并能在 {harness} 下不依赖 Kafka 运行"
+  },
+  "landing.principles.agnostic.title": {
+    "message": "核心里没有 Broker"
+  },
+  "landing.principles.agnostic.body": {
+    "message": "核心只有 trait 和类型。每个 Broker 都是独立的 crate，由 {suite} 套件检查是否遵守契约。"
+  },
+  "landing.principles.config.title": {
+    "message": "Broker 的配置留在 Broker crate 中"
+  },
+  "landing.principles.config.body": {
+    "message": "每个 Broker crate 都有自己的 {config}。客户端升级只改动这个 crate，框架不受影响。"
+  },
+  "landing.principles.compile.title": {
+    "message": "误用无法通过编译"
+  },
+  "landing.principles.compile.body": {
+    "message": "{ack} 会消费这次投递，所以第二次 ack 是编译错误。乱序的生命周期调用同样无法编译。"
+  },
+  "landing.principles.stream.title": {
+    "message": "订阅者就是流"
+  },
+  "landing.principles.stream.body": {
+    "message": "订阅者是一个 {stream}，背压随之而来。运行时在其之上构建处理器。"
+  },
+  "landing.principles.generic.title": {
+    "message": "泛型核心，契约里没有 dyn"
+  },
+  "landing.principles.generic.body": {
+    "message": "契约建立在关联类型和原生的 {rpitit} 之上。只有服务需要时，运行时才做类型擦除。"
+  },
+  "landing.principles.capabilities.title": {
+    "message": "能力 trait，而不是臃肿的接口"
+  },
+  "landing.principles.capabilities.body": {
+    "message": "批量、事务、请求-回复、分区和重新定位都是独立的 trait。Broker 只实现自己支持的那些。"
+  },
+  "landing.principles.eyebrow": {
+    "message": "设计"
+  },
+  "landing.principles.title": {
+    "message": "框架坚持的原则"
+  },
+  "landing.compare.replayLabel": {
+    "message": "再次播放这次运行"
+  },
+  "landing.compare.replay": {
+    "message": "重放"
+  },
+  "landing.quickstart.macros": {
+    "message": "宏"
+  },
+  "landing.quickstart.manual": {
+    "message": "手写"
+  },
+  "landing.quickstart.note": {
+    "message": "{app} 会生成 {main}，其中包含运行时的全部样板代码：{run} 启动服务，{gen} 打印该服务的 AsyncAPI 文档。"
+  },
+  "landing.next.quickstart": {
+    "message": "快速上手"
+  },
+  "landing.next.quickstart.body": {
+    "message": "用 {command} 生成服务骨架。"
+  },
+  "landing.next.asyncapi.body": {
+    "message": "服务根据自身声明生成的文档。"
   }
 }
