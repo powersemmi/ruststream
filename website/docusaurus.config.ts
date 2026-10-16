@@ -194,7 +194,8 @@ const config: Config = {
         {type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left'},
         {type: 'custom-versionDropdown', position: 'left'},
         {type: 'custom-askAi', position: 'right'},
-        {type: 'localeDropdown', position: 'right'},
+        // An archive is built in English only; a language menu would offer nothing to switch to.
+        ...(archive ? [] : [{type: 'localeDropdown' as const, position: 'right' as const}]),
         {
           href: 'https://github.com/powersemmi/ruststream',
           label: 'GitHub',
