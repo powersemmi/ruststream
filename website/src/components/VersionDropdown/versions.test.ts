@@ -30,6 +30,14 @@ describe('currentEntry', () => {
     );
     expect(currentEntry(versions, '/ruststream/', '/ruststream/0.1/')).toBeUndefined();
   });
+
+  it('finds the version of a translated build, whose base URL ends in its language', () => {
+    const versions = parseVersions(published);
+    expect(currentEntry(versions, '/ruststream/', '/ruststream/next/ru/')?.title).toBe(
+      'next (unreleased)',
+    );
+    expect(currentEntry(versions, '/ruststream/', '/ruststream/latest/zh/')?.version).toBe('0.7');
+  });
 });
 
 describe('latestEntry', () => {
