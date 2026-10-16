@@ -322,6 +322,41 @@ path = "examples/manual/testing_records.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
+# The application scenarios of the component pages run as tests too: the macro form and its
+# manual twin drive the same service through the same test body.
+[[example]]
+name = "app_macro"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_app_macro"
+path = "examples/manual/app_macro.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "app_running"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_app_running"
+path = "examples/manual/app_running.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "app_lifecycle"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_app_lifecycle"
+path = "examples/manual/app_lifecycle.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
