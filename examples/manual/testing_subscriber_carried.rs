@@ -51,7 +51,6 @@ mod with_value {
     use super::Wire;
     use super::carried_rows::{Row, Rows};
 
-    // --8<-- [start:with_value]
     struct Greet;
 
     impl Handle<Row> for Greet {
@@ -72,6 +71,7 @@ mod with_value {
         })
     }
 
+    // --8<-- [start:with_value]
     #[tokio::test]
     async fn the_handler_got_the_row() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -102,7 +102,6 @@ mod received_values {
     use super::Wire;
     use super::carried_rows::{Row, Rows};
 
-    // --8<-- [start:received_values]
     struct Greet;
 
     impl Handle<Row> for Greet {
@@ -123,6 +122,7 @@ mod received_values {
         })
     }
 
+    // --8<-- [start:received_values]
     #[tokio::test]
     async fn the_handler_got_every_row() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

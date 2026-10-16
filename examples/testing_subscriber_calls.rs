@@ -29,7 +29,6 @@ mod assert_called_once {
 
     use super::Order;
 
-    // --8<-- [start:assert_called_once]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         tracing::info!(order.id, "accepted");
@@ -42,6 +41,7 @@ mod assert_called_once {
         })
     }
 
+    // --8<-- [start:assert_called_once]
     #[tokio::test]
     async fn the_handler_ran_once() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -67,7 +67,6 @@ mod assert_called {
 
     use super::Order;
 
-    // --8<-- [start:assert_called]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         tracing::info!(order.id, "accepted");
@@ -80,6 +79,7 @@ mod assert_called {
         })
     }
 
+    // --8<-- [start:assert_called]
     #[tokio::test]
     async fn the_handler_ran_once_per_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -102,7 +102,6 @@ mod assert_not_called {
 
     use super::Order;
 
-    // --8<-- [start:assert_not_called]
     #[derive(OutSlot)]
     #[publishes(Order)]
     struct Rejected;
@@ -128,6 +127,7 @@ mod assert_not_called {
         })
     }
 
+    // --8<-- [start:assert_not_called]
     #[tokio::test]
     async fn a_valid_order_is_not_reviewed() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -153,7 +153,6 @@ mod settled {
 
     use super::Order;
 
-    // --8<-- [start:settled]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         if order.id == 0 {
@@ -168,6 +167,7 @@ mod settled {
         })
     }
 
+    // --8<-- [start:settled]
     #[tokio::test]
     async fn an_order_without_an_id_is_dropped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -195,7 +195,6 @@ mod outcomes {
 
     use super::Order;
 
-    // --8<-- [start:outcomes]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         if order.id == 0 {
@@ -210,6 +209,7 @@ mod outcomes {
         })
     }
 
+    // --8<-- [start:outcomes]
     #[tokio::test]
     async fn every_order_settled_in_turn() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -236,7 +236,6 @@ mod assert_outcome {
 
     use super::Order;
 
-    // --8<-- [start:assert_outcome]
     #[subscriber("orders")]
     async fn reserve(order: &Order) -> HandlerOutcome {
         tracing::info!(order.id, "stock not there yet");
@@ -249,6 +248,7 @@ mod assert_outcome {
         })
     }
 
+    // --8<-- [start:assert_outcome]
     #[tokio::test(start_paused = true)]
     async fn a_delayed_retry_reads_as_a_nack() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -276,7 +276,6 @@ mod panicked {
 
     use super::Order;
 
-    // --8<-- [start:panicked]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         assert_ne!(order.id, 0, "an order always has an id");
@@ -289,6 +288,7 @@ mod panicked {
         })
     }
 
+    // --8<-- [start:panicked]
     #[tokio::test]
     async fn a_panic_stops_the_service() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -314,7 +314,6 @@ mod assert_last_failed_to_decode {
 
     use super::{Order, Wire};
 
-    // --8<-- [start:assert_last_failed_to_decode]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         tracing::info!(order.id, "accepted");
@@ -327,6 +326,7 @@ mod assert_last_failed_to_decode {
         })
     }
 
+    // --8<-- [start:assert_last_failed_to_decode]
     #[tokio::test]
     async fn bytes_that_are_no_order_are_dropped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

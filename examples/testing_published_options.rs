@@ -109,7 +109,6 @@ mod with_options {
 
     use super::{Order, PriorityOptions, PriorityPublish, PriorityPublishSteps};
 
-    // --8<-- [start:with-options]
     #[derive(OutSlot)]
     #[publishes(Order)]
     struct Shipments;
@@ -139,6 +138,7 @@ mod with_options {
         })
     }
 
+    // --8<-- [start:with-options]
     #[tokio::test]
     async fn an_express_order_ships_at_top_priority() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -167,7 +167,6 @@ mod assert_options_default {
 
     use super::{Order, PriorityOptions, PriorityPublish, PriorityPublishSteps};
 
-    // --8<-- [start:assert-options-default]
     #[derive(OutSlot)]
     #[publishes(Order)]
     struct Shipments;
@@ -197,6 +196,7 @@ mod assert_options_default {
         })
     }
 
+    // --8<-- [start:assert-options-default]
     #[tokio::test]
     async fn a_standard_order_ships_at_the_default_priority() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

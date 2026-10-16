@@ -38,7 +38,6 @@ mod run_result {
 
     use super::Order;
 
-    // --8<-- [start:run-result]
     struct Fulfil;
 
     impl Handle<Order> for Fulfil {
@@ -59,6 +58,7 @@ mod run_result {
         })
     }
 
+    // --8<-- [start:run-result]
     #[tokio::test]
     async fn a_panic_ends_the_run_with_an_error() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -82,7 +82,6 @@ mod assert_running {
 
     use super::Order;
 
-    // --8<-- [start:assert-running]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -103,6 +102,7 @@ mod assert_running {
         })
     }
 
+    // --8<-- [start:assert-running]
     #[tokio::test]
     async fn an_undecodable_order_does_not_stop_the_service() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -128,7 +128,6 @@ mod assert_shut_down {
 
     use super::Order;
 
-    // --8<-- [start:assert-shut-down]
     struct Fulfil;
 
     impl Handle<Order> for Fulfil {
@@ -149,6 +148,7 @@ mod assert_shut_down {
         })
     }
 
+    // --8<-- [start:assert-shut-down]
     #[tokio::test]
     async fn a_panic_shuts_the_service_down() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

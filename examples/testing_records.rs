@@ -31,7 +31,6 @@ mod subscriber {
 
     use super::Order;
 
-    // --8<-- [start:subscriber]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         if order.id == 0 {
@@ -46,6 +45,7 @@ mod subscriber {
         })
     }
 
+    // --8<-- [start:subscriber]
     #[tokio::test]
     async fn the_handler_received_the_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -74,7 +74,6 @@ mod published {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:published]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Receipt {
         Receipt { order_id: order.id }
@@ -86,6 +85,7 @@ mod published {
         })
     }
 
+    // --8<-- [start:published]
     #[tokio::test]
     async fn a_receipt_is_published() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -113,7 +113,6 @@ mod out {
 
     use super::Order;
 
-    // --8<-- [start:out]
     #[derive(OutSlot)]
     #[publishes(Order)]
     struct Audit;
@@ -132,6 +131,7 @@ mod out {
         })
     }
 
+    // --8<-- [start:out]
     #[tokio::test]
     async fn the_audit_slot_carried_the_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

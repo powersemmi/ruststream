@@ -78,7 +78,6 @@ mod with {
 
     use super::Order;
 
-    // --8<-- [start:with]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -99,6 +98,7 @@ mod with {
         })
     }
 
+    // --8<-- [start:with]
     #[tokio::test]
     async fn the_latest_call_got_the_second_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -125,7 +125,6 @@ mod with_raw {
 
     use super::Order;
 
-    // --8<-- [start:with_raw]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -146,6 +145,7 @@ mod with_raw {
         })
     }
 
+    // --8<-- [start:with_raw]
     #[tokio::test]
     async fn the_order_arrived_as_json() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -174,7 +174,6 @@ mod received {
 
     use super::Order;
 
-    // --8<-- [start:received]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -195,6 +194,7 @@ mod received {
         })
     }
 
+    // --8<-- [start:received]
     #[tokio::test]
     async fn the_orders_arrived_in_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -224,7 +224,6 @@ mod received_raw {
 
     use super::{Frame, Wire};
 
-    // --8<-- [start:received_raw]
     struct Ingest;
 
     impl<'p> Handle<Frame<'p>> for Ingest {
@@ -245,6 +244,7 @@ mod received_raw {
         })
     }
 
+    // --8<-- [start:received_raw]
     #[tokio::test]
     async fn the_frames_arrived_untouched() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -275,7 +275,6 @@ mod batches {
 
     use super::Order;
 
-    // --8<-- [start:batches]
     struct Bill;
 
     impl Handle<[Order]> for Bill {
@@ -301,6 +300,7 @@ mod batches {
         })
     }
 
+    // --8<-- [start:batches]
     #[tokio::test]
     async fn the_orders_were_billed_two_at_a_time() -> Result<(), Box<dyn Error>> {
         // The log already holds three orders, so the subscription reads them as full batches.
@@ -339,7 +339,6 @@ mod batches_raw {
 
     use super::{Frame, Wire};
 
-    // --8<-- [start:batches_raw]
     struct Ingest;
 
     impl<'p> Handle<[Frame<'p>]> for Ingest {
@@ -365,6 +364,7 @@ mod batches_raw {
         })
     }
 
+    // --8<-- [start:batches_raw]
     #[tokio::test]
     async fn the_frames_were_cut_in_pairs() -> Result<(), Box<dyn Error>> {
         // The log already holds three frames, so the subscription reads them as full batches.
@@ -400,7 +400,6 @@ mod assert_batch_sizes {
 
     use super::Order;
 
-    // --8<-- [start:assert_batch_sizes]
     struct Bill;
 
     impl Handle<[Order]> for Bill {
@@ -426,6 +425,7 @@ mod assert_batch_sizes {
         })
     }
 
+    // --8<-- [start:assert_batch_sizes]
     #[tokio::test]
     async fn five_orders_make_three_calls() -> Result<(), Box<dyn Error>> {
         // The log already holds five orders, so the subscription reads them as full batches.

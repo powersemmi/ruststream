@@ -24,7 +24,8 @@ why on the line above the fence:
 An example region shown outside the Testing pages is what a service writes, so it holds no test (the
 tests that prove it sit in the same file, after the region's end marker) and opens with an item
 or an attribute, so the reader sees the signature of the code it shows, never a statement taken
-out of the middle of a function. An inline fence outside the Testing pages holds no test either.
+out of the middle of a function. An inline fence outside the Testing pages holds no test either. A region on a Testing page is
+the test that calls the documented function, without the handler and `fn app` above it.
 """
 
 import re
@@ -36,6 +37,7 @@ SNIPPET = re.compile(r'(?:^|\s)reference="([^"#]+)')
 REGION = re.compile(r'(?:^|\s)reference="[^"#]+#([^"]+)"')
 MARKER = re.compile(r"^\s*// --8<-- \[(start|end):([^\]]+)\]\s*$")
 TEST_ATTR = re.compile(r"^\s*#\[(?:tokio::)?test\b")
+SERVICE = re.compile(r"^\s*(?:#\[subscriber\b|(?:pub(?:\([^)]*\))?\s+)?fn app\b)")
 COMMENT = re.compile(r"^\s*//")
 ITEM = re.compile(
     r"^\s*(?:#!?\[|(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:const\s+)?(?:unsafe\s+)?"
@@ -69,6 +71,24 @@ def region_lines(source: Path, name: str) -> list[str] | None:
         if lines is not None:
             lines.append(line)
     return lines
+
+
+def testing_region_errors(path: Path, n: int, target: str, region: str) -> list[str]:
+    """A Testing page shows the test that calls its function; the service sits above it."""
+    source = ROOT / target
+    lines = region_lines(source, region) if source.is_file() else None
+    if lines is None:
+        return []
+    where = f"{path}:{n}: {target}#{region}"
+    errors = []
+    if not any(TEST_ATTR.match(line) for line in lines):
+        errors.append(f"{where} holds no test - a Testing page shows the test it documents")
+    if any(SERVICE.match(line) for line in lines):
+        errors.append(
+            f"{where} shows the service - move the region's start marker below the handler and"
+            " `fn app`, so the region holds only the test"
+        )
+    return errors
 
 
 def service_region_errors(path: Path, n: int, target: str, region: str) -> list[str]:
@@ -136,6 +156,8 @@ def lint(path: Path) -> list[str]:
             if snippet:
                 target = snippet.group(1)
                 region = REGION.search(line)
+                if region and target.startswith(EXAMPLES) and relative.startswith(TESTING_PAGES):
+                    errors.extend(testing_region_errors(path, n, target, region.group(1)))
                 # The rule is about a service's code, which lives under `examples/`; a page that
                 # documents a test suite (the broker contract) shows tests on purpose.
                 if (

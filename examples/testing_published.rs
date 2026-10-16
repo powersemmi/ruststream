@@ -37,7 +37,6 @@ mod assert_called_once {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:assert-called-once]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Receipt {
         Receipt { order_id: order.id }
@@ -49,6 +48,7 @@ mod assert_called_once {
         })
     }
 
+    // --8<-- [start:assert-called-once]
     #[tokio::test]
     async fn one_order_gets_one_receipt() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -73,7 +73,6 @@ mod assert_called {
 
     use super::{Order, Ticket};
 
-    // --8<-- [start:assert-called]
     #[derive(OutSlot)]
     #[publishes(Ticket)]
     struct Tickets;
@@ -101,6 +100,7 @@ mod assert_called {
         })
     }
 
+    // --8<-- [start:assert-called]
     #[tokio::test]
     async fn one_ticket_per_seat() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -126,7 +126,6 @@ mod assert_not_called {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:assert-not-called]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Result<Receipt, HandlerOutcome> {
         if order.seats == 0 {
@@ -141,6 +140,7 @@ mod assert_not_called {
         })
     }
 
+    // --8<-- [start:assert-not-called]
     #[tokio::test]
     async fn an_empty_order_gets_no_receipt() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -165,7 +165,6 @@ mod messages {
 
     use super::{Order, Ticket};
 
-    // --8<-- [start:messages]
     #[derive(OutSlot)]
     #[publishes(Ticket)]
     struct Tickets;
@@ -201,6 +200,7 @@ mod messages {
         })
     }
 
+    // --8<-- [start:messages]
     #[tokio::test]
     async fn every_ticket_names_its_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -233,7 +233,6 @@ mod with_header {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:with-header]
     /// Stamps the schema version on every reply this mounting sends.
     struct SchemaVersion;
 
@@ -275,6 +274,7 @@ mod with_header {
             })
     }
 
+    // --8<-- [start:with-header]
     #[tokio::test]
     async fn the_receipt_left_stamped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
