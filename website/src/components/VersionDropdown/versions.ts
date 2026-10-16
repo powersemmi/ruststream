@@ -1,5 +1,6 @@
 // The versions file sits at the site root, one level above every version directory, in the
-// format mike wrote it: newest first, `aliases` naming the directories that mirror a version.
+// format mike wrote it: newest first, a development version (`next`) above the releases,
+// `aliases` naming the directories that mirror a version.
 export interface VersionEntry {
   version: string;
   title: string;
@@ -45,6 +46,11 @@ export function currentEntry(
     versions.find((entry) => entry.version === directory) ??
     versions.find((entry) => entry.aliases.includes(directory))
   );
+}
+
+/** The newest release: the entry the `latest` alias points at (`next` is listed above it). */
+export function latestEntry(versions: VersionEntry[]): VersionEntry | undefined {
+  return versions.find((entry) => entry.aliases.includes('latest'));
 }
 
 export function versionRoot(siteRoot: string, version: string): string {

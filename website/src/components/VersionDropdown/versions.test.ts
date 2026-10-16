@@ -1,7 +1,8 @@
 import {describe, expect, it} from 'vitest';
-import {currentEntry, parseVersions, samePageIn, versionRoot} from './versions';
+import {currentEntry, latestEntry, parseVersions, samePageIn, versionRoot} from './versions';
 
 const published = [
+  {version: 'next', title: 'next (unreleased)', aliases: []},
   {version: '0.7', title: '0.7', aliases: ['latest']},
   {version: '0.6', title: '0.6', aliases: []},
 ];
@@ -24,7 +25,17 @@ describe('currentEntry', () => {
     const versions = parseVersions(published);
     expect(currentEntry(versions, '/ruststream/', '/ruststream/0.6/')?.version).toBe('0.6');
     expect(currentEntry(versions, '/ruststream/', '/ruststream/latest/')?.version).toBe('0.7');
+    expect(currentEntry(versions, '/ruststream/', '/ruststream/next/')?.title).toBe(
+      'next (unreleased)',
+    );
     expect(currentEntry(versions, '/ruststream/', '/ruststream/0.1/')).toBeUndefined();
+  });
+});
+
+describe('latestEntry', () => {
+  it('is the version the latest alias points at, wherever it sits in the list', () => {
+    expect(latestEntry(parseVersions(published))?.version).toBe('0.7');
+    expect(latestEntry(parseVersions([{version: 'next', aliases: []}]))).toBeUndefined();
   });
 });
 
@@ -33,6 +44,12 @@ describe('samePageIn', () => {
     expect(
       samePageIn('/ruststream/', '/ruststream/latest/', '/ruststream/latest/ru/getting-started/installation/', '0.6'),
     ).toBe('/ruststream/0.6/ru/getting-started/installation/');
+  });
+
+  it('maps a page of next to the same page of latest', () => {
+    expect(
+      samePageIn('/ruststream/', '/ruststream/next/', '/ruststream/next/zh/benchmarks/', 'latest'),
+    ).toBe('/ruststream/latest/zh/benchmarks/');
   });
 
   it('falls back to the version root for a path outside the build', () => {

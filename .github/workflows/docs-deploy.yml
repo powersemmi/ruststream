@@ -1,28 +1,47 @@
 name: Deploy docs
 
 on:
-  # The published site tracks releases, not main. A docs change merged today describes the
-  # crate that will ship, not the one a reader has installed, so publishing it immediately puts
-  # instructions for unreleased API in front of everyone on the current version. Deploying from
-  # the release keeps each documented version next to the code it documents; the CI workflow still
-  # builds and lints every docs change on its PR, so nothing reaches main unchecked.
+  # `latest` tracks releases. A docs change merged today describes the crate that will ship, not
+  # the one a reader has installed, so it reaches the numbered versions with the release that
+  # ships it.
   release:
     types: [published]
-  # The escape hatch: a typo fix or a broken link worth publishing between releases, run
-  # against the tag it belongs to.
+  # `main` is published as `next`, marked as unreleased on every page, so a reader of the
+  # upcoming version finds its documentation before the release.
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "website/**"
+      - "examples/**"
+  # A manual run either republishes a release from its tag (a typo fix or a broken link worth
+  # publishing between releases), or, with `archive_ref`, rebuilds an older line from its archive
+  # branch with the site code of the branch the run starts from.
   workflow_dispatch:
     inputs:
       ref:
         description: "Tag or ref to deploy the site from (defaults to the current branch)"
         required: false
         type: string
+      version:
+        description: "Minor line of an archive, such as 0.6 (with archive_ref)"
+        required: false
+        type: string
+      archive_ref:
+        description: "Archive branch holding that line's pages, such as docs/archive/v0.6"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
+# Every deploy rewrites the whole gh-pages branch, so deploys run one at a time, in order. The
+# queue keeps every waiting run: without it a newer run would cancel a waiting one, and a push to
+# main could drop a release deploy.
 concurrency:
   group: docs-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy:
@@ -32,9 +51,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # On a release this is the tag; a manual run may name one, and falls back to the
-          # branch it was started from.
+          # branch it was started from. An archive run builds with the site code of that branch.
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+
+      # The archive branch holds the old line's pages, the sources they include and its sidebar;
+      # it carries no site code.
+      - name: Check out the archive
+        if: inputs.archive_ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.archive_ref }}
+          path: archive
 
       - uses: actions/setup-node@v7
         with:
@@ -57,20 +85,44 @@ jobs:
       # and `latest` would point at a version nobody released.
       #
       # Every version lives side by side in the gh-pages tree, so a deploy rebuilds only its own
-      # directory. `latest` follows the newest line: a deploy of an older line (an archive branch
-      # or a fix to a past release) leaves it where it is.
+      # directory. `latest` follows the newest release: `next`, an archive and a fix to a past
+      # release leave it where it is.
       - name: Build and place the site
         env:
           TAG: ${{ github.event_name == 'release' && github.ref_name || '' }}
+          EVENT: ${{ github.event_name }}
+          ARCHIVE_VERSION: ${{ inputs.version }}
+          ARCHIVE_REF: ${{ inputs.archive_ref }}
         run: |
+          git fetch origin gh-pages
+          git worktree add -B gh-pages gh-pages origin/gh-pages
+          if [ "$EVENT" = "push" ]; then
+            GH_PAGES_DIR=gh-pages scripts/deploy_docs.sh next
+            exit 0
+          fi
+          if [ -n "$ARCHIVE_REF" ]; then
+            if ! [[ "$ARCHIVE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+              echo "An archive run needs the version of its line, such as 0.6; got '${ARCHIVE_VERSION}'"
+              exit 1
+            fi
+            GH_PAGES_DIR=gh-pages scripts/deploy_docs.sh "$ARCHIVE_VERSION" \
+              --content archive --source-ref "$ARCHIVE_REF"
+            exit 0
+          fi
+          if [ -n "$ARCHIVE_VERSION" ]; then
+            echo "version names the line of an archive and needs archive_ref"
+            exit 1
+          fi
           version="$(sed -nE 's/^version = "([0-9]+)\.([0-9]+).*/\1.\2/p' Cargo.toml | head -1)"
           if [ -n "$TAG" ] && [ "${TAG#v}" != "$(sed -nE 's/^version = "([^"]+)".*/\1/p' Cargo.toml | head -1)" ]; then
             echo "Tag '${TAG}' does not match the manifest version; refusing to publish docs"
             exit 1
           fi
-          git fetch origin gh-pages
-          git worktree add -B gh-pages gh-pages origin/gh-pages
-          newest="$(node -e 'const v = require("./gh-pages/versions.json"); console.log(v[0] ? v[0].version : "")')"
+          newest="$(node -e '
+            const versions = require("./gh-pages/versions.json");
+            const release = versions.find((entry) => /^v?\d/.test(entry.version));
+            console.log(release ? release.version : "");
+          ')"
           alias_args=()
           if [ -z "$newest" ] || [ "$(printf '%s\n%s\n' "$version" "$newest" | sort -V | tail -1)" = "$version" ]; then
             alias_args=(--alias latest)

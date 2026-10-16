@@ -1,4 +1,4 @@
-import {existsSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
@@ -6,23 +6,23 @@ import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
 import remarkSnippets from './plugins/remarkSnippets';
 import redirectsPlugin from './plugins/redirects';
-import {redirects} from './redirects';
+import {redirects as guideRedirects} from './redirects';
+import {readBuildVersion, siteRoot} from './versioning';
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
-// build of the newest line under `/ruststream/latest/`. The deploy script sets the base URL per
-// build, so one configuration serves every version directory.
-const siteRoot = '/ruststream/';
-const baseUrl = process.env.DOCS_BASE_URL ?? `${siteRoot}latest/`;
-
-if (!/^\/ruststream\/[^/]+\/$/.test(baseUrl)) {
-  throw new Error(`DOCS_BASE_URL must be ${siteRoot}<version>/, got '${baseUrl}'`);
-}
+// build of the newest line under `/ruststream/latest/` and a build of `main` under
+// `/ruststream/next/`. The deploy script sets the base URL and the kind of version per build, so
+// one configuration serves every version directory. An old line is built from its archive
+// checkout, with the site code of this one.
+const repoRoot = path.resolve(__dirname, '..');
+const version = readBuildVersion(process.env, repoRoot);
+const {baseUrl, contentRoot, archive} = version;
+const docsRoot = path.join(contentRoot, 'docs');
 
 const accent = '#ff5722';
 
 // Excerpts on the pages are read from the repository's compiled sources and link back to them.
-const repoRoot = path.resolve(__dirname, '..');
-const sourceUrl = 'https://github.com/powersemmi/ruststream/blob/main';
+const sourceUrl = `https://github.com/powersemmi/ruststream/blob/${version.sourceRef}`;
 const editBase = 'https://github.com/powersemmi/ruststream/edit/main';
 
 // A translated page is edited in its own file; a page the locale has not translated yet is
@@ -34,6 +34,18 @@ function editUrl({locale, docPath}: {locale: string; docPath: string}): string {
   }
   return `${editBase}/docs/${docPath}`;
 }
+
+// An archive is the line as it was released, in English; its pages carry the sidebar and the
+// moved addresses of that line. The current line keeps its translations and the redirects of the
+// guides that moved to docs.rs.
+const locales = archive ? ['en'] : ['en', 'ru', 'zh'];
+const sidebarPath = archive ? path.join(contentRoot, 'sidebars.json') : './sidebars.ts';
+const archiveRedirects = path.join(contentRoot, 'redirects.json');
+const redirects: Record<string, string> = archive
+  ? existsSync(archiveRedirects)
+    ? JSON.parse(readFileSync(archiveRedirects, 'utf8'))
+    : {}
+  : guideRedirects;
 
 // The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
 // `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
@@ -92,9 +104,16 @@ const config: Config = {
     accent,
   },
 
+  // `next` documents unreleased code; search engines should send readers to `latest`. The tag
+  // goes on every page, the landing page included, not only on the docs.
+  headTags:
+    version.noIndex
+      ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex, nofollow'}}]
+      : [],
+
   i18n: {
     defaultLocale: 'en',
-    locales: ['en', 'ru', 'zh'],
+    locales,
     localeConfigs: {
       en: {label: 'English', htmlLang: 'en'},
       ru: {label: 'Русский', htmlLang: 'ru', path: 'ru'},
@@ -115,9 +134,9 @@ const config: Config = {
       '@easyops-cn/docusaurus-search-local',
       {
         hashed: true,
-        language: ['en', 'ru', 'zh'],
+        language: locales,
         indexBlog: false,
-        docsDir: '../docs',
+        docsDir: docsRoot,
         docsRouteBasePath: '/',
         highlightSearchTermsOnTargetPage: true,
         askAi: {},
@@ -136,17 +155,22 @@ const config: Config = {
       'classic',
       {
         docs: {
-          path: '../docs',
+          path: docsRoot,
           routeBasePath: '/',
-          sidebarPath: './sidebars.ts',
-          remarkPlugins: [[remarkSnippets, {rootDir: repoRoot, repoUrl: sourceUrl}]],
-          editUrl,
+          sidebarPath,
+          remarkPlugins: [[remarkSnippets, {rootDir: contentRoot, repoUrl: sourceUrl}]],
+          // An archive is not edited: its fixes land in `main`.
+          editUrl: archive ? undefined : editUrl,
+          // The build holds one version; its kind decides the banner on every page.
+          versions: {current: version.docsVersion},
           // The benchmark results feed the landing page and the benchmarks page; they are not pages.
           exclude: [
             'benchmarks/**',
           ],
         },
         blog: false,
+        // The landing page belongs to `latest` and `next`; an archive opens on its first page.
+        pages: archive ? false : undefined,
         theme: {
           customCss: './src/css/custom.css',
         },

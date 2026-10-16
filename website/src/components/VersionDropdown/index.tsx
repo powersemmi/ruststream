@@ -1,49 +1,14 @@
-import React, {useEffect, useState, type MouseEvent, type ReactNode} from 'react';
+import React, {type MouseEvent, type ReactNode} from 'react';
 import clsx from 'clsx';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import {translate} from '@docusaurus/Translate';
-import {currentEntry, parseVersions, samePageIn, versionRoot, type VersionEntry} from './versions';
+import {currentEntry, versionRoot} from './versions';
+import {openSamePageIn, usePublishedVersions} from './client';
 
 interface Props {
   /** Set when the navbar renders the item in its mobile sidebar. */
   mobile?: boolean;
   position?: 'left' | 'right';
-}
-
-// Each version is a separate build, so the list comes from the shared file at run time: an
-// older build lists the versions released after it.
-function usePublishedVersions(siteRoot: string): VersionEntry[] {
-  const [versions, setVersions] = useState<VersionEntry[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${siteRoot}versions.json`)
-      .then((response) => (response.ok ? response.json() : []))
-      .then((json: unknown) => {
-        if (!cancelled) {
-          setVersions(parseVersions(json));
-        }
-      })
-      .catch(() => {
-        // Without the file the dropdown shows only the version being read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [siteRoot]);
-  return versions;
-}
-
-// The same page may not exist in another version; asking first avoids landing on a 404.
-async function navigateTo(siteRoot: string, baseUrl: string, version: string): Promise<void> {
-  const {pathname, hash} = window.location;
-  const target = samePageIn(siteRoot, baseUrl, pathname, version);
-  let exists = false;
-  try {
-    exists = (await fetch(target, {method: 'HEAD'})).ok;
-  } catch {
-    // An unreachable page is treated like a missing one.
-  }
-  window.location.assign(exists ? target + hash : versionRoot(siteRoot, version));
 }
 
 export default function VersionDropdown({mobile, position}: Props): ReactNode {
@@ -58,7 +23,7 @@ export default function VersionDropdown({mobile, position}: Props): ReactNode {
     const href = versionRoot(siteRoot, entry.version);
     const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
-      void navigateTo(siteRoot, baseUrl, entry.version);
+      void openSamePageIn(siteRoot, baseUrl, entry.version);
     };
     const active = entry.version === current?.version;
     const text =
