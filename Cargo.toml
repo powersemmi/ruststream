@@ -173,7 +173,8 @@ test = true
 [[example]]
 name = "manual_typed_headers"
 path = "examples/manual/typed_headers.rs"
-required-features = ["testing", "memory", "json", "asyncapi"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_lifespan"
@@ -347,7 +348,8 @@ test = true
 
 [[example]]
 name = "typed_headers"
-required-features = ["testing", "macros", "memory", "json", "asyncapi"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "lifespan"

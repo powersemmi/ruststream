@@ -1,194 +1,271 @@
-//! Typed message headers: one struct declares the header contract, and it drives all three
-//! surfaces at once - runtime extraction (`Headers`), the outgoing typed publish path (the
-//! `Out` slot dictionary and the reply form), and the generated `AsyncAPI` document (headers
-//! schemas next to the payloads). Driven through the real dispatch path with the in-process
-//! `TestApp` harness.
+//! Typed headers: a serde struct is the header contract a handler reads and a publish writes.
+//! `Headers<T>` and `Message<H, T>` parse it from a delivery, `#[outgoing(headers = ..)]` makes a
+//! publish demand it, and `HeaderMap::insert_typed` writes one from a transform. Each scenario
+//! is a test.
 //!
 //! ```text
-//! cargo run --example typed_headers --features testing,macros,memory,json,asyncapi
+//! cargo test --example typed_headers --features testing,macros,memory,json
 //! ```
 
-use ruststream::memory::prelude::*;
-use ruststream::schemars::JsonSchema;
-use ruststream::testing::TestApp;
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
+
 use serde::{Deserialize, Serialize};
 
-// The header contracts: flat structs whose fields name headers. On the wire every value is a
-// string-encoded header entry; the schema describes the logical types.
+use ruststream::memory::prelude::*;
+
 // --8<-- [start:contracts]
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// What travels in the headers of a chunk: each field is one header, its value a string.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct ChunkMeta {
     task_id: u64,
     chunk_no: u32,
     chunks_total: u32,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// What travels in the headers of a finished chunk.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct DoneMeta {
     task_id: u64,
-    duration_ms: u64,
+    chunk_no: u32,
 }
 // --8<-- [end:contracts]
 
-// The outgoing messages: one derive declares everything about being sent - the destination, and
-// the header contract that comes with it - so the publish builder demands the right headers and
-// the AsyncAPI document shows them next to the payload.
 // --8<-- [start:messages]
-#[derive(Outgoing, Serialize, Deserialize, JsonSchema)]
+/// A chunk: publishing one does not compile without its `ChunkMeta`.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
+#[outgoing(name = "chunks", headers = ChunkMeta)]
+struct Chunk {
+    size: u64,
+}
+
+/// A finished chunk: publishing one does not compile without its `DoneMeta`.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Outgoing)]
 #[outgoing(name = "chunks.done", headers = DoneMeta)]
 struct ChunkDone {
     output_key: String,
 }
-
-#[derive(Outgoing, Serialize, Deserialize, JsonSchema)]
-#[outgoing(name = "chunks.progress")]
-struct Progress {
-    percent: u8,
-}
 // --8<-- [end:messages]
 
-// The slot lists what it may publish; where each type goes is the type's own declaration.
 // --8<-- [start:dictionary]
+/// The slot the converter publishes through, and what it may publish.
 #[derive(OutSlot)]
-#[publishes(ChunkDone, Progress)]
+#[publishes(ChunkDone)]
 struct Events;
 // --8<-- [end:dictionary]
 
-/// The producer's side of the byte input below: a chunk as it arrives from outside, with no model
-/// of its own. `Serialized` says the bytes are already the payload, so no codec touches them; the
-/// contract is the same one the handler extracts, and no destination is declared, so the call site
-/// names one.
-#[derive(Outgoing, Serialized)]
-#[outgoing(headers = ChunkMeta)]
-struct RawChunk(Vec<u8>);
-
-// Headers parses the delivery headers into the contract before the body runs; a missing or
-// unparsable header settles the delivery by `on_failure(decode = ..)` (drop by default). The
-// Out parameter's optional third position declares the message types this handler publishes:
-// destinations come from each type's declaration, headers from its contract - `Progress`
-// publishes bare, `ChunkDone` does not compile without `.with_headers(&meta)`.
-// --8<-- [start:handler]
-/// The body keeps the chunk as bytes, so the input is a type of its own rather than a decoded
-/// model: the derive gives the newtype the delivery's payload as it arrives.
-#[derive(Deserialized)]
-struct Chunk<'a>(&'a [u8]);
-
-#[subscriber("chunks.raw")]
-async fn convert(
-    chunk: &Chunk<'_>,
-    Headers(meta): Headers<ChunkMeta>,
-    Out(events): Out<impl Publisher, Events, (ChunkDone, Progress)>,
-) -> HandlerOutcome {
-    let percent = u8::try_from(meta.chunk_no * 100 / meta.chunks_total.max(1)).unwrap_or(100);
-    if events
-        .message(&Progress { percent })
-        .publish()
-        .await
-        .is_err()
-    {
-        return HandlerOutcome::retry();
-    }
-
-    let done = ChunkDone {
-        output_key: format!("chunks/{}/{}.part", meta.task_id, meta.chunk_no),
-    };
-    let done_meta = DoneMeta {
-        task_id: meta.task_id,
-        duration_ms: chunk.0.len() as u64,
-    };
-    if events
-        .message(&done)
-        .with_headers(&done_meta)
-        .publish()
-        .await
-        .is_err()
-    {
-        return HandlerOutcome::retry();
-    }
-    HandlerOutcome::ack()
-}
-// --8<-- [end:handler]
-
-// The reply form gets the same treatment from the reply type's contract: the generated document
-// declares a send operation for "jobs.status" with `DoneMeta` as the headers schema. At runtime
-// reply headers stay with `PublishTransform`, which can serialize a contract with
-// `headers_mut().insert_typed(&meta)`.
-// --8<-- [start:reply]
-#[derive(Deserialize, JsonSchema)]
-struct StatusRequest {
-    task_id: u64,
-}
-
-// The reply is sent where the `reply(..)` clause says, so the type declares no name of its
-// own - only the contract that travels with it.
-#[derive(Outgoing, Serialize, JsonSchema)]
-#[outgoing(headers = DoneMeta)]
-struct StatusReply {
-    done: bool,
-}
-
-#[subscriber("jobs.status-requests", reply("jobs.status"))]
-async fn status(req: &StatusRequest) -> StatusReply {
-    StatusReply {
-        done: req.task_id.is_multiple_of(2),
-    }
-}
-// --8<-- [end:reply]
-
-// Headers stay per-delivery on a batch too, so the batch pairs each element with its own
-// contract: a `Message<ChunkMeta, Progress>` element carries its decoded headers next to its
-// payload, and an element failing either the payload decode or the contract is settled by the
-// decode policy instead of reaching the handler.
-// --8<-- [start:batch]
-#[subscriber("chunks.bulk")]
-async fn bulk(reports: &[Message<ChunkMeta, Progress>]) -> HandlerOutcome {
-    for report in reports {
-        let meta = &report.headers;
-        println!(
-            "task {}: chunk {} of {} at {}%",
-            meta.task_id, meta.chunk_no, meta.chunks_total, report.body.percent,
-        );
-    }
-    HandlerOutcome::ack()
-}
-// --8<-- [end:batch]
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --8<-- [start:mounts]
-    let app = RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(convert).out(Events, Publish).build();
-            b.include(status);
-            b.include(bulk.batch(nonzero!(2)));
-        },
-    );
-    // --8<-- [end:mounts]
-
-    let tb = TestApp::start(app).await?;
-    // --8<-- [start:drive]
-    let meta = ChunkMeta {
+fn meta(chunk_no: u32) -> ChunkMeta {
+    ChunkMeta {
         task_id: 7,
-        chunk_no: 3,
+        chunk_no,
         chunks_total: 12,
-    };
-    tb.broker::<MemoryBroker>()
-        .message(&RawChunk(vec![0; 16]))
-        .with_headers(&meta)
-        .to("chunks.raw")
-        .publish()
-        .await?;
-
-    let done = tb
-        .broker::<MemoryBroker>()
-        .published::<ChunkDone>("chunks.done")
-        .assert_called_once();
-    println!("published: {:?}", done.decoded()[0].output_key);
-    println!(
-        "task_id header: {:?}",
-        done.messages()[0].headers().get_str("task_id")
-    );
-    // --8<-- [end:drive]
-    Ok(())
+    }
 }
+
+mod handler {
+    use std::error::Error;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+    use serde_json::json;
+
+    use super::{Chunk, ChunkDone, ChunkMeta, DoneMeta, Events, meta};
+
+    // --8<-- [start:handler]
+    /// The contract is parsed before the body runs; what the body publishes carries its own.
+    #[subscriber("chunks")]
+    async fn convert(
+        chunk: &Chunk,
+        Headers(meta): Headers<ChunkMeta>,
+        Out(events): Out<impl Publisher, Events>,
+    ) -> HandlerOutcome {
+        tracing::info!(meta.task_id, meta.chunk_no, chunk.size, "converting");
+        let done = ChunkDone {
+            output_key: format!("chunks/{}/{}.part", meta.task_id, meta.chunk_no),
+        };
+        let done_meta = DoneMeta {
+            task_id: meta.task_id,
+            chunk_no: meta.chunk_no,
+        };
+        match events
+            .message(&done)
+            .with_headers(&done_meta)
+            .publish()
+            .await
+        {
+            Ok(()) => HandlerOutcome::ack(),
+            Err(_) => HandlerOutcome::retry(),
+        }
+    }
+
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(convert).out(Events, Publish).build();
+        })
+    }
+    // --8<-- [end:handler]
+
+    #[tokio::test]
+    async fn the_contract_comes_in_and_goes_out() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        tb.message(&Chunk { size: 16 })
+            .with_headers(&meta(3))
+            .publish()
+            .await?;
+        tb.broker::<MemoryBroker>()
+            .published::<ChunkDone>("chunks.done")
+            .assert_called_once()
+            .with_header("task_id", "7")
+            .with_header("chunk_no", "3");
+
+        // A chunk without its headers is bad input: the decode policy drops it.
+        tb.publish("chunks", &json!({ "size": 16 })).await?;
+        tb.broker::<MemoryBroker>()
+            .subscriber("chunks")
+            .assert_called(2)
+            .settled(HandlerOutcome::drop());
+        Ok(())
+    }
+}
+
+mod message {
+    use std::error::Error;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::{Outcome, TestApp};
+
+    use super::{Chunk, ChunkMeta, meta};
+
+    // --8<-- [start:message]
+    /// The payload and its contract arrive decoded together.
+    #[subscriber("chunks")]
+    async fn store(chunk: &Message<ChunkMeta, Chunk>) -> HandlerOutcome {
+        let meta = &chunk.headers;
+        if meta.chunk_no >= meta.chunks_total {
+            // A chunk past the end of its task.
+            return HandlerOutcome::drop();
+        }
+        tracing::info!(meta.task_id, meta.chunk_no, chunk.body.size, "stored");
+        HandlerOutcome::ack()
+    }
+
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("store", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(store);
+        })
+    }
+    // --8<-- [end:message]
+
+    #[tokio::test]
+    async fn the_body_reads_the_headers_it_declared() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        for chunk_no in [3, 12] {
+            tb.message(&Chunk { size: 16 })
+                .with_headers(&meta(chunk_no))
+                .publish()
+                .await?;
+        }
+
+        assert_eq!(
+            tb.broker::<MemoryBroker>().subscriber("chunks").outcomes(),
+            [Outcome::Ack, Outcome::Drop],
+        );
+        Ok(())
+    }
+}
+
+mod stamp {
+    use std::error::Error;
+
+    use ruststream::memory::prelude::*;
+    // The derive in the prelude and the value a transform edits share the name `Outgoing`.
+    use ruststream::runtime::{Outgoing, SlotContext};
+    use ruststream::testing::TestApp;
+    use serde::Serialize;
+
+    use super::{Chunk, ChunkDone, ChunkMeta, DoneMeta, Events, meta};
+
+    /// The converter of the first example; what this one adds is the transform.
+    #[subscriber("chunks")]
+    async fn convert(
+        _chunk: &Chunk,
+        Headers(meta): Headers<ChunkMeta>,
+        Out(events): Out<impl Publisher, Events>,
+    ) -> HandlerOutcome {
+        let done = ChunkDone {
+            output_key: format!("chunks/{}/{}.part", meta.task_id, meta.chunk_no),
+        };
+        let done_meta = DoneMeta {
+            task_id: meta.task_id,
+            chunk_no: meta.chunk_no,
+        };
+        match events
+            .message(&done)
+            .with_headers(&done_meta)
+            .publish()
+            .await
+        {
+            Ok(()) => HandlerOutcome::ack(),
+            Err(_) => HandlerOutcome::retry(),
+        }
+    }
+
+    // --8<-- [start:stamp]
+    /// Where the service runs, as a contract stamped on everything the slot sends.
+    #[derive(Clone, Serialize)]
+    struct Origin {
+        region: &'static str,
+        canary: bool,
+    }
+
+    struct Stamp(Origin);
+
+    impl<Options> PublishTransform<ForSlot, Options> for Stamp {
+        type Destination = Reads;
+
+        fn apply(
+            &self,
+            out: &mut Outgoing<'_>,
+            _options: &mut Option<Options>,
+            _cx: &SlotContext<'_>,
+        ) {
+            if let Err(error) = out.headers_mut().insert_typed(&self.0) {
+                tracing::warn!(%error, "origin headers left out");
+            }
+        }
+    }
+
+    fn app() -> impl App {
+        let origin = Origin {
+            region: "eu-west",
+            canary: false,
+        };
+        RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(convert)
+                .out(Events, Publish)
+                .transform(Stamp(origin))
+                .build();
+        })
+    }
+    // --8<-- [end:stamp]
+
+    #[tokio::test]
+    async fn every_publish_carries_the_origin() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        tb.message(&Chunk { size: 16 })
+            .with_headers(&meta(3))
+            .publish()
+            .await?;
+
+        tb.broker::<MemoryBroker>()
+            .published::<ChunkDone>("chunks.done")
+            .assert_called_once()
+            .with_header("task_id", "7")
+            .with_header("region", "eu-west")
+            .with_header("canary", "false");
+        Ok(())
+    }
+}
+
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}
