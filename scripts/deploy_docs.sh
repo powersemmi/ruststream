@@ -53,8 +53,11 @@ if [ "$version" = "next" ]; then
   fi
   kind="next"
   title="next (unreleased)"
+  line=""
 elif [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
   title="$version"
+  # A release links its pages to the rustdoc of its own line, under the alias too.
+  line="$version"
   if [ -n "$alias_name" ]; then
     if [ "$alias_name" != "latest" ] || [ -n "$content" ]; then
       echo "only the newest release takes an alias, and it is latest" >&2
@@ -81,7 +84,7 @@ build_into() {
   local directory="$1"
   echo "Building /ruststream/$directory/"
   (cd "$website" &&
-    DOCS_BASE_URL="/ruststream/$directory/" DOCS_VERSION_KIND="$kind" \
+    DOCS_BASE_URL="/ruststream/$directory/" DOCS_VERSION_KIND="$kind" DOCS_LINE="$line" \
       DOCS_CONTENT_ROOT="$content" DOCS_SOURCE_REF="${source_ref:-main}" \
       npm run build -- --out-dir "build/$directory")
   # mike published an alias as a symlink; removing the path drops the link, not its target.

@@ -34,7 +34,7 @@ export default function Hero(): ReactNode {
           </Translate>
         </p>
         <div className={shared.actions}>
-          <Link className={shared.button} to="/getting-started/quickstart/">
+          <Link className={shared.button} to="/guides/getting-started/quickstart/">
             <Translate id="landing.hero.quickStart">Quick start</Translate>
           </Link>
           <Link className={shared.buttonGhost} href="https://github.com/powersemmi/ruststream">

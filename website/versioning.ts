@@ -31,6 +31,12 @@ export interface BuildVersion {
   noIndex: boolean;
   /** The docs plugin's options for the one version a build holds. */
   docsVersion: {label: string; banner: 'none' | 'unreleased' | 'unmaintained'};
+  /**
+   * The crate's rustdoc on docs.rs for the code this build documents, with a trailing slash:
+   * the minor line of a release (docs.rs serves its newest patch), and the newest release for
+   * `next`, whose code is not published yet.
+   */
+  docsRs: string;
 }
 
 export const siteRoot = '/ruststream/';
@@ -52,6 +58,12 @@ export function readBuildVersion(
     throw new Error(`DOCS_VERSION_KIND must be one of ${kinds.join(', ')}, got '${requested}'`);
   }
   const kind = requested as VersionKind;
+  // The deploy script names the minor line of a release; a build without it (a local one, or
+  // CI's check) documents the newest release.
+  const line = env.DOCS_LINE || (/^\d+\.\d+$/.test(directory) ? directory : undefined);
+  if (line && !/^\d+\.\d+$/.test(line)) {
+    throw new Error(`DOCS_LINE must be a minor line such as 0.7, got '${line}'`);
+  }
   // An archive checkout holds an old line's pages; it never becomes `latest` or `next`.
   if (archive && kind !== 'archive') {
     throw new Error(`DOCS_CONTENT_ROOT names an archive, which builds as archive, not '${kind}'`);
@@ -65,5 +77,6 @@ export function readBuildVersion(
     sourceRef: env.DOCS_SOURCE_REF ?? 'main',
     noIndex: kind === 'next',
     docsVersion: {label: directory, banner: banners[kind]},
+    docsRs: `https://docs.rs/ruststream/${kind === 'next' ? 'latest' : (line ?? 'latest')}/`,
   };
 }

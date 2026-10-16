@@ -15,7 +15,32 @@ describe('readBuildVersion', () => {
       sourceRef: 'main',
       noIndex: false,
       docsVersion: {label: 'latest', banner: 'none'},
+      docsRs: 'https://docs.rs/ruststream/latest/',
     });
+  });
+
+  it('links a release to its minor line on docs.rs, under its number and under latest', () => {
+    for (const directory of ['0.7', 'latest']) {
+      const version = readBuildVersion(
+        {DOCS_BASE_URL: `/ruststream/${directory}/`, DOCS_VERSION_KIND: 'latest', DOCS_LINE: '0.7'},
+        repoRoot,
+      );
+      expect(version.docsRs).toBe('https://docs.rs/ruststream/0.7/');
+    }
+  });
+
+  it('links next to the newest release on docs.rs', () => {
+    const version = readBuildVersion(
+      {DOCS_BASE_URL: '/ruststream/next/', DOCS_VERSION_KIND: 'next', DOCS_LINE: ''},
+      repoRoot,
+    );
+    expect(version.docsRs).toBe('https://docs.rs/ruststream/latest/');
+  });
+
+  it('refuses a line that is not a minor version', () => {
+    expect(() =>
+      readBuildVersion({DOCS_BASE_URL: '/ruststream/0.7/', DOCS_LINE: '0.7.1'}, repoRoot),
+    ).toThrow(/DOCS_LINE/);
   });
 
   it('marks next as unreleased and keeps it out of search engines', () => {
@@ -37,6 +62,7 @@ describe('readBuildVersion', () => {
     expect(version.noIndex).toBe(false);
     expect(version.docsVersion).toEqual({label: '0.6', banner: 'unmaintained'});
     expect(version.contentRoot).toBe(repoRoot);
+    expect(version.docsRs).toBe('https://docs.rs/ruststream/0.6/');
   });
 
   it('reads an archive from its own checkout, relative to the repository', () => {

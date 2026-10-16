@@ -1,6 +1,18 @@
 {
-  "item.label.Docs": {
-    "message": "文档",
-    "description": "Navbar item with label Docs"
+  "item.label.Guides": {
+    "message": "指南",
+    "description": "Navbar item with label Guides"
+  },
+  "item.label.Components": {
+    "message": "组件",
+    "description": "Navbar item with label Components"
+  },
+  "item.label.API": {
+    "message": "API",
+    "description": "Navbar item with label API"
+  },
+  "item.label.Architecture": {
+    "message": "架构",
+    "description": "Navbar item with label Architecture"
   }
 }

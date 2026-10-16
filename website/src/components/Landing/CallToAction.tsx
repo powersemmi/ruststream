@@ -28,13 +28,13 @@ interface Next {
 
 const NEXT: Next[] = [
   {
-    to: '/getting-started/installation/',
+    to: '/guides/getting-started/installation/',
     icon: <DownloadIcon />,
     title: <Translate id="landing.next.installation">Installation</Translate>,
     body: <Translate id="landing.next.installation.body">Features and crate setup.</Translate>,
   },
   {
-    to: '/getting-started/quickstart/',
+    to: '/guides/getting-started/quickstart/',
     icon: <RocketIcon />,
     title: <Translate id="landing.next.quickstart">Quick start</Translate>,
     body: (
@@ -44,7 +44,7 @@ const NEXT: Next[] = [
     ),
   },
   {
-    to: '/getting-started/tutorial/',
+    to: '/guides/getting-started/tutorial/',
     icon: <BookIcon />,
     title: <Translate id="landing.next.tutorial">Tutorial</Translate>,
     body: <Translate id="landing.next.tutorial.body">Build a service step by step.</Translate>,
@@ -100,13 +100,13 @@ const NEXT: Next[] = [
     ),
   },
   {
-    to: '/reference/',
+    to: 'https://docs.rs/ruststream/latest/ruststream/',
     icon: <BracesIcon />,
     title: <Translate id="landing.next.reference">API reference</Translate>,
     body: <Translate id="landing.next.reference.body">Every type, on docs.rs.</Translate>,
   },
   {
-    to: '/benchmarks/',
+    to: '/architecture/benchmarks/',
     icon: <GaugeIcon />,
     title: <Translate id="landing.next.benchmarks">Benchmarks</Translate>,
     body: (
@@ -141,7 +141,7 @@ export default function CallToAction(): ReactNode {
           </Translate>
         </p>
         <div className={`${shared.actions} ${styles.actions}`}>
-          <Link className={shared.button} to="/getting-started/quickstart/">
+          <Link className={shared.button} to="/guides/getting-started/quickstart/">
             <Translate id="landing.hero.quickStart">Quick start</Translate>
           </Link>
           <button type="button" className={shared.buttonGhost} onClick={() => openAskAi()}>

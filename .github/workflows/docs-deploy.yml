@@ -74,6 +74,16 @@ jobs:
         working-directory: website
         run: npm ci
 
+      # The API links on the pages resolve against the rustdoc of the code deployed. An archive's
+      # pages carry none.
+      - name: Install Rust toolchain
+        if: "!inputs.archive_ref"
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the rustdoc the API links resolve against
+        if: "!inputs.archive_ref"
+        run: cargo doc --locked --all-features --no-deps -p ruststream
+
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"

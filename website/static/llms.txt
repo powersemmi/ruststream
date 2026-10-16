@@ -6,14 +6,15 @@ A handler is an `async fn` under `#[subscriber(..)]`, mounted on a broker with `
 
 This site holds the entry pages. How each topic is done lives in the module overviews on docs.rs, and a broker's own settings live in its crate's documentation.
 
-## Getting started
+## Guides
 
 - [Home](https://powersemmi.github.io/ruststream/latest/): what RustStream does and its design principles
-- [Installation](https://powersemmi.github.io/ruststream/latest/getting-started/installation/): the crate, its cargo features and a broker crate
-- [Quick start](https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/): a running service scaffolded with `cargo generate`
-- [Tutorial](https://powersemmi.github.io/ruststream/latest/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
+- [Guides](https://powersemmi.github.io/ruststream/latest/guides/): the path from an empty crate to a running service
+- [Installation](https://powersemmi.github.io/ruststream/latest/guides/getting-started/installation/): the crate, its cargo features and a broker crate
+- [Quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/): a running service scaffolded with `cargo generate`
+- [Tutorial](https://powersemmi.github.io/ruststream/latest/guides/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
 
-## Guides
+## Module overviews on docs.rs
 
 - [Subscribers](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): handlers, subscription sources, mount-site settings, broker steps that read them, batches, values a broker's deliveries already hold, workers, dedicated threads for handlers that compute, finding handlers that compute (the `poll-diagnostics` feature), delayed redelivery and its cap
 - [Publishing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing): replies, `Out` slots, publish transforms and the publish pipeline
@@ -52,6 +53,11 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [AWS Kinesis](https://docs.rs/ruststream-kinesis): `ruststream-kinesis`
 - [SQL databases through sqlx](https://docs.rs/ruststream-sqlx): `ruststream-sqlx`, a transactional outbox over any broker, and task queues in Postgres, MySQL/MariaDB and SQLite tables, with statements checked at startup or at compile time
 
+## Architecture
+
+- [Architecture](https://powersemmi.github.io/ruststream/latest/architecture/): how RustStream is built and what its design costs a service
+- [Benchmarks](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/): what the framework costs over a raw client, and the cost of its own code
+
 ## Broker authors
 
 - [Writing a broker](https://powersemmi.github.io/ruststream/latest/broker-authors/): the traits a broker crate implements, the lazy-startup contract, the runtime a broker's own tasks run on and the in-process mode
@@ -62,5 +68,4 @@ This site holds the entry pages. How each topic is done lives in the module over
 ## Optional
 
 - [API reference](https://docs.rs/ruststream): the full rustdoc of the core crate
-- [Benchmarks](https://powersemmi.github.io/ruststream/latest/benchmarks/): what the framework costs over a raw client, and the cost of its own code
 - [Source](https://github.com/powersemmi/ruststream): the core repository
