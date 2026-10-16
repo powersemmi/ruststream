@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Быстрый старт
 
 Самый быстрый путь к работающему сервису - сгенерировать заготовку через `cargo generate`.
@@ -34,7 +37,7 @@ my-service/
 cargo run -- run                # или: ruststream run, если установлен CLI
 ```
 
-`cargo run -- run` запускает рантайм tokio. Сервис работает, пока вы не нажмёте ++ctrl+c++.
+`cargo run -- run` запускает рантайм tokio. Сервис работает, пока вы не нажмёте <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 Брокер очереди для запуска не нужен.
 
 ## Генерация AsyncAPI-документа
@@ -51,17 +54,20 @@ cargo run -- asyncapi gen
 Точка входа - это функция, которая собирает сервис: подключает брокер и монтирует на нём роутер.
 `#[ruststream::app]` превращает её в `main`.
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```
+
+</TabItem>
+</Tabs>
 
 ## Что дальше
 

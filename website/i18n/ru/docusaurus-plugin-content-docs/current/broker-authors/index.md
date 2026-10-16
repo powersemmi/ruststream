@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Как написать адаптацию библиотеки брокера
 
 Адаптация библиотеки брокера - это отдельный крейт, который реализует трейты ядра. Она подключает
@@ -43,7 +46,7 @@ NATS](example-nats.md).
 Брокер проходит через три состояния, и у каждого свой тип. Переход поглощает `self` и возвращает
 следующее состояние. Поэтому вызов не в том порядке не компилируется.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Broker: Send + Sync + Sized {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -79,7 +82,7 @@ pub trait ConnectedBroker: Send + Sync + Sized + 'static {
 `Handle::current()` в `connect` и запускает задачи через этот дескриптор, из какого бы потока ни
 пришёл вызов:
 
-<!-- inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below -->
+{/* inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below */}
 ```rust
 pub struct ConnectedExampleBroker {
     runtime: Handle, // captured in `connect`
@@ -107,8 +110,7 @@ in-memory брокер. Ранние дескрипторы обслуживае
 
 In-memory брокер реализует весь жизненный цикл в нескольких строках:
 
-```rust
---8<-- "src/memory/mod.rs:ladder"
+```rust reference="src/memory/mod.rs#ladder"
 ```
 
 `ClosedMemoryBroker` - свидетель остановки с диагностикой: он сообщает, сколько регистраций
@@ -126,7 +128,7 @@ In-memory брокер реализует весь жизненный цикл �
 стрима и очереди. Фильтр MQTT `devices/+/telemetry` - исключение: он читает топики всех устройств
 и не называет ни одного.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
@@ -150,8 +152,7 @@ pub trait Subscribe: ConnectedBroker {
 
 In-memory брокер реализует его так:
 
-```rust
---8<-- "src/memory/mod.rs:subscribe"
+```rust reference="src/memory/mod.rs#subscribe"
 ```
 
 От `type Copies` зависит, как повторяет `#[subscriber("orders")]` на вашем брокере.
@@ -165,7 +166,7 @@ In-memory брокер реализует его так:
 
 Подписчик - это `Stream` входящих сообщений. Обратное давление даёт сам `Stream`.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscriber: Send {
     type Message: IncomingMessage;
@@ -182,7 +183,7 @@ pub trait Subscriber: Send {
 Доставленное сообщение отдаёт полезную нагрузку и заголовки. Его подтверждают через `ack` или
 отклоняют через `nack`. `ack` поглощает `self`, поэтому двойной `ack` - ошибка компиляции.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
@@ -231,8 +232,7 @@ pub trait IncomingMessage: Send + Sync {
 `ruststream-rumqttc`, `ruststream-sea-file` и `ruststream-zeromq`. Поведение по умолчанию
 закрепляет тест в ядре:
 
-```rust
---8<-- "src/message.rs:incoming_defaults"
+```rust reference="src/message.rs#incoming_defaults"
 ```
 
 **Отложенная доставка.** Её переопределяют парой методов. Рантайм сначала спрашивает
@@ -274,7 +274,7 @@ pub trait IncomingMessage: Send + Sync {
 
 ### `Publisher`
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Publisher: Send + Sync {
     /// Как ваш транспорт распоряжается нагрузкой: `Lend`, если он её читает, `Take`, если ваш
@@ -306,7 +306,7 @@ pub trait Publisher: Send + Sync {
 
 От объявления зависит, что приходит в `publish`:
 
-<!-- inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less -->
+{/* inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less */}
 ```rust
 // Take: буфер, который записал фреймворк, и он ваш.
 async fn publish(&self, msg: OutgoingMessage<'_, BytesMut>, options: Option<&()>) -> Result<(), Error>
@@ -366,7 +366,7 @@ async fn publish(&self, msg: OutgoingMessage<'_, &[u8]>, options: Option<&()>) -
 На старте политика конструирует живого издателя на подключённой форме. Конструктор - метод `pair`
 трейта `PublishPolicy`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait PublishPolicy<C: ConnectedBroker> {
     type Live; // the live publisher (or live wiring form, for combinator stacks)
@@ -391,7 +391,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 **Политика по умолчанию.** Если обычная политика работает со своими умолчаниями (так почти всегда),
 реализуйте на подключённой форме `DefaultPublish` и назовите её там:
 
-<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait DefaultPublish: ConnectedBroker {
     type Policy: PublishPolicy<Self> + Default + Send + 'static;
@@ -409,17 +409,16 @@ pub trait DefaultPublish: ConnectedBroker {
 Самый короткий образец - `MemoryPublish` и `MemoryRequest` in-memory брокера. Настроек у них нет,
 поэтому это пустые структуры. Обе половины на этом брокере:
 
-```rust
---8<-- "src/memory/mod.rs:publish_policy"
+```rust reference="src/memory/mod.rs#publish_policy"
 ```
 
-## Источники подписки {#subscription-sources}
+## Источники подписки {/* #subscription-sources */}
 
 Подписке по имени хватает `Subscribe`. Если подписке нужны настройки вашего брокера (группа
 консьюмеров, durable-имя, политика доставки), заведите для неё тип-дескриптор. Он реализует
 `SubscriptionSource`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
@@ -461,7 +460,7 @@ pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies
 Выведите на дескрипторе `Clone`. Монтирование пересобирает конфигурацию на каждую регистрацию, и
 с `Clone` одно определение можно смонтировать сразу на два брокера.
 
-### Кто публикует копию для повтора {#who-publishes-a-retry-copy}
+### Кто публикует копию для повтора {/* #who-publishes-a-retry-copy */}
 
 Повтор после задержки - это копия сообщения. Её публикует либо сервис, либо сам брокер. Каждый
 дескриптор объявляет через `type Copies`, как устроено у него:
@@ -488,7 +487,7 @@ pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies
 У очереди RabbitMQ своя отложенная доставка есть, только если задан `.delay(..)`. Когда поведение
 зависит от значения поля, а не от типа, оставьте путь копий открытым.
 
-### Что объявляет регистрация {#what-the-registration-declares}
+### Что объявляет регистрация {/* #what-the-registration-declares */}
 
 Место монтирования может объявить предел доставок и адрес DLQ. Дескриптор получает их в
 `declare_retry`. Рантайм вызывает этот метод один раз на регистрацию, до `subscribe`.
@@ -510,14 +509,13 @@ Pub/Sub, redrive в SQS, `DeadLetterPolicy` у консьюмера Pulsar. В �
 
 Отображение проверяет `retry::broker_moves` ([проверки повторов](conformance.md#retry-checks)).
 
-### Куда публикуется копия для повтора {#where-a-retry-copy-is-published}
+### Куда публикуется копия для повтора {/* #where-a-retry-copy-is-published */}
 
 Если брокер не умеет откладывать доставку, повтор выполняет рантайм. Он ждёт задержку и публикует
 копию сообщения. Копия должна вернуться в ту же подписку, поэтому её адрес называет дескриптор с
 `AddressedCopies`:
 
-```rust
---8<-- "src/memory/mod.rs:source"
+```rust reference="src/memory/mod.rs#source"
 ```
 
 Адрес - это имя, по которому публикация доходит до подписки. В NATS это субъект, в Kafka - топик,
@@ -540,8 +538,7 @@ Pub/Sub, redrive в SQS, `DeadLetterPolicy` у консьюмера Pulsar. В �
 Вид, который определяется одним именем, реализует ещё и `FromName`. Его единственный конструктор
 строит значение из этого имени.
 
-```rust
---8<-- "src/memory/mod.rs:from_name"
+```rust reference="src/memory/mod.rs#from_name"
 ```
 
 Тогда законна запись `#[subscriber(OrdersStream)]`: атрибут называет вид, а значение подставляет
@@ -555,7 +552,7 @@ Pub/Sub, redrive в SQS, `DeadLetterPolicy` у консьюмера Pulsar. В �
 который собирает точка монтирования. Положите сверху свой трейт и привяжите его к своему типу
 источника:
 
-<!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
 
@@ -589,7 +586,7 @@ where
 `StartAt<SubscribeOptions, Position>`, и на такой подписке ваших методов не видно. Добавьте для
 неё второй impl:
 
-<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+{/* inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home */}
 ```rust
 use ruststream::StartAt;
 use ruststream::runtime::Fixed;
@@ -627,7 +624,7 @@ where
 `batch_size()` возвращает размер пакета, если его уже задал `batch(n)`. `subscription_name()`
 возвращает имя, которое сообщает источник.
 
-<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
 
@@ -668,7 +665,7 @@ where
 
 Над политикой этой позиции ядро даёт хук `MapPublisher`. Ваш трейт вызывает его:
 
-<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::MapPublisher;
 
@@ -690,7 +687,7 @@ impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
 
 В сервисе это выглядит так:
 
-<!-- inline-rust: the call shape against the broker policy sketched above -->
+{/* inline-rust: the call shape against the broker policy sketched above */}
 ```rust
 b.include(confirm).out_reply(Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
@@ -703,7 +700,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 публикации, и его называют в самом `.out(marker, policy)`. Туда же можно сразу передать
 настроенное значение: `.out_reply(Publish::default().stream("ORDERS"))`.
 
-### Настройки на сообщение в билдере публикации {#per-message-settings-on-the-publish-builder}
+### Настройки на сообщение в билдере публикации {/* #per-message-settings-on-the-publish-builder */}
 
 Некоторые настройки меняются от сообщения к сообщению: ключ упорядочивания, приоритет, QoS.
 Место вызова задаёт их шагом билдера публикации, а шаг пишет поле вашего `Publisher::Options`.
@@ -718,8 +715,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 4. трейт-расширение над `PublishBuilder`, ограниченное типом настроек. Ограничение не пускает ваши
    шаги на билдер издателя другого брокера.
 
-```rust
---8<-- "tests/publish_options.rs:broker_side"
+```rust reference="tests/publish_options.rs#broker_side"
 ```
 
 Половина адаптации библиотеки брокера одинакова на пути с макросами и на ручном пути. Экспортируйте
@@ -807,7 +803,7 @@ URL, стройте описание через `ServerSpec::from_url`. Он о�
   значений рантайм строит контекст из всего пакета.
 - Наборы `capabilities::carries` и `capabilities::carries_batch` проверяют оба трейта.
 
-### Пакеты: `BatchSubscriber` {#batches-batchsubscriber}
+### Пакеты: `BatchSubscriber` {/* #batches-batchsubscriber */}
 
 Обработчик, который принимает `&[T]`, получает пакет. Точка монтирования задаёт размер пакета, и
 рантайм передаёт его в `BatchSubscriber::batches(size)`. Рантайм пакеты не делит и не склеивает:
@@ -836,8 +832,7 @@ URL, стройте описание через `ServerSpec::from_url`. Он о�
 
 Остальное в подписчике проходит сквозь обёртку без изменений:
 
-```rust
---8<-- "tests/batch_subscriber.rs:buffered_capability"
+```rust reference="tests/batch_subscriber.rs#buffered_capability"
 ```
 
 Сервис не видит, какой путь вы выбрали: он задаёт размер пакета и получает пакеты.
@@ -851,7 +846,7 @@ ROUTER в ZeroMQ. Он отвечает каждому пиру по его `rep
 совместимостей вы вызываете сами, по одному на каждую
 ([наборы для совместимостей](conformance.md#capability-suites)).
 
-### Прелюдия, которую поставляет ваш крейт { #broker-prelude }
+### Прелюдия, которую поставляет ваш крейт {/* #broker-prelude */}
 
 Сервис называет ваши типы в точке монтирования. Для этого ваш крейт поставляет модуль `prelude`.
 Он состоит из трёх слоёв, в таком порядке:
@@ -900,17 +895,20 @@ ROUTER в ZeroMQ. Он отвечает каждому пиру по его `rep
 записи. Тогда функции и тела, обобщённые по совместимости, принимают запись как есть, а конкретный
 тип в коде приложения не появляется:
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust
-    --8<-- "tests/out_slots.rs:extension"
-    ```
+```rust reference="tests/out_slots.rs#extension"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust
-    --8<-- "tests/manual_out_slots.rs:extension"
-    ```
+```rust reference="tests/manual_out_slots.rs#extension"
+```
+
+</TabItem>
+</Tabs>
 
 Место отправки задаёт одну из двух форм трейта.
 
@@ -952,7 +950,7 @@ ROUTER в ZeroMQ. Он отвечает каждому пиру по его `rep
 Закрепите правило пробой за собственным glob-импортом: ограничение из тела должно означать трейт
 ядра, а имя из точки монтирования - вашу политику.
 
-<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+{/* inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob */}
 ```rust
 // in your crate, behind your own prelude glob
 use crate::prelude::*;
@@ -979,7 +977,7 @@ fn _q() {
 `Ctx<K>`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state). Ключи
 - пустые структуры, поэтому путь доставки обходится без type-map и без выделений в куче.
 
-<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+{/* inline-rust: sketch; the real trait lives in src/field.rs */}
 ```rust
 /// Per-delivery context of this broker.
 #[non_exhaustive]
@@ -1030,7 +1028,7 @@ impl ContextField for Partition {
 ключом `SeekHandle`, что и в контексте доставки. Брокер, которому нечего дать на уровне подписки,
 ничего не реализует, и контекст пакета остаётся `()`.
 
-## Middleware на асинхронных краях {#middleware-on-the-async-edges}
+## Middleware на асинхронных краях {/* #middleware-on-the-async-edges */}
 
 Кодек ядра синхронный. Поэтому интеграции с асинхронным вводом-выводом, такие как schema registry
 или конверт поверх формата передачи, в `Codec` не ставят. Обработчикам лучше оставаться на кодеке
@@ -1049,8 +1047,7 @@ impl ContextField for Partition {
 RabbitMQ, группа потребителей Kafka, QoS в MQTT. Спецификация называет это **биндингами**. Для
 подписки их заполняет ваш дескриптор:
 
-```rust
---8<-- "tests/asyncapi.rs:descriptor_bindings"
+```rust reference="tests/asyncapi.rs#descriptor_bindings"
 ```
 
 `Binding::new(protocol, version, &body)` сериализует тело один раз и сам вписывает
@@ -1080,16 +1077,14 @@ RabbitMQ, группа потребителей Kafka, QoS в MQTT. Специф
 Второе правило проверяет `conformance::harness`. Настройте брокер и дескриптор с заранее известным
 паролем и запустите сканирование:
 
-```rust
---8<-- "tests/conformance_self.rs:credentials"
+```rust reference="tests/conformance_self.rs#credentials"
 ```
 
 **Публикация.** На стороне публикации те же три уровня заполняют политики. Ответ, слот `Out` и
 издатель недоставленных сообщений - всё это `PublishPolicy`, и каждая политика описывает канал, в
 который публикует:
 
-```rust
---8<-- "tests/asyncapi.rs:policy_bindings"
+```rust reference="tests/asyncapi.rs#policy_bindings"
 ```
 
 Политика хранит настройки брокера, но не адресата. Адресата каждому методу передаёт точка
@@ -1112,8 +1107,7 @@ RabbitMQ, группа потребителей Kafka, QoS в MQTT. Специф
 реализуйте четвёртый метод, `reply_address_location`: он есть только у ответа и сообщает, откуда
 клиент читает адрес ответа.
 
-```rust
---8<-- "tests/asyncapi.rs:reply_address"
+```rust reference="tests/asyncapi.rs#reply_address"
 ```
 
 Документ показывает канал ответа с `address: null`, а выражение записывает в
@@ -1145,7 +1139,7 @@ asyncapi = ["ruststream/asyncapi"]
 Публичные перечисления ошибок помечайте `#[non_exhaustive]`. `anyhow` в библиотечном крейте не
 используйте никогда.
 
-## Поддержка тестирования {#test-support}
+## Поддержка тестирования {/* #test-support */}
 
 Сервис тестирует то приложение, которое поставляет: `TestApp::start(app())` принимает тот же
 билдер, что запускает `main`. Каждый брокер приложения тест подключает внутри процесса, без
@@ -1162,15 +1156,13 @@ asyncapi = ["ruststream/asyncapi"]
 
 У in-memory брокера нет сервера, поэтому его режим внутри процесса - обычный `connect`:
 
-```rust
---8<-- "src/memory/mod.rs:testable"
+```rust reference="src/memory/mod.rs#testable"
 ```
 
 Брокер с сервером строит внутрипроцессный транспорт в `connect_in_process` и регистрирует рабочий
 тип:
 
-```rust
---8<-- "tests/in_process.rs:in_process"
+```rust reference="tests/in_process.rs#in_process"
 ```
 
 Внутрипроцессный вариант подключённой формы, её подписчика, издателей и доставки существует только
@@ -1196,7 +1188,7 @@ dev-зависимостей в рабочий бинарник.
 [Conformance](conformance.md) показывает, как подтвердить режим внутри процесса через `run_suite` и
 остальные наборы.
 
-### Как написать транспорт, которому можно верить {#writing-one-you-can-trust}
+### Как написать транспорт, которому можно верить {/* #writing-one-you-can-trust */}
 
 Тесты сервиса целиком опираются на внутрипроцессный транспорт. Если он расходится с настоящим
 брокером, тест проходит на поведении, которого у брокера нет. Поэтому транспорт отклоняет всё, что
@@ -1208,8 +1200,7 @@ dev-зависимостей в рабочий бинарник.
 **Прогоняйте наборы ядра и внутри процесса.** Наборы написаны против трейтов и не различают,
 отвечает ли сервер или внутрипроцессный транспорт. Хватит одного `#[tokio::test]`:
 
-```rust
---8<-- "tests/conformance_self.rs:run_suite"
+```rust reference="tests/conformance_self.rs#run_suite"
 ```
 
 `lifecycle` тоже запускайте внутри процесса, через `harness::InProcessBroker`. Он выполняет `new` ->
@@ -1218,8 +1209,7 @@ dev-зависимостей в рабочий бинарник.
 ошибку. Настоящая клиентская библиотека отвечает «нет соединения». Транспорт, у которого публикация
 - это отправка в канал, примет сообщение.
 
-```rust
---8<-- "tests/conformance_self.rs:lifecycle"
+```rust reference="tests/conformance_self.rs#lifecycle"
 ```
 
 Добавьте и наборы `capabilities::*`, по одному на каждую реализованную возможность.
@@ -1273,7 +1263,7 @@ dev-зависимостей в рабочий бинарник.
 «возможности нет», а какому тесту читатель больше не может верить и что на самом деле закрывает
 эту проверку:
 
-<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+{/* inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on */}
 ```rust
 // No fencing: a second producer claiming the same transactional id is not rejected here, so a
 // test cannot assert the first one is fenced out. `capabilities::transactions` against a real

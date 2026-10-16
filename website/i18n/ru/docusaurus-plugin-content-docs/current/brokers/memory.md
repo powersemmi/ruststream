@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Memory
 
 `MemoryBroker` за фичей `memory` - полноценный брокер внутри процесса. Он подходит, когда очередь
@@ -9,14 +12,14 @@
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 ```
 
-<!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->
+{/* inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) */}
 ```rust
 use ruststream::memory::MemoryBroker;
 
 let broker = MemoryBroker::new();
 ```
 
-## Сколько он хранит { #retention }
+## Сколько он хранит {/* #retention */}
 
 Брокер из `MemoryBroker::new()` не хранит ничего. Сообщение живёт от публикации до чтения последним
 подписчиком, поэтому долгоживущий сервис держит в памяти только ту работу, которую обработчики ещё
@@ -24,8 +27,7 @@ let broker = MemoryBroker::new();
 
 Сервису с перемоткой нужна история, и он называет её объём:
 
-```rust
---8<-- "examples/seek.rs:retaining"
+```rust reference="examples/seek.rs#retaining"
 ```
 
 `Retention` ограничивает одну тему: `Messages(n)` хранит `n` свежих сообщений каждой темы,
@@ -39,11 +41,11 @@ let broker = MemoryBroker::new();
 против неё. Перемотка на брокере без журнала - ошибка компиляции, а не повтор, который молча ничего
 не находит.
 
-## Прелюдия, которую импортирует точка монтирования { #prelude }
+## Прелюдия, которую импортирует точка монтирования {/* #prelude */}
 
 Точка монтирования импортирует прелюдию брокера одной строкой:
 
-<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+{/* inline-rust: the import shape; every memory-feature example under examples/ mounts through it */}
 ```rust
 use ruststream::memory::prelude::*;
 ```
@@ -97,7 +99,7 @@ use ruststream::memory::prelude::*;
 Рантайм доставляет сообщения одним путём для всех брокеров, поэтому обработчик, middleware и
 декодирование работают здесь так же, как с сетевым брокером.
 
-## Совместимости {#capabilities}
+## Совместимости {/* #capabilities */}
 
 Следующие трейты-совместимости `MemoryBroker` реализует на своей внутрипроцессной семантике.
 
@@ -162,25 +164,28 @@ use ruststream::memory::prelude::*;
 Пример из
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service):
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/routed_service/orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/routed_service/orders.rs:descriptor"
-    ```
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/manual/routed_service_orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
-    ```
+```
 
-## Подписка по шаблону { #patterns }
+</TabItem>
+</Tabs>
 
-<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+## Подписка по шаблону {/* #patterns */}
+
+{/* inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs */}
 ```rust
 use ruststream::memory::prelude::*;
 

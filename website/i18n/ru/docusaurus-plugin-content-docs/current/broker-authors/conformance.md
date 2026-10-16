@@ -26,10 +26,9 @@ ruststream = { version = "0.7", features = ["conformance"] }
 `harness::run_suite` проверяет гарантии маршрутизации ядра, общие для всех брокеров. Так его
 прогоняет эталонный in-memory брокер:
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 **Фабрика.** Подставьте в неё конструктор своего брокера с теми настройками, с которыми его собирает
@@ -83,7 +82,7 @@ use ruststream::conformance::harness;
 `harness::lifecycle` проводит настоящий брокер через жизненный цикл так же, как сервис.
 Проверка не зависит от брокера: она принимает три фабрики.
 
-<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -188,11 +187,10 @@ async fn passes_lifecycle() {
 тому же брокеру: против сервера - к серверу, внутри процесса - к одному общему миру для всех
 построенных брокеров. Брокер в памяти в собственном прогоне делит одну шину между копиями:
 
-```rust
+```rust reference="tests/conformance_self.rs#shutdown_flushes"
 use ruststream::conformance::lifecycle;
 use ruststream::testing::Backlog;
 
---8<-- "tests/conformance_self.rs:shutdown_flushes"
 ```
 
 ## Те же наборы внутри процесса
@@ -208,8 +206,7 @@ use ruststream::testing::Backlog;
 В примере брокер, чей `connect` обращается к серверу, проходит внутри процесса набор маршрутизации
 и проверку жизненного цикла:
 
-```rust
---8<-- "tests/in_process.rs:suites"
+```rust reference="tests/in_process.rs#suites"
 ```
 
 ## Набор проверок подтверждения
@@ -217,8 +214,7 @@ use ruststream::testing::Backlog;
 `settlement::suite` проверяет, что каждый способ завершить доставку делает то, что обещает. Набор
 работает на транспорте брокера, в том числе на живом сервере.
 
-```rust
---8<-- "src/conformance/settlement/tests.rs:matches_in_process"
+```rust reference="src/conformance/settlement/tests.rs#matches_in_process"
 ```
 
 - **`make_broker`** вызывается на каждое соединение, а соединений два. Все брокеры, которые она
@@ -257,7 +253,7 @@ use ruststream::testing::Backlog;
 заявляет подтверждение, отвергнутое сервером, пропускает в тесте повтор обработчика, а в продакшене
 теряет сообщение.
 
-## Проверки повторов {#retry-checks}
+## Проверки повторов {/* #retry-checks */}
 
 `type Copies` дескриптора говорит, как регистрация повторяет доставку. Два ответа что-то обещают
 сервису: копию по адресу дескриптора и перекладку силами брокера. `conformance::retry` проверяет
@@ -278,8 +274,7 @@ use ruststream::testing::Backlog;
 Если ваша подключённая форма отвечает `Subscribe::Copies = AddressedCopies`, прогоните проверку ещё
 раз с голым источником `Name`. Этот ответ и есть адрес каждой регистрации `#[subscriber("orders")]`.
 
-```rust
---8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```rust reference="src/conformance/retry/tests.rs#redelivery_address"
 ```
 
 **Перекладка брокером.** `retry::broker_moves` принимает дескриптор с `BrokerMoves`:
@@ -295,7 +290,7 @@ use ruststream::testing::Backlog;
 Передайте `n`, который ваш брокер принимает. `make_source(name)` открывает и адрес DLQ,
 поэтому создаёт всё, что нужно для публикации в `name`.
 
-<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness::InProcessBroker;
 use ruststream::conformance::retry;
@@ -320,7 +315,7 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
 одно с другим. Оба его набора подключают брокер дважды на каждую пробу: через `Broker::connect` и
 через `connect_in_process`. Поэтому запускайте их там же, где проверки против сервера:
 
-<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::in_process::{self, Refusal};
 use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
@@ -385,8 +380,7 @@ async fn in_process_matches_the_server() {
 - **`describes_addresses_without_credentials`.** Вы передаёте брокер, построенный из нескольких
   адресов с пользователем и паролем. Описание сервера не содержит этих учётных данных.
 
-```rust
---8<-- "tests/conformance_message_shape.rs:keyed_order"
+```rust reference="tests/conformance_message_shape.rs#keyed_order"
 ```
 
 Транспорт без ключей не вызывает `keyed_order`: `None` для него честный ответ.
@@ -394,7 +388,7 @@ async fn in_process_matches_the_server() {
 Политику для `publish_options` настройте на значение, отличное от умолчания транспорта. Иначе
 издатель, который забыл про политику, пройдёт проверку, случайно попав в умолчание.
 
-## Наборы проверок для совместимостей {#capability-suites}
+## Наборы проверок для совместимостей {/* #capability-suites */}
 
 У каждой трейт-совместимости есть свой набор в `conformance::capabilities`. Набор доказывает, что
 реализация соблюдает контракт трейта. Запустите набор для каждой совместимости, которую реализует
@@ -403,7 +397,7 @@ async fn in_process_matches_the_server() {
 Наборы, как и `lifecycle`, строят брокер и подписку из фабрик и выполняют настоящий `connect`.
 Поэтому включайте их по той же переменной окружения:
 
-<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};

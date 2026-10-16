@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Учебник: собираем первый сервис
 
 Этот учебник собирает сервис заказов с нуля и разбирает каждую его часть. Сервис работает на
@@ -27,17 +30,20 @@ serde = { version = "1", features = ["derive"] }
 Обработчик - это `async fn`. Первым параметром он получает полезную нагрузку, уже декодированную
 из сообщения. Макрос `#[subscriber]` делает из функции определение подписчика с тем же именем.
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/tutorial/orders.rs:order"
-    ```
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/manual/tutorial/orders.rs:order"
-    ```
+```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#order"
+```
+
+</TabItem>
+</Tabs>
 
 Обработчик возвращает исход, [`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers):
 
@@ -56,17 +62,20 @@ serde = { version = "1", features = ["derive"] }
 Приложение - это функция с атрибутом `#[ruststream::app]`. В ней `with_broker` подключает брокер,
 а `include` регистрирует на нём обработчик:
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/first_app.rs:app"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/first_app.rs#app"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/first_app.rs:app"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/first_app.rs#app"
+```
+
+</TabItem>
+</Tabs>
 
 Запустите сервис:
 
@@ -74,11 +83,14 @@ serde = { version = "1", features = ["derive"] }
 cargo run -- run
 ```
 
-!!! tip "Кодек по умолчанию"
-    `include` декодирует сообщения кодеком по умолчанию. Это `json`, если фича включена, иначе
-    `cbor`, иначе `msgpack`. Другой кодек для всех обработчиков брокера задаётся один раз через
-    `with_broker_codec(broker, codec, |b| ...)`. Правила выбора кодека описаны в разделе
-    [Кодеки](https://docs.rs/ruststream/latest/ruststream/codec/index.html).
+:::tip[Кодек по умолчанию]
+
+`include` декодирует сообщения кодеком по умолчанию. Это `json`, если фича включена, иначе
+`cbor`, иначе `msgpack`. Другой кодек для всех обработчиков брокера задаётся один раз через
+`with_broker_codec(broker, codec, |b| ...)`. Правила выбора кодека описаны в разделе
+[Кодеки](https://docs.rs/ruststream/latest/ruststream/codec/index.html).
+
+:::
 
 ## 4. Ответьте на сообщения
 
@@ -96,31 +108,37 @@ cargo run -- run
 Если адрес объявлен на типе, он важнее адреса в `reply("...")`. Пример ниже объявляет адрес на
 типе:
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/tutorial/orders.rs:confirm"
-    ```
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/manual/tutorial/orders.rs:confirm"
-    ```
+```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#confirm"
+```
+
+</TabItem>
+</Tabs>
 
 Подключите `confirm` тем же `include`, что и `handle`:
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/reply_app.rs:reply"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/reply_app.rs#reply"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/reply_app.rs:reply"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/reply_app.rs#reply"
+```
+
+</TabItem>
+</Tabs>
 
 Ответ публикуется политикой брокера по умолчанию и кодируется кодеком по умолчанию. Другие способы
 публикации, в том числе изнутри обработчика, описаны в разделе
@@ -132,17 +150,20 @@ cargo run -- run
 [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing). Роутер - это
 набор обработчиков, который приложение подключает к брокеру одним вызовом.
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/routes.rs"
-    --8<-- "examples/tutorial/routes.rs:routes"
-    ```
+```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/routes.rs"
-    --8<-- "examples/manual/tutorial/routes.rs:routes"
-    ```
+```rust title="src/routes.rs" reference="examples/manual/tutorial/routes.rs#routes"
+```
+
+</TabItem>
+</Tabs>
 
 `include` добавляет в роутер обычный обработчик. Для обработчика в reply-форме он возвращает
 цепочку:
@@ -155,17 +176,20 @@ cargo run -- run
 
 Приложение подключает роутер через `include_router`:
 
-=== "Макросы"
+<Tabs groupId="api">
+<TabItem value="macros" label="Макросы">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```
 
-=== "Вручную"
+</TabItem>
+<TabItem value="manual" label="Вручную">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```
+
+</TabItem>
+</Tabs>
 
 Остальные возможности роутера описаны в разделе
 [Роутинг](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing).
@@ -192,12 +216,15 @@ cargo run -- asyncapi gen
 раздел
 [Брокеры](../brokers/index.md#switching-brokers).
 
-!!! info "Готовый сервис - это компилируемый пример"
-    Каждый фрагмент этой страницы взят из
-    [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial),
-    который CI собирает при каждом изменении. `first_app.rs` и `reply_app.rs` - это сервис после
-    шагов 3 и 4, а `main.rs` - готовый. Запустить его можно командой
-    `cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+:::info[Готовый сервис - это компилируемый пример]
+
+Каждый фрагмент этой страницы взят из
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial),
+который CI собирает при каждом изменении. `first_app.rs` и `reply_app.rs` - это сервис после
+шагов 3 и 4, а `main.rs` - готовый. Запустить его можно командой
+`cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+
+:::
 
 ## Что дальше
 

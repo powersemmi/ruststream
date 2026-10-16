@@ -32,7 +32,7 @@ ruststream = { version = "0.7", default-features = false }
 
 У крейта одно перечисление ошибок с вариантами по источникам:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::error::Error as StdError;
 
@@ -75,7 +75,7 @@ pub enum NatsError {
 - `shutdown` поглощает подключённую форму и возвращает свидетеля `ClosedNatsBroker`. `shutdown`
   выполняет всё завершение, которое может вернуть ошибку, и никогда не паникует.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -195,7 +195,7 @@ pub struct ClosedNatsBroker {
 одним подписчиком `NatsSubscriber`. Дескриптор реализует `SubscriptionSource`. JetStream включает
 вызов `jetstream(..)`:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use async_nats::jetstream::consumer::DeliverPolicy;
 use ruststream::SubscriptionSource;
@@ -272,7 +272,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 **Дескриптор в атрибуте.** Каждый метод билдера - один именованный аргумент макроса
 `#[subscriber(..)]`. Атрибут принимает цепочку вызовов целиком:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
 async fn handle(order: &Order) -> HandlerOutcome {
@@ -283,7 +283,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 **Подписка по имени.** `Subscribe` строит `SubscribeOptions::new(name)`, поэтому форма
 `#[subscriber("orders")]` идёт тем же путём:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::Subscribe;
 
@@ -300,7 +300,7 @@ impl Subscribe for ConnectedNatsBroker {
 опции и ветвится ровно один раз. Клиента он берёт из соединения, а соединение проверяет, не
 закрыто ли оно:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::{self, consumer::pull::Config as PullConfig};
 
@@ -360,7 +360,7 @@ impl ConnectedNatsBroker {
 `NatsSubscriber` оборачивает либо core-подписку `async-nats`, либо pull-поток JetStream. Для
 рантайма оба выглядят одинаково: поток сообщений типа `Message`.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::consumer::pull::Stream as PullStream;
 use futures::{Stream, future::Either};
@@ -408,7 +408,7 @@ impl Subscriber for NatsSubscriber {
 `NatsMessage` - перечисление из двух вариантов: доставка Core без ack и доставка JetStream с
 настоящим ack. Сообщения `async-nats` большие, поэтому оба варианта лежат в `Box`.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::AckKind;
 use ruststream::{AckError, HeaderMap, IncomingMessage};
@@ -461,7 +461,7 @@ impl IncomingMessage for NatsMessage {
 Заголовки сообщение преобразует один раз, при создании. От версии `async-nats` зависят только эти
 две функции:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use bytes::Bytes;
 
@@ -495,7 +495,7 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 
 Издатель делит соединение с подключённым брокером, на котором политика его инстанцировала:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{OutgoingMessage, Publisher};
 
@@ -548,7 +548,7 @@ impl Publisher for NatsPublisher {
 `NatsPublish` - политика, которая конструирует издателя `NatsPublisher`. Вы указываете её при
 регистрации обработчика, а издателя она инстанцирует при старте на подключённом брокере.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{DefaultPublish, PairError, PublishPolicy};
 
@@ -583,7 +583,7 @@ reply-форме, с аргументом `reply(..)` макроса `#[subscrib
 Запрос ждёт ответа не дольше таймаута вызывающей стороны. Когда таймер срабатывает, запрос
 возвращает `RequestTimeout`.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::time::Duration;
 
@@ -634,7 +634,7 @@ impl RequestReply for NatsPublisher {
 
 Точка монтирования подключает крейт одним glob-импортом:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use ruststream::prelude::*;
 
@@ -652,7 +652,7 @@ pub use ruststream::RequestReply;
 
 Готовый брокер подключается к приложению так же, как любой другой:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream_nats::prelude::*;
 
