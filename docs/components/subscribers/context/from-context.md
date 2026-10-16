@@ -60,7 +60,7 @@ An extractor that reads a broker field or a typed state implements the trait for
 
 ## See also
 
-- [`Context` and `Ctx<K>`](./context.md): what the context carries, and one broker field as a parameter.
+- [`Context` and `Ctx<K>`](./context-and-ctx.md): what the context carries, and one broker field as a parameter.
 - [Any struct as state](../../application/state/any-struct.md): `State<T>`, the extractor for the application state.
 - [Ack, retry, drop](../messages/handler-outcome.md): the outcomes a rejection can settle with.
 - [`FromContext`](api:ruststream::runtime::FromContext), [`State`](api:ruststream::runtime::State), [`HandlerOutcome`](api:ruststream::runtime::HandlerOutcome)
