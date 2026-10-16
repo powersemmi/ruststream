@@ -58,6 +58,50 @@ function useStroke(): [React.RefObject<HTMLDivElement | null>, Stroke] {
   return [ref, stroke];
 }
 
+// The scribble is drawn on a 100 x 100 grid and scaled to the panel in user units, so the stroke
+// keeps its width and the draw animation (a dash over `pathLength`) measures the real path. A
+// stretched viewBox with a non-scaling stroke breaks that dash in Firefox.
+const SCRIBBLE: [string, number, number][] = [
+  ['M', 22, 12], ['C', 40, 20], ['', 60, 8], ['', 78, 18], ['L', 24, 40],
+  ['C', 45, 36], ['', 60, 44], ['', 80, 46], ['L', 20, 70],
+  ['C', 40, 66], ['', 62, 74], ['', 82, 72], ['L', 30, 92],
+];
+
+function scribblePath(width: number, height: number): string {
+  return SCRIBBLE.map(
+    ([command, x, y]) =>
+      `${command}${command ? ' ' : ''}${((x * width) / 100).toFixed(1)} ${((y * height) / 100).toFixed(1)}`,
+  ).join(' ');
+}
+
+function Scribble(): ReactNode {
+  const ref = useRef<SVGSVGElement>(null);
+  const [size, setSize] = useState({width: 100, height: 100});
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) {
+      return undefined;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) {
+        const {width, height} = entry.contentRect;
+        setSize({width: Math.max(1, width), height: Math.max(1, height)});
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <svg
+      ref={ref}
+      className={styles.scribble}
+      viewBox={`0 0 ${size.width} ${size.height}`}
+      aria-hidden="true">
+      <path pathLength={1} d={scribblePath(size.width, size.height)} />
+    </svg>
+  );
+}
+
 function Chores({items, mark}: {items: ReactNode[]; mark: 'cross' | 'check'}): ReactNode {
   return (
     <ul className={styles.chores}>
@@ -123,16 +167,7 @@ export default function OldWayNewWay(): ReactNode {
             <div className={styles.oldCode}>
               <CodeBlock language="rust">{RAW_LOOP}</CodeBlock>
             </div>
-            <svg
-              className={styles.scribble}
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-              aria-hidden="true">
-              <path
-                pathLength={1}
-                d="M22 12 C 40 20, 60 8, 78 18 L 24 40 C 45 36, 60 44, 80 46 L 20 70 C 40 66, 62 74, 82 72 L 30 92"
-              />
-            </svg>
+            <Scribble />
           </div>
           <Chores
             mark="cross"
