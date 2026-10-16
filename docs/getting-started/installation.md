@@ -12,11 +12,14 @@ serde = { version = "1", features = ["derive"] }
 `serde` is a direct dependency of your service because your message types derive `Deserialize` /
 `Serialize`.
 
-!!! note "Edition and MSRV"
-    RustStream targets **edition 2024** and a minimum supported Rust version of **1.95**. Set
-    `edition = "2024"` in your `Cargo.toml`.
-    A broker crate may need a newer Rust than the core when its client library does. The broker
-    crate's own `rust-version` field states the exact minimum version.
+:::note[Edition and MSRV]
+
+RustStream targets **edition 2024** and a minimum supported Rust version of **1.95**. Set
+`edition = "2024"` in your `Cargo.toml`.
+A broker crate may need a newer Rust than the core when its client library does. The broker
+crate's own `rust-version` field states the exact minimum version.
+
+:::
 
 ## Features
 

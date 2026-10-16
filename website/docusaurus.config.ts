@@ -2,7 +2,8 @@ import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
-import {linkToPendingPage, pendingPages} from './pendingPages';
+import {resolveMarkdownLinks} from './markdownLinks';
+import {pendingPages} from './pendingPages';
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
 // build of the newest line under `/ruststream/latest/`. The deploy script sets the base URL per
@@ -74,7 +75,7 @@ const config: Config = {
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: linkToPendingPage(baseUrl),
+      onBrokenMarkdownLinks: resolveMarkdownLinks(baseUrl),
     },
   },
 
