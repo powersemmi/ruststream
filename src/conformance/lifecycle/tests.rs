@@ -22,9 +22,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, stream};
 use thiserror::Error;
 use tokio::{
-    runtime::Handle,
     sync::{Notify, mpsc, oneshot},
-    task::AbortHandle,
     time::sleep,
 };
 
@@ -36,7 +34,7 @@ use crate::{
         ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
         MemoryPublisher, MemorySubscriber,
     },
-    testing::Backlog,
+    testing::{Backlog, TestableBroker},
 };
 
 /// The one rule a [`Faulty`] broker breaks.
@@ -107,7 +105,8 @@ enum Fault {
     UntouchedReconnects,
     /// `nack` after shutdown answers `Ok` and does nothing.
     ClaimsAfterShutdown,
-    /// A publish is handed to a task that shutdown stops without flushing it.
+    /// A publish waits in a client buffer that only the connection's own read loop flushes, and
+    /// shutdown discards it.
     DefersPublishes,
     /// A subscription opened after shutdown stays open and silent.
     SubscribesAfterShutdown,
@@ -157,7 +156,6 @@ impl Broker for Faulty {
             bus: self.bus,
             fault: self.fault,
             closed: Arc::default(),
-            runtime: Handle::current(),
             deferred: Arc::default(),
         })
     }
@@ -169,8 +167,7 @@ struct ConnectedFaulty {
     bus: MemoryBroker,
     fault: Fault,
     closed: Arc<AtomicBool>,
-    runtime: Handle,
-    deferred: Arc<Mutex<Vec<AbortHandle>>>,
+    deferred: Deferred,
 }
 
 impl ConnectedFaulty {
@@ -183,7 +180,6 @@ impl ConnectedFaulty {
             lazy: OnceLock::new(),
             socket: Mutex::new(None),
             closed: Arc::clone(&self.closed),
-            runtime: self.runtime.clone(),
             deferred: Arc::clone(&self.deferred),
         }
     }
@@ -198,13 +194,13 @@ impl ConnectedBroker for ConnectedFaulty {
             pending::<()>().await;
         }
         self.closed.store(true, Ordering::SeqCst);
-        let deferred: Vec<_> = self.deferred.lock().expect("poisoned").drain(..).collect();
-        for task in deferred {
-            task.abort();
-        }
+        drop(take(&mut *self.deferred.lock().expect("poisoned")));
         self.inner.shutdown().await
     }
 }
+
+/// The publishes a [`Fault::DefersPublishes`] connection holds until its read loop runs.
+type Deferred = Arc<Mutex<Vec<(String, Bytes, HeaderMap)>>>;
 
 /// What a publish hands the connection a [`Fault::AttachesOnFirstCaller`] publisher attached.
 type Frame = (String, Bytes, HeaderMap, Option<oneshot::Sender<()>>);
@@ -217,8 +213,7 @@ struct FaultyPublisher {
     lazy: OnceLock<MemoryPublisher>,
     socket: Mutex<Option<mpsc::UnboundedSender<Frame>>>,
     closed: Arc<AtomicBool>,
-    runtime: Handle,
-    deferred: Arc<Mutex<Vec<AbortHandle>>>,
+    deferred: Deferred,
 }
 
 impl Publisher for FaultyPublisher {
@@ -305,21 +300,10 @@ impl Publisher for FaultyPublisher {
                 if self.closed.load(Ordering::SeqCst) {
                     return Err(MemoryError::ShutDown);
                 }
-                let connected = self.connected.clone();
-                let task = self.runtime.spawn(async move {
-                    sleep(Duration::from_millis(50)).await;
-                    let _ = connected
-                        .publisher()
-                        .publish(
-                            OutgoingMessage::new(&name, &payload).with_headers(headers),
-                            None,
-                        )
-                        .await;
-                });
                 self.deferred
                     .lock()
                     .expect("poisoned")
-                    .push(task.abort_handle());
+                    .push((name, payload, headers));
                 Ok(())
             }
             _ => {
@@ -380,8 +364,11 @@ impl SubscriptionSource<ConnectedFaulty> for FaultySource {
                 Feed::Direct(inner)
             }
         };
+        let outbox = (connected.fault == Fault::DefersPublishes)
+            .then(|| (Arc::clone(&connected.deferred), connected.inner.clone()));
         Ok(FaultySubscriber {
             feed,
+            outbox,
             fault: connected.fault,
             closed: Arc::clone(&connected.closed),
             ended: Arc::default(),
@@ -403,6 +390,8 @@ enum Feed {
 
 struct FaultySubscriber {
     feed: Feed,
+    /// The connection's held publishes, flushed whenever this subscription reads.
+    outbox: Option<(Deferred, ConnectedMemoryBroker)>,
     fault: Fault,
     closed: Arc<AtomicBool>,
     /// Ends the stream when notified.
@@ -436,7 +425,17 @@ impl Subscriber for FaultySubscriber {
                     .right_stream()
             }
         };
-        deliveries.take_until(async move { ended.notified().await })
+        let outbox = self.outbox.clone();
+        let mut deliveries = Box::pin(deliveries);
+        stream::poll_fn(move |cx| {
+            if let Some((deferred, connected)) = &outbox {
+                for (name, payload, headers) in take(&mut *deferred.lock().expect("poisoned")) {
+                    connected.inject(OutgoingMessage::new(&name, &payload).with_headers(headers));
+                }
+            }
+            deliveries.as_mut().poll_next(cx)
+        })
+        .take_until(async move { ended.notified().await })
     }
 }
 
