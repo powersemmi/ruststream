@@ -136,6 +136,7 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
+        {type: 'custom-versionDropdown', position: 'left'},
         {type: 'custom-askAi', position: 'right'},
         {type: 'localeDropdown', position: 'right'},
         {

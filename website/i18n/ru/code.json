@@ -93,5 +93,8 @@
   "theme.SearchBar.label": {
     "message": "Поиск",
     "description": "The ARIA label and placeholder for search button"
+  },
+  "versions.label": {
+    "message": "Версия"
   }
 }
