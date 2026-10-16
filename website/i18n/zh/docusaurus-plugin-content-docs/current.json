@@ -1,0 +1,26 @@
+{
+  "sidebar.docs.doc.Home": {
+    "message": "首页",
+    "description": "The label for the doc item 'Home' in sidebar 'docs', linking to the doc index"
+  },
+  "sidebar.docs.category.Getting started": {
+    "message": "快速开始",
+    "description": "The label for category 'Getting started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Brokers": {
+    "message": "Broker",
+    "description": "The label for category 'Brokers' in sidebar 'docs'"
+  },
+  "sidebar.docs.doc.Benchmarks": {
+    "message": "基准测试",
+    "description": "The label for the doc item 'Benchmarks' in sidebar 'docs', linking to the doc benchmarks"
+  },
+  "sidebar.docs.category.Broker authors": {
+    "message": "Broker 作者",
+    "description": "The label for category 'Broker authors' in sidebar 'docs'"
+  },
+  "sidebar.docs.doc.API reference": {
+    "message": "API 参考",
+    "description": "The label for the doc item 'API reference' in sidebar 'docs', linking to the doc reference"
+  }
+}
