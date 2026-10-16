@@ -3,7 +3,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
-import {pendingPages} from './pendingPages';
+import remarkSnippets from './plugins/remarkSnippets';
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
 // build of the newest line under `/ruststream/latest/`. The deploy script sets the base URL per
@@ -16,6 +16,10 @@ if (!/^\/ruststream\/[^/]+\/$/.test(baseUrl)) {
 }
 
 const accent = '#ff5722';
+
+// Excerpts on the pages are read from the repository's compiled sources and link back to them.
+const repoRoot = path.resolve(__dirname, '..');
+const sourceUrl = 'https://github.com/powersemmi/ruststream/blob/main';
 
 // The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
 // `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
@@ -75,7 +79,7 @@ const config: Config = {
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: resolveMarkdownLinks(baseUrl),
+      onBrokenMarkdownLinks: resolveMarkdownLinks(),
     },
   },
 
@@ -105,6 +109,7 @@ const config: Config = {
           path: '../docs',
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
+          remarkPlugins: [[remarkSnippets, {rootDir: repoRoot, repoUrl: sourceUrl}]],
           editUrl: 'https://github.com/powersemmi/ruststream/edit/main/docs/',
           // The translations live under `website/i18n/`; the other folders feed tools, not pages.
           exclude: [
@@ -113,7 +118,6 @@ const config: Config = {
             'hooks/**',
             'assets/**',
             'benchmarks/**',
-            ...pendingPages.map((page) => `${page}.md`),
           ],
         },
         blog: false,

@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Memory
 
 `MemoryBroker`, behind the `memory` feature, is a complete broker that runs inside your process. It
@@ -9,14 +12,14 @@ dependencies.
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 ```
 
-<!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->
+{/* inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) */}
 ```rust
 use ruststream::memory::MemoryBroker;
 
 let broker = MemoryBroker::new();
 ```
 
-## How much it keeps { #retention }
+## How much it keeps {/* #retention */}
 
 A broker built with `MemoryBroker::new()` keeps nothing. A message lives from the publish until the
 last subscriber has read it, so the memory a long-running service holds is the work its handlers
@@ -24,8 +27,7 @@ have yet to do, whatever the message count.
 
 A service that replays needs history, and says how much of it to keep:
 
-```rust
---8<-- "examples/seek.rs:retaining"
+```rust reference="examples/seek.rs#retaining"
 ```
 
 `Retention` bounds one topic: `Messages(n)` keeps the newest `n` messages of every topic,
@@ -39,7 +41,7 @@ are `Seekable`, and a mount that opens at a position or reads a seek handle only
 it. Replaying on a broker that keeps nothing is a compile error, not a replay that quietly finds
 nothing.
 
-## The prelude a mount site imports { #prelude }
+## The prelude a mount site imports {/* #prelude */}
 
 `ruststream::memory::prelude` is this broker's glob, built like the prelude of every broker crate.
 It re-exports the core prelude, then the broker's own surface (`MemoryBroker` with its `Routing`,
@@ -52,7 +54,7 @@ This broker's publisher implements both transaction kinds, so `TransactionalPubl
 same policy as `Publish`; on a broker with a separate transactional configuration that name points
 to a different policy.
 
-<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+{/* inline-rust: the import shape; every memory-feature example under examples/ mounts through it */}
 ```rust
 use ruststream::memory::prelude::*;
 ```
@@ -136,25 +138,28 @@ These capability traits are implemented over this broker's own in-process semant
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/routed_service/orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/routed_service/orders.rs:descriptor"
-    ```
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/manual/routed_service_orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
-    ```
+```
 
-## Pattern subscriptions { #patterns }
+</TabItem>
+</Tabs>
 
-<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+## Pattern subscriptions {/* #patterns */}
+
+{/* inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs */}
 ```rust
 use ruststream::memory::prelude::*;
 

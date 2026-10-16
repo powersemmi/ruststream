@@ -28,10 +28,9 @@ for each scenario, so no scenario sees another's state. Each scenario connects i
 `Subscribe`. Below is the reference in-memory broker's own run of the suite, verbatim; put your
 broker's constructor in the factory, configured the way a service configures it:
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### What it checks
@@ -117,7 +116,7 @@ them are `'static`.
 
 The check takes three factories, and they keep it broker-agnostic:
 
-<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -162,11 +161,10 @@ them itself, in process and against a real server:
 a server, or in process one world shared by every broker it builds. The in-memory broker's own run
 shares one bus between clones:
 
-```rust
+```rust reference="tests/conformance_self.rs#shutdown_flushes"
 use ruststream::conformance::lifecycle;
 use ruststream::testing::Backlog;
 
---8<-- "tests/conformance_self.rs:shutdown_flushes"
 ```
 
 ## The same suites in process
@@ -178,8 +176,7 @@ own descriptors and publish policies. Run both passes: the in-process one is wha
 in-process mode honest, the live one proves the real transport. Below, a broker whose `connect`
 dials a server passes the routing suite and the ladder in process:
 
-```rust
---8<-- "tests/in_process.rs:suites"
+```rust reference="tests/in_process.rs#suites"
 ```
 
 ## The settlement suite
@@ -201,8 +198,7 @@ two checks end where `nack(requeue = true)` answers `AckError::Unsupported`: a t
 that takes nothing back has no redelivery to observe. A log that commits a contiguous prefix may
 deliver the acked third message again with the first two; a duplicate passes, a loss does not.
 
-```rust
---8<-- "src/conformance/settlement/tests.rs:matches_in_process"
+```rust reference="src/conformance/settlement/tests.rs#matches_in_process"
 ```
 
 - **`make_broker`** is called once per connection, and a check connects twice, so every broker it
@@ -234,8 +230,7 @@ second time with the bare `Name` source when your connected form answers
 `Subscribe::Copies = AddressedCopies`: that answer is the address of every
 `#[subscriber("orders")]` registration.
 
-```rust
---8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```rust reference="src/conformance/retry/tests.rs#redelivery_address"
 ```
 
 `retry::broker_moves` takes a `BrokerMoves` descriptor. It declares `max_attempts(n)` and a
@@ -246,7 +241,7 @@ the declaration on its own must be refused at startup. Pass an `n` your broker a
 `make_source(name)` opens the dead-letter destination too, so it creates whatever a publish to
 `name` needs.
 
-<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness::InProcessBroker;
 use ruststream::conformance::retry;
@@ -271,7 +266,7 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
 Both suites connect the broker twice per probe, with `Broker::connect` and with
 `connect_in_process`, so run them where your live suites run:
 
-<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::in_process::{self, Refusal};
 use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
@@ -327,8 +322,7 @@ A transport with no keys does not call `keyed_order`: `None` is its honest answe
 policy you pass to `publish_options` away from the transport's default, so a publisher that forgets
 the policy cannot pass by landing on the default.
 
-```rust
---8<-- "tests/conformance_message_shape.rs:keyed_order"
+```rust reference="tests/conformance_message_shape.rs#keyed_order"
 ```
 
 ## Capability suites
@@ -352,7 +346,7 @@ suite instead of hanging it:
 | `capabilities::carries` | `Carries` on the subscription's deliveries | every delivery of a published value lends that value, and each value is lent exactly once; where the service publishes the subscription's copies (`AddressedCopies`, `NamedCopies`), a copy of a delivery, published from its payload and headers the way the runtime publishes a retry copy or a dead letter, lends the same value, and on `BrokerMoves` the suite copies nothing; a delivery whose value is gone lends none, so the runtime settles it by the decode-failure policy |
 | `capabilities::carries_batch` | `BatchSubscriber`, `CarriesBatch` on its batches | every published value is lent exactly once across the batches, and no batch lends more values than it delivers; when two values share a batch in one of five rounds, the batch's first delivery, nacked with requeue, comes back lending the value the batch lent first (a subscription that never groups them, or a transport that answers the requeue with `AckError::Unsupported`, passes, and the order goes unchecked for it); where the service publishes the copies, a copy of a delivery lends the same value, as for `carries`; a delivery whose value is gone, published in front of a value, is lent none and goes after it, past the end of the slice, checked the same way |
 
-<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};

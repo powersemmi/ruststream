@@ -32,7 +32,7 @@ One enum for the whole crate, variants by source, `#[non_exhaustive]` so that ne
 breaking change. Each source is stored as a boxed `std` error, so the `async-nats` error types do
 not appear in the public API.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::error::Error as StdError;
 
@@ -74,7 +74,7 @@ order of calls, but that several handles refer to one connection. The connection
 closed flag: `shutdown` sets it before calling `drain`, and every such handle reads the client
 through it.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -191,7 +191,7 @@ Core NATS is fire-and-forget; JetStream stores messages and requires acknowledge
 `SubscriptionSource`, and the broker picks the branch by whether `jetstream(..)` was called. Each
 builder method corresponds to one named parameter of the `#[subscriber(..)]` attribute.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use async_nats::jetstream::consumer::DeliverPolicy;
 use ruststream::SubscriptionSource;
@@ -268,7 +268,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 The `#[subscriber(..)]` macro accepts a builder chain, so the whole descriptor fits inside the
 attribute:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
 async fn handle(order: &Order) -> HandlerOutcome {
@@ -279,7 +279,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 Subscriptions by subject name reuse the same path: you can implement `Subscribe` by delegating to
 `SubscribeOptions::new(name)`, and then the `#[subscriber("orders")]` form works too.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::Subscribe;
 
@@ -296,7 +296,7 @@ The connected form's own `subscribe_with` validates the options and branches exa
 (`queue_group_ref`, `stream_ref` and `durable_ref` are small `pub(crate)` getters returning
 `Option<&str>`); it takes the client from the connection, where the closed check runs:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::{self, consumer::pull::Config as PullConfig};
 
@@ -354,7 +354,7 @@ impl ConnectedNatsBroker {
 both behind one `Message` type. `stream` branches with `futures::future::Either` and takes the inner
 stream out on the first poll, so it is single-use: the contract allows exactly one `stream` call.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::consumer::pull::Stream as PullStream;
 use futures::{Stream, future::Either};
@@ -401,7 +401,7 @@ delivery return `AckError::Unsupported`. That is not an error, and the runtime a
 JetStream they confirm the delivery, and `nack` maps to `nak` (redeliver) when the handler asks for
 it and to `term` (drop a poison message) when it does not.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::AckKind;
 use ruststream::{AckError, HeaderMap, IncomingMessage};
@@ -449,7 +449,7 @@ The `lifecycle` check from the conformance suite accepts `AckError::Unsupported`
 passes it. Each message converts its headers once, at construction; these two functions are the only
 place that depends on the `async-nats` version:
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use bytes::Bytes;
 
@@ -485,7 +485,7 @@ The publisher and the connected broker on which the policy instantiated it share
 connection. On every publish the publisher reads the client through the closed check and forwards
 the headers when they are present.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{OutgoingMessage, Publisher};
 
@@ -533,7 +533,7 @@ NATS has request-reply at the transport level, so you can implement `RequestRepl
 publisher. The wait is bounded by the caller's timeout, and an elapsed timer maps to
 `RequestTimeout`.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::time::Duration;
 
@@ -595,7 +595,7 @@ as is, the connected form also implements `DefaultPublish` (see
 [the contract](index.md#publishpolicy)), and a handler with `reply(..)` then compiles without an
 explicit publisher.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{DefaultPublish, PairError, PublishPolicy};
 
@@ -617,7 +617,7 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 A mount site imports the crate's prelude in full: the core prelude, then the broker and its
 descriptor, then the policies under the uniform names ([the contract](index.md#broker-prelude)).
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use ruststream::prelude::*;
 
@@ -633,7 +633,7 @@ pub use ruststream::RequestReply;
 Once the broker is ready, an application looks like any other: nothing in the handlers or the
 codecs is specific to NATS.
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream_nats::prelude::*;
 

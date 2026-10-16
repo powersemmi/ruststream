@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type {MarkdownConfig} from '@docusaurus/types';
-import {pendingPages} from './pendingPages';
 
 const docsRoot = path.resolve(__dirname, '../docs');
 const translationRoot = path.resolve(__dirname, 'i18n');
@@ -15,9 +14,7 @@ const translationTree = /^(ru|zh)\/docusaurus-plugin-content-docs\/current\/(.*)
  * English file, so the link goes to that page's address in the same language, where the
  * build's link check still verifies it. Any other unresolved link fails the build.
  */
-export function resolveMarkdownLinks(
-  baseUrl: string,
-): MarkdownConfig['hooks']['onBrokenMarkdownLinks'] {
+export function resolveMarkdownLinks(): MarkdownConfig['hooks']['onBrokenMarkdownLinks'] {
   return ({url, sourceFilePath}) => {
     const source = path.resolve(__dirname, sourceFilePath);
     const translated = translationTree.exec(path.relative(translationRoot, source));
@@ -27,10 +24,6 @@ export function resolveMarkdownLinks(
     const page = path.relative(docsRoot, target).replace(/\.md$/, '');
     const address = page.replace(/(^|\/)index$/, '');
     const suffix = `${address}${address ? '/' : ''}${hash ? `#${hash}` : ''}`;
-    if (pendingPages.includes(page)) {
-      const locale = translated ? `${translated[1]}/` : '';
-      return `pathname://${baseUrl}${locale}${suffix}`;
-    }
     if (translated && !page.startsWith('..') && fs.existsSync(target)) {
       return `/${suffix}`;
     }

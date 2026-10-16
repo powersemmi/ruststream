@@ -1,5 +1,4 @@
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
-import {pendingPages} from './pendingPages';
 
 // Each broker crate is documented on its own site; the sidebar links straight there.
 const brokerSites: Array<[string, string]> = [
@@ -18,9 +17,6 @@ const brokerSites: Array<[string, string]> = [
   ['SQL databases', 'ruststream-sqlx'],
 ];
 
-const built = (ids: string[]): string[] =>
-  ids.filter((id) => !pendingPages.includes(id));
-
 const sidebars: SidebarsConfig = {
   docs: [
     {type: 'doc', id: 'index', label: 'Home'},
@@ -28,18 +24,19 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Getting started',
       collapsible: false,
-      items: built([
+      items: [
         'getting-started/installation',
         'getting-started/quickstart',
         'getting-started/tutorial',
-      ]),
+      ],
     },
     {
       type: 'category',
       label: 'Brokers',
       collapsible: false,
       items: [
-        ...built(['brokers/index', 'brokers/memory']),
+        'brokers/index',
+        'brokers/memory',
         ...brokerSites.map(([label, repo]) => ({
           type: 'link' as const,
           label,
@@ -52,12 +49,12 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Broker authors',
       collapsible: false,
-      items: built([
+      items: [
         'broker-authors/index',
         'broker-authors/example-nats',
         'broker-authors/conformance',
         'broker-authors/templates',
-      ]),
+      ],
     },
     {type: 'doc', id: 'reference', label: 'API reference'},
   ],
