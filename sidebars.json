@@ -63,7 +63,8 @@
       "items": [
         "brokers/index",
         "brokers/memory",
-        "brokers/nats"
+        "brokers/nats",
+        "brokers/redis"
       ]
     },
     {

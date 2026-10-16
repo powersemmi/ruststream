@@ -36,7 +36,7 @@ Two architectural commitments shape the framework:
 - **[Quick start](getting-started/quickstart.md)** - scaffold a service with the CLI.
 - **[Tutorial](getting-started/tutorial.md)** - build a service step by step.
 - **[Testing](guides/testing.md)** - test handlers in-process, no server needed.
-- **[Brokers](brokers/index.md)** - the in-memory broker and NATS.
+- **[Brokers](brokers/index.md)** - the in-memory broker, NATS, and Redis.
 - **[Broker authors](broker-authors/index.md)** - implement the contract and pass conformance.
 
 ## Scope of this repository

@@ -110,6 +110,8 @@ only, so you assert on handler behaviour, middleware, and decoding exactly as in
 
 - [`ruststream-nats`](https://github.com/powersemmi/ruststream-nats): the NATS broker (Core NATS and
   JetStream).
+- [`ruststream-fred`](https://github.com/powersemmi/ruststream-fred): the Redis broker (Redis Streams
+  with consumer groups; standalone, cluster, and sentinel topologies) via the `fred` client.
 - [`ruststream-py`](https://github.com/powersemmi/ruststream-py): Python bindings.
 
 Concrete brokers live in their own crates and pull `ruststream` from crates.io.
