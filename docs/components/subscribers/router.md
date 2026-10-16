@@ -84,8 +84,8 @@ Without it, a router decodes with the default codec, JSON when the `json` featur
 
 ## See also
 
-- [`#[subscriber]`](./subscriber.md): what a router groups.
+- [`#[subscriber]`](./index.md): what a router groups.
 - [Middleware](./middleware/index.md): layers in general.
 - [Codecs](./codecs/index.md): the codecs a router can name.
-- [Application](../application/app.md): the broker scope a router mounts on.
+- [Application](../application/index.md): the broker scope a router mounts on.
 - [`Router`](api:ruststream::runtime::Router), [`RouterDef`](api:ruststream::runtime::RouterDef), [`BrokerScope::include_router`](api:ruststream::runtime::BrokerScope::include_router), [`Router::merge`](api:ruststream::runtime::Router::merge), [`Router::layer`](api:ruststream::runtime::Router::layer), [`Router::with_codec`](api:ruststream::runtime::Router::with_codec), [`BlanketLayer`](api:ruststream::runtime::BlanketLayer)

@@ -25,6 +25,10 @@ describe('redirects', () => {
     expect(moved.benchmarks).toBe('/architecture/benchmarks/');
   });
 
+  it('sends a component page that a category took over to the category', () => {
+    expect(moved['components/application/app']).toBe('/components/application/');
+  });
+
   it('sends the API reference page to the rustdoc of the version built', () => {
     expect(moved.reference).toBe('https://docs.rs/ruststream/0.8/ruststream/');
   });

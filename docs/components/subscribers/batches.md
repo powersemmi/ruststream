@@ -65,7 +65,7 @@ In the manual form the body is an `impl Handle<[T]>`; `Ok(())` acks the batch an
 
 ## See also
 
-- [`#[subscriber]`](./subscriber.md): the single-message form.
+- [`#[subscriber]`](./index.md): the single-message form.
 - [Mount-site settings](./mount-settings.md): `batch` among the other settings.
 - [Ack, retry, drop](./messages/handler-outcome.md) and [`retry_after`](./messages/retry-after.md): the outcomes a batch returns.
 - [`assert_batch_sizes`](../application/testing/subscriber-assertions/assert-batch-sizes.md) and [`batches`](../application/testing/subscriber-assertions/batches.md): reading batches in a test.

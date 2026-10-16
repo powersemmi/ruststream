@@ -70,7 +70,7 @@ In the manual form the first argument of `subscriber` is the source: a string, a
 
 ## See also
 
-- [`#[subscriber]`](./subscriber.md): the handler the source belongs to.
+- [`#[subscriber]`](./index.md): the handler the source belongs to.
 - [Mount-site settings](./mount-settings.md): the other settings `include` can chain.
 - [Routers](./router.md): mounting a module's handlers as one group.
 - [`Subscribe`](api:ruststream::Subscribe), [`Name`](api:ruststream::Name), [`Unnamed`](api:ruststream::Unnamed), [`FromName`](api:ruststream::FromName), [`SubscriptionSource`](api:ruststream::SubscriptionSource), [`MemorySource`](api:ruststream::memory::MemorySource), [`SubscriberSettings::name`](api:ruststream::runtime::SubscriberSettings::name)
