@@ -237,6 +237,39 @@ name = "routing"
 required-features = ["macros", "memory", "json"]
 
 [[example]]
+name = "subscriber_handler"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_handler"
+path = "examples/manual/subscriber_handler.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_source"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_source"
+path = "examples/manual/subscriber_source.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_settings"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_settings"
+path = "examples/manual/subscriber_settings.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
 name = "codecs"
 required-features = ["macros", "memory", "json", "cbor"]
 
