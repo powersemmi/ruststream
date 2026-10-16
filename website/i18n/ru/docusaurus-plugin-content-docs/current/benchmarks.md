@@ -1,3 +1,7 @@
+import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
+
+export const labels = {"loading": "Загружаем опубликованные результаты...", "broker": "Брокер", "scenario": "Сценарий", "raw": "Сырой клиент", "adapter": "Адаптация библиотеки брокера", "framework": "RustStream", "overhead": "Оверхед", "against": "({percent} к клиенту)", "indistinguishable": "неразличимо", "brokerBound": "упирается в брокер очереди", "measured": "измерено", "details": "Полные результаты и методология", "pending": "Результаты ещё не опубликованы: {brokers}.", "crate": "Крейт", "instructions": "Инструкции", "allocations": "Выделения", "cold": "Холодный старт"};
+
 # Бенчмарки
 
 Между клиентом брокера и обработчиком фреймворк тратит время на каждое сообщение: поток подписки,
@@ -18,7 +22,7 @@
 
 ### Против сырого клиента {/* #against-a-raw-client */}
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Загружаем опубликованные результаты...", "broker": "Брокер", "scenario": "Сценарий", "raw": "Сырой клиент", "adapter": "Адаптация библиотеки брокера", "framework": "RustStream", "overhead": "Оверхед", "against": "({percent} к клиенту)", "indistinguishable": "неразличимо", "brokerBound": "упирается в брокер очереди", "measured": "измерено", "details": "Полные результаты и методология", "pending": "Результаты ещё не опубликованы: {brokers}.", "crate": "Крейт", "instructions": "Инструкции", "allocations": "Выделения", "cold": "Холодный старт"}'></div>
+<BenchmarkResults labels={labels} />
 
 Как читать таблицу:
 
@@ -42,7 +46,7 @@
 внутрипроцессном транспорте. Адаптация библиотеки брокера измеряет себя на настоящем транспорте, а
 что входит в её числа, сообщает страница бенчмарков адаптации.
 
-<div id="benchmark-code"></div>
+<BenchmarkCode labels={labels} />
 
 Колонка «Холодный старт» считает запуск сервиса вместе с обработкой первого сообщения. Эти
 инструкции и выделения сервис тратит один раз, а не на каждом сообщении.

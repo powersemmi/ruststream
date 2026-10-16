@@ -1,3 +1,7 @@
+import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
+
+export const labels = {"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"};
+
 # 基准测试
 
 Broker 客户端和你的处理器之间隔着一层框架，每条消息都要为它花时间：订阅流、解码、分发、ack。
@@ -23,7 +27,7 @@ pull request 通不过。
 消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上
 多付多少。
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
+<BenchmarkResults labels={labels} />
 
 ### 代码的开销 {/* #cost-of-the-code */}
 
@@ -31,7 +35,7 @@ pull request 通不过。
 多付出多少，看上面那张表。`ruststream` 在进程内传输上测量框架自身的代码。Broker crate
 在真实的传输上测量自己，数字里包含什么，写在它的基准测试页面上。
 
-<div id="benchmark-code"></div>
+<BenchmarkCode labels={labels} />
 
 “冷启动”一列是启动服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一
 次，不按消息计。表格下面那一行先写跑出这些数字的机器，一直写到内存，再写这次测量的 crate
