@@ -86,7 +86,7 @@ export default function Numbers(): ReactNode {
             date: numbers.measuredAt,
             cpu: numbers.cpu,
             link: (
-              <Link to="/benchmarks/">
+              <Link to="/architecture/benchmarks/">
                 <Translate id="landing.numbers.link">every scenario and the method</Translate>
               </Link>
             ),

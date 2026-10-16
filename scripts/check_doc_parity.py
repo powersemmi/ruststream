@@ -40,6 +40,10 @@ TRANSLATION_PREFIX = {
 # every page in every language to prove that none of them changed.
 TRIGGERING = ("M", "D", "R")
 
+# Pages written in English only: the localized sites serve them in English under a
+# banner that says so, so an edit to one has no counterpart to reach.
+ENGLISH_ONLY = ("components/",)
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -50,12 +54,14 @@ def git(*args: str) -> str:
 
 
 def relative_page(path: str) -> str | None:
-    """A page's path relative to its language's tree, or None for a file that is not a page."""
+    """A page's path relative to its language's tree, or None for a file that is not a
+    translated page."""
     if not path.endswith(".md"):
         return None
     for prefix in (DOCS_PREFIX, *TRANSLATION_PREFIX.values()):
         if path.startswith(prefix):
-            return path[len(prefix) :]
+            relative = path[len(prefix) :]
+            return None if relative.startswith(ENGLISH_ONLY) else relative
     return None
 
 

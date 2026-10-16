@@ -8,6 +8,7 @@ import remarkApiLinks from './plugins/remarkApiLinks';
 import remarkSnippets from './plugins/remarkSnippets';
 import redirectsPlugin from './plugins/redirects';
 import {redirects as guideRedirects} from './redirects';
+import {translatableLabels} from './sidebarItems';
 import {readBuildVersion, siteRoot} from './versioning';
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
@@ -46,11 +47,25 @@ const redirects: Record<string, string> = archive
   ? existsSync(archiveRedirects)
     ? JSON.parse(readFileSync(archiveRedirects, 'utf8'))
     : {}
-  : guideRedirects;
+  : guideRedirects(version.docsRs);
 
 // API links on the pages resolve against the rustdoc of the checkout being built, which is the
 // rustdoc docs.rs renders for that version (`cargo doc --all-features --no-deps`).
 const rustdocDir = process.env.DOCS_RUSTDOC_DIR ?? path.join(contentRoot, 'target', 'doc');
+
+// The navbar opens each category of the documentation. The API is the crate's rustdoc of the
+// version built; an archive keeps the one sidebar of its line.
+const api = {href: `${version.docsRs}ruststream/`, label: 'API', position: 'left'} as const;
+const sidebar = (sidebarId: string, label: string) =>
+  ({type: 'docSidebar', sidebarId, label, position: 'left'}) as const;
+const categories = archive
+  ? [sidebar('docs', 'Docs'), api]
+  : [
+      sidebar('guides', 'Guides'),
+      sidebar('components', 'Components'),
+      api,
+      sidebar('architecture', 'Architecture'),
+    ];
 
 // The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
 // `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
@@ -164,6 +179,11 @@ const config: Config = {
           path: docsRoot,
           routeBasePath: '/',
           sidebarPath,
+          // Components follow their directory tree; their labels are translated like the rest.
+          sidebarItemsGenerator: async ({defaultSidebarItemsGenerator, ...args}) =>
+            translatableLabels(await defaultSidebarItemsGenerator(args), {
+              'components/index': 'Overview',
+            }),
           // Before the default plugins, which would otherwise read an `api:` link as a file.
           beforeDefaultRemarkPlugins: [[remarkApiLinks, {docsRs: version.docsRs, rustdocDir}]],
           remarkPlugins: [[remarkSnippets, {rootDir: contentRoot, repoUrl: sourceUrl}]],
@@ -199,7 +219,7 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
-        {type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left'},
+        ...categories,
         {type: 'custom-versionDropdown', position: 'left'},
         {type: 'custom-askAi', position: 'right'},
         // An archive is built in English only; a language menu would offer nothing to switch to.

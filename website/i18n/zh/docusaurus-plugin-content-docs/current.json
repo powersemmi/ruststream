@@ -1,26 +1,174 @@
 {
-  "sidebar.docs.doc.Home": {
-    "message": "首页",
-    "description": "The label for the doc item 'Home' in sidebar 'docs', linking to the doc index"
-  },
-  "sidebar.docs.category.Getting started": {
+  "sidebar.guides.category.Getting started": {
     "message": "快速开始",
-    "description": "The label for category 'Getting started' in sidebar 'docs'"
+    "description": "The label for category 'Getting started' in sidebar 'guides'"
   },
-  "sidebar.docs.category.Brokers": {
+  "sidebar.guides.category.Brokers": {
     "message": "Broker",
-    "description": "The label for category 'Brokers' in sidebar 'docs'"
+    "description": "The label for category 'Brokers' in sidebar 'guides'"
   },
-  "sidebar.docs.doc.Benchmarks": {
-    "message": "基准测试",
-    "description": "The label for the doc item 'Benchmarks' in sidebar 'docs', linking to the doc benchmarks"
+  "sidebar.guides.link.NATS": {
+    "message": "NATS",
+    "description": "The label for link 'NATS' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-nats/'"
   },
-  "sidebar.docs.category.Broker authors": {
+  "sidebar.guides.link.Redis": {
+    "message": "Redis",
+    "description": "The label for link 'Redis' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-fred/'"
+  },
+  "sidebar.guides.link.RabbitMQ": {
+    "message": "RabbitMQ",
+    "description": "The label for link 'RabbitMQ' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-lapin/'"
+  },
+  "sidebar.guides.link.Kafka": {
+    "message": "Kafka",
+    "description": "The label for link 'Kafka' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-rdkafka/'"
+  },
+  "sidebar.guides.link.AMQP 1.0": {
+    "message": "AMQP 1.0",
+    "description": "The label for link 'AMQP 1.0' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-amqp/'"
+  },
+  "sidebar.guides.link.Google Cloud Pub/Sub": {
+    "message": "Google Cloud Pub/Sub",
+    "description": "The label for link 'Google Cloud Pub/Sub' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-gcp-pubsub/'"
+  },
+  "sidebar.guides.link.AWS SQS / SNS": {
+    "message": "AWS SQS / SNS",
+    "description": "The label for link 'AWS SQS / SNS' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-sqs-sns/'"
+  },
+  "sidebar.guides.link.Apache Pulsar": {
+    "message": "Apache Pulsar",
+    "description": "The label for link 'Apache Pulsar' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-pulsar/'"
+  },
+  "sidebar.guides.link.MQTT 5": {
+    "message": "MQTT 5",
+    "description": "The label for link 'MQTT 5' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-rumqttc/'"
+  },
+  "sidebar.guides.link.ZeroMQ": {
+    "message": "ZeroMQ",
+    "description": "The label for link 'ZeroMQ' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-zeromq/'"
+  },
+  "sidebar.guides.link.Stream files / stdio": {
+    "message": "流式文件 / stdio",
+    "description": "The label for link 'Stream files / stdio' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-sea-file/'"
+  },
+  "sidebar.guides.link.AWS Kinesis": {
+    "message": "AWS Kinesis",
+    "description": "The label for link 'AWS Kinesis' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-kinesis/'"
+  },
+  "sidebar.guides.link.SQL databases": {
+    "message": "SQL 数据库",
+    "description": "The label for link 'SQL databases' in sidebar 'guides', linking to 'https://powersemmi.github.io/ruststream-sqlx/'"
+  },
+  "sidebar.components.category.Application": {
+    "message": "应用",
+    "description": "The label for category 'Application' in sidebar 'components'"
+  },
+  "sidebar.components.category.Testing": {
+    "message": "测试",
+    "description": "The label for category 'Testing' in sidebar 'components'"
+  },
+  "sidebar.components.category.Subscribers": {
+    "message": "订阅者",
+    "description": "The label for category 'Subscribers' in sidebar 'components'"
+  },
+  "sidebar.components.category.Publishing": {
+    "message": "发布",
+    "description": "The label for category 'Publishing' in sidebar 'components'"
+  },
+  "sidebar.components.category.AsyncAPI": {
+    "message": "AsyncAPI",
+    "description": "The label for category 'AsyncAPI' in sidebar 'components'"
+  },
+  "sidebar.architecture.category.Broker authors": {
     "message": "Broker 作者",
-    "description": "The label for category 'Broker authors' in sidebar 'docs'"
+    "description": "The label for category 'Broker authors' in sidebar 'architecture'"
   },
-  "sidebar.docs.doc.API reference": {
-    "message": "API 参考",
-    "description": "The label for the doc item 'API reference' in sidebar 'docs', linking to the doc reference"
+  "sidebar.architecture.doc.Benchmarks": {
+    "message": "基准测试",
+    "description": "The label for the doc item 'Benchmarks' in sidebar 'architecture', linking to the doc architecture/benchmarks"
+  },
+  "sidebar.components.doc.State": {
+    "message": "状态",
+    "description": "The label for the doc item 'State' in sidebar 'components', linking to the doc components/application/state/index"
+  },
+  "sidebar.components.doc.Starting and stopping": {
+    "message": "启动与停止",
+    "description": "The label for the doc item 'Starting and stopping' in sidebar 'components', linking to the doc components/application/testing/starting-and-stopping/index"
+  },
+  "sidebar.components.doc.Driving": {
+    "message": "驱动测试",
+    "description": "The label for the doc item 'Driving' in sidebar 'components', linking to the doc components/application/testing/driving/index"
+  },
+  "sidebar.components.doc.Service state": {
+    "message": "服务状态",
+    "description": "The label for the doc item 'Service state' in sidebar 'components', linking to the doc components/application/testing/service-state/index"
+  },
+  "sidebar.components.doc.Records": {
+    "message": "记录",
+    "description": "The label for the doc item 'Records' in sidebar 'components', linking to the doc components/application/testing/records/index"
+  },
+  "sidebar.components.doc.Subscriber assertions": {
+    "message": "订阅者断言",
+    "description": "The label for the doc item 'Subscriber assertions' in sidebar 'components', linking to the doc components/application/testing/subscriber-assertions/index"
+  },
+  "sidebar.components.doc.Published assertions": {
+    "message": "发布断言",
+    "description": "The label for the doc item 'Published assertions' in sidebar 'components', linking to the doc components/application/testing/published-assertions/index"
+  },
+  "sidebar.components.doc.Messages": {
+    "message": "消息",
+    "description": "The label for the doc item 'Messages' in sidebar 'components', linking to the doc components/subscribers/messages/index"
+  },
+  "sidebar.components.doc.Context and extractors": {
+    "message": "上下文与提取器",
+    "description": "The label for the doc item 'Context and extractors' in sidebar 'components', linking to the doc components/subscribers/context/index"
+  },
+  "sidebar.components.doc.Codecs": {
+    "message": "编解码器",
+    "description": "The label for the doc item 'Codecs' in sidebar 'components', linking to the doc components/subscribers/codecs/index"
+  },
+  "sidebar.components.doc.Dispatch": {
+    "message": "调度",
+    "description": "The label for the doc item 'Dispatch' in sidebar 'components', linking to the doc components/subscribers/dispatch/index"
+  },
+  "sidebar.components.doc.Middleware": {
+    "message": "中间件",
+    "description": "The label for the doc item 'Middleware' in sidebar 'components', linking to the doc components/subscribers/middleware/index"
+  },
+  "sidebar.components.doc.Publishers": {
+    "message": "发布者",
+    "description": "The label for the doc item 'Publishers' in sidebar 'components', linking to the doc components/subscribers/publishing/publishers/index"
+  },
+  "sidebar.components.doc.Transforms": {
+    "message": "转换",
+    "description": "The label for the doc item 'Transforms' in sidebar 'components', linking to the doc components/subscribers/publishing/transforms/index"
+  },
+  "sidebar.components.doc.Observability": {
+    "message": "可观测性",
+    "description": "The label for the doc item 'Observability' in sidebar 'components', linking to the doc components/observability/index"
+  },
+  "sidebar.components.doc.Generation": {
+    "message": "生成",
+    "description": "The label for the doc item 'Generation' in sidebar 'components', linking to the doc components/asyncapi/generation/index"
+  },
+  "sidebar.components.doc.What the document reports": {
+    "message": "文档报告的内容",
+    "description": "The label for the doc item 'What the document reports' in sidebar 'components', linking to the doc components/asyncapi/reports/index"
+  },
+  "sidebar.components.doc.Servers": {
+    "message": "服务器",
+    "description": "The label for the doc item 'Servers' in sidebar 'components', linking to the doc components/asyncapi/servers/index"
+  },
+  "sidebar.components.doc.Service info": {
+    "message": "服务信息",
+    "description": "The label for the doc item 'Service info' in sidebar 'components', linking to the doc components/asyncapi/service-info/index"
+  },
+  "sidebar.components.doc.Memory broker": {
+    "message": "内存 Broker",
+    "description": "The label for the doc item 'Memory broker' in sidebar 'components', linking to the doc components/memory/index"
+  },
+  "sidebar.components.doc.Overview": {
+    "message": "概览",
+    "description": "The label for the doc item 'Overview' in sidebar 'components', linking to the doc components/index"
   }
 }

@@ -24,7 +24,23 @@ const guides: Record<string, string> = {
   cli: `${docsRs}/runtime/cli/index.html`,
 };
 
-/** Old address to its target; every language of a build gets the same set. */
-export const redirects: Record<string, string> = Object.fromEntries(
-  Object.entries(guides).map(([guide, to]) => [`guides/${guide}`, to]),
-);
+// The entry pages moved into the categories of the site: installation, quick start and the
+// tutorial open the guides, and the benchmarks explain the architecture's cost.
+const pages: Record<string, string> = {
+  'getting-started/installation': '/guides/getting-started/installation/',
+  'getting-started/quickstart': '/guides/getting-started/quickstart/',
+  'getting-started/tutorial': '/guides/getting-started/tutorial/',
+  benchmarks: '/architecture/benchmarks/',
+};
+
+/**
+ * Old address to its target; every language of a build gets the same set. `docsRs` is the
+ * crate's rustdoc for the version built, which took over the API reference page.
+ */
+export function redirects(docsRs: string): Record<string, string> {
+  return {
+    ...Object.fromEntries(Object.entries(guides).map(([guide, to]) => [`guides/${guide}`, to])),
+    ...pages,
+    reference: `${docsRs}ruststream/`,
+  };
+}
