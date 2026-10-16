@@ -27,14 +27,19 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-code-region": "0.3.0",
+    "remark-gfm": "4.0.1",
+    "unist-util-visit": "5.1.0"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
     "@docusaurus/types": "3.10.2",
+    "@types/mdast": "4.0.4",
     "@types/react": "19.3.0",
+    "remark-parse": "11.0.0",
     "typescript": "6.0.3",
+    "unified": "11.0.5",
     "vitest": "4.1.12"
   },
   "browserslist": {
