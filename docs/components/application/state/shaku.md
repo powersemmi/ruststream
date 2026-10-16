@@ -21,10 +21,6 @@ import TabItem from '@theme/TabItem';
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 serde = { version = "1", features = ["derive"] }
 shaku = "0.6"
-
-[dev-dependencies]
-ruststream = { version = "0.7", features = ["testing"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 {/* inline-rust: it depends on shaku, a crate outside this repository */}
@@ -102,36 +98,6 @@ pub fn app() -> impl App {
             b.include(price).out_reply(Publish);
         })
 }
-
-#[cfg(test)]
-mod tests {
-    use std::error::Error;
-
-    use ruststream::memory::prelude::*;
-    use ruststream::testing::TestApp;
-
-    use super::{Order, Receipt, app};
-
-    #[tokio::test]
-    async fn the_handler_prices_the_order() -> Result<(), Box<dyn Error>> {
-        let tb = TestApp::start(app()).await?;
-        let broker = tb.broker::<MemoryBroker>();
-        broker
-            .message(&Order { id: 7, items: 3 })
-            .to("orders")
-            .publish()
-            .await?;
-
-        broker
-            .published::<Receipt>("receipts")
-            .assert_called_once()
-            .with(&Receipt {
-                order_id: 7,
-                total: 75,
-            });
-        Ok(())
-    }
-}
 ```
 
 </TabItem>
@@ -143,10 +109,6 @@ ruststream = { version = "0.7", default-features = false, features = ["memory", 
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 shaku = "0.6"
-
-[dev-dependencies]
-ruststream = { version = "0.7", default-features = false, features = ["testing"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 {/* inline-rust: it depends on shaku, a crate outside this repository */}
@@ -255,49 +217,10 @@ pub fn app() -> impl App {
                 .out_reply(Publish);
         })
 }
-
-#[cfg(test)]
-mod tests {
-    use std::error::Error;
-
-    use ruststream::memory::prelude::*;
-    use ruststream::testing::TestApp;
-
-    use super::{Order, Receipt, app};
-
-    #[tokio::test]
-    async fn the_handler_prices_the_order() -> Result<(), Box<dyn Error>> {
-        let tb = TestApp::start(app()).await?;
-        let broker = tb.broker::<MemoryBroker>();
-        broker
-            .message(&Order { id: 7, items: 3 })
-            .to("orders")
-            .publish()
-            .await?;
-
-        broker
-            .published::<Receipt>("receipts")
-            .assert_called_once()
-            .with(&Receipt {
-                order_id: 7,
-                total: 75,
-            });
-        Ok(())
-    }
-}
 ```
 
 </TabItem>
 </Tabs>
-
-`cargo test` runs the test at the end of the file:
-
-```text
-running 1 test
-test tests::the_handler_prices_the_order ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-```
 
 ## How it works
 

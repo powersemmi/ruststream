@@ -24,7 +24,7 @@ why on the line above the fence:
 An example region shown outside the Testing pages is what a service writes, so it holds no test (the
 tests that prove it sit in the same file, after the region's end marker) and opens with an item
 or an attribute, so the reader sees the signature of the code it shows, never a statement taken
-out of the middle of a function.
+out of the middle of a function. An inline fence outside the Testing pages holds no test either.
 """
 
 import re
@@ -104,9 +104,19 @@ def lint(path: Path) -> list[str]:
     # Per open `<Tabs>` block: whether it has a manual tab, and the macro fences it holds.
     block_has_manual = False
     block_macro_fences: list[int] = []
+    relative = path.resolve().relative_to(ROOT).as_posix()
+    # The Testing pages and the broker contract's pages document test suites: tests are their
+    # subject.
+    testing_page = relative.startswith(TESTING_PAGES) or "/broker-authors/" in f"/{relative}"
+    snippet_fence = False
     for n, line in enumerate(lines, 1):
         stripped = line.strip()
         if inside:
+            if not snippet_fence and not testing_page and TEST_ATTR.match(line):
+                errors.append(
+                    f"{path}:{n}: a test inside an inline rust fence - a page outside Testing"
+                    " shows the service only; keep the test beside the code, off the page"
+                )
             if stripped == "```":
                 inside = False
                 if not allowed:
@@ -121,17 +131,17 @@ def lint(path: Path) -> list[str]:
             fence_line = n
             previous = lines[n - 2] if n > 1 else ""
             snippet = SNIPPET.search(line)
+            snippet_fence = bool(snippet)
             allowed = bool(EXEMPT.search(previous)) or bool(snippet)
             if snippet:
                 target = snippet.group(1)
                 region = REGION.search(line)
-                relative = path.resolve().relative_to(ROOT).as_posix()
                 # The rule is about a service's code, which lives under `examples/`; a page that
                 # documents a test suite (the broker contract) shows tests on purpose.
                 if (
                     region
                     and target.startswith(EXAMPLES)
-                    and not relative.startswith(TESTING_PAGES)
+                    and not testing_page
                 ):
                     errors.extend(service_region_errors(path, n, target, region.group(1)))
                 if target.startswith(MANUAL):
