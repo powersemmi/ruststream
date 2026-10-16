@@ -61,6 +61,12 @@ jobs:
               - 'docs/**'
               - 'website/**'
               - 'examples/**'
+              # API links on the pages resolve against the crate's rustdoc, so a renamed item
+              # rebuilds the site and fails it on a link that no longer resolves
+              - 'src/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               # the testing and conformance pages embed their snippets from these test files
               - 'tests/doc_*.rs'
               - 'tests/conformance_self.rs'
@@ -525,7 +531,18 @@ jobs:
       - name: Check translated pages against their originals
         run: python3 scripts/check_doc_i18n.py
 
-      # Strict: a broken link, anchor or Markdown link fails the build.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # The API links on the pages resolve against this rustdoc, the one docs.rs renders for the
+      # same code; an item it lacks fails the build below.
+      - name: Build the rustdoc the API links resolve against
+        run: cargo doc --locked --all-features --no-deps -p ruststream
+
+      # Strict: a broken link, anchor, Markdown link or API link fails the build.
       - name: Build site (strict)
         working-directory: website
         run: npm run build

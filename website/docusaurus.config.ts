@@ -4,6 +4,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
+import remarkApiLinks from './plugins/remarkApiLinks';
 import remarkSnippets from './plugins/remarkSnippets';
 import redirectsPlugin from './plugins/redirects';
 import {redirects as guideRedirects} from './redirects';
@@ -46,6 +47,10 @@ const redirects: Record<string, string> = archive
     ? JSON.parse(readFileSync(archiveRedirects, 'utf8'))
     : {}
   : guideRedirects;
+
+// API links on the pages resolve against the rustdoc of the checkout being built, which is the
+// rustdoc docs.rs renders for that version (`cargo doc --all-features --no-deps`).
+const rustdocDir = process.env.DOCS_RUSTDOC_DIR ?? path.join(contentRoot, 'target', 'doc');
 
 // The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
 // `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
@@ -159,6 +164,8 @@ const config: Config = {
           path: docsRoot,
           routeBasePath: '/',
           sidebarPath,
+          // Before the default plugins, which would otherwise read an `api:` link as a file.
+          beforeDefaultRemarkPlugins: [[remarkApiLinks, {docsRs: version.docsRs, rustdocDir}]],
           remarkPlugins: [[remarkSnippets, {rootDir: contentRoot, repoUrl: sourceUrl}]],
           // An archive is not edited: its fixes land in `main`.
           editUrl: archive ? undefined : editUrl,
