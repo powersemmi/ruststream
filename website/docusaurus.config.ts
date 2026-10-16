@@ -1,3 +1,4 @@
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
@@ -22,6 +23,17 @@ const accent = '#ff5722';
 // Excerpts on the pages are read from the repository's compiled sources and link back to them.
 const repoRoot = path.resolve(__dirname, '..');
 const sourceUrl = 'https://github.com/powersemmi/ruststream/blob/main';
+const editBase = 'https://github.com/powersemmi/ruststream/edit/main';
+
+// A translated page is edited in its own file; a page the locale has not translated yet is
+// served from the English text, so its edit link opens the English file.
+function editUrl({locale, docPath}: {locale: string; docPath: string}): string {
+  const localized = `website/i18n/${locale}/docusaurus-plugin-content-docs/current/${docPath}`;
+  if (locale !== 'en' && existsSync(path.join(repoRoot, localized))) {
+    return `${editBase}/${localized}`;
+  }
+  return `${editBase}/docs/${docPath}`;
+}
 
 // The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
 // `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
@@ -112,7 +124,7 @@ const config: Config = {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
           remarkPlugins: [[remarkSnippets, {rootDir: repoRoot, repoUrl: sourceUrl}]],
-          editUrl: 'https://github.com/powersemmi/ruststream/edit/main/docs/',
+          editUrl,
           // The translations live under `website/i18n/`; the other folders feed tools, not pages.
           exclude: [
             'ru/**',
