@@ -111,7 +111,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_routing"
 path = "examples/manual/routing.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_codecs"
@@ -236,7 +237,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "routing"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "subscriber_handler"
