@@ -109,7 +109,7 @@ struct handler, and `HandlerMetadata`. Both forms below register the same handle
 <Tabs groupId="api">
 <TabItem value="macros" label="Macro">
 
-```rust
+```rust title="https://github.com/powersemmi/ruststream/blob/docs/archive/v0.2/examples/subscribers.rs"
 use ruststream::subscriber;
 
 #[subscriber("orders")]
