@@ -36,6 +36,18 @@ function askAiInSearch(): Plugin {
   };
 }
 
+// The landing page shows files of `examples/` as text, read when the site is built, so the code
+// on the page is the code that compiles. Webpack 5 and Rspack both load a module as its source
+// text with the `asset/source` type, which is what the deprecated `raw-loader` used to do.
+function rustSourceImports(): Plugin {
+  return {
+    name: 'ruststream-rust-source-imports',
+    configureWebpack() {
+      return {module: {rules: [{test: /\.rs$/, type: 'asset/source'}]}};
+    },
+  };
+}
+
 const config: Config = {
   title: 'RustStream',
   tagline: 'Async messaging framework for Rust',
@@ -95,7 +107,7 @@ const config: Config = {
     ],
   ],
 
-  plugins: [askAiInSearch],
+  plugins: [askAiInSearch, rustSourceImports],
 
   presets: [
     [

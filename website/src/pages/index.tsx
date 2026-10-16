@@ -7,6 +7,7 @@ import OldWayNewWay from '@site/src/components/Landing/OldWayNewWay';
 import Architecture from '@site/src/components/Landing/Architecture';
 import Principles from '@site/src/components/Landing/Principles';
 import Numbers from '@site/src/components/Landing/Numbers';
+import CallToAction from '@site/src/components/Landing/CallToAction';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -26,6 +27,7 @@ export default function Home(): ReactNode {
           <Architecture />
           <Principles />
           <Numbers />
+          <CallToAction />
         </div>
       </main>
     </Layout>
