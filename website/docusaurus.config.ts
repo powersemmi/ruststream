@@ -102,6 +102,7 @@ const config: Config = {
   customFields: {
     siteRoot,
     accent,
+    sourceUrl,
   },
 
   // `next` documents unreleased code; search engines should send readers to `latest`. The tag
