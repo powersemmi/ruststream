@@ -26,10 +26,9 @@ broker and drives its connected form, which is your `TestableBroker` (it also im
 `Subscribe`). This is the in-memory reference broker's own suite run, verbatim; substitute your
 transport's constructor in the factory:
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### What it checks
@@ -59,7 +58,7 @@ the ladder, so the runtime rule the check keeps verifying is the **aliased-handl
 publisher created before the shutdown must error afterwards, never silently succeed against a
 dead connection. It takes three factories that keep it broker-agnostic:
 
-<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -102,7 +101,7 @@ without the capability do not call it. Each suite takes the same factory shape a
 | `capabilities::owned_transactions` | `OwnedTransactions`, its `Transaction` | nothing published into an open transaction is visible before `commit`, a commit delivers the whole buffer in publish order, an abort discards it, two transactions open at once on one handle settle independently, and the handle keeps publishing directly while one is open |
 | `capabilities::seeking` | `Seekable`, messages `Positioned` | a seek back to a position captured from a delivered message redelivers exactly that message and the ordered suffix after it, a seek forward skips the queued deliveries before the target, and the subscription keeps delivering new publishes after repositioning |
 
-<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};

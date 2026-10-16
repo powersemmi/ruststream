@@ -55,16 +55,14 @@ The common case: open a pool before serving, share it with every handler, close 
 The `Database` below is a stand-in for any async resource - a `sqlx::PgPool` or an HTTP client
 slots in the same way, only its `connect` / `close` calls differ:
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
+```rust reference="examples/lifespan.rs#hooks"
 ```
 
 The hook's error type is inferred from the returned `Result`; it only needs to implement
 `std::error::Error + Send + Sync`. The resource is `Send + Sync`, so every concurrent handler borrows
 the one shared instance through `ctx.state()` - no per-message connection setup:
 
-```rust
---8<-- "examples/lifespan.rs:handler"
+```rust reference="examples/lifespan.rs#handler"
 ```
 
 The runnable program is
@@ -79,8 +77,7 @@ sequence and resolves once subscriptions are open - so a startup failure surface
 starts accepting traffic - and installs no signal handlers: the host decides what stops the
 service. The returned `RunningApp` handle drives the rest of the lifecycle:
 
-```rust
---8<-- "tests/app_start.rs:handle"
+```rust reference="tests/app_start.rs#handle"
 ```
 
 - `stopping()` returns an owned future that resolves when the service tears itself down on a
@@ -101,7 +98,7 @@ By default `run` waits indefinitely for in-flight handlers to finish after shutd
 Bound that wait with `shutdown_timeout`, as the example above does; handlers still running after it
 are aborted:
 
-<!-- inline-rust: isolates the shutdown_timeout call; the full chain is compiled in lifespan.rs:hooks, shown earlier on this page -->
+{/* inline-rust: isolates the shutdown_timeout call; the full chain is compiled in lifespan.rs:hooks, shown earlier on this page */}
 ```rust
 use std::time::Duration;
 

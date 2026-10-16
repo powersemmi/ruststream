@@ -28,8 +28,7 @@ pairs the token once `start()` has connected the broker - so the sibling task ge
 publisher, never a "not connected" state, and the live form is a plain value, safe to clone into
 whatever state the HTTP framework carries:
 
-```rust
---8<-- "examples/http_outbox.rs:wiring"
+```rust reference="examples/http_outbox.rs#wiring"
 ```
 
 ## A healthz endpoint
@@ -42,8 +41,7 @@ answering with the terminal state. This closes the gap `stopping()` alone leaves
 messaging side fail-fasts but a sibling task keeps the process alive, `/healthz` flips to 503
 instead of serving a permanent 200 for a dead consumer:
 
-```rust
---8<-- "examples/http_outbox.rs:healthz"
+```rust reference="examples/http_outbox.rs#healthz"
 ```
 
 The route carries its own state (`get(healthz).with_state(running.health())`), so it composes
@@ -53,8 +51,7 @@ with whatever state the rest of the router holds - the full wiring above registe
 The subscriber side is an ordinary handler; the same service consumes what its HTTP endpoints
 produce, and any other service subscribed to the broker sees the events too:
 
-```rust
---8<-- "examples/http_outbox.rs:handler"
+```rust reference="examples/http_outbox.rs#handler"
 ```
 
 ## Publishing straight from a request
@@ -74,19 +71,16 @@ consistency bug waiting for a deploy window. The fix is the transactional outbox
 Instead of publishing on the request path, the endpoint records the event next to the business
 write, atomically. A relay then moves recorded events to the broker:
 
-```rust
---8<-- "examples/http_outbox.rs:event"
+```rust reference="examples/http_outbox.rs#event"
 ```
 
-```rust
---8<-- "examples/http_outbox.rs:store"
+```rust reference="examples/http_outbox.rs#store"
 ```
 
 The endpoint only writes to the store. Recording the order and queueing its event is one atomic
 step, and no broker I/O can fail or stall the HTTP response:
 
-```rust
---8<-- "examples/http_outbox.rs:endpoint"
+```rust reference="examples/http_outbox.rs#endpoint"
 ```
 
 A background task drains the outbox into the broker. A row is removed only after its publish
@@ -95,8 +89,7 @@ the removal re-publishes the row on restart. Consumers therefore see at-least-on
 usual contract of an outbox, and handle duplicates the same way they handle redeliveries from the
 broker itself:
 
-```rust
---8<-- "examples/http_outbox.rs:relay"
+```rust reference="examples/http_outbox.rs#relay"
 ```
 
 With a real database the `Store` is a table plus an `outbox` table written in one SQL

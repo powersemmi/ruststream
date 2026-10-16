@@ -10,10 +10,9 @@ the runtime pairs them with the connected broker at startup.
 Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
 sends it:
 
-```rust
+```rust reference="examples/publishing.rs#reply"
 use ruststream::subscriber;
 
---8<-- "examples/publishing.rs:reply"
 ```
 
 Mount it with plain `include`. With nothing else said, the reply goes out through the broker's
@@ -22,8 +21,7 @@ default publish policy under the default codec; to name the reply codec or add t
 (`TypedPublisher::new` uses the default codec; name one with `TypedPublisher::with_codec`). The
 stack is a declaration: the runtime pairs it with the connected broker at startup.
 
-```rust
---8<-- "examples/publishing.rs:reply_mount"
+```rust reference="examples/publishing.rs#reply_mount"
 ```
 
 Decoding of the incoming request follows the scope (the scope codec set with
@@ -37,8 +35,7 @@ take control: `Ok(reply)` publishes and acks, `Err(result)` publishes nothing an
 acts on the returned `HandlerResult` (`HandlerResult::drop()` to dead-letter,
 `HandlerResult::retry()` to ask for redelivery):
 
-```rust
---8<-- "examples/publishing.rs:reply_result"
+```rust reference="examples/publishing.rs#reply_result"
 ```
 
 The `Result` form is detected from the written signature, so spell it out (a type alias hiding the
@@ -58,16 +55,14 @@ The source is attached where the handler is included, and the runtime pairs it a
 connects, so the handler cannot observe a "not connected" publisher, and the state stays free of
 connection-bound values.
 
-```rust
+```rust reference="examples/publishing.rs#forward"
 use ruststream::runtime::Out;
 
---8<-- "examples/publishing.rs:forward"
 ```
 
 The include site names the source; for the scope's own broker it is the publish policy:
 
-```rust
---8<-- "examples/publishing.rs:forward_mount"
+```rust reference="examples/publishing.rs#forward_mount"
 ```
 
 An `Out` handler included without `.publisher(..)` panics when the application is built (not at
@@ -80,12 +75,10 @@ their batch counterpart - `.publisher(..)` stays the reply's own attachment and 
 publisher attaches with `.out(..)` instead, so a gateway can answer on a fixed destination
 while fanning side copies out through the injection:
 
-```rust
---8<-- "examples/publishing.rs:publish_out"
+```rust reference="examples/publishing.rs#publish_out"
 ```
 
-```rust
---8<-- "examples/publishing.rs:publish_out_mount"
+```rust reference="examples/publishing.rs#publish_out_mount"
 ```
 
 ### Publishing to a different broker
@@ -97,8 +90,7 @@ before any `with_broker` runs, registration order does not matter - a bidirectio
 both directions up front. The token is then the source at the include site (shown here with two
 in-memory brokers, the shape is the same for any pair):
 
-```rust
---8<-- "tests/out_injection.rs:cross_broker"
+```rust reference="tests/out_injection.rs#cross_broker"
 ```
 
 A token shares a slot with the `Bindable` wrapper it was minted from, and registering that same
@@ -135,8 +127,7 @@ A static `PublishTransform` implements `apply(&mut Outgoing<'_>, &PublishContext
 incoming headers, and the broker's typed per-delivery context by `Field` key), so a transform can
 carry a value from the incoming message onto the reply:
 
-```rust
---8<-- "examples/publishing.rs:static_transform"
+```rust reference="examples/publishing.rs#static_transform"
 ```
 
 A batch handler's replies skip the per-message `.transform(..)` stack; add a transform there with
@@ -145,14 +136,12 @@ A batch handler's replies skip the per-message `.transform(..)` stack; add a tra
 A `PublishLayer` implements an around/next signature, so it can short-circuit, retry, or
 observe (reserve "dynamic" for `PublishDynLayer` inside a `PublishDynStack`):
 
-```rust
---8<-- "examples/publishing.rs:app_layer"
+```rust reference="examples/publishing.rs#app_layer"
 ```
 
 Both levels compose on the application:
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
+```rust reference="examples/publishing.rs#pipeline"
 ```
 
 The pipeline runs on the reply path (the `publish(..)` form). An injected `Out` publisher is the
@@ -168,14 +157,12 @@ the reply name and acks the batch; `Err(result)` publishes nothing and settles t
 with `result` (all-or-nothing: selective per-element outcomes do not compose with a
 transaction):
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing"
+```rust reference="examples/publishing.rs#batch_publishing"
 ```
 
 Mount it with `include_batch`, chaining the reply wiring with `.publisher(..)`:
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing_mount"
+```rust reference="examples/publishing.rs#batch_publishing_mount"
 ```
 
 With a plain `TypedPublisher`, each reply publishes independently; a mid-batch failure retries
@@ -195,8 +182,7 @@ opens a `TransactionScope` that owns the transaction. Publishes go through the s
 `commit()` / `abort()` consume it - so a commit without a begin, a second commit, or a publish
 after settling are compile errors, not runtime surprises:
 
-```rust
---8<-- "examples/publishing.rs:manual_transaction"
+```rust reference="examples/publishing.rs#manual_transaction"
 ```
 
 The scope encodes values with the publisher's codec and sends them directly: per-publisher

@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Codecs and serialization
 
 A codec turns wire bytes into your typed payload and back. It is a separate seam from the broker:
@@ -31,27 +34,30 @@ the most specific level you set, from narrowest to widest:
 
 Override a single mounting:
 
-=== "Router"
+<Tabs groupId="codec-scope">
+<TabItem value="router" label="Router">
 
-    <!-- inline-rust: standalone Router-builder fragment; the compiled form is the with_broker tab below (codecs.rs:per_handler), which mounts the same chain via include_router -->
-    ```rust
-    router.with_codec(CborCodec).include(handle);
-    ```
+{/* inline-rust: standalone Router-builder fragment; the compiled form is the with_broker tab below (codecs.rs:per_handler), which mounts the same chain via include_router */}
+```rust
+router.with_codec(CborCodec).include(handle);
+```
 
-=== "with_broker"
+</TabItem>
+<TabItem value="with-broker" label="with_broker">
 
-    ```rust
-    --8<-- "examples/codecs.rs:per_handler"
-    ```
+```rust reference="examples/codecs.rs#per_handler"
+```
+
+</TabItem>
+</Tabs>
 
 ### Per scope
 
 Set one codec for every handler in a `with_broker` scope:
 
-```rust
+```rust reference="examples/codecs.rs#scope"
 use ruststream::codec::CborCodec;
 
---8<-- "examples/codecs.rs:scope"
 ```
 
 ### Default
@@ -75,10 +81,9 @@ When decoding fails, the failure policy decides what happens to the message; by 
 dropped (a nack without requeue). The policy is set per subscriber with the
 `on_failure(decode = ..)` clause:
 
-```rust
+```rust reference="examples/codecs.rs#decode_failure"
 use ruststream::subscriber;
 
---8<-- "examples/codecs.rs:decode_failure"
 ```
 
 When building handlers by hand, the `Typed` wrapper returned by `typed(codec, handler)` takes

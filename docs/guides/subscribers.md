@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Subscribers
 
 A subscriber binds a handler to one subscription. The `#[subscriber]` macro is the ergonomic way to
@@ -9,11 +12,10 @@ Grouping handlers into modules is covered in [Routing](routing.md), and how payl
 
 A handler is an `async fn` whose first parameter is a reference to the decoded payload:
 
-```rust
+```rust reference="examples/subscribers.rs#contract"
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
 
---8<-- "examples/subscribers.rs:contract"
 ```
 
 The macro turns the function into a value named after it (here `handle`) that implements the
@@ -24,8 +26,7 @@ mounting contract. You pass that value to `include`.
 Declare an optional second parameter, `&mut Context`, to read headers, the subscription name, and
 shared state, or to publish from inside the handler:
 
-```rust
---8<-- "examples/subscribers.rs:context"
+```rust reference="examples/subscribers.rs#context"
 ```
 
 The macro resolves the context type itself, so the `Context` name needs no import when it appears
@@ -76,8 +77,7 @@ On the message itself, ack consumes `self`, so the type system prevents acking t
 non-critical notification, slow follow-up work, a cache warm-up. Any outcome works
 (`drop().and_after(..)` is valid; the neutral reading is "after settle"):
 
-```rust
---8<-- "examples/post_settle.rs:single"
+```rust reference="examples/post_settle.rs#single"
 ```
 
 The continuation follows the shared post-settle semantics (at-most-once, runs only after the
@@ -87,8 +87,7 @@ ack or nack settles, drained on graceful shutdown); see
 In a batch each element settles individually, so the continuation rides per element - a capability
 the per-message context hook cannot offer:
 
-```rust
---8<-- "examples/post_settle.rs:batch"
+```rust reference="examples/post_settle.rs#batch"
 ```
 
 Batch *publishing* (`batch(..) + publish(..)`) settles all-or-nothing under one transaction, so
@@ -99,8 +98,7 @@ per-element `and_after` does not compose there; it applies to plain batch and si
 `retry_after` covers the not-ready-yet case (a dependency has not arrived, an upstream is
 rate-limited), where an immediate redelivery would spin without progress:
 
-```rust
---8<-- "examples/retry.rs:retry_after"
+```rust reference="examples/retry.rs#retry_after"
 ```
 
 Under the hood, the runtime honours the delay:
@@ -123,8 +121,7 @@ The `batch_retry_after` form composes with
 [selective batch outcomes](#selective-acknowledgement): a `Vec<HandlerResult>` carries
 per-element delays, so pending entries back off without holding up the rest of the page:
 
-```rust
---8<-- "examples/retry.rs:batch_retry_after"
+```rust reference="examples/retry.rs#batch_retry_after"
 ```
 
 ## Choosing the subscription source
@@ -139,7 +136,7 @@ per-element delays, so pending entries back off without holding up the rest of t
 When a subscription needs broker-specific options (a consumer group, a durable name, a delivery
 policy), the broker crate exposes a descriptor type. Use its constructor directly in the decorator:
 
-<!-- inline-rust: illustrative descriptor sketch; OrdersStream is a stand-in for a broker crate's SubscriptionSource type, which lives in another crate and has no in-repo compiled home (the real NATS form is pulled in just below) -->
+{/* inline-rust: illustrative descriptor sketch; OrdersStream is a stand-in for a broker crate's SubscriptionSource type, which lives in another crate and has no in-repo compiled home (the real NATS form is pulled in just below) */}
 ```rust
 #[subscriber(OrdersStream::new("orders", "workers"))]
 async fn handle(order: &Order) -> HandlerResult {
@@ -155,7 +152,7 @@ The source may also be a builder chain on that constructor, so fluent options st
 example, a broker that ships an options builder lets a handler name a specific stream and consumer
 right in the decorator:
 
-<!-- inline-rust: illustrative builder-chain source; the concrete options type lives in a broker crate, so there is no in-repo compiled home -->
+{/* inline-rust: illustrative builder-chain source; the concrete options type lives in a broker crate, so there is no in-repo compiled home */}
 ```rust
 #[subscriber(StreamOptions::new("orders").durable("audit"))]
 async fn handle(order: &Order) -> HandlerResult {
@@ -171,7 +168,7 @@ macro.
 
 Inside `with_broker`, mount a definition with `include`:
 
-<!-- inline-rust: minimal include mount fragment with placeholder info/broker; the full compiled program is examples/subscribers.rs (its app is pulled in via other anchors on this page) -->
+{/* inline-rust: minimal include mount fragment with placeholder info/broker; the full compiled program is examples/subscribers.rs (its app is pulled in via other anchors on this page) */}
 ```rust
 RustStream::new(info).with_broker(broker, |b| {
     b.include(handle);
@@ -191,14 +188,12 @@ Wrapping the source in `batch(..)` switches the handler to whole-batch consumpti
 decoded batch as a slice and runs once per batch the broker delivers - one database round-trip,
 one bulk API call.
 
-```rust
---8<-- "examples/subscribers.rs:batch"
+```rust reference="examples/subscribers.rs#batch"
 ```
 
 Mount it with `include_batch` (the batch counterpart of `include`):
 
-```rust
---8<-- "examples/subscribers.rs:batch_mount"
+```rust reference="examples/subscribers.rs#batch_mount"
 ```
 
 The source's subscriber must implement the `BatchSubscriber` capability. Brokers whose clients
@@ -207,8 +202,7 @@ in their subscription options; the in-memory broker batches natively too. For an
 the `Buffered` adapter buffers single deliveries client-side, closing a batch by size or by a
 deadline after its first delivery:
 
-```rust
---8<-- "examples/subscribers.rs:batch_buffered"
+```rust reference="examples/subscribers.rs#batch_buffered"
 ```
 
 The semantics differ from single-message handlers in a few ways:
@@ -228,8 +222,7 @@ A common case is partial readiness: some messages of the page are processed, oth
 ready yet and should be redelivered without retrying the ones that succeeded. Return
 `Vec<HandlerResult>` to settle element `i` of the slice with outcome `i`:
 
-```rust
---8<-- "examples/subscribers.rs:batch_selective"
+```rust reference="examples/subscribers.rs#batch_selective"
 ```
 
 Broker semantics are exactly those of per-message `nack(requeue = true)`: brokers with
@@ -251,12 +244,10 @@ A handler repositions its own subscription through a `Seek` parameter. The runti
 seeker off the subscription right after it opens, so the handler always holds a live handle;
 nothing is attached at the include site:
 
-```rust
---8<-- "examples/seek.rs:handler"
+```rust reference="examples/seek.rs#handler"
 ```
 
-```rust
---8<-- "examples/seek.rs:mount"
+```rust reference="examples/seek.rs#mount"
 ```
 
 A seek from inside the handler settles the current message as usual; deliveries queued before
@@ -280,8 +271,7 @@ A subscription can also open at a chosen position instead of the broker's defaul
 deploy" or "replay the whole log into a fresh subscription" is part of the subscriber's
 declaration, not an operational action afterwards:
 
-```rust
---8<-- "examples/seek.rs:start_at"
+```rust reference="examples/seek.rs#start_at"
 ```
 
 The clause forces the position on every startup; without it the subscription opens at the
@@ -301,8 +291,7 @@ When the payload is not a serialized value at all (a binary frame, a foreign wir
 parse yourself), the `raw` clause takes the codec out of the path entirely: the handler receives
 each delivery's bytes exactly as the broker handed them over.
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw"
+```rust reference="tests/raw_subscriber.rs#raw"
 ```
 
 The message parameter must be `&[u8]` - a serde-typed parameter under `raw` is a compile error,
@@ -321,8 +310,7 @@ at the include site (`b.include(relay).publisher(policy)`, or the broker's defau
 policy without the call) - no codec on either side, and a failed reply publish nacks the
 delivery with requeue:
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply"
+```rust reference="tests/raw_subscriber.rs#raw_reply"
 ```
 
 `publish_raw` is not tied to a raw input: on a typed handler it makes only the *reply* raw - the
@@ -330,8 +318,7 @@ input still decodes with the scope codec (and keeps the decode failure policy), 
 returned bytes go out unencoded. That is the gateway shape, consuming structured messages and
 emitting a wire format the handler produced itself:
 
-```rust
---8<-- "tests/raw_subscriber.rs:raw_reply_typed"
+```rust reference="tests/raw_subscriber.rs#raw_reply_typed"
 ```
 
 The encoded `publish(..)` clause under `raw` is rejected (a raw handler's reply is bytes -
@@ -344,16 +331,14 @@ next is pulled, so one slow handler stalls the whole subscription. A `workers(n)
 processes up to `n` deliveries of this subscriber concurrently, each in its own task on the
 multi-thread runtime:
 
-```rust
---8<-- "examples/subscribers.rs:workers"
+```rust reference="examples/subscribers.rs#workers"
 ```
 
 Back-pressure holds: the stream is not polled while `n` deliveries are in flight, which plays
 well with broker-side limits like JetStream `max_ack_pending`. **Global processing order is lost
 by design** - if any ordering matters, either stay sequential or use keyed lanes:
 
-```rust
---8<-- "examples/subscribers.rs:workers_by_key"
+```rust reference="examples/subscribers.rs#workers_by_key"
 ```
 
 `workers(n, by_key)` runs `n` sequential lanes. A delivery goes to the lane its partition key
@@ -387,27 +372,32 @@ integration test.
 you can write the same registration by hand with `typed` (which decodes the payload), a closure or
 struct handler, and `HandlerMetadata`. Both forms below register the same handler.
 
-=== "Macro"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macro">
 
-    ```rust
-    use ruststream::subscriber;
+```rust reference="examples/subscribers.rs#contract"
+use ruststream::subscriber;
 
-    --8<-- "examples/subscribers.rs:contract"
+```
 
-    // inside with_broker(...):
-    b.include(handle);
-    ```
+```rust
+// inside with_broker(...):
+b.include(handle);
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+```rust reference="examples/subscribers.rs#manual"
+use ruststream::Name;
+use ruststream::codec::JsonCodec;
+use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
 
-    // inside with_broker(...):
-    --8<-- "examples/subscribers.rs:manual"
-    ```
+// inside with_broker(...):
+```
+
+</TabItem>
+</Tabs>
 
 Reach for the manual form when a handler needs state the macro cannot express (a struct handler with
 fields), or to set a non-default [decode-failure policy](codecs.md#decode-failures). Otherwise the
