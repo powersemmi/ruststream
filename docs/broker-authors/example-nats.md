@@ -6,9 +6,12 @@ a complete broker in miniature: a `Broker`, one subscription type that serves bo
 JetStream behind a single `SubscribeOptions` descriptor, a publisher that forwards headers, and a
 native request-reply capability.
 
-!!! note
-    Item names track the `async-nats` version you depend on (0.46 here); adapt the few spots noted
-    below if the crate's API has moved.
+:::note
+
+Item names track the `async-nats` version you depend on (0.46 here); adapt the few spots noted
+below if the crate's API has moved.
+
+:::
 
 ```toml title="Cargo.toml"
 [package]

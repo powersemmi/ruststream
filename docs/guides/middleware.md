@@ -13,16 +13,14 @@ Today the two scopes are independent: a layer lives either on the **application*
 `with_broker`. Every handler registered directly on a broker scope is wrapped with it - but not the
 handlers a router brings in, because a router is finalized independently:
 
-```rust
---8<-- "examples/middleware_app_scope.rs:app_scope"
+```rust reference="examples/middleware_app_scope.rs#app_scope"
 ```
 
 **Router scope.** Give a router its own middleware with `Router::layer`, which wraps every handler
 registered on it after the call (see [Routing](routing.md#router-middleware)). Handlers mounted
 directly on the broker scope stay outside it:
 
-```rust
---8<-- "examples/middleware_router_scope.rs:router_scope"
+```rust reference="examples/middleware_router_scope.rs#router_scope"
 ```
 
 The two programs are
@@ -32,11 +30,14 @@ and
 `LogLayer` is the hand-written layer from the next section, and the built-in
 `layers::TracingLayer` mounts the same way.
 
-!!! warning "Planned for 0.3: routers inherit the application scope"
-    The separation above is the 0.2 behaviour. In 0.3 a router will inherit the application's
-    stack, so app-level layers will wrap router handlers too (composing outside the router's own
-    `Router::layer` stack). Until then, a layer that must cover everything has to be added in both
-    places explicitly.
+:::warning[Planned for 0.3: routers inherit the application scope]
+
+The separation above is the 0.2 behaviour. In 0.3 a router will inherit the application's
+stack, so app-level layers will wrap router handlers too (composing outside the router's own
+`Router::layer` stack). Until then, a layer that must cover everything has to be added in both
+places explicitly.
+
+:::
 
 The first layer added is the outermost. Both stacks are static: zero runtime dispatch cost, and
 the type grows as you call `layer`.
@@ -45,10 +46,9 @@ the type grows as you call `layer`.
 
 A layer transforms one handler into another. Implement `Layer<H>`:
 
-```rust
+```rust reference="examples/middleware.rs#layer_impl"
 use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
 
---8<-- "examples/middleware.rs:layer_impl"
 ```
 
 `Identity` is the no-op layer (the default global stack), and `Stack<Inner, Outer>` composes two.
@@ -91,13 +91,12 @@ into the dynamic stack for exactly those handlers: `DynStack`, `DynMiddleware`, 
 `next.run(..)` to continue or short-circuits with its own result. Because it is object-safe, it
 returns a boxed future explicitly:
 
-```rust
+```rust reference="examples/middleware.rs#dyn_middleware"
 use std::future::Future;
 use std::pin::Pin;
 
 use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 
---8<-- "examples/middleware.rs:dyn_middleware"
 ```
 
 Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, and the result is an
@@ -105,13 +104,12 @@ ordinary static `Layer` - compose it into the application stack with `layer`, ex
 hand-written one. The rest of the dispatch chain stays static; the boxing cost is paid only inside
 the stack:
 
-```rust
+```rust reference="examples/middleware.rs#dyn_stack"
 use std::sync::Arc;
 
 use ruststream::memory::MemoryMessage;
 use ruststream::runtime::DynStack;
 
---8<-- "examples/middleware.rs:dyn_stack"
 ```
 
 The full program, with the chain toggled by an environment variable, is

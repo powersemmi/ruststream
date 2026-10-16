@@ -11,8 +11,7 @@ ruststream = { version = "0.2", features = ["macros", "memory", "metrics"] }
 
 Create a `Metrics`, install its consume and publish layers, and keep the handle to export later:
 
-```rust
---8<-- "examples/metrics_http.rs:wiring"
+```rust reference="examples/metrics_http.rs#wiring"
 ```
 
 `consume_layer` records every handled message; `publish_layer` records every published message. To
@@ -54,6 +53,5 @@ curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
 curl http://127.0.0.1:8080/metrics
 ```
 
-```rust
---8<-- "examples/metrics_http.rs"
+```rust reference="examples/metrics_http.rs"
 ```

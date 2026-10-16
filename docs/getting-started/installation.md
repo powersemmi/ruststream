@@ -12,9 +12,12 @@ serde = { version = "1", features = ["derive"] }
 `serde` is a direct dependency of your service because your message types derive `Deserialize` /
 `Serialize`.
 
-!!! note "Edition and MSRV"
-    RustStream targets **edition 2024** and a minimum supported Rust version of **1.85** (native
-    `async fn in trait`). Set `edition = "2024"` in your `Cargo.toml`.
+:::note[Edition and MSRV]
+
+RustStream targets **edition 2024** and a minimum supported Rust version of **1.85** (native
+`async fn in trait`). Set `edition = "2024"` in your `Cargo.toml`.
+
+:::
 
 ## Features
 

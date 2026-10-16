@@ -43,8 +43,7 @@ ruststream asyncapi gen --yaml
 
 ## What the entry point looks like
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
 ```
 
 You write a function that builds the service; the macro turns it into a `main` that dispatches

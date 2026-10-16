@@ -21,8 +21,7 @@ ruststream asyncapi gen --yaml
 In code, build the spec from the application with `build_spec`, then serialize it with `to_json` or
 `to_yaml`:
 
-```rust
---8<-- "examples/asyncapi_http.rs:generate"
+```rust reference="examples/asyncapi_http.rs#generate"
 ```
 
 `#[ruststream::app]` wires the `asyncapi gen` command to `build_spec` for you, so the CLI and a
@@ -33,8 +32,7 @@ hand-written call produce the same document.
 A handler's payload type appears as a schema when it derives `JsonSchema`. RustStream re-exports
 `schemars`, so you do not need a direct dependency:
 
-```rust
---8<-- "examples/asyncapi_http.rs:payload"
+```rust reference="examples/asyncapi_http.rs#payload"
 ```
 
 A type without `JsonSchema` still works as a handler payload; it just contributes no schema to the
@@ -79,8 +77,7 @@ locked-down deployments (`with_title` sets the page title).
 The [`asyncapi_http`](https://github.com/powersemmi/ruststream/blob/main/examples/asyncapi_http.rs)
 example serves the document and the viewer with [axum](https://github.com/tokio-rs/axum). Run it with
 `cargo run --example asyncapi_http --features macros,memory,asyncapi`, then open
-<http://127.0.0.1:8080/>.
+[http://127.0.0.1:8080/](http://127.0.0.1:8080/).
 
-```rust
---8<-- "examples/asyncapi_http.rs"
+```rust reference="examples/asyncapi_http.rs"
 ```

@@ -8,10 +8,9 @@ handler through a named publisher. Both run through the publish pipeline.
 Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
 sends it:
 
-```rust
+```rust reference="examples/publishing.rs#reply"
 use ruststream::subscriber;
 
---8<-- "examples/publishing.rs:reply"
 ```
 
 Mount it with `include_publishing`, handing it a [`TypedPublisher`] that carries the broker
@@ -43,16 +42,18 @@ let app = RustStream::new(info)
     .with_broker(broker, |b| b.include(forward));
 ```
 
-```rust
+```rust reference="examples/publishing.rs#forward"
 use ruststream::runtime::{HandlerResult, Outgoing};
 
---8<-- "examples/publishing.rs:forward"
 ```
 
-!!! note "Handlers that publish must own their context"
-    A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
-    handler (as above) or a struct handler with `async fn handle`, both of which own the borrow
-    across awaits.
+:::note[Handlers that publish must own their context]
+
+A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
+handler (as above) or a struct handler with `async fn handle`, both of which own the borrow
+across awaits.
+
+:::
 
 ## The publish pipeline
 
@@ -67,21 +68,18 @@ Two kinds of transform run before a message leaves the process, and they compose
 
 A static `PublishLayer` implements `apply(&mut Outgoing)`:
 
-```rust
---8<-- "examples/publishing.rs:static_layer"
+```rust reference="examples/publishing.rs#static_layer"
 ```
 
 A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
 short-circuit, retry, or observe:
 
-```rust
---8<-- "examples/publishing.rs:dynamic_middleware"
+```rust reference="examples/publishing.rs#dynamic_middleware"
 ```
 
 Both levels compose on the application:
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
+```rust reference="examples/publishing.rs#pipeline"
 ```
 
 Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (the static layer is a

@@ -17,8 +17,7 @@ RustStream::new(info)
 
 Read them from any handler or middleware through the `Context`:
 
-```rust
---8<-- "examples/lifespan.rs:handler"
+```rust reference="examples/lifespan.rs#handler"
 ```
 
 `ctx.get::<T>()` returns `Option<&T>`; it is `None` only if no value of that type was inserted.
@@ -63,8 +62,7 @@ The common case: open a pool before serving, share it with every handler, close 
 The `Database` below is a stand-in for any async resource - a `sqlx::PgPool` or an HTTP client
 slots in the same way, only its `connect` / `close` calls differ:
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
+```rust reference="examples/lifespan.rs#hooks"
 ```
 
 The hook's error type is inferred from the `Ok::<_, E>(..)` annotation; it only needs to implement

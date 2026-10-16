@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Subscribers
 
 A subscriber binds a handler to one subscription. The `#[subscriber]` macro is the ergonomic way to
@@ -9,11 +12,10 @@ Grouping handlers into modules is covered in [Routing](routing.md), and how payl
 
 A handler is an `async fn` whose first parameter is a reference to the decoded payload:
 
-```rust
+```rust reference="examples/subscribers.rs#contract"
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
 
---8<-- "examples/subscribers.rs:contract"
 ```
 
 The macro turns the function into a value named after it (here `handle`) that implements the
@@ -24,8 +26,7 @@ mounting contract. You pass that value to `include`.
 Declare an optional second parameter, `&mut Context`, to read headers, the subscription name, and
 shared state, or to publish from inside the handler:
 
-```rust
---8<-- "examples/subscribers.rs:context"
+```rust reference="examples/subscribers.rs#context"
 ```
 
 The macro resolves the context type itself, so the `Context` name needs no import when it appears
@@ -73,10 +74,9 @@ descriptor against the broker it is mounted on. A descriptor is any type that im
 The source may also be a builder chain on that constructor, so fluent options stay inline. A NATS
 JetStream consumer, for example:
 
-```rust
+```rust reference="examples/nats_jetstream.rs#decorator"
 use ruststream_nats::SubscribeOptions;
 
---8<-- "examples/nats_jetstream.rs:decorator"
 ```
 
 The macro follows the chain down to the base `Type::new(..)` to name the source type, so each method
@@ -106,27 +106,35 @@ To group handlers per module and mount them all at once, collect them into a `Ro
 you can write the same registration by hand with `typed` (which decodes the payload), a closure or
 struct handler, and `HandlerMetadata`. Both forms below register the same handler.
 
-=== "Macro"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macro">
 
-    ```rust
-    use ruststream::subscriber;
+```rust
+use ruststream::subscriber;
 
-    --8<-- "examples/subscribers.rs:contract"
+#[subscriber("orders")]
+async fn handle(order: &Order) -> HandlerResult {
+    println!("got order {}", order.id);
+    HandlerResult::Ack
+}
 
-    // inside with_broker(...):
-    b.include(handle);
-    ```
+// inside with_broker(...):
+b.include(handle);
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust
-    use ruststream::Name;
-    use ruststream::codec::JsonCodec;
-    use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
+```rust reference="examples/subscribers.rs#manual"
+use ruststream::Name;
+use ruststream::codec::JsonCodec;
+use ruststream::runtime::{Context, HandlerMetadata, HandlerResult, typed};
 
-    // inside with_broker(...):
-    --8<-- "examples/subscribers.rs:manual"
-    ```
+// inside with_broker(...):
+```
+
+</TabItem>
+</Tabs>
 
 Reach for the manual form when a handler needs state the macro cannot express (a struct handler with
 fields), or to set a non-default [decode-failure policy](codecs.md#decode-failures). Otherwise the

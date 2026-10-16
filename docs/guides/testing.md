@@ -8,13 +8,16 @@ RustStream services are tested at two levels:
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
    the semantics only a real server has (durable consumers, redelivery timers, partitions).
 
-!!! warning "What the test client does and does not do"
-    An in-memory test broker is a handler-stub dispatcher: publishing fans the message out to the
-    subscribers whose subject matches, runs your handler, and treats ack/nack as broker-side no-ops
-    (a nack with requeue redelivers the same payload to the same subscriber). It does **not** model
-    JetStream durable cursors, `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or
-    consumer groups, or RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns;
-    test them in the [integration suite](#integration-tests-against-a-real-broker).
+:::warning[What the test client does and does not do]
+
+An in-memory test broker is a handler-stub dispatcher: publishing fans the message out to the
+subscribers whose subject matches, runs your handler, and treats ack/nack as broker-side no-ops
+(a nack with requeue redelivers the same payload to the same subscriber). It does **not** model
+JetStream durable cursors, `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or
+consumer groups, or RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns;
+test them in the [integration suite](#integration-tests-against-a-real-broker).
+
+:::
 
 ## The `TestClient` contract
 
@@ -51,20 +54,21 @@ external producer would, and asserts on what the handler published back.
 The handler under test (in a real service it lives in your handler module and the test imports
 it):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
+```rust reference="tests/doc_testing_memory.rs#handler"
 ```
 
 The test:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
+```rust reference="tests/doc_testing_memory.rs#test"
 ```
 
-!!! info "This test runs in this repository's CI"
-    The code above is embedded from
-    [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
-    which `cargo test --all-features` runs on every change - the example cannot silently rot.
+:::info[This test runs in this repository's CI]
+
+The code above is embedded from
+[`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
+which `cargo test --all-features` runs on every change - the example cannot silently rot.
+
+:::
 
 Three details carry the pattern:
 
@@ -92,8 +96,7 @@ ruststream-nats = { version = "0.2", features = ["testing"] }
 The same pattern as above, with a wildcard subscriber that audits every order event (this file
 also runs in this repository's CI):
 
-```rust
---8<-- "tests/doc_testing_nats.rs:test"
+```rust reference="tests/doc_testing_nats.rs#test"
 ```
 
 The test broker also implements `RequestReply`, so a handler that responds to requests is testable

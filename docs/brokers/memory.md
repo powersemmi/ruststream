@@ -36,10 +36,9 @@ descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
-```rust
+```rust reference="examples/routed_service/orders.rs#descriptor"
 use ruststream::memory::MemorySource;
 
---8<-- "examples/routed_service/orders.rs:descriptor"
 ```
 
 ## As a test client

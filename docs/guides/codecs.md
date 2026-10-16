@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Codecs and serialization
 
 A codec turns wire bytes into your typed payload and back. It is a separate seam from the broker:
@@ -31,26 +34,29 @@ the most specific level you set, from narrowest to widest:
 
 Override a single mounting:
 
-=== "Router"
+<Tabs groupId="mount">
+<TabItem value="router" label="Router">
 
-    ```rust
-    router.with_codec(CborCodec).include(handle);
-    ```
+```rust
+router.with_codec(CborCodec).include(handle);
+```
 
-=== "with_broker"
+</TabItem>
+<TabItem value="with-broker" label="with_broker">
 
-    ```rust
-    --8<-- "examples/codecs.rs:per_handler"
-    ```
+```rust reference="examples/codecs.rs#per_handler"
+```
+
+</TabItem>
+</Tabs>
 
 ### Per scope
 
 Set one codec for every handler in a `with_broker` scope:
 
-```rust
+```rust reference="examples/codecs.rs#scope"
 use ruststream::codec::CborCodec;
 
---8<-- "examples/codecs.rs:scope"
 ```
 
 ### Default
@@ -74,11 +80,10 @@ When decoding fails, the message is dropped by default (a nack without requeue).
 configurable on the typed adapter when you build handlers by hand: `typed(codec, handler)` returns
 a `Typed` wrapper whose `on_decode_failure` accepts a `DecodeFailure` mode (`Drop` or `Requeue`).
 
-```rust
+```rust reference="examples/codecs.rs#decode_failure"
 use ruststream::runtime::{DecodeFailure, typed};
 
 // inside with_broker(...):
---8<-- "examples/codecs.rs:decode_failure"
 ```
 
 Requeue with care: a payload that can never decode will redeliver forever unless the broker has a
