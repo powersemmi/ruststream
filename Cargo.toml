@@ -346,6 +346,18 @@ path = "examples/manual/testing_driving.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
+[[example]]
+name = "testing_service_state"
+path = "examples/testing_service_state.rs"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_service_state"
+path = "examples/manual/testing_service_state.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
