@@ -28,7 +28,13 @@ export type Labels = Record<
   | 'crate'
   | 'instructions'
   | 'allocations'
-  | 'cold',
+  | 'cold'
+  | 'table'
+  | 'axis'
+  | 'rounds'
+  | 'best'
+  | 'median'
+  | 'noise',
   string
 >;
 
@@ -179,21 +185,30 @@ function indistinguishable(scenario: Scenario): boolean {
   return Math.abs(figure(scenario.raw)! - figure(scenario.adapter)!) < Math.max(ours, theirs);
 }
 
+/** What the crate costs over the client it wraps, as the document's verdict states it. */
+export function adapterVerdict(scenario: Scenario, labels: Labels): string {
+  // A crate that measured only the two ends has no middle loop to judge.
+  if (!scenario.adapter) {
+    return EMPTY;
+  }
+  // The overhead column's rule, applied here too, so the two loops of a row never disagree
+  // about what is visible.
+  if (scenario.adapter_verdict === 'indistinguishable' || indistinguishable(scenario)) {
+    return labels.indistinguishable;
+  }
+  if (typeof scenario.adapter_overhead_percent === 'number') {
+    return signed(scenario.adapter_overhead_percent);
+  }
+  return EMPTY;
+}
+
 export function adapterCell(scenario: Scenario, lang: string, labels: Labels): string {
-  // A crate that measured only the two ends leaves the middle column empty.
   if (!scenario.adapter) {
     return EMPTY;
   }
   const value = sideCell(scenario.adapter, scenario.unit, lang);
-  // The overhead column's rule, applied here too, so the two columns of a row never disagree
-  // about what is visible.
-  if (scenario.adapter_verdict === 'indistinguishable' || indistinguishable(scenario)) {
-    return `${value} ${labels.against.replace('{percent}', labels.indistinguishable)}`;
-  }
-  if (typeof scenario.adapter_overhead_percent === 'number') {
-    return `${value} ${labels.against.replace('{percent}', signed(scenario.adapter_overhead_percent))}`;
-  }
-  return value;
+  const verdict = adapterVerdict(scenario, labels);
+  return verdict === EMPTY ? value : `${value} ${labels.against.replace('{percent}', verdict)}`;
 }
 
 export interface ComparisonRow {
@@ -234,13 +249,22 @@ export function codeRows(published: Loaded[], lang: string): CodeRow[] {
       scenario: scenario.name,
       instructions: number(scenario.framework.instructions, lang),
       allocations: number(scenario.framework.allocations, lang),
-      // Two numbers in one cell: what starting cost in instructions, and in allocations.
-      cold: scenario.cold
-        ? `${number(scenario.cold.instructions, lang)} / ${number(scenario.cold.allocations, lang)}`
-        : EMPTY,
+      cold: coldCell(scenario, lang),
     })),
   );
 }
+
+// Two numbers in one cell: what starting cost in instructions, and in allocations.
+const coldCell = (scenario: CodeScenario, lang: string): string =>
+  scenario.cold
+    ? `${number(scenario.cold.instructions, lang)} / ${number(scenario.cold.allocations, lang)}`
+    : EMPTY;
+
+/** The core first, its number being the framework's own code, then the catalog order. */
+export const coreFirst = (loaded: Loaded[]): Loaded[] => [
+  ...loaded.filter((entry) => entry.broker === CORE),
+  ...loaded.filter((entry) => entry.broker !== CORE),
+];
 
 /** What a comparison was measured on, after the broker's name. */
 export function provenanceLine({results}: Loaded, labels: Labels): string {
@@ -294,4 +318,227 @@ export function pendingLine(loaded: Loaded[], labels: Labels): string | null {
   }
   // A template rather than a prefix: spacing and punctuation around the list differ by language.
   return labels.pending.replace('{brokers}', loaded.map((entry) => entry.broker.name).join(', '));
+}
+
+/*
+ * The geometry of the two charts. Every position is a percentage of the plot's width, so the
+ * components lay marks out with CSS alone and the page draws the same at any width.
+ */
+
+export interface Tick {
+  value: number;
+  label: string;
+  position: number;
+}
+
+export interface Axis {
+  ticks: Tick[];
+  place(value: number): number;
+}
+
+// A step of one, two or five times a power of ten reads as a round number in every language.
+const STEPS = [1, 2, 5, 10];
+
+/** A linear axis over `low..high`, widened to round ticks at both ends. */
+export function niceAxis(
+  low: number,
+  high: number,
+  label: (value: number) => string,
+  count = 5,
+): Axis {
+  // A set of equal values still needs a width to be drawn against.
+  const top = high > low ? high : low + 1;
+  const rough = (top - low) / (count - 1);
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const step = STEPS.map((factor) => factor * power).find((candidate) => candidate >= rough)!;
+  const min = Math.floor(low / step) * step;
+  const max = Math.ceil(top / step) * step;
+  const place = (value: number): number => ((value - min) / (max - min)) * 100;
+  const ticks: Tick[] = [];
+  for (let index = 0; min + index * step <= max + step / 2; index += 1) {
+    // Repeated addition of a fractional step drifts; the tick is the round number it means.
+    const value = Number((min + index * step).toPrecision(12));
+    ticks.push({value, label: label(value), position: place(value)});
+  }
+  return {ticks, place};
+}
+
+export type Loop = 'raw' | 'adapter' | 'framework';
+
+/** One loop of one scenario: where its rounds fall, and what the document concluded. */
+export interface Lane {
+  loop: Loop;
+  // The rounds from the best to the slowest, then the round the comparison is drawn from.
+  from: number;
+  to: number;
+  best: number;
+  median?: number;
+  // The spread a verdict rests on: a best round inside it is indistinguishable from the raw one.
+  band?: {from: number; to: number};
+  inside: boolean;
+  value: string;
+  verdict?: string;
+}
+
+export interface ComparisonPanel {
+  broker: Broker;
+  provenance: string;
+  zero: number;
+  ticks: Tick[];
+  rows: {scenario: string; unit: string; lanes: Lane[]}[];
+}
+
+// The narrowest axis a panel draws, in percent either side of the raw client: a difference of
+// a fraction of a percent is not drawn as if it filled the plot.
+const MIN_SPAN = 2;
+
+interface Extent {
+  loop: Loop;
+  measurement: Measurement;
+  from: number;
+  to: number;
+  best: number;
+  median?: number;
+  band?: number;
+}
+
+// How far below the raw client's figure a loop falls, in percent: the overhead the page prints.
+function extent(loop: Loop, measurement: Measurement, raw: Measurement): Extent {
+  const reference = figure(raw)!;
+  const below = (value: number): number => ((reference - value) / reference) * 100;
+  const third = typeof measurement.best === 'number';
+  const fastest = third ? measurement.best! : measurement.max ?? measurement.median!;
+  const slowest = third
+    ? measurement.worst ?? measurement.best!
+    : measurement.min ?? measurement.median!;
+  const ours = spread(measurement);
+  const theirs = spread(raw);
+  return {
+    loop,
+    measurement,
+    from: below(fastest),
+    to: below(slowest),
+    best: below(figure(measurement)!),
+    median:
+      third && typeof measurement.median === 'number' ? below(measurement.median) : undefined,
+    band:
+      loop === 'raw' || ours === null || theirs === null
+        ? undefined
+        : (Math.max(Math.abs(ours), Math.abs(theirs)) / reference) * 100,
+  };
+}
+
+/** Per broker, each scenario's three loops placed against the raw client's figure. */
+export function comparisonPanels(
+  published: Loaded[],
+  lang: string,
+  labels: Labels,
+): ComparisonPanel[] {
+  return published
+    .filter((entry) => entry.results?.scenarios?.length)
+    .map((entry) => {
+      const scenarios = entry.results!.scenarios!.filter((scenario) => figure(scenario.raw));
+      const extents = scenarios.map((scenario) =>
+        (['raw', 'adapter', 'framework'] as const)
+          .filter((loop) => scenario[loop] && figure(scenario[loop]) !== undefined)
+          .map((loop) => extent(loop, scenario[loop]!, scenario.raw!)),
+      );
+      const reach = extents
+        .flat()
+        .flatMap((lane) => [lane.from, lane.to, lane.band ?? 0, -(lane.band ?? 0)]);
+      const axis = niceAxis(
+        Math.min(-MIN_SPAN, ...reach),
+        Math.max(MIN_SPAN, ...reach),
+        (value) => `${value > 0 ? '+' : ''}${value.toLocaleString(lang)}%`,
+      );
+      return {
+        broker: entry.broker,
+        provenance: provenanceLine(entry, labels),
+        zero: axis.place(0),
+        ticks: axis.ticks,
+        rows: scenarios.map((scenario, index) => ({
+          scenario: scenario.name,
+          unit: scenario.unit,
+          lanes: extents[index]!.map((lane): Lane => {
+            const verdict =
+              lane.loop === 'framework'
+                ? overheadCell(scenario, labels)
+                : lane.loop === 'adapter'
+                  ? adapterVerdict(scenario, labels)
+                  : undefined;
+            const inside =
+              lane.loop === 'framework'
+                ? scenario.verdict === 'indistinguishable'
+                : lane.loop === 'adapter' && verdict === labels.indistinguishable;
+            return {
+              loop: lane.loop,
+              from: axis.place(lane.from),
+              to: axis.place(lane.to),
+              best: axis.place(lane.best),
+              median: lane.median === undefined ? undefined : axis.place(lane.median),
+              band:
+                lane.band === undefined
+                  ? undefined
+                  : {from: axis.place(-lane.band), to: axis.place(lane.band)},
+              inside,
+              value: sideCell(lane.measurement, scenario.unit, lang),
+              verdict,
+            };
+          }),
+        })),
+      };
+    });
+}
+
+export interface CodeBar {
+  value: string;
+  width: number;
+}
+
+export interface CodePanel {
+  broker: Broker;
+  machine: string;
+  instructions: Tick[];
+  allocations: Tick[];
+  rows: {scenario: string; instructions: CodeBar; allocations: CodeBar; cold: string}[];
+}
+
+/**
+ * Per crate, the instructions and the allocations of each scenario as bars. Each crate has an
+ * axis of its own: a broker crate counts its client's work over a real transport, so its
+ * number does not compare with another crate's.
+ */
+export function codePanels(published: Loaded[], lang: string, labels: Labels): CodePanel[] {
+  const compact = new Intl.NumberFormat(lang, {notation: 'compact'});
+  const label = (value: number): string => compact.format(value);
+  return coreFirst(published)
+    .filter((entry) => entry.results?.code?.length)
+    .map((entry) => {
+      const code = entry.results!.code!;
+      const measure = (pick: (scenario: CodeScenario) => number | undefined) => {
+        // Three ticks: a measure shares a narrow column with its neighbour and its values.
+        const top = Math.max(0, ...code.map((scenario) => pick(scenario) ?? 0));
+        const axis = niceAxis(0, top, label, 3);
+        const bar = (scenario: CodeScenario): CodeBar => {
+          const value = pick(scenario);
+          const width = typeof value === 'number' ? axis.place(value) : 0;
+          return {value: number(value, lang), width};
+        };
+        return {ticks: axis.ticks, bar};
+      };
+      const instructions = measure((scenario) => scenario.framework.instructions);
+      const allocations = measure((scenario) => scenario.framework.allocations);
+      return {
+        broker: entry.broker,
+        machine: machineLine(entry, labels),
+        instructions: instructions.ticks,
+        allocations: allocations.ticks,
+        rows: code.map((scenario) => ({
+          scenario: scenario.name,
+          instructions: instructions.bar(scenario),
+          allocations: allocations.bar(scenario),
+          cold: coldCell(scenario, lang),
+        })),
+      };
+    });
 }

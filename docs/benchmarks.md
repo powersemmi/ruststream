@@ -1,6 +1,6 @@
 import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
 
-export const labels = {"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start"};
+export const labels = {"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start", "table": "Show the numbers as a table", "axis": "How far each loop falls below the raw client's best round", "rounds": "rounds, best to slowest", "best": "best round", "median": "median round", "noise": "spread of the rounds"};
 
 # Benchmarks
 
@@ -16,34 +16,44 @@ the framework's own code, with no broker in the number. It says what changed whe
 and it is precise enough to fail a pull request that makes a message more expensive.
 
 Each crate measures itself and publishes its own numbers. This page loads them from the `main`
-branch of each crate's repository and shows them together. A new measurement appears in the tables
+branch of each crate's repository and shows them together. A new measurement appears in the charts
 below as soon as it is merged.
 
 ## Results
 
 ### Against a raw client
 
-The best of three interleaved rounds, with the median round in parentheses. The best round is the
-closest to the undisturbed cost, and the median is the one a rerun typically repeats. The slowest
-round is published with them and kept out of the cell. It is what the `indistinguishable` verdict
-rests on: the spread from the best round to the worst. `Broker crate` is the crate's own consumer
-and publisher driven without the runtime, so the two differences read apart: what the crate costs
-over the client it wraps, and what the runtime costs on top of that.
-
 <BenchmarkResults labels={labels} />
+
+Each scenario draws three loops of three interleaved rounds against the raw client's best round,
+the zero of its axis. A loop is a bar from its best round to its slowest, with a dot at the best
+round and a notch at the median. A dot right of zero is slower than the raw client. The best round
+is the closest to the undisturbed cost, and the median is the one a rerun typically repeats.
+
+The shaded band around zero is what the runtime's `indistinguishable` verdict rests on: the spread
+from the best round to the worst. A best round inside it cannot be told from the raw client. A
+hollow dot marks every loop the crate judged indistinguishable, and the verdicts beside a row are
+the ones the crate published. A row shows its numbers on hover or focus,
+and the table under the chart lists them all: the best round, with the median in parentheses.
+
+`Broker crate` is the crate's own consumer and publisher driven without the runtime, so the two
+differences read apart: what the crate costs over the client it wraps, and what the runtime costs
+on top of that.
 
 ### Cost of the code
 
 Instructions and allocations per message in the steady state. These are absolute figures, not a
-comparison: what the framework costs over a broker's own client is the table above. `ruststream`
+comparison: what the framework costs over a broker's own client is the chart above. `ruststream`
 measures its own code on the in-process transport. A broker crate measures over its real
 transport, and its benchmarks page says what its number covers.
 
 <BenchmarkCode labels={labels} />
 
-`Cold start` is what starting the service and handling the first delivery cost together,
-instructions and allocations, and a service pays it once rather than per message. The line under
-the table is the machine the run was taken on, down to the memory, then the versions of the crate
+Each crate has an axis of its own, because a broker crate counts its client's work too. `Cold
+start` is what starting the service and handling the first delivery cost together, instructions
+and allocations, and a service pays it once rather than per message. A row shows it on hover or
+focus, and the table under the chart lists it. The line above a crate's chart is the machine the
+run was taken on, down to the memory, then the versions of the crate
 and of `ruststream` it counted and the date it ran: an instruction count is comparable across
 machines only once you know they ran the same code.
 
