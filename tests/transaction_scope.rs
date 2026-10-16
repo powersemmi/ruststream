@@ -3,7 +3,7 @@
 //! publisher handle is reusable once a scope settles.
 //!
 //! [`TransactionScope`]: ruststream::runtime::TransactionScope
-#![cfg(all(feature = "memory", feature = "json"))]
+#![cfg(all(feature = "memory", feature = "json", feature = "macros"))]
 
 use std::pin::pin;
 
