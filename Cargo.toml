@@ -140,7 +140,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_context"
 path = "examples/manual/context.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_context_field"
@@ -150,16 +151,12 @@ path = "examples/manual/context_field.rs"
 name = "manual_from_context"
 path = "examples/manual/from_context.rs"
 required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_typed_headers"
 path = "examples/manual/typed_headers.rs"
 required-features = ["testing", "memory", "json", "asyncapi"]
-
-[[example]]
-name = "manual_ctx_extractor"
-path = "examples/manual/ctx_extractor.rs"
-required-features = ["testing", "memory", "json"]
 
 [[example]]
 name = "manual_lifespan"
@@ -261,7 +258,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "context"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "context_field"
@@ -269,14 +267,11 @@ name = "context_field"
 [[example]]
 name = "from_context"
 required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "typed_headers"
 required-features = ["testing", "macros", "memory", "json", "asyncapi"]
-
-[[example]]
-name = "ctx_extractor"
-required-features = ["testing", "macros", "memory", "json"]
 
 [[example]]
 name = "lifespan"
