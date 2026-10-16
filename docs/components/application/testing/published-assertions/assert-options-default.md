@@ -31,7 +31,7 @@ import TabItem from '@theme/TabItem';
 ## How it works
 
 A publish carries settings only when a builder step or a transform set them; otherwise the policy named at the mount site decides.
-The records that carry settings are the same as for `with_options`: every slot publish, and the replies on a destination.
+The records that carry settings are the same as for `with_options`: every publish the runtime makes, in a slot record and in a destination record.
 The assertion panics when the latest publish carried settings, naming their type.
 
 ## See also
