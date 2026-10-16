@@ -51,7 +51,7 @@ done
 | `just cov` | cargo-llvm-cov | `cargo install cargo-llvm-cov --locked` |
 | `just bench` | valgrind | the system package manager; the recipe installs the benchmark runner itself, at the release `Cargo.lock` pins |
 | `just brokers` | jq | the system package manager |
-| the documentation site | Python 3.12 | `pip install -r docs/requirements.txt`, then `properdocs serve` |
+| the documentation site | Node.js 22 | `npm ci` in `website/`, then `npm start` (one language) or `npm run build` (all three, strict) |
 | a broker's live suite | Docker with Compose | the Docker documentation |
 
 ## Checking a change to the core

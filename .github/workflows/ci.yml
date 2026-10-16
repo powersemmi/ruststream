@@ -59,8 +59,7 @@ jobs:
               - '.github/workflows/ci.yml'
             docs:
               - 'docs/**'
-              - 'properdocs.yml'
-              - 'overrides/**'
+              - 'website/**'
               - 'examples/**'
               # the testing and conformance pages embed their snippets from these test files
               - 'tests/doc_*.rs'
@@ -510,12 +509,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-node@v7
         with:
-          python-version: "3.12"
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
 
-      - name: Install docs toolchain
-        run: pip install -r docs/requirements.txt
+      - name: Install site toolchain
+        working-directory: website
+        run: npm ci
 
       - name: Lint doc code fences
         run: python3 scripts/lint_doc_fences.py
@@ -523,8 +525,16 @@ jobs:
       - name: Check translated pages against their originals
         run: python3 scripts/check_doc_i18n.py
 
+      # Strict: a broken link, anchor or Markdown link fails the build.
       - name: Build site (strict)
-        run: properdocs build --strict
+        working-directory: website
+        run: npm run build
+
+      - name: Type-check and test site components
+        working-directory: website
+        run: |
+          npm run typecheck
+          npm run test
 
   codeql:
     name: CodeQL (${{ matrix.language }})

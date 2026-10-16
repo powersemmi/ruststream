@@ -10,8 +10,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths:
       - docs/**
-      - properdocs.yml
-      - overrides/**
+      - website/i18n/**
       - examples/**
       # the testing and conformance guides embed their snippets from these test files
       - tests/doc_*.rs
