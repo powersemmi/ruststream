@@ -32,8 +32,10 @@ export function parseVersions(json: unknown): VersionEntry[] {
 }
 
 /** The directory a build is served from: `0.7` for `/ruststream/0.7/`, or an alias. */
+// A translated build's base URL carries its language after the version (`next/ru/`); the
+// version is the first segment.
 function directoryOf(siteRoot: string, baseUrl: string): string {
-  return baseUrl.slice(siteRoot.length).replace(/\/$/, '');
+  return baseUrl.slice(siteRoot.length).split('/')[0] ?? '';
 }
 
 export function currentEntry(
