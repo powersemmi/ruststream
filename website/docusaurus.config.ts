@@ -4,6 +4,8 @@ import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
 import remarkSnippets from './plugins/remarkSnippets';
+import redirectsPlugin from './plugins/redirects';
+import {redirects} from './redirects';
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
 // build of the newest line under `/ruststream/latest/`. The deploy script sets the base URL per
@@ -99,7 +101,7 @@ const config: Config = {
     ],
   ],
 
-  plugins: [askAiInSearch],
+  plugins: [askAiInSearch, (context) => redirectsPlugin(context, {redirects})],
 
   presets: [
     [
