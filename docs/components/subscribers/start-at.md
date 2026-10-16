@@ -65,5 +65,4 @@ The in-memory broker keeps a log only when it is built with `MemoryBroker::retai
 
 - [Mount-site settings](./mount-settings.md): `start_at` at the mount site.
 - [Context and `Ctx<K>`](./context/context-and-ctx.md): broker fields as parameters.
-- [The in-memory broker](../../brokers/memory.md): how much a retaining broker keeps.
 - [`SubscriberSettings::start_at`](api:ruststream::runtime::SubscriberSettings::start_at), [`MemoryBroker::retaining`](api:ruststream::memory::MemoryBroker::retaining), [`MemoryPosition`](api:ruststream::memory::MemoryPosition), [`SeekHandle`](api:ruststream::memory::SeekHandle), [`Ctx`](api:ruststream::runtime::Ctx), [`Seekable`](api:ruststream::Seekable), [`Seeker`](api:ruststream::Seeker)
