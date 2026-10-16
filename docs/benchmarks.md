@@ -1,3 +1,7 @@
+import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
+
+export const labels = {"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start"};
+
 # Benchmarks
 
 A framework between the broker client and your handler costs time on every message: the
@@ -26,7 +30,7 @@ rests on: the spread from the best round to the worst. `Broker crate` is the cra
 and publisher driven without the runtime, so the two differences read apart: what the crate costs
 over the client it wraps, and what the runtime costs on top of that.
 
-<div id="benchmark-results" data-benchmark-labels='{"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start"}'></div>
+<BenchmarkResults labels={labels} />
 
 ### Cost of the code
 
@@ -35,7 +39,7 @@ comparison: what the framework costs over a broker's own client is the table abo
 measures its own code on the in-process transport. A broker crate measures over its real
 transport, and its benchmarks page says what its number covers.
 
-<div id="benchmark-code"></div>
+<BenchmarkCode labels={labels} />
 
 `Cold start` is what starting the service and handling the first delivery cost together,
 instructions and allocations, and a service pays it once rather than per message. The line under

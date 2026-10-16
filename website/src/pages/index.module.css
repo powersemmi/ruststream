@@ -1,0 +1,49 @@
+/* The landing page's own palette, on top of the site's `--rs-*` variables. Every color the
+   landing sections use is read from these or from the site's variables. */
+:global([data-theme='dark']) .landing {
+  --rs-land-dot: #2c3139;
+  --rs-land-wire: #4a515c;
+  --rs-land-node: #8a929d;
+  --rs-land-core: #e6e8eb;
+  --rs-land-packet: #ff7043;
+  --rs-land-accent-text: #ff7043;
+  --rs-land-danger: #ff8a80;
+  --rs-land-ok: #7ee787;
+  --rs-land-accent-soft: rgb(255 112 67 / 16%);
+  --rs-land-danger-soft: rgb(255 138 128 / 8%);
+}
+
+:global([data-theme='light']) .landing {
+  --rs-land-dot: #dfe3e8;
+  --rs-land-wire: #b8bfc8;
+  --rs-land-node: #6b7380;
+  --rs-land-core: #1b1f24;
+  --rs-land-packet: #e64a19;
+  /* The site accent is 3.9:1 on white; small text and button fills use a deeper shade. */
+  --rs-land-accent-text: #bf3b10;
+  --rs-land-danger: #c62828;
+  --rs-land-ok: #1a7f37;
+  --rs-land-accent-soft: rgb(230 74 25 / 12%);
+  --rs-land-danger-soft: rgb(198 40 40 / 5%);
+}
+
+.landing {
+  background: var(--rs-bg);
+  color: var(--rs-fg);
+  overflow-x: clip;
+}
+
+/* The thin vertical rules that frame every section, as one centered column. */
+.frame {
+  max-width: 1280px;
+  margin: 0 auto;
+  border-left: 1px solid var(--rs-border);
+  border-right: 1px solid var(--rs-border);
+}
+
+@media (max-width: 1312px) {
+  .frame {
+    border-left: none;
+    border-right: none;
+  }
+}

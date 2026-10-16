@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Tutorial: build your first service
 
 By the end of this page you have a running orders service: a message type, a handler, a reply, and a
@@ -27,17 +30,20 @@ serde = { version = "1", features = ["derive"] }
 A handler is an `async fn` whose first parameter is the decoded payload. The `#[subscriber]` macro
 turns it into a subscriber definition named after the function.
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/tutorial/orders.rs:order"
-    ```
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/manual/tutorial/orders.rs:order"
-    ```
+```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#order"
+```
+
+</TabItem>
+</Tabs>
 
 A handler returns a [`HandlerOutcome`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#subscribers): an `ack`, or a `nack` that
 drops or requeues the message. You can return `()` or `Result<(), E>` instead, where `Ok` acks and
@@ -49,23 +55,29 @@ doc comment becomes the message description there. You need no extra dependency 
 
 ## 3. Wire it into an app
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/first_app.rs:app"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/first_app.rs#app"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/first_app.rs:app"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/first_app.rs#app"
+```
 
-!!! tip "Codec defaults"
-    `include` decodes with the default codec, so it needs no codec argument. The default is `json`
-    when the feature is enabled, otherwise `cbor`, otherwise `msgpack`. You can set one codec for
-    all the broker's handlers at once with `with_broker_codec(broker, codec, |b| ...)`. See
-    [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html) for the full resolution rules.
+</TabItem>
+</Tabs>
+
+:::tip[Codec defaults]
+
+`include` decodes with the default codec, so it needs no codec argument. The default is `json`
+when the feature is enabled, otherwise `cbor`, otherwise `msgpack`. You can set one codec for
+all the broker's handlers at once with `with_broker_codec(broker, codec, |b| ...)`. See
+[Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html) for the full resolution rules.
+
+:::
 
 Run it:
 
@@ -78,32 +90,38 @@ cargo run -- run
 To publish a reply, return the reply value and write `reply` on the subscriber. The `Outgoing`
 derive on the reply type says where it goes:
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/tutorial/orders.rs:confirm"
-    ```
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/orders.rs"
-    --8<-- "examples/manual/tutorial/orders.rs:confirm"
-    ```
+```rust title="src/orders.rs" reference="examples/manual/tutorial/orders.rs#confirm"
+```
+
+</TabItem>
+</Tabs>
 
 Mount `confirm` next to `handle` with the same `include`. The reply is published with the broker's
 default publish policy and encoded with the default codec.
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/reply_app.rs:reply"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/reply_app.rs#reply"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/reply_app.rs:reply"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/reply_app.rs#reply"
+```
+
+</TabItem>
+</Tabs>
 
 Publishing from inside a handler and the other ways to publish are in
 [Publishing & replies](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#publishing).
@@ -113,17 +131,20 @@ Publishing from inside a handler and the other ways to publish are in
 As the number of handlers grows, keep them in their own module and collect them into a
 [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing):
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/routes.rs"
-    --8<-- "examples/tutorial/routes.rs:routes"
-    ```
+```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/routes.rs"
-    --8<-- "examples/manual/tutorial/routes.rs:routes"
-    ```
+```rust title="src/routes.rs" reference="examples/manual/tutorial/routes.rs#routes"
+```
+
+</TabItem>
+</Tabs>
 
 `include` adds a plain handler to the router directly. A handler that publishes a reply hands back
 a mount chain instead: `.out_reply(..)` names the reply's publish policy, and `.build()` finishes
@@ -131,17 +152,20 @@ the registration. Without `.out_reply(..)`, `.build()` takes the broker's defaul
 the same one `include` took in step 4. [Routing](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing) covers the rest of the router
 surface.
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```
+
+</TabItem>
+</Tabs>
 
 ## 6. Inspect the AsyncAPI document
 
@@ -164,12 +188,15 @@ a one-line change. Add the broker crate as a dependency and construct it there i
 router and the codecs stay as they are. [Brokers](../brokers/index.md#switching-brokers) lists the
 available brokers and the swap for each of them.
 
-!!! info "The complete service is a compiled example"
-    Every snippet on this page comes from
-    [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    in the repository, which CI builds on every change. `first_app.rs` and `reply_app.rs` are the
-    service as steps 3 and 4 leave it, and `main.rs` is the finished one. Run it yourself with
-    `cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+:::info[The complete service is a compiled example]
+
+Every snippet on this page comes from
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
+in the repository, which CI builds on every change. `first_app.rs` and `reply_app.rs` are the
+service as steps 3 and 4 leave it, and `main.rs` is the finished one. Run it yourself with
+`cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+
+:::
 
 ## Next steps
 

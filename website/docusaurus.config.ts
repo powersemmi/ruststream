@@ -1,0 +1,222 @@
+import {existsSync, readFileSync} from 'node:fs';
+import path from 'node:path';
+import {themes as prismThemes} from 'prism-react-renderer';
+import type {Config, Plugin} from '@docusaurus/types';
+import type * as Preset from '@docusaurus/preset-classic';
+import {resolveMarkdownLinks} from './markdownLinks';
+import remarkSnippets from './plugins/remarkSnippets';
+import redirectsPlugin from './plugins/redirects';
+import {redirects as guideRedirects} from './redirects';
+import {readBuildVersion, siteRoot} from './versioning';
+
+// Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
+// build of the newest line under `/ruststream/latest/` and a build of `main` under
+// `/ruststream/next/`. The deploy script sets the base URL and the kind of version per build, so
+// one configuration serves every version directory. An old line is built from its archive
+// checkout, with the site code of this one.
+const repoRoot = path.resolve(__dirname, '..');
+const version = readBuildVersion(process.env, repoRoot);
+const {baseUrl, contentRoot, archive} = version;
+const docsRoot = path.join(contentRoot, 'docs');
+
+const accent = '#ff5722';
+
+// Excerpts on the pages are read from the repository's compiled sources and link back to them.
+const sourceUrl = `https://github.com/powersemmi/ruststream/blob/${version.sourceRef}`;
+const editBase = 'https://github.com/powersemmi/ruststream/edit/main';
+
+// A translated page is edited in its own file; a page the locale has not translated yet is
+// served from the English text, so its edit link opens the English file.
+function editUrl({locale, docPath}: {locale: string; docPath: string}): string {
+  const localized = `website/i18n/${locale}/docusaurus-plugin-content-docs/current/${docPath}`;
+  if (locale !== 'en' && existsSync(path.join(repoRoot, localized))) {
+    return `${editBase}/${localized}`;
+  }
+  return `${editBase}/docs/${docPath}`;
+}
+
+// An archive is the line as it was released, in English; its pages carry the sidebar and the
+// moved addresses of that line. The current line keeps its translations and the redirects of the
+// guides that moved to docs.rs.
+const locales = archive ? ['en'] : ['en', 'ru', 'zh'];
+const sidebarPath = archive ? path.join(contentRoot, 'sidebars.json') : './sidebars.ts';
+const archiveRedirects = path.join(contentRoot, 'redirects.json');
+const redirects: Record<string, string> = archive
+  ? existsSync(archiveRedirects)
+    ? JSON.parse(readFileSync(archiveRedirects, 'utf8'))
+    : {}
+  : guideRedirects;
+
+// The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
+// `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
+// entry to the site's own panel instead of the third-party widget.
+function askAiInSearch(): Plugin {
+  return {
+    name: 'ruststream-ask-ai-in-search',
+    configureWebpack() {
+      return {
+        resolve: {
+          alias: {
+            'open-ask-ai$': path.resolve(__dirname, 'src/components/AskAi/searchAdapter.tsx'),
+            'open-ask-ai/styles.css': path.resolve(__dirname, 'src/components/AskAi/empty.css'),
+          },
+        },
+      };
+    },
+  };
+}
+
+// The landing page shows files of `examples/` as text, read when the site is built, so the code
+// on the page is the code that compiles. Webpack 5 and Rspack both load a module as its source
+// text with the `asset/source` type, which is what the deprecated `raw-loader` used to do.
+function rustSourceImports(): Plugin {
+  return {
+    name: 'ruststream-rust-source-imports',
+    configureWebpack() {
+      return {module: {rules: [{test: /\.rs$/, type: 'asset/source'}]}};
+    },
+  };
+}
+
+const config: Config = {
+  title: 'RustStream',
+  tagline: 'Async messaging framework for Rust',
+  favicon: 'img/logo.svg',
+
+  future: {
+    v4: true,
+    faster: true,
+  },
+
+  url: 'https://powersemmi.github.io',
+  baseUrl,
+  trailingSlash: true,
+
+  organizationName: 'powersemmi',
+  projectName: 'ruststream',
+
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
+  onDuplicateRoutes: 'throw',
+
+  customFields: {
+    siteRoot,
+    accent,
+    sourceUrl,
+  },
+
+  // `next` documents unreleased code; search engines should send readers to `latest`. The tag
+  // goes on every page, the landing page included, not only on the docs.
+  headTags:
+    version.noIndex
+      ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex, nofollow'}}]
+      : [],
+
+  i18n: {
+    defaultLocale: 'en',
+    locales,
+    localeConfigs: {
+      en: {label: 'English', htmlLang: 'en'},
+      ru: {label: 'Русский', htmlLang: 'ru', path: 'ru'},
+      zh: {label: '中文', htmlLang: 'zh-CN', path: 'zh'},
+    },
+  },
+
+  markdown: {
+    mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: resolveMarkdownLinks(),
+    },
+  },
+
+  themes: [
+    '@docusaurus/theme-mermaid',
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        hashed: true,
+        language: locales,
+        indexBlog: false,
+        docsDir: docsRoot,
+        docsRouteBasePath: '/',
+        highlightSearchTermsOnTargetPage: true,
+        askAi: {},
+      },
+    ],
+  ],
+
+  plugins: [
+    askAiInSearch,
+    rustSourceImports,
+    (context) => redirectsPlugin(context, {redirects}),
+  ],
+
+  presets: [
+    [
+      'classic',
+      {
+        docs: {
+          path: docsRoot,
+          routeBasePath: '/',
+          sidebarPath,
+          remarkPlugins: [[remarkSnippets, {rootDir: contentRoot, repoUrl: sourceUrl}]],
+          // An archive is not edited: its fixes land in `main`.
+          editUrl: archive ? undefined : editUrl,
+          // The build holds one version; its kind decides the banner on every page.
+          versions: {current: version.docsVersion},
+          // The benchmark results feed the landing page and the benchmarks page; they are not pages.
+          exclude: [
+            'benchmarks/**',
+          ],
+        },
+        blog: false,
+        // The landing page belongs to `latest` and `next`; an archive opens on its first page.
+        pages: archive ? false : undefined,
+        theme: {
+          customCss: './src/css/custom.css',
+        },
+      } satisfies Preset.Options,
+    ],
+  ],
+
+  themeConfig: {
+    colorMode: {
+      defaultMode: 'dark',
+      respectPrefersColorScheme: false,
+      disableSwitch: false,
+    },
+    navbar: {
+      title: 'RustStream',
+      logo: {
+        alt: 'RustStream',
+        src: 'img/logo.svg',
+      },
+      items: [
+        {type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left'},
+        {type: 'custom-versionDropdown', position: 'left'},
+        {type: 'custom-askAi', position: 'right'},
+        // An archive is built in English only; a language menu would offer nothing to switch to.
+        ...(archive ? [] : [{type: 'localeDropdown' as const, position: 'right' as const}]),
+        {
+          href: 'https://github.com/powersemmi/ruststream',
+          label: 'GitHub',
+          position: 'right',
+        },
+      ],
+    },
+    footer: {
+      style: 'light',
+      copyright: 'Apache-2.0',
+    },
+    prism: {
+      theme: prismThemes.github,
+      darkTheme: prismThemes.dracula,
+      additionalLanguages: ['toml', 'bash'],
+    },
+    mermaid: {
+      theme: {light: 'neutral', dark: 'dark'},
+    },
+  } satisfies Preset.ThemeConfig,
+};
+
+export default config;

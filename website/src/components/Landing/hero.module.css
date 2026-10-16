@@ -1,0 +1,90 @@
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 48px;
+  padding: 88px 48px 72px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding: 5px 12px;
+  border: 1px solid var(--rs-border);
+  border-radius: 999px;
+  background: var(--rs-surface);
+  color: var(--rs-muted);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.badgeDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rs-accent);
+}
+
+.headline {
+  margin: 0 0 24px;
+  font-size: clamp(2.4rem, 5vw, 4.25rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.04;
+}
+
+.subtitle {
+  max-width: 34rem;
+  margin: 0 0 36px;
+  color: var(--rs-muted);
+  font-size: 1.2rem;
+  line-height: 1.6;
+}
+
+.graphic {
+  min-width: 0;
+}
+
+/* The box reserves its height before the script runs, so the canvas never shifts the layout. */
+.canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 8 / 6;
+}
+
+.legend {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  color: var(--rs-muted);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.legend span:nth-child(2) {
+  color: var(--rs-fg);
+}
+
+@media (max-width: 996px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+    padding: 56px 24px 48px;
+  }
+}
+
+@media (max-width: 600px) {
+  .hero {
+    padding: 40px 16px 40px;
+  }
+
+  .subtitle {
+    font-size: 1.05rem;
+  }
+}

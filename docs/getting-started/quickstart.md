@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Quick start
 
 The fastest way to a running service is to scaffold one with `cargo generate`.
@@ -33,7 +36,7 @@ my-service/
 cargo run -- run                # or: ruststream run, with the CLI installed
 ```
 
-`cargo run -- run` starts a tokio runtime. The service runs until you press ++ctrl+c++. It needs
+`cargo run -- run` starts a tokio runtime. The service runs until you press <kbd>Ctrl</kbd>+<kbd>C</kbd>. It needs
 no external broker.
 
 ## Generate the AsyncAPI document
@@ -47,17 +50,20 @@ document itself are covered in the [`asyncapi` module](https://docs.rs/ruststrea
 
 ## What the entry point looks like
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```
+
+</TabItem>
+</Tabs>
 
 You write a function that builds the service; `#[ruststream::app]` turns it into `main`.
 

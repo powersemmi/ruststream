@@ -1,0 +1,427 @@
+{
+  "askAi.button": {
+    "message": "Спросить ИИ"
+  },
+  "askAi.close": {
+    "message": "Закрыть"
+  },
+  "askAi.newChat": {
+    "message": "Новый диалог"
+  },
+  "askAi.placeholder": {
+    "message": "Спросите о RustStream"
+  },
+  "askAi.send": {
+    "message": "Отправить"
+  },
+  "askAi.title": {
+    "message": "Вопрос к ИИ"
+  },
+  "askAi.unavailable": {
+    "message": "Помощник сейчас не может ответить здесь. В углу страницы открывается виджет Context7; тот же помощник есть на странице библиотеки:"
+  },
+  "askAi.welcome": {
+    "message": "Задайте вопрос о RustStream. Ответ составляет Context7 по этой документации, и в нём возможны ошибки."
+  },
+  "banner.translated.body": {
+    "message": "Эта страница переведена с английского языковой моделью. При любом расхождении верен {original}."
+  },
+  "banner.translated.original": {
+    "message": "английский оригинал"
+  },
+  "banner.translated.title": {
+    "message": "Нормативная версия документации - английская"
+  },
+  "banner.untranslated.body": {
+    "message": "Ниже показан английский оригинал."
+  },
+  "banner.untranslated.title": {
+    "message": "Эта страница ещё не переведена"
+  },
+  "landing.arch.asyncapi.role": {
+    "message": "Из тех же объявлений строится документ AsyncAPI 3.1, поэтому документ не расходится с кодом."
+  },
+  "landing.arch.broker": {
+    "message": "Брокер"
+  },
+  "landing.arch.broker.role": {
+    "message": "Адаптация библиотеки брокера оборачивает одного клиента и соблюдает контракт, который проверяет набор conformance; ядро не зависит ни от одного брокера."
+  },
+  "landing.arch.codec": {
+    "message": "Кодек"
+  },
+  "landing.arch.codec.role": {
+    "message": "Кодек превращает содержимое сообщения в тип обработчика: JSON, MessagePack или CBOR выбираются при компиляции, а сырые байты обходятся без кодека."
+  },
+  "landing.arch.diagramLabel": {
+    "message": "Схема частей, через которые проходит сообщение"
+  },
+  "landing.arch.eyebrow": {
+    "message": "Архитектура"
+  },
+  "landing.arch.handler": {
+    "message": "Обработчик"
+  },
+  "landing.arch.handler.role": {
+    "message": "Асинхронная функция под #[subscriber]; то, что она возвращает, подтверждает доставку или становится ответом."
+  },
+  "landing.arch.lede": {
+    "message": "Доставка идёт от брокера через подписку и кодек к вашему обработчику, а ответ возвращается тем же путём. Каждая часть - тип, который проверяет компилятор."
+  },
+  "landing.arch.middleware": {
+    "message": "Промежуточные слои"
+  },
+  "landing.arch.middleware.role": {
+    "message": "Слои потребления и публикации оборачивают каждую доставку: журналирование, метрики, трассировку или ваш собственный слой."
+  },
+  "landing.arch.publisher": {
+    "message": "Издатель"
+  },
+  "landing.arch.publisher.role": {
+    "message": "Политика публикации в паре с подключённым брокером; обработчик публикует и через типизированные слоты Out."
+  },
+  "landing.arch.reply": {
+    "message": "Ответ"
+  },
+  "landing.arch.reply.role": {
+    "message": "Тип ответа выводит Outgoing и объявляет, куда он идёт; рантайм кодирует его и публикует."
+  },
+  "landing.arch.subscription": {
+    "message": "Подписка"
+  },
+  "landing.arch.subscription.role": {
+    "message": "Подписка называет, что потреблять, и разрешается один раз, при запуске, на подключённом брокере."
+  },
+  "landing.arch.testapp.role": {
+    "message": "Тест запускает рабочее приложение с брокером внутри процесса и проходит настоящую диспетчеризацию без сервера."
+  },
+  "landing.arch.title": {
+    "message": "Путь сообщения"
+  },
+  "landing.brokers.files": {
+    "message": "Файлы / stdio"
+  },
+  "landing.brokers.label": {
+    "message": "Один обработчик, четырнадцать транспортов"
+  },
+  "landing.brokers.memory": {
+    "message": "В памяти процесса"
+  },
+  "landing.brokers.sql": {
+    "message": "Базы данных SQL"
+  },
+  "landing.compare.byHand": {
+    "message": "Вручную"
+  },
+  "landing.compare.caption": {
+    "message": "Настоящий запуск примера {example} на локальной Kafka с включённой фичей {feature}."
+  },
+  "landing.compare.eyebrow": {
+    "message": "Один и тот же потребитель, дважды"
+  },
+  "landing.compare.lede": {
+    "message": "Обе программы читают заказы из Kafka, декодируют их и печатают номер. Слева клиентом управляют вручную, справа им управляет рантайм."
+  },
+  "landing.compare.new.decode": {
+    "message": "Декодирует каждое сообщение кодеком, выбранным при сборке"
+  },
+  "landing.compare.new.docs": {
+    "message": "Печатает свой AsyncAPI-документ командой {command} и работает под {harness} без Kafka"
+  },
+  "landing.compare.new.settle": {
+    "message": "Подтверждает каждое сообщение по результату обработчика"
+  },
+  "landing.compare.new.signals": {
+    "message": "Останавливается по Ctrl+C или SIGTERM и закрывает брокер"
+  },
+  "landing.compare.newLabel": {
+    "message": "Путь RustStream"
+  },
+  "landing.compare.old.again": {
+    "message": "И всё это заново для следующей темы и следующего брокера"
+  },
+  "landing.compare.old.config": {
+    "message": "Настройки клиента и режим фиксации смещений вручную"
+  },
+  "landing.compare.old.decode": {
+    "message": "Декодирование и каждая ветка ошибок вручную"
+  },
+  "landing.compare.old.shutdown": {
+    "message": "Сигналы и остановка вручную"
+  },
+  "landing.compare.oldLabel": {
+    "message": "Цикл вручную"
+  },
+  "landing.compare.replay": {
+    "message": "Повторить"
+  },
+  "landing.compare.replayLabel": {
+    "message": "Воспроизвести запуск ещё раз"
+  },
+  "landing.compare.terminal": {
+    "message": "терминал"
+  },
+  "landing.compare.title": {
+    "message": "Пишите {accent}, а не цикл"
+  },
+  "landing.compare.titleAccent": {
+    "message": "обработчик"
+  },
+  "landing.cta.lede": {
+    "message": "Создайте сервис из шаблона командой {command} за минуту или задайте вопрос документации."
+  },
+  "landing.cta.title": {
+    "message": "Начните с {accent}"
+  },
+  "landing.cta.titleAccent": {
+    "message": "одного обработчика"
+  },
+  "landing.hero.badge": {
+    "message": "Открытый код · Apache-2.0 · 100% безопасный Rust"
+  },
+  "landing.hero.canvasLabel": {
+    "message": "Анимация: сообщения выходят из брокеров, проходят через ядро RustStream и попадают в обработчики."
+  },
+  "landing.hero.legendBrokers": {
+    "message": "Брокеры"
+  },
+  "landing.hero.legendHandlers": {
+    "message": "Обработчики"
+  },
+  "landing.hero.quickStart": {
+    "message": "Быстрый старт"
+  },
+  "landing.hero.subtitle": {
+    "message": "Напишите обработчики {subscriber} один раз, запускайте их на Kafka, NATS, RabbitMQ и ещё десяти брокерах, а ошибки использования пусть ловит компилятор."
+  },
+  "landing.hero.title": {
+    "message": "Асинхронные сообщения для Rust на {accent}"
+  },
+  "landing.hero.titleAccent": {
+    "message": "любом брокере"
+  },
+  "landing.meta.description": {
+    "message": "RustStream - фреймворк асинхронного обмена сообщениями для Rust: обработчики #[subscriber] поверх ядра, не зависящего от брокера, тринадцать адаптаций библиотек брокеров, генерация AsyncAPI и тесты внутри процесса."
+  },
+  "landing.meta.title": {
+    "message": "Асинхронный обмен сообщениями для Rust"
+  },
+  "landing.next.asyncapi.body": {
+    "message": "Документ, который сервис строит из собственных объявлений."
+  },
+  "landing.next.benchmarks": {
+    "message": "Бенчмарки"
+  },
+  "landing.next.benchmarks.body": {
+    "message": "Цена кода и каждый брокер против своего клиента без фреймворка."
+  },
+  "landing.next.brokerAuthors": {
+    "message": "Авторам брокеров"
+  },
+  "landing.next.brokerAuthors.body": {
+    "message": "Как написать адаптацию библиотеки брокера: контракт и проверки conformance."
+  },
+  "landing.next.brokers": {
+    "message": "Брокеры"
+  },
+  "landing.next.brokers.body": {
+    "message": "In-memory брокер и адаптации библиотек остальных брокеров."
+  },
+  "landing.next.http": {
+    "message": "HTTP-фреймворки"
+  },
+  "landing.next.http.body": {
+    "message": "Сервис рядом с axum и транзакционный outbox."
+  },
+  "landing.next.installation": {
+    "message": "Установка"
+  },
+  "landing.next.installation.body": {
+    "message": "Подключение крейта и выбор фич."
+  },
+  "landing.next.quickstart": {
+    "message": "Быстрый старт"
+  },
+  "landing.next.quickstart.body": {
+    "message": "Сервис из шаблона одной командой {command}."
+  },
+  "landing.next.reference": {
+    "message": "Справочник API"
+  },
+  "landing.next.reference.body": {
+    "message": "Все типы на docs.rs."
+  },
+  "landing.next.testing": {
+    "message": "Тестирование"
+  },
+  "landing.next.testing.body": {
+    "message": "Тесты обработчиков внутри процесса, без сервера."
+  },
+  "landing.next.tutorial": {
+    "message": "Учебник"
+  },
+  "landing.next.tutorial.body": {
+    "message": "Первый сервис шаг за шагом."
+  },
+  "landing.numbers.allocations": {
+    "message": "выделений памяти: {count}"
+  },
+  "landing.numbers.bytes": {
+    "message": "Получить сырые байты, без кодека"
+  },
+  "landing.numbers.eyebrow": {
+    "message": "Цена одного сообщения"
+  },
+  "landing.numbers.instructions": {
+    "message": "инструкций"
+  },
+  "landing.numbers.json": {
+    "message": "Получить сообщение и декодировать JSON в структуру"
+  },
+  "landing.numbers.lede": {
+    "message": "Собственный код фреймворка на одно сообщение в установившемся режиме; бенчмарки считают его при каждом изменении. Клиент брокера в эти числа не входит."
+  },
+  "landing.numbers.link": {
+    "message": "все сценарии и методика"
+  },
+  "landing.numbers.middleware": {
+    "message": "Получить сообщение через четыре промежуточных слоя"
+  },
+  "landing.numbers.note": {
+    "message": "Замер: {version}, {date}, {cpu}. На странице бенчмарков - {link}, в том числе пути, которые выделяют память."
+  },
+  "landing.numbers.reply": {
+    "message": "Закодировать и опубликовать ответ"
+  },
+  "landing.numbers.title": {
+    "message": "{accent} на сообщение"
+  },
+  "landing.numbers.titleAccent": {
+    "message": "Ноль выделений памяти"
+  },
+  "landing.principles.agnostic.body": {
+    "message": "Ядро - это трейты и типы. Адаптация библиотеки каждого брокера - отдельный крейт, и соблюдение контракта проверяет набор {suite}."
+  },
+  "landing.principles.agnostic.title": {
+    "message": "Ядро без брокера внутри"
+  },
+  "landing.principles.capabilities.body": {
+    "message": "Пакеты, транзакции, запрос-ответ, разделы и перемотка - отдельные трейты. Брокер реализует те, что поддерживает."
+  },
+  "landing.principles.capabilities.title": {
+    "message": "Возможности, а не раздутый интерфейс"
+  },
+  "landing.principles.compile.body": {
+    "message": "{ack} поглощает доставку, поэтому второй ack - ошибка компиляции. Вызовы жизненного цикла не по порядку отклоняются так же."
+  },
+  "landing.principles.compile.title": {
+    "message": "Ошибка использования не компилируется"
+  },
+  "landing.principles.config.body": {
+    "message": "Каждая адаптация объявляет свой {config}. Обновление клиентской библиотеки меняет эту адаптацию, а не фреймворк."
+  },
+  "landing.principles.config.title": {
+    "message": "Настройки брокера живут в его адаптации"
+  },
+  "landing.principles.eyebrow": {
+    "message": "Устройство"
+  },
+  "landing.principles.generic.body": {
+    "message": "Контракт построен на ассоциированных типах и нативном {rpitit}. Типы стирает рантайм и только там, где это нужно сервису."
+  },
+  "landing.principles.generic.title": {
+    "message": "Обобщённое ядро без dyn в контракте"
+  },
+  "landing.principles.stream.body": {
+    "message": "Подписчик - это {stream}, поэтому обратное давление идёт вместе с ним. Обработчики рантайм надстраивает поверх."
+  },
+  "landing.principles.stream.title": {
+    "message": "Подписчики - это потоки"
+  },
+  "landing.principles.title": {
+    "message": "Чему фреймворк следует"
+  },
+  "landing.quickstart.macros": {
+    "message": "Макросы"
+  },
+  "landing.quickstart.manual": {
+    "message": "Вручную"
+  },
+  "landing.quickstart.note": {
+    "message": "{app} генерирует {main} со всем шаблонным кодом рантайма: {run} запускает сервис, а {gen} печатает его AsyncAPI-документ."
+  },
+  "theme.DocSidebarItem.collapseCategoryAriaLabel": {
+    "message": "Свернуть раздел «{label}»",
+    "description": "The ARIA label to collapse the sidebar category"
+  },
+  "theme.DocSidebarItem.expandCategoryAriaLabel": {
+    "message": "Развернуть раздел «{label}»",
+    "description": "The ARIA label to expand the sidebar category"
+  },
+  "theme.IconExternalLink.ariaLabel": {
+    "message": "(откроется в новой вкладке)",
+    "description": "The ARIA label for the external link icon"
+  },
+  "theme.NavBar.navAriaLabel": {
+    "message": "Главное меню",
+    "description": "The ARIA label for the main navigation"
+  },
+  "theme.SearchBar.label": {
+    "message": "Поиск",
+    "description": "The ARIA label and placeholder for search button"
+  },
+  "theme.SearchBar.noResultsText": {
+    "message": "Нет результатов"
+  },
+  "theme.SearchBar.searchInContext": {
+    "message": "Все результаты в «{context}»"
+  },
+  "theme.SearchBar.seeAll": {
+    "message": "Все результаты"
+  },
+  "theme.SearchBar.seeAllOutsideContext": {
+    "message": "Все результаты вне «{context}»"
+  },
+  "theme.SearchPage.documentsFound.plurals": {
+    "message": "Найден {count} документ|Найдено {count} документа|Найдено {count} документов",
+    "description": "Pluralized label for \"{count} documents found\". Use as much plural forms (separated by \"|\") as your language support (see https://www.unicode.org/cldr/cldr-aux/charts/34/supplemental/language_plural_rules.html)"
+  },
+  "theme.SearchPage.emptyResultsTitle": {
+    "message": "Поиск по документации",
+    "description": "The search page title for empty query"
+  },
+  "theme.SearchPage.existingResultsTitle": {
+    "message": "Результаты поиска по запросу «{query}»",
+    "description": "The search page title for non-empty query"
+  },
+  "theme.SearchPage.noResultsText": {
+    "message": "Ничего не найдено",
+    "description": "The paragraph for empty search result"
+  },
+  "theme.SearchPage.searchContext.everywhere": {
+    "message": "Везде"
+  },
+  "theme.admonition.warning": {
+    "message": "предупреждение",
+    "description": "The default label used for the Warning admonition (:::warning)"
+  },
+  "theme.colorToggle.ariaLabel.mode.system": {
+    "message": "системная тема",
+    "description": "The name for the system color mode"
+  },
+  "theme.docs.sidebar.navAriaLabel": {
+    "message": "Оглавление документации",
+    "description": "The ARIA label for the sidebar navigation"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.collapseAriaLabel": {
+    "message": "Свернуть список",
+    "description": "The ARIA label of the button to collapse the mobile dropdown navbar item"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.expandAriaLabel": {
+    "message": "Развернуть список",
+    "description": "The ARIA label of the button to expand the mobile dropdown navbar item"
+  },
+  "versions.label": {
+    "message": "Версия"
+  }
+}

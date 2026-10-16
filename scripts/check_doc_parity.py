@@ -26,10 +26,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Keep in sync with the `i18n` plugin's language list in `properdocs.yml`.
+# Keep in sync with `i18n.locales` in `website/docusaurus.config.ts`.
 LOCALES = ("ru", "zh")
 
+# English pages live under `docs/`; each translation mirrors their paths in its locale's tree.
 DOCS_PREFIX = "docs/"
+TRANSLATION_PREFIX = {
+    loc: f"website/i18n/{loc}/docusaurus-plugin-content-docs/current/" for loc in LOCALES
+}
 # Statuses that put the rule in force: the page existed and its content moved. A rename that
 # changed nothing (`R100`) is excluded, because relocating a file says nothing about what it
 # says: moving the whole tree from one layout to another would otherwise demand an edit to
@@ -45,15 +49,21 @@ def git(*args: str) -> str:
     ).stdout
 
 
+def relative_page(path: str) -> str | None:
+    """A page's path relative to its language's tree, or None for a file that is not a page."""
+    if not path.endswith(".md"):
+        return None
+    for prefix in (DOCS_PREFIX, *TRANSLATION_PREFIX.values()):
+        if path.startswith(prefix):
+            return path[len(prefix) :]
+    return None
+
+
 def family(path: str) -> tuple[str, dict[str, str]]:
     """The English original of a page and every locale counterpart it could have."""
-    relative = path[len(DOCS_PREFIX) :]
-    head, _, rest = relative.partition("/")
-    # A path that starts with a locale directory is a translation; anything else is the original.
-    if head in LOCALES:
-        relative = rest
+    relative = relative_page(path)
     english = f"{DOCS_PREFIX}{relative}"
-    return english, {loc: f"{DOCS_PREFIX}{loc}/{relative}" for loc in LOCALES}
+    return english, {loc: f"{prefix}{relative}" for loc, prefix in TRANSLATION_PREFIX.items()}
 
 
 def changed_pages(base: str) -> dict[str, str]:
@@ -69,7 +79,7 @@ def changed_pages(base: str) -> dict[str, str]:
             continue
         # A rename reports the old path and the new one; both sides are part of the diff.
         for path in fields[1:]:
-            if path.startswith(DOCS_PREFIX) and path.endswith(".md"):
+            if relative_page(path) is not None:
                 pages[path] = status
     return pages
 

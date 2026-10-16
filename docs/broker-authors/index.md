@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Writing a broker
 
 A broker is an independent crate that implements the core traits. It depends on `ruststream` with
@@ -22,7 +25,7 @@ The broker is pure lifecycle: each state is a distinct type, and a transition co
 returns the next state, so calls made out of order do not compile. The broker names neither a
 subscriber type nor a publisher type, so one application can mix brokers of different kinds.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Broker: Send + Sync + Sized {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -58,7 +61,7 @@ redelivery's timer, a reply dispatcher and a commit window are such tasks. The c
 keeps `Handle::current()` from `connect` and spawns every such task through that handle,
 whichever thread publishes, settles or requests:
 
-<!-- inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below -->
+{/* inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below */}
 ```rust
 pub struct ConnectedExampleBroker {
     runtime: Handle, // captured in `connect`
@@ -88,8 +91,7 @@ check covers that path too.
 The in-memory broker walks the whole lifecycle in a few lines, and every example of it on this
 page is cut from that same file, so a contract that moves takes the page's code with it:
 
-```rust
---8<-- "src/memory/mod.rs:ladder"
+```rust reference="src/memory/mod.rs#ladder"
 ```
 
 `ClosedMemoryBroker` is the witness with the teardown diagnostics described above: it reports how
@@ -100,7 +102,7 @@ many subscriber registrations the shutdown dropped.
 Implement `Subscribe` on the connected form so a service can subscribe by the name of a topic, a
 subject or a queue. `#[subscriber("name")]` subscribes through it.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
@@ -123,8 +125,7 @@ pub trait Subscribe: ConnectedBroker {
 
 Opening a subscription and saying where a publish reaches it is all it has to do:
 
-```rust
---8<-- "src/memory/mod.rs:subscribe"
+```rust reference="src/memory/mod.rs#subscribe"
 ```
 
 `type Copies` is what the by-name source reports on your broker, so it decides how
@@ -141,7 +142,7 @@ instead.
 
 A subscriber is a `Stream` of incoming messages. Back-pressure comes from the stream itself.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscriber: Send {
     type Message: IncomingMessage;
@@ -166,7 +167,7 @@ subscriber, a requeue, a replay - is then one atomic increment rather than three
 whose client thread and dispatch task sit on different cores pays for on every message.
 `MemoryBroker` is written that way.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
@@ -236,8 +237,7 @@ delivery, so put it past the end of the slice.
 Three brokers override none of the five defaulted methods: `ruststream-rumqttc`,
 `ruststream-sea-file` and `ruststream-zeromq`. A test in the core pins what the defaults answer:
 
-```rust
---8<-- "src/message.rs:incoming_defaults"
+```rust reference="src/message.rs#incoming_defaults"
 ```
 
 The `Unsupported` answer is what lets the runtime tell a transport with no delayed redelivery from
@@ -245,7 +245,7 @@ one that honoured the delay, and run its own fallback.
 
 ### `Publisher`
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Publisher: Send + Sync {
     /// How your transport consumes the payload: `Lend` when it reads the bytes, `Take` when
@@ -275,7 +275,7 @@ the second kind.
 
 The message you receive follows the declaration, and so does what the framework does above you:
 
-<!-- inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less -->
+{/* inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less */}
 ```rust
 // Take: the buffer the framework wrote, yours to keep.
 async fn publish(&self, msg: OutgoingMessage<'_, BytesMut>, options: Option<&()>) -> Result<(), Error>
@@ -339,7 +339,7 @@ Implement `PublishPolicy` on it: the policy constructs the live publisher on the
 and `pair` is that constructor. It is async and can return an error, so a broker that has to
 initialize a transactional producer does it here.
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait PublishPolicy<C: ConnectedBroker> {
     type Live; // the live publisher (or live wiring form, for combinator stacks)
@@ -368,7 +368,7 @@ itself when a `reply("dest")` handler is mounted without an explicit `.out_reply
 `b.include(def)` compiles on its own. Brokers whose publishers always need explicit options do not
 implement it, and their users specify the policy at every handler registration.
 
-<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait DefaultPublish: ConnectedBroker {
     type Policy: PublishPolicy<Self> + Default + Send + 'static;
@@ -377,8 +377,7 @@ pub trait DefaultPublish: ConnectedBroker {
 
 Both halves, on a broker whose policy carries no options at all:
 
-```rust
---8<-- "src/memory/mod.rs:publish_policy"
+```rust reference="src/memory/mod.rs#publish_policy"
 ```
 
 ## Subscription sources
@@ -387,7 +386,7 @@ Both halves, on a broker whose policy carries no options at all:
 own broker (a consumer group, a durable name, a delivery policy), ship a descriptor type that
 implements `SubscriptionSource`:
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
@@ -489,8 +488,7 @@ half a declaration is refused at startup.
 Without native delayed redelivery, the runtime honours `retry_after` by publishing a copy of the
 message once the delay is over. An `AddressedCopies` descriptor says where that copy goes.
 
-```rust
---8<-- "src/memory/mod.rs:source"
+```rust reference="src/memory/mod.rs#source"
 ```
 
 Answer with the name a publisher bound to your broker uses to reach this subscription again: the
@@ -515,8 +513,7 @@ covers the rest of the ladder for both.
 A kind identified by a name and nothing else also implements `FromName`: its single constructor
 builds the value from that name.
 
-```rust
---8<-- "src/memory/mod.rs:from_name"
+```rust reference="src/memory/mod.rs#from_name"
 ```
 
 `#[subscriber(OrdersStream)]` is then legal: the attribute names the kind, and the mount site
@@ -529,7 +526,7 @@ The core does not know that a subscription has a stream, a durable name or a con
 gives you one hook: `map_source`, a transform over the source the mount site is building. You put
 your own trait on top and bind it to your source type:
 
-<!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
 
@@ -564,7 +561,7 @@ position your methods fall out of scope, so cover that case with a second impl o
 source. `StartAt::map_inner` takes the descriptor out of the wrapper and hands the position back
 untouched, so each method stays one line:
 
-<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+{/* inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home */}
 ```rust
 use ruststream::StartAt;
 use ruststream::runtime::Fixed;
@@ -599,7 +596,7 @@ the batch. It reads the value off the builder instead of asking the user to name
 `batch_size()` returns the batch size once `batch(n)` named it, and `subscription_name()` returns
 the name the source reports.
 
-<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
 
@@ -635,7 +632,7 @@ The publish side is built the same way. The mount site names a policy with `.out
 the `Reply` marker for what a `reply("dest")` handler returns, a slot's marker for an `Out` slot.
 `MapPublisher` is the hook over the policy in that position:
 
-<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::MapPublisher;
 
@@ -657,7 +654,7 @@ impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
 
 In a service it reads like this:
 
-<!-- inline-rust: the call shape against the broker policy sketched above -->
+{/* inline-rust: the call shape against the broker policy sketched above */}
 ```rust
 b.include(confirm).out_reply(Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
@@ -682,8 +679,7 @@ defaults, a live publisher resolving one against the other, and an extension tra
 `PublishBuilder` bounded on the options type. The bound is what keeps your steps off a builder
 over another broker's publisher:
 
-```rust
---8<-- "tests/publish_options.rs:broker_side"
+```rust reference="tests/publish_options.rs#broker_side"
 ```
 
 The broker half is the same on the macro path and the manual one. Ship the extension trait from
@@ -806,8 +802,7 @@ option settle between 10 and 50 ms.
 
 Everything else about the subscriber passes through the wrapper unchanged:
 
-```rust
---8<-- "tests/batch_subscriber.rs:buffered_capability"
+```rust reference="tests/batch_subscriber.rs#buffered_capability"
 ```
 
 Nothing in the mount site says which of the two you did: a service names the batch size and gets
@@ -823,7 +818,7 @@ The `conformance` batch suite checks the contract: it opens a subscription at a 
 the run and fails a broker whose batches come back larger. It is not part of `harness::run_suite`;
 capability suites are yours to call, one per capability you implement.
 
-### The prelude your crate ships { #broker-prelude }
+### The prelude your crate ships {/* #broker-prelude */}
 
 Your types are named at the mount site, not in the body, and that is what your crate's prelude is
 for. Ship a `prelude` module in three layers, in this order:
@@ -868,17 +863,20 @@ Add one blanket impl next to your trait, `impl<M, W: Lanes, E, Pipe, Body> Lanes
 Pipe, Body>` delegating through the entry's `Deref`, and helpers and bodies generic over the
 capability take the entry as it is. The concrete type still never appears in application code:
 
-=== "Macros"
+<Tabs groupId="api">
+<TabItem value="macros" label="Macros">
 
-    ```rust
-    --8<-- "tests/out_slots.rs:extension"
-    ```
+```rust reference="tests/out_slots.rs#extension"
+```
 
-=== "Manual"
+</TabItem>
+<TabItem value="manual" label="Manual">
 
-    ```rust
-    --8<-- "tests/manual_out_slots.rs:extension"
-    ```
+```rust reference="tests/manual_out_slots.rs#extension"
+```
+
+</TabItem>
+</Tabs>
 
 Where the send happens is what shapes the trait, and there are two shapes.
 
@@ -920,7 +918,7 @@ surfaces in the service's file rather than in yours.
 Pin both halves with a probe behind your own glob: the bound a body writes still has to arrive as
 the core trait, and the mount-site name still has to be your policy.
 
-<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+{/* inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob */}
 ```rust
 // in your crate, behind your own prelude glob
 use crate::prelude::*;
@@ -942,7 +940,7 @@ key types. A key binds a single field as a handler parameter through the
 [`Ctx<K>` extractor](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state). Keys are unit structs, and the
 delivery path carries no type-map and no heap allocation.
 
-<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+{/* inline-rust: sketch; the real trait lives in src/field.rs */}
 ```rust
 /// Per-delivery context of this broker.
 #[non_exhaustive]
@@ -990,7 +988,7 @@ The in-memory broker's `MemoryBatchContext` is the model: the subscription's see
 same `SeekHandle` key its per-delivery context publishes. A broker with nothing subscription-scoped
 to offer implements nothing and leaves batches on the `()` default.
 
-## Middleware on the async edges { #middleware-on-the-async-edges }
+## Middleware on the async edges {/* #middleware-on-the-async-edges */}
 
 Integrations that need async I/O around encode and decode (a schema registry, a wire-format
 envelope) do not belong in a `Codec`: the core codec is synchronous and handlers should stay on the
@@ -1007,8 +1005,7 @@ The generated AsyncAPI document has room for what only your broker knows: a Rabb
 durability, a Kafka consumer group, an MQTT QoS. The specification calls those **bindings**, and
 your descriptor fills them.
 
-```rust
---8<-- "tests/asyncapi.rs:descriptor_bindings"
+```rust reference="tests/asyncapi.rs#descriptor_bindings"
 ```
 
 `Binding::new(protocol, version, &body)` serializes the body once and writes `bindingVersion`
@@ -1029,8 +1026,7 @@ cannot come from here.
 A credential never goes in, for the reason `DescribeServer` gives. `conformance::harness` has the
 check: configure your broker and your descriptor with a known password and run the scan.
 
-```rust
---8<-- "tests/conformance_self.rs:credentials"
+```rust reference="tests/conformance_self.rs#credentials"
 ```
 
 A protocol the specification has no binding for goes in `Binding::extension("x-kinesis", &body)`.
@@ -1044,8 +1040,7 @@ Your publish policies fill the same three names on the other side. A reply, an `
 publisher a dead-lettered delivery leaves through are each a `PublishPolicy`, and each describes
 the channel it publishes to.
 
-```rust
---8<-- "tests/asyncapi.rs:policy_bindings"
+```rust reference="tests/asyncapi.rs#policy_bindings"
 ```
 
 Each hook is handed the destination the mount site resolved. For a reply that is the reply type's
@@ -1065,8 +1060,7 @@ dead-letter destination each have one.
 A fourth method belongs to the reply alone. `reply_address_location` is where a client reads the
 address of an answer your broker routes through a reply-to header:
 
-```rust
---8<-- "tests/asyncapi.rs:reply_address"
+```rust reference="tests/asyncapi.rs#reply_address"
 ```
 
 The document then reports the reply channel with `address: null` and puts the expression in the
@@ -1122,15 +1116,13 @@ production does not have.
 The in-memory broker has no server, so its in-process mode is its ordinary `connect`, and its
 reference implementation is short:
 
-```rust
---8<-- "src/memory/mod.rs:testable"
+```rust reference="src/memory/mod.rs#testable"
 ```
 
 A broker with a server builds its in-process transport in `connect_in_process` and registers the
 production type:
 
-```rust
---8<-- "tests/in_process.rs:in_process"
+```rust reference="tests/in_process.rs#in_process"
 ```
 
 The transport calls `Coordinator::enqueued` on every enqueue into a subscriber and
@@ -1156,8 +1148,7 @@ exotic ones, and each rule below costs about one test.
 against the traits and do not care whether the server or the in-process transport answers them.
 One `#[tokio::test]` is enough:
 
-```rust
---8<-- "tests/conformance_self.rs:run_suite"
+```rust reference="tests/conformance_self.rs#run_suite"
 ```
 
 Run `lifecycle` in process too, through `harness::InProcessBroker`. It walks `new` -> `connect` ->
@@ -1166,8 +1157,7 @@ gets asked: does a publisher created before the shutdown return an error afterwa
 answers "not connected". A transport whose publish is a channel send has no reason to, and accepts
 the message instead.
 
-```rust
---8<-- "tests/conformance_self.rs:lifecycle"
+```rust reference="tests/conformance_self.rs#lifecycle"
 ```
 
 Add the `capabilities::*` suites the same way, one for each capability you implement.
@@ -1210,7 +1200,7 @@ checks the declaration against your server (see [Conformance](conformance.md)).
 **Give every gap a comment naming the assertion it makes unsound.** Do not write that the feature
 is missing; write which test a reader may no longer trust, and what covers it instead:
 
-<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+{/* inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on */}
 ```rust
 // No fencing: a second producer claiming the same transactional id is not rejected here, so a
 // test cannot assert the first one is fenced out. `capabilities::transactions` against a real

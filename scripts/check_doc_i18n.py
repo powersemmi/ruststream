@@ -21,33 +21,34 @@ import sys
 import tomllib
 from pathlib import Path
 
-# Locales that get a translated page next to the original. Keep in sync with the `i18n`
-# plugin's language list in `properdocs.yml`.
+# Locales with a translation tree. Keep in sync with `i18n.locales` in
+# `website/docusaurus.config.ts`.
 LOCALES = ("ru", "zh")
 
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
+# Each locale mirrors the English page paths in a tree of its own.
+TRANSLATIONS = {
+    locale: REPO / "website" / "i18n" / locale / "docusaurus-plugin-content-docs" / "current"
+    for locale in LOCALES
+}
 GLOSSARY = REPO / "scripts" / "doc_glossary.toml"
 
 FENCE = re.compile(r"^(?P<indent>\s*)(?P<ticks>```+|~~~+).*?^(?P=indent)(?P=ticks)\s*$", re.M | re.S)
 HEADING = re.compile(r"^(#{1,6})\s+\S", re.M)
-INCLUDE = re.compile(r'--8<--\s+"(?P<target>[^"]+)"')
+INCLUDE = re.compile(r'^\s*```.*?(?:^|\s)reference="(?P<target>[^"]+)"', re.M)
 INLINE_CODE = re.compile(r"`[^`\n]+`")
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+COMMENT = re.compile(r"\{/\*.*?\*/\}", re.S)
 LINK_TARGET = re.compile(r"\]\([^)]*\)")
 
 
 def english_pages() -> list[Path]:
-    """Every original page: a markdown file outside the locale trees."""
-    return sorted(
-        path
-        for path in DOCS.rglob("*.md")
-        if path.relative_to(DOCS).parts[0] not in LOCALES
-    )
+    """Every original page: a markdown file under `docs/`."""
+    return sorted(DOCS.rglob("*.md"))
 
 
 def translation_of(page: Path, locale: str) -> Path:
-    return DOCS / locale / page.relative_to(DOCS)
+    return TRANSLATIONS[locale] / page.relative_to(DOCS)
 
 
 def includes(text: str) -> list[str]:
@@ -66,7 +67,7 @@ def prose(text: str) -> str:
     would accept a term as rendered where the translator only left a symbol name in place.
     """
     text = FENCE.sub("", text)
-    text = HTML_COMMENT.sub("", text)
+    text = COMMENT.sub("", text)
     text = INLINE_CODE.sub("", text)
     return LINK_TARGET.sub("]()", text)
 
@@ -116,17 +117,14 @@ def main() -> int:
     pairs = missing = 0
 
     originals = {page.relative_to(DOCS).as_posix(): page for page in english_pages()}
-    for path in sorted(DOCS.rglob("*.md")):
-        name = path.name
-        if name.count(".") < 2 or name.split(".")[-2] not in LOCALES:
-            continue
-        locale = name.split(".")[-2]
-        original = path.with_name(name.replace(f".{locale}.md", ".md"))
-        if original.relative_to(DOCS).as_posix() not in originals:
-            errors.append(
-                f"{path.relative_to(REPO)}: translated page with no original at"
-                f" {original.relative_to(REPO)}"
-            )
+    for locale, tree in TRANSLATIONS.items():
+        for path in sorted(tree.rglob("*.md")):
+            relative = path.relative_to(tree).as_posix()
+            if relative not in originals:
+                errors.append(
+                    f"{path.relative_to(REPO)}: translated page with no original at"
+                    f" {(DOCS / relative).relative_to(REPO)}"
+                )
 
     for page in originals.values():
         for locale in LOCALES:
