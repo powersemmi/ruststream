@@ -4,6 +4,8 @@ import {translate} from '@docusaurus/Translate';
 import Hero from '@site/src/components/Landing/Hero';
 import BrokerStrip from '@site/src/components/Landing/BrokerStrip';
 import OldWayNewWay from '@site/src/components/Landing/OldWayNewWay';
+import Architecture from '@site/src/components/Landing/Architecture';
+import Principles from '@site/src/components/Landing/Principles';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -20,6 +22,8 @@ export default function Home(): ReactNode {
           <Hero />
           <BrokerStrip />
           <OldWayNewWay />
+          <Architecture />
+          <Principles />
         </div>
       </main>
     </Layout>
