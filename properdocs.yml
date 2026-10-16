@@ -73,6 +73,15 @@ hooks:
 
 plugins:
   - search
+  # Fonts and other third-party assets the theme links are downloaded at build time and served
+  # from the site itself, so a reader whose network cannot reach Google Fonts still gets a page
+  # that renders instead of one that waits on the font stylesheet. The Context7 widget is a live
+  # service script and keeps loading from its own host. The download runs in CI, where every
+  # deploy is built; a local build keeps linking the fonts and works offline.
+  - privacy:
+      enabled: !ENV [CI, false]
+      assets_exclude:
+        - context7.com/*
   # Versioned docs are published with `mike` (see the Docs workflow and the version switcher).
   # Pages that moved keep their old URLs alive; extend the map on any future move. The guides
   # moved to docs.rs, where each feature module documents itself, so every old guide URL in
