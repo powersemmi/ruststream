@@ -312,8 +312,8 @@ does.
 `options` is `None` on every path with no call site to adjust them - a reply, a deferred
 redelivery - and the policy's settings apply.
 
-`Clone` and `'static` are what the test harness asks of the type: it copies the options of a
-publish through an `Out` slot and hands them back to the test as this type. A service testing your
+`Clone` and `'static` are what the test harness asks of the type: it copies the options of every
+publish the runtime makes and hands them back to the test as this type. A service testing your
 broker then asserts on the value your `publish` received, not on the protocol field it became.
 Derive `Debug` and `PartialEq` as well, and the assertion reads `with_options(&YourOptions { .. })`
 ([asserting on `Out` slots](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)).

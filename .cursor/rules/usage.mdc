@@ -975,10 +975,10 @@ nothing to decode.
 
 `tb.out::<Marker>()` is the other view: exactly what left through one injected publisher, across
 every broker. It takes the same assertions as `published` (`assert_called_once`, `with_raw`,
-`messages`; chain `.decoded_as::<T>()` for the typed `with`), and it is the only place a test reads
-back the per-message broker settings a publish carried - `with_options(&expected)` compares them,
-`assert_options_default()` states that no step touched one. The broker's publish log has already
-resolved the settings into the protocol, so asking it for options panics.
+`messages`; chain `.decoded_as::<T>()` for the typed `with`). Both views read back the per-message
+broker settings the latest publish carried - `with_options(&expected)` compares them,
+`assert_options_default()` states that no step touched one. They are recorded for what the runtime
+publishes; a message the test published itself carries none, and asking for them panics.
 
 ```rust
 // every field of an options type is optional, so the expectation is a struct literal

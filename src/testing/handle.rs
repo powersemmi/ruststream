@@ -14,8 +14,9 @@ use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Lend, OutgoingMessage, RawMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
+use super::attribution::{MessageOptions, attribute};
 use super::broker::{LivePublish, TestableBroker};
-use super::coordinator::Coordinator;
+use super::coordinator::{Coordinator, PublishedEntry};
 use super::harness::{BrokerEntry, Mode, TestError};
 
 /// A handle to one broker in a [`TestApp`](super::TestApp): inject input and assert on its handlers and publishes.
@@ -285,14 +286,37 @@ impl BrokerHandle<'_> {
     /// publisher turns into a header or a destination prefix is not in it, and a transaction is
     /// committed on the broker, out of the harness's sight. A test that runs in both modes
     /// asserts on the recorded form, and asserts on those in process.
+    ///
+    /// The per-message options of each message come from the harness's record in both modes:
+    /// the options every runtime publish to this broker carried, matched in process to the
+    /// broker's log by payload. A message the test published itself has none.
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
-        let coordinator = self.harness.coordinator;
-        let messages = match self.transport {
-            Transport::InProcess(testable) => testable.published(name),
-            Transport::Live { .. } => coordinator.published(self.scope_id, name),
+        let recorded = self.harness.coordinator.published(self.scope_id, name);
+        let (messages, options) = match self.transport {
+            Transport::InProcess(testable) => {
+                let messages = testable.published(name);
+                let runtime: Vec<_> = recorded
+                    .into_iter()
+                    .filter_map(|entry| match entry {
+                        PublishedEntry::Runtime(publish) => Some(publish),
+                        PublishedEntry::Test(_) => None,
+                    })
+                    .collect();
+                let options = attribute(&messages, &runtime);
+                (messages, options)
+            }
+            Transport::Live { .. } => recorded
+                .into_iter()
+                .map(|entry| match entry {
+                    PublishedEntry::Test(message) => (message, MessageOptions::Unrecorded),
+                    PublishedEntry::Runtime(publish) => {
+                        (publish.message, MessageOptions::Recorded(publish.options))
+                    }
+                })
+                .unzip(),
         };
-        PublishedAssertions::new(name.to_owned(), messages, coordinator.reply_published(name))
+        PublishedAssertions::new(name.to_owned(), messages, options)
     }
 }
 

@@ -10,8 +10,6 @@ use super::{
 };
 use crate::codec::Codec;
 use crate::runtime::lifecycle::BoxError;
-#[cfg(feature = "testing")]
-use crate::testing::coordinator::record_reply_publish;
 use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack: what a
@@ -106,8 +104,6 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         // starts at the publish policy's own and only a transform fills it.
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        #[cfg(feature = "testing")]
-        record_reply_publish(out.name(), options.as_ref());
         pipeline
             .run(&mut out, &self.publisher, options.as_ref())
             .await
@@ -139,8 +135,6 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
             .map_err(|e| Box::new(e) as BoxError)?;
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
-        #[cfg(feature = "testing")]
-        record_reply_publish(out.name(), options.as_ref());
         pipeline
             .run(&mut out, &self.publisher, options.as_ref())
             .await
@@ -169,8 +163,6 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         let mut out = self.outgoing(name, payload);
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);
-        #[cfg(feature = "testing")]
-        record_reply_publish(out.name(), options.as_ref());
         pipeline
             .run(&mut out, &self.publisher, options.as_ref())
             .await

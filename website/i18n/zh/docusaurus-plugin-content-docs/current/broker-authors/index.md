@@ -280,7 +280,7 @@ async fn publish(&self, msg: OutgoingMessage<'_, &[u8]>, options: Option<&()>) -
 在没有调用点可以改动设置的路径上，`options` 是 `None`：处理器的回复、延后重试。那里生效的是策略的
 设置。
 
-`Clone` 和 `'static` 是测试套件对这个类型的要求：它把经由 `Out` 槽位的一次发布所带的设置复制一份，
+`Clone` 和 `'static` 是测试套件对这个类型的要求：它把运行时每次发布所带的设置复制一份，
 再以这个类型交回给测试。于是，测试你这个 Broker 的服务断言的是你的 `publish` 收到的值，而不是它
 变成的那个协议字段。再派生 `Debug` 和 `PartialEq`，断言就写成 `with_options(&YourOptions { .. })`
 （见[对 Out 槽位做断言](https://docs.rs/ruststream/latest/ruststream/testing/index.html#what-a-test-can-say)）。

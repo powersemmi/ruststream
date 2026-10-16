@@ -21,7 +21,8 @@ use crate::runtime::HandlerOutcome;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
-use super::coordinator::{Coordinator, Delivered, Outcome, Record, RecordedOptions, SlotRecord};
+use super::attribution::{MessageOptions, RecordedOptions};
+use super::coordinator::{Coordinator, Delivered, Outcome, Record, SlotRecord};
 
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
@@ -95,11 +96,12 @@ impl<'a> SubscriberAssertions<'a> {
         self
     }
 
-    /// Asserts this subscriber received exactly `times` deliveries (counting each redelivery).
+    /// Asserts this subscriber was called exactly `times` times: once per delivery, each
+    /// redelivery included, and once per batch.
     ///
     /// # Panics
     ///
-    /// Panics if the delivery count differs from `times`.
+    /// Panics if the call count differs from `times`.
     pub fn assert_called(self, times: usize) -> Self {
         let count = self.with_records(|records| records.len());
         assert_eq!(
@@ -570,20 +572,19 @@ fn recorded<'a, T: 'static>(one: &'a Delivered, subscriber: &str) -> &'a T {
 pub struct PublishedAssertions<T> {
     name: String,
     messages: Vec<RawMessage>,
-    // One entry per message on a slot view; on a channel view, one per reply the runtime
-    // published there. The broker's publish log records none of its own: by the time it sees a
-    // message the broker has resolved the options into its protocol.
-    options: Vec<RecordedOptions>,
+    // One entry per message, aligned with `messages`: what the harness knows of the options that
+    // message was published with.
+    options: Vec<MessageOptions>,
     _payload: PhantomData<fn() -> T>,
 }
 
 impl<T> PublishedAssertions<T> {
-    /// Assertions over the broker's publish log, with the options of whatever replies the
-    /// runtime published to the same channel.
+    /// Assertions over a broker's publishes to one channel, with what the harness knows of each
+    /// message's options.
     pub(crate) fn new(
         name: String,
         messages: Vec<RawMessage>,
-        options: Vec<RecordedOptions>,
+        options: Vec<MessageOptions>,
     ) -> Self {
         Self {
             name,
@@ -597,7 +598,7 @@ impl<T> PublishedAssertions<T> {
     pub(crate) fn captured(name: String, records: Vec<SlotRecord>) -> Self {
         let (messages, options) = records
             .into_iter()
-            .map(|record| (record.message, record.options))
+            .map(|record| (record.message, MessageOptions::Recorded(record.options)))
             .unzip();
         Self {
             name,
@@ -671,17 +672,24 @@ impl<T> PublishedAssertions<T> {
         }
     }
 
-    /// The options of the most recent recorded publish, panicking if there was none.
+    /// The options of the most recent publish, panicking if nothing was published or the harness
+    /// cannot say which options it carried.
     fn last_options(&self, what: &str) -> &RecordedOptions {
         self.last(what);
-        self.options.last().unwrap_or_else(|| {
-            panic!(
-                "nothing the runtime published carries per-message options on {:?}, cannot \
-                 assert {what}: they are recorded for a reply and for a slot publish \
-                 (`tb.out::<Marker>()`), never for a message the test published itself",
+        match self.options.last() {
+            Some(MessageOptions::Recorded(options)) => options,
+            Some(MessageOptions::Ambiguous) => panic!(
+                "the last publish to {:?} has the same payload as another publish there, and the \
+                 harness cannot tell which of them carried which options; cannot assert {what}",
                 self.name,
-            )
-        })
+            ),
+            Some(MessageOptions::Unrecorded) | None => panic!(
+                "the harness recorded no per-message options for the last publish to {:?}: the \
+                 test published it itself, a publisher the runtime did not pair made it, or the \
+                 broker changed its payload; cannot assert {what}",
+                self.name,
+            ),
+        }
     }
 
     /// Asserts the most recent publish carried exactly `expected` as the broker's per-message
@@ -690,15 +698,17 @@ impl<T> PublishedAssertions<T> {
     /// The options are what the broker's builder steps set on that one publish (see
     /// [`PublishBuilder::options_mut`](crate::runtime::PublishBuilder::options_mut)); a publish
     /// no step touched carried none, which
-    /// [`assert_options_default`](Self::assert_options_default) asserts. They are recorded on
-    /// the slot view only (`tb.out::<Marker>()`): the broker's publish log sees the message after
-    /// the broker resolved them, and a bare publisher no slot attributes records nothing.
+    /// [`assert_options_default`](Self::assert_options_default) asserts. The harness records
+    /// them with every publish the runtime makes (a reply, an `Out` slot publish, a retry copy),
+    /// on the broker it went to, so a broker's view and a slot view both read them.
     ///
     /// # Panics
     ///
-    /// Panics if nothing was published, these assertions read the broker's publish log rather
-    /// than a slot view, the publish carried no options, the broker's options type is not
-    /// `Options`, or the value differs from `expected`.
+    /// Panics if nothing was published, the harness cannot say which options the most recent
+    /// publish carried (the test published it itself, a publisher the runtime did not pair made
+    /// it, or another publish there has the same payload and the order of the two is unknown),
+    /// it carried none, the broker's options type is not `Options`, or the value differs from
+    /// `expected`.
     pub fn with_options<Options>(self, expected: &Options) -> Self
     where
         Options: PartialEq + Debug + 'static,
@@ -722,12 +732,13 @@ impl<T> PublishedAssertions<T> {
     /// Asserts the most recent publish carried no per-message options: no builder step ran on
     /// it, and the publish policy's own settings applied.
     ///
-    /// Recorded on the slot view only, like [`with_options`](Self::with_options).
+    /// Recorded for every publish the runtime makes, like [`with_options`](Self::with_options).
     ///
     /// # Panics
     ///
-    /// Panics if nothing was published, these assertions read the broker's publish log rather
-    /// than a slot view, or a step did set options on the publish.
+    /// Panics if nothing was published, the harness cannot say which options the most recent
+    /// publish carried (see [`with_options`](Self::with_options)), or a step did set options on
+    /// the publish.
     pub fn assert_options_default(self) -> Self {
         let recorded = self.last_options("the per-message options");
         assert!(
