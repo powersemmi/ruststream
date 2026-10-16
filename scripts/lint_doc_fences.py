@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Forbid inline Rust fences in docs/.
+"""Forbid inline Rust fences in the documentation pages, in every language.
 
-Every ```rust fence must either embed a compiled snippet (a --8<-- include) or be
-explicitly exempted by an HTML comment on the line directly above it:
+Every ```rust fence must either embed a compiled snippet (a `reference="<path>#<region>"`
+on the fence) or be explicitly exempted by an MDX comment on the line directly above it:
 
-    <!-- inline-rust: <why this cannot come from a compiled example> -->
+    {/* inline-rust: <why this cannot come from a compiled example> */}
     ```rust
 
 The justification is mandatory. Exemptions are for code that has no compilable home in
@@ -17,40 +17,38 @@ import sys
 from pathlib import Path
 
 FENCE = re.compile(r"^```rust\b")
-SNIPPET = re.compile(r"--8<--")
-EXEMPT = re.compile(r"<!--\s*inline-rust:\s*\S")
+SNIPPET = re.compile(r'(?:^|\s)reference="[^"]+"')
+EXEMPT = re.compile(r"\{/\*\s*inline-rust:\s*\S")
+ROOT = Path(__file__).resolve().parent.parent
+PAGES = [ROOT / "docs", *sorted((ROOT / "website" / "i18n").glob("*/docusaurus-plugin-content-docs"))]
 
 def lint(path: Path) -> list[str]:
     errors = []
     lines = path.read_text().splitlines()
     inside = False
     fence_line = 0
-    exempt = False
-    has_snippet = False
+    allowed = False
     for n, line in enumerate(lines, 1):
         if not inside and FENCE.match(line.strip()):
             inside = True
             fence_line = n
             exempt = n > 1 and bool(EXEMPT.search(lines[n - 2]))
-            has_snippet = False
-        elif inside:
-            if SNIPPET.search(line):
-                has_snippet = True
-            if line.strip() == "```":
-                inside = False
-                if not has_snippet and not exempt:
-                    errors.append(
-                        f"{path}:{fence_line}: inline rust fence - embed a compiled"
-                        " snippet (--8<--) or add an `<!-- inline-rust: why -->`"
-                        " justification on the previous line"
-                    )
+            allowed = exempt or bool(SNIPPET.search(line))
+        elif inside and line.strip() == "```":
+            inside = False
+            if not allowed:
+                errors.append(
+                    f"{path}:{fence_line}: inline rust fence - embed a compiled"
+                    ' snippet (reference="<path>#<region>") or add an'
+                    " `{/* inline-rust: why */}` justification on the previous line"
+                )
     return errors
 
 def main() -> int:
-    docs = Path(__file__).resolve().parent.parent / "docs"
     errors = []
-    for path in sorted(docs.rglob("*.md")):
-        errors.extend(lint(path))
+    for root in PAGES:
+        for path in sorted(root.rglob("*.md")):
+            errors.extend(lint(path))
     for error in errors:
         print(error, file=sys.stderr)
     if errors:
