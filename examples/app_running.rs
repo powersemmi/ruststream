@@ -24,6 +24,7 @@ struct Receipt {
 
 mod start {
     use std::error::Error;
+    use std::future::Future;
     use std::pin::pin;
     use std::time::Duration;
 
@@ -48,6 +49,30 @@ mod start {
         })
     }
 
+    /// Starts the service beside other work of the process, and stops it once that work is done.
+    async fn serve(
+        broker: MemoryBroker,
+        work: impl Future<Output = ()> + Send,
+    ) -> Result<(), Box<dyn Error>> {
+        // `start` returns once every subscription is open.
+        let running = app(broker).start().await?;
+        let health = running.health();
+        work.await;
+        running.shutdown().await?;
+        tracing::info!(state = ?health.state(), "stopped");
+        Ok(())
+    }
+
+    /// Runs the service until `work` resolves; `work` starts once the service has started.
+    async fn serve_until(
+        broker: MemoryBroker,
+        work: impl Future<Output = ()> + Send,
+    ) -> Result<(), Box<dyn Error>> {
+        app(broker).run_until(work).await?;
+        Ok(())
+    }
+    // --8<-- [end:start]
+
     /// The next receipt a downstream reader sees, or `None` after five seconds.
     async fn next_receipt(receipts: &mut MemorySubscriber) -> Option<Receipt> {
         let mut stream = pin!(receipts.stream());
@@ -55,6 +80,29 @@ mod start {
             Ok(Some(Ok(delivery))) => serde_json::from_slice(delivery.payload()).ok(),
             _ => None,
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serve_stops_the_service_after_the_work() -> Result<(), Box<dyn Error>> {
+        let broker = MemoryBroker::new();
+        let mut receipts = broker.subscribe("receipts");
+        let orders = broker.publisher();
+
+        let mut receipt = None;
+        let work = async {
+            let sent = orders
+                .message(&Order { id: 7 })
+                .to("orders")
+                .publish()
+                .await;
+            if sent.is_ok() {
+                receipt = next_receipt(&mut receipts).await;
+            }
+        };
+        serve(broker, work).await?;
+
+        assert_eq!(receipt, Some(Receipt { order_id: 7 }));
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -101,12 +149,11 @@ mod start {
                 receipt = next_receipt(&mut receipts).await;
             }
         };
-        app(broker).run_until(first_receipt).await?;
+        serve_until(broker, first_receipt).await?;
 
         assert_eq!(receipt, Some(Receipt { order_id: 7 }));
         Ok(())
     }
-    // --8<-- [end:start]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

@@ -60,6 +60,7 @@ mod name_at_mount {
             );
         })
     }
+    // --8<-- [end:name_at_mount]
 
     #[tokio::test]
     async fn the_mount_site_names_the_subscription() -> Result<(), Box<dyn Error>> {
@@ -77,7 +78,6 @@ mod name_at_mount {
             .with(&Order { id: 1 });
         Ok(())
     }
-    // --8<-- [end:name_at_mount]
 }
 
 mod descriptor {
@@ -130,6 +130,7 @@ mod descriptor {
             );
         })
     }
+    // --8<-- [end:descriptor]
 
     #[tokio::test]
     async fn each_descriptor_reads_its_subscription() -> Result<(), Box<dyn Error>> {
@@ -156,7 +157,6 @@ mod descriptor {
             .with(&Order { id: 2 });
         Ok(())
     }
-    // --8<-- [end:descriptor]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

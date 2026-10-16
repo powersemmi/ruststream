@@ -59,13 +59,18 @@ mod start_at {
         })
     }
 
+    // --8<-- [start:retaining]
+    /// Replaying reads what the broker kept, so this one keeps the last 64 entries of every name.
+    /// `MemoryBroker::new()` keeps nothing, and a mount that seeks does not compile on it.
+    fn broker() -> MemoryBroker<Retaining> {
+        MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
+    }
+    // --8<-- [end:retaining]
+    // --8<-- [end:start_at]
+
     #[tokio::test]
     async fn the_history_is_replayed() -> Result<(), Box<dyn Error>> {
-        // --8<-- [start:retaining]
-        // Replaying reads what the broker kept, so this one keeps the last 64 entries of every log.
-        // `MemoryBroker::new()` keeps nothing, and a mount that seeks does not compile on it.
-        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(64)));
-        // --8<-- [end:retaining]
+        let broker = broker();
         // Published before the service starts.
         let publisher = broker.publisher();
         for id in [1, 2] {
@@ -84,7 +89,6 @@ mod start_at {
         assert_eq!(ids, [1, 2]);
         Ok(())
     }
-    // --8<-- [end:start_at]
 }
 
 mod seek {
@@ -146,6 +150,7 @@ mod seek {
             );
         })
     }
+    // --8<-- [end:seek]
 
     #[tokio::test]
     async fn the_poisoned_region_is_skipped() -> Result<(), Box<dyn Error>> {
@@ -167,7 +172,6 @@ mod seek {
         assert_eq!(ids, [1, POISON, 4]);
         Ok(())
     }
-    // --8<-- [end:seek]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

@@ -96,6 +96,7 @@ mod router {
             b.include_router(orders().merge(shipping()));
         })
     }
+    // --8<-- [end:router]
 
     #[tokio::test]
     async fn both_modules_are_mounted() -> Result<(), Box<dyn Error>> {
@@ -108,7 +109,6 @@ mod router {
         broker.subscriber("shipments").assert_called_once();
         Ok(())
     }
-    // --8<-- [end:router]
 }
 
 mod layer {
@@ -202,6 +202,7 @@ mod layer {
             b.include(subscriber("shipments", Dispatch).build());
         })
     }
+    // --8<-- [end:layer]
 
     #[tokio::test]
     async fn the_layer_wraps_only_its_router() -> Result<(), Box<dyn Error>> {
@@ -214,7 +215,6 @@ mod layer {
         assert_eq!(orders_seen.load(Ordering::Relaxed), 1);
         Ok(())
     }
-    // --8<-- [end:layer]
 }
 
 #[cfg(feature = "cbor")]
@@ -255,6 +255,7 @@ mod codec {
             b.include_router(orders());
         })
     }
+    // --8<-- [end:codec]
 
     #[tokio::test]
     async fn the_router_decodes_cbor() -> Result<(), Box<dyn Error>> {
@@ -273,7 +274,6 @@ mod codec {
             .settled(HandlerOutcome::ack());
         Ok(())
     }
-    // --8<-- [end:codec]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

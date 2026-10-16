@@ -53,6 +53,7 @@ mod reading {
             b.include(receive);
         })
     }
+    // --8<-- [end:handler]
 
     #[tokio::test]
     async fn the_handler_reads_the_channel_and_a_header() -> Result<(), Box<dyn Error>> {
@@ -76,7 +77,6 @@ mod reading {
             });
         Ok(())
     }
-    // --8<-- [end:handler]
 }
 
 mod field {
@@ -117,6 +117,7 @@ mod field {
             b.include(locate);
         })
     }
+    // --8<-- [end:ctx]
 
     #[tokio::test]
     async fn the_handler_takes_the_position_as_a_parameter() -> Result<(), Box<dyn Error>> {
@@ -142,7 +143,6 @@ mod field {
             });
         Ok(())
     }
-    // --8<-- [end:ctx]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

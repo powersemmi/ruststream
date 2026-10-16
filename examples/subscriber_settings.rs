@@ -46,6 +46,7 @@ mod settings {
             );
         })
     }
+    // --8<-- [end:settings]
 
     #[tokio::test]
     async fn a_malformed_order_is_skipped() -> Result<(), Box<dyn Error>> {
@@ -65,7 +66,6 @@ mod settings {
             .assert_last_failed_to_decode();
         Ok(())
     }
-    // --8<-- [end:settings]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

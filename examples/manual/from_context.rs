@@ -82,15 +82,13 @@ impl Handle<Order, Accepted> for Accept {
         })
     }
 }
-// --8<-- [end:extractor]
-
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Accept).reply().build());
     })
 }
+// --8<-- [end:extractor]
 
-// --8<-- [start:test]
 #[tokio::test]
 async fn an_order_without_a_tenant_is_dropped() -> Result<(), Box<dyn Error>> {
     let tb = TestApp::start(app()).await?;
@@ -123,7 +121,6 @@ async fn an_order_without_a_tenant_is_dropped() -> Result<(), Box<dyn Error>> {
         });
     Ok(())
 }
-// --8<-- [end:test]
 
 // The scenario is the test above; the command in the header runs it.
 fn main() {}

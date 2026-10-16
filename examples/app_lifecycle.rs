@@ -78,6 +78,7 @@ mod hooks {
                 b.include(accept);
             })
     }
+    // --8<-- [end:hooks]
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_hooks_bracket_the_run() -> Result<(), Box<dyn Error>> {
@@ -92,7 +93,6 @@ mod hooks {
         );
         Ok(())
     }
-    // --8<-- [end:hooks]
 }
 
 mod announce {
@@ -129,6 +129,7 @@ mod announce {
             });
         })
     }
+    // --8<-- [end:announce]
 
     #[tokio::test]
     async fn the_service_announces_itself() -> Result<(), Box<dyn Error>> {
@@ -142,7 +143,6 @@ mod announce {
             });
         Ok(())
     }
-    // --8<-- [end:announce]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

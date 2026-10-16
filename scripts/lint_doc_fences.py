@@ -20,6 +20,11 @@ why on the line above the fence:
 
     {/* single-form: <why this code has no macro form> */}
     ```rust reference="examples/seek.rs#retaining"
+
+An example region shown outside the Testing pages is what a service writes, so it holds no test (the
+tests that prove it sit in the same file, after the region's end marker) and opens with an item
+or an attribute, so the reader sees the signature of the code it shows, never a statement taken
+out of the middle of a function.
 """
 
 import re
@@ -28,6 +33,14 @@ from pathlib import Path
 
 FENCE = re.compile(r"^```rust\b")
 SNIPPET = re.compile(r'(?:^|\s)reference="([^"#]+)')
+REGION = re.compile(r'(?:^|\s)reference="[^"#]+#([^"]+)"')
+MARKER = re.compile(r"^\s*// --8<-- \[(start|end):([^\]]+)\]\s*$")
+TEST_ATTR = re.compile(r"^\s*#\[(?:tokio::)?test\b")
+COMMENT = re.compile(r"^\s*//")
+ITEM = re.compile(
+    r"^\s*(?:#!?\[|(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:const\s+)?(?:unsafe\s+)?"
+    r"(?:fn|use|struct|enum|impl|mod|const|static|type|trait|macro_rules!)\b)"
+)
 EXEMPT = re.compile(r"\{/\*\s*inline-rust:\s*\S")
 SINGLE_FORM = re.compile(r"\{/\*\s*single-form:\s*\S")
 TABS_OPEN = re.compile(r"<Tabs\b")
@@ -37,6 +50,48 @@ TAB_CLOSE = re.compile(r"</TabItem>")
 EXAMPLES = "examples/"
 MANUAL = "examples/manual/"
 ROOT = Path(__file__).resolve().parent.parent
+TESTING_PAGES = ("docs/components/application/testing/",)
+
+
+def region_lines(source: Path, name: str) -> list[str] | None:
+    """The lines of region `name` in `source`, markers dropped; None when it is not there."""
+    lines = None
+    for line in source.read_text().splitlines():
+        marker = MARKER.match(line)
+        if marker:
+            kind, region = marker.groups()
+            if region == name:
+                if kind == "start" and lines is None:
+                    lines = []
+                elif kind == "end" and lines is not None:
+                    return lines
+            continue
+        if lines is not None:
+            lines.append(line)
+    return lines
+
+
+def service_region_errors(path: Path, n: int, target: str, region: str) -> list[str]:
+    source = ROOT / target
+    if not source.is_file():
+        return []
+    lines = region_lines(source, region)
+    if lines is None:
+        return []
+    errors = []
+    where = f"{path}:{n}: {target}#{region}"
+    if any(TEST_ATTR.match(line) for line in lines):
+        errors.append(
+            f"{where} holds a test - a page outside Testing shows the service only; move the"
+            " test after the region's end marker"
+        )
+    first = next((line for line in lines if line.strip() and not COMMENT.match(line)), None)
+    if first is not None and not ITEM.match(first):
+        errors.append(
+            f"{where} opens with `{first.strip()}` - start the region at the item it belongs to"
+            " (its `fn`, `struct`, `impl`, attribute or `use`) so the reader sees its signature"
+        )
+    return errors
 PAGES = [ROOT / "docs", *sorted((ROOT / "website" / "i18n").glob("*/docusaurus-plugin-content-docs"))]
 
 def lint(path: Path) -> list[str]:
@@ -69,6 +124,16 @@ def lint(path: Path) -> list[str]:
             allowed = bool(EXEMPT.search(previous)) or bool(snippet)
             if snippet:
                 target = snippet.group(1)
+                region = REGION.search(line)
+                relative = path.resolve().relative_to(ROOT).as_posix()
+                # The rule is about a service's code, which lives under `examples/`; a page that
+                # documents a test suite (the broker contract) shows tests on purpose.
+                if (
+                    region
+                    and target.startswith(EXAMPLES)
+                    and not relative.startswith(TESTING_PAGES)
+                ):
+                    errors.extend(service_region_errors(path, n, target, region.group(1)))
                 if target.startswith(MANUAL):
                     if tab != "manual":
                         errors.append(

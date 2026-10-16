@@ -28,23 +28,6 @@ A type that implements `FromContext` becomes a handler parameter, resolved from 
 </TabItem>
 </Tabs>
 
-## The rejection settles the delivery
-
-<Tabs groupId="api">
-<TabItem value="macros" label="Macros">
-
-```rust reference="examples/from_context.rs#test"
-```
-
-</TabItem>
-<TabItem value="manual" label="Manual">
-
-```rust reference="examples/manual/from_context.rs#test"
-```
-
-</TabItem>
-</Tabs>
-
 ## How it works
 
 Every parameter of a `#[subscriber]` function after the message and the optional `&mut Context` is an extractor.

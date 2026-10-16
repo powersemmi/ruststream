@@ -55,6 +55,7 @@ mod handler {
             b.include(subscriber("orders", Accept).build());
         })
     }
+    // --8<-- [end:handler]
 
     #[tokio::test]
     async fn the_handler_takes_each_order() -> Result<(), Box<dyn Error>> {
@@ -73,7 +74,6 @@ mod handler {
             .settled(HandlerOutcome::ack());
         Ok(())
     }
-    // --8<-- [end:handler]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

@@ -36,6 +36,7 @@ mod batch {
             b.include(store.batch(nonzero!(64)));
         })
     }
+    // --8<-- [end:batch]
 
     #[tokio::test]
     async fn three_orders_arrive_in_one_call() -> Result<(), Box<dyn Error>> {
@@ -54,7 +55,6 @@ mod batch {
             .settled(HandlerOutcome::ack());
         Ok(())
     }
-    // --8<-- [end:batch]
 }
 
 mod per_element {
@@ -95,6 +95,7 @@ mod per_element {
             b.include(reconcile.batch(nonzero!(64)));
         })
     }
+    // --8<-- [end:per_element]
 
     #[tokio::test(start_paused = true)]
     async fn only_the_uncleared_payment_comes_back() -> Result<(), Box<dyn Error>> {
@@ -120,7 +121,6 @@ mod per_element {
         assert_eq!(ids, [vec![1, 2, 3], vec![2]]);
         Ok(())
     }
-    // --8<-- [end:per_element]
 }
 
 // The scenarios are the tests above; the command in the header runs them.
