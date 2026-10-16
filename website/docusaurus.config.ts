@@ -1,5 +1,6 @@
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import type {Config, Plugin} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {linkToPendingPage, pendingPages} from './pendingPages';
 
@@ -14,6 +15,25 @@ if (!/^\/ruststream\/[^/]+\/$/.test(baseUrl)) {
 }
 
 const accent = '#ff5722';
+
+// The search plugin offers an "Ask AI" entry when `askAi` is set and renders the module
+// `open-ask-ai` as the widget that answers it. Pointing that module at our adapter sends the
+// entry to the site's own panel instead of the third-party widget.
+function askAiInSearch(): Plugin {
+  return {
+    name: 'ruststream-ask-ai-in-search',
+    configureWebpack() {
+      return {
+        resolve: {
+          alias: {
+            'open-ask-ai$': path.resolve(__dirname, 'src/components/AskAi/searchAdapter.tsx'),
+            'open-ask-ai/styles.css': path.resolve(__dirname, 'src/components/AskAi/empty.css'),
+          },
+        },
+      };
+    },
+  };
+}
 
 const config: Config = {
   title: 'RustStream',
@@ -69,9 +89,12 @@ const config: Config = {
         docsDir: '../docs',
         docsRouteBasePath: '/',
         highlightSearchTermsOnTargetPage: true,
+        askAi: {},
       },
     ],
   ],
+
+  plugins: [askAiInSearch],
 
   presets: [
     [
@@ -113,6 +136,7 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
+        {type: 'custom-askAi', position: 'right'},
         {type: 'localeDropdown', position: 'right'},
         {
           href: 'https://github.com/powersemmi/ruststream',

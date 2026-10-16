@@ -1,0 +1,42 @@
+{
+  "askAi.button": {
+    "message": "问 AI"
+  },
+  "askAi.title": {
+    "message": "向 AI 提问"
+  },
+  "askAi.newChat": {
+    "message": "新对话"
+  },
+  "askAi.close": {
+    "message": "关闭"
+  },
+  "askAi.welcome": {
+    "message": "提出关于 RustStream 的问题。回答由 Context7 根据本文档生成，可能有误。"
+  },
+  "askAi.unavailable": {
+    "message": "助手暂时无法在此回答。Context7 小组件正在页面一角打开；库页面上也有同一个助手："
+  },
+  "askAi.placeholder": {
+    "message": "询问 RustStream 相关问题"
+  },
+  "askAi.send": {
+    "message": "发送"
+  },
+  "theme.colorToggle.ariaLabel.mode.system": {
+    "message": "跟随系统",
+    "description": "The name for the system color mode"
+  },
+  "theme.IconExternalLink.ariaLabel": {
+    "message": "（在新标签页中打开）",
+    "description": "The ARIA label for the external link icon"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.expandAriaLabel": {
+    "message": "展开下拉菜单",
+    "description": "The ARIA label of the button to expand the mobile dropdown navbar item"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.collapseAriaLabel": {
+    "message": "收起下拉菜单",
+    "description": "The ARIA label of the button to collapse the mobile dropdown navbar item"
+  }
+}

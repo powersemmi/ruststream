@@ -1,0 +1,97 @@
+{
+  "askAi.button": {
+    "message": "Спросить ИИ"
+  },
+  "askAi.title": {
+    "message": "Вопрос к ИИ"
+  },
+  "askAi.newChat": {
+    "message": "Новый диалог"
+  },
+  "askAi.close": {
+    "message": "Закрыть"
+  },
+  "askAi.welcome": {
+    "message": "Задайте вопрос о RustStream. Ответ составляет Context7 по этой документации, и в нём возможны ошибки."
+  },
+  "askAi.unavailable": {
+    "message": "Помощник сейчас не может ответить здесь. В углу страницы открывается виджет Context7; тот же помощник есть на странице библиотеки:"
+  },
+  "askAi.placeholder": {
+    "message": "Спросите о RustStream"
+  },
+  "askAi.send": {
+    "message": "Отправить"
+  },
+  "theme.colorToggle.ariaLabel.mode.system": {
+    "message": "системная тема",
+    "description": "The name for the system color mode"
+  },
+  "theme.admonition.warning": {
+    "message": "предупреждение",
+    "description": "The default label used for the Warning admonition (:::warning)"
+  },
+  "theme.DocSidebarItem.expandCategoryAriaLabel": {
+    "message": "Развернуть раздел «{label}»",
+    "description": "The ARIA label to expand the sidebar category"
+  },
+  "theme.DocSidebarItem.collapseCategoryAriaLabel": {
+    "message": "Свернуть раздел «{label}»",
+    "description": "The ARIA label to collapse the sidebar category"
+  },
+  "theme.IconExternalLink.ariaLabel": {
+    "message": "(откроется в новой вкладке)",
+    "description": "The ARIA label for the external link icon"
+  },
+  "theme.NavBar.navAriaLabel": {
+    "message": "Главное меню",
+    "description": "The ARIA label for the main navigation"
+  },
+  "theme.docs.sidebar.navAriaLabel": {
+    "message": "Оглавление документации",
+    "description": "The ARIA label for the sidebar navigation"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.expandAriaLabel": {
+    "message": "Развернуть список",
+    "description": "The ARIA label of the button to expand the mobile dropdown navbar item"
+  },
+  "theme.navbar.mobileDropdown.collapseButton.collapseAriaLabel": {
+    "message": "Свернуть список",
+    "description": "The ARIA label of the button to collapse the mobile dropdown navbar item"
+  },
+  "theme.SearchPage.existingResultsTitle": {
+    "message": "Результаты поиска по запросу «{query}»",
+    "description": "The search page title for non-empty query"
+  },
+  "theme.SearchPage.emptyResultsTitle": {
+    "message": "Поиск по документации",
+    "description": "The search page title for empty query"
+  },
+  "theme.SearchPage.searchContext.everywhere": {
+    "message": "Везде"
+  },
+  "theme.SearchPage.documentsFound.plurals": {
+    "message": "Найден {count} документ|Найдено {count} документа|Найдено {count} документов",
+    "description": "Pluralized label for \"{count} documents found\". Use as much plural forms (separated by \"|\") as your language support (see https://www.unicode.org/cldr/cldr-aux/charts/34/supplemental/language_plural_rules.html)"
+  },
+  "theme.SearchPage.noResultsText": {
+    "message": "Ничего не найдено",
+    "description": "The paragraph for empty search result"
+  },
+  "theme.SearchBar.noResultsText": {
+    "message": "Нет результатов"
+  },
+  "theme.SearchBar.seeAllOutsideContext": {
+    "message": "Все результаты вне «{context}»"
+  },
+  "theme.SearchBar.searchInContext": {
+    "message": "Все результаты в «{context}»"
+  },
+  "theme.SearchBar.seeAll": {
+    "message": "Все результаты"
+  },
+  "theme.SearchBar.label": {
+    "message": "Поиск",
+    "description": "The ARIA label and placeholder for search button"
+  }
+}

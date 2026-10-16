@@ -1,0 +1,131 @@
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: calc(var(--ifm-z-index-fixed) + 10);
+  display: flex;
+  flex-direction: column;
+  width: min(30rem, 100vw);
+  height: 100vh;
+  height: 100dvh;
+  background: var(--rs-bg);
+  color: var(--rs-fg);
+  border-left: 1px solid var(--rs-border);
+  box-shadow: var(--rs-shadow);
+}
+
+.header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--rs-border);
+}
+
+.title {
+  flex: 1;
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 700;
+  color: var(--rs-accent);
+}
+
+.headerButton {
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--rs-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--rs-border);
+  border-radius: 4px;
+}
+
+.headerButton:hover {
+  color: var(--rs-fg);
+  border-color: var(--rs-accent);
+}
+
+.log {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.hint,
+.notice {
+  color: var(--rs-muted);
+}
+
+.notice a {
+  color: var(--rs-accent);
+}
+
+.question {
+  margin: 0 0 1rem auto;
+  padding: 0.5rem 0.75rem;
+  width: fit-content;
+  max-width: 85%;
+  white-space: pre-wrap;
+  background: var(--rs-code-bg);
+  border: 1px solid var(--rs-border);
+  border-radius: 6px;
+}
+
+.answer {
+  margin-bottom: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.answer > :last-child {
+  margin-bottom: 0;
+}
+
+.typing {
+  color: var(--rs-muted);
+}
+
+.form {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--rs-border);
+}
+
+.input {
+  flex: 1;
+  padding: 0.5rem;
+  font: inherit;
+  color: var(--rs-fg);
+  resize: none;
+  background: var(--rs-code-bg);
+  border: 1px solid var(--rs-border);
+  border-radius: 4px;
+}
+
+.input:focus {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -1px;
+}
+
+.send {
+  padding: 0 1rem;
+  font: inherit;
+  font-weight: 500;
+  color: var(--rs-accent-contrast);
+  cursor: pointer;
+  background: var(--rs-accent);
+  border: 0;
+  border-radius: 4px;
+}
+
+.send:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.navbarButton {
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
