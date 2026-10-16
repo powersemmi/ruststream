@@ -100,6 +100,12 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
+name = "manual_settle_retry_destination"
+path = "examples/manual/settle_retry_destination.rs"
+required-features = ["testing", "memory", "json", "asyncapi"]
+test = true
+
+[[example]]
 name = "manual_handler_outcome"
 path = "examples/manual/handler_outcome.rs"
 required-features = ["testing", "memory", "json"]
@@ -234,6 +240,11 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "retry"
 required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "settle_retry_destination"
+required-features = ["testing", "macros", "memory", "json", "asyncapi"]
 test = true
 
 [[example]]
