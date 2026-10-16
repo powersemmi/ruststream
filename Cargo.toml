@@ -347,6 +347,17 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
+name = "app_state"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_app_state"
+path = "examples/manual/app_state.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
 name = "app_lifecycle"
 required-features = ["testing", "macros", "memory", "json"]
 test = true
