@@ -429,7 +429,8 @@ impl Subscriber for FaultySubscriber {
         let mut deliveries = Box::pin(deliveries);
         stream::poll_fn(move |cx| {
             if let Some((deferred, connected)) = &outbox {
-                for (name, payload, headers) in take(&mut *deferred.lock().expect("poisoned")) {
+                let held = take(&mut *deferred.lock().expect("poisoned"));
+                for (name, payload, headers) in held {
                     connected.inject(OutgoingMessage::new(&name, &payload).with_headers(headers));
                 }
             }
