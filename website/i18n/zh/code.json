@@ -41,5 +41,20 @@
   },
   "versions.label": {
     "message": "版本"
+  },
+  "banner.untranslated.title": {
+    "message": "本页尚未翻译"
+  },
+  "banner.untranslated.body": {
+    "message": "下面显示的是英文原文。"
+  },
+  "banner.translated.title": {
+    "message": "英文版本为准"
+  },
+  "banner.translated.body": {
+    "message": "本页译自英文，由模型翻译。若与{original}存在差异，以英文原文为准。"
+  },
+  "banner.translated.original": {
+    "message": "英文原文"
   }
 }

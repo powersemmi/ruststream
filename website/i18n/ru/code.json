@@ -96,5 +96,20 @@
   },
   "versions.label": {
     "message": "Версия"
+  },
+  "banner.untranslated.title": {
+    "message": "Эта страница ещё не переведена"
+  },
+  "banner.untranslated.body": {
+    "message": "Ниже показан английский оригинал."
+  },
+  "banner.translated.title": {
+    "message": "Нормативная версия документации - английская"
+  },
+  "banner.translated.body": {
+    "message": "Эта страница переведена с английского языковой моделью. При любом расхождении верен {original}."
+  },
+  "banner.translated.original": {
+    "message": "английский оригинал"
   }
 }
