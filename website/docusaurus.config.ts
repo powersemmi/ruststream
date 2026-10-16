@@ -122,7 +122,7 @@ const config: Config = {
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light',
       copyright: 'Apache-2.0',
     },
     prism: {

@@ -1,1 +1,78 @@
-/* Site-wide styles. Theme colors are set per theme in a later step. */
+/* Fonts are bundled with the site, so a page renders the same where Google Fonts is unreachable.
+   Each face ships per-subset files behind `unicode-range`: a reader downloads only the scripts a
+   page uses. Chinese text falls back to the system's CJK faces. */
+@import '@fontsource/roboto/400.css';
+@import '@fontsource/roboto/400-italic.css';
+@import '@fontsource/roboto/500.css';
+@import '@fontsource/roboto/700.css';
+@import '@fontsource/roboto-mono/400.css';
+@import '@fontsource/roboto-mono/700.css';
+
+/* The palette every custom component reads. Nothing outside these blocks names a color. */
+:root,
+[data-theme='light'] {
+  --rs-bg: #ffffff;
+  --rs-fg: #1b1f24;
+  --rs-muted: #5c6370;
+  --rs-accent: #e64a19;
+  --rs-accent-contrast: #ffffff;
+  --rs-border: #d9dde3;
+  --rs-code-bg: #f5f6f8;
+  --rs-surface: #fafbfc;
+  --rs-shadow: 0 8px 32px rgb(15 20 25 / 18%);
+
+  --ifm-color-primary: #e64a19;
+  --ifm-color-primary-dark: #cf4317;
+  --ifm-color-primary-darker: #c33f15;
+  --ifm-color-primary-darkest: #a13412;
+  --ifm-color-primary-light: #e95c30;
+  --ifm-color-primary-lighter: #ea653c;
+  --ifm-color-primary-lightest: #ee815f;
+  --docusaurus-highlighted-code-line-bg: rgb(0 0 0 / 10%);
+}
+
+[data-theme='dark'] {
+  --rs-bg: #121418;
+  --rs-fg: #e6e8eb;
+  --rs-muted: #9aa1ab;
+  --rs-accent: #ff7043;
+  --rs-accent-contrast: #121418;
+  --rs-border: #2c3038;
+  --rs-code-bg: #1b1e24;
+  --rs-surface: #181b20;
+  --rs-shadow: 0 8px 32px rgb(0 0 0 / 55%);
+
+  --ifm-color-primary: #ff7043;
+  --ifm-color-primary-dark: #ff5b28;
+  --ifm-color-primary-darker: #ff501a;
+  --ifm-color-primary-darkest: #f03a00;
+  --ifm-color-primary-light: #ff855e;
+  --ifm-color-primary-lighter: #ff906c;
+  --ifm-color-primary-lightest: #ffb095;
+  --docusaurus-highlighted-code-line-bg: rgb(0 0 0 / 30%);
+}
+
+:root {
+  --ifm-font-family-base: 'Roboto', system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --ifm-font-family-monospace: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+  --ifm-code-font-size: 92%;
+  --ifm-background-color: var(--rs-bg);
+  --ifm-background-surface-color: var(--rs-surface);
+  --ifm-font-color-base: var(--rs-fg);
+  --ifm-toc-border-color: var(--rs-border);
+  --ifm-code-background: var(--rs-code-bg);
+  --ifm-navbar-background-color: var(--rs-bg);
+  --ifm-footer-background-color: var(--rs-surface);
+  --ifm-footer-color: var(--rs-muted);
+}
+
+.navbar {
+  border-bottom: 1px solid var(--rs-border);
+  box-shadow: none;
+}
+
+.footer {
+  border-top: 1px solid var(--rs-border);
+}
