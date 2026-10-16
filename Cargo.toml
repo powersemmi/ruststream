@@ -322,6 +322,39 @@ path = "examples/manual/testing_records.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
+[[example]]
+name = "testing_published"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_published"
+path = "examples/manual/testing_published.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "testing_published_payloads"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_published_payloads"
+path = "examples/manual/testing_published_payloads.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "testing_published_options"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_published_options"
+path = "examples/manual/testing_published_options.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
