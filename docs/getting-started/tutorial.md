@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Tutorial: build your first service
 
 This tutorial builds an orders service from scratch, explaining each piece. It uses the in-memory
@@ -27,12 +30,11 @@ serde = { version = "1", features = ["derive"] }
 A handler is an `async fn` whose first parameter is the decoded payload. The `#[subscriber]` macro
 turns it into a mountable definition named after the function.
 
-```rust title="src/orders.rs"
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#order"
 use ruststream::runtime::HandlerResult;
 use ruststream::subscriber;
 use serde::{Deserialize, Serialize};
 
---8<-- "examples/tutorial/orders.rs:order"
 ```
 
 A handler returns a [`HandlerResult`](../guides/subscribers.md#acking): `Ack`, or a `nack` that drops
@@ -41,7 +43,7 @@ or requeues the message. Returning `()` or `Result<(), E>` also works - they con
 
 ## 3. Wire it into an app
 
-```rust title="src/main.rs"
+```rust title="src/main.rs" reference="examples/quickstart.rs#app"
 mod orders;
 
 use ruststream::memory::MemoryBroker;
@@ -49,16 +51,18 @@ use ruststream::runtime::{AppInfo, RustStream};
 
 use crate::orders::handle;
 
---8<-- "examples/quickstart.rs:app"
 ```
 
 The macro turns `handle` into a value named after the function, so you import and pass it directly.
 
-!!! tip "Codec defaults"
-    `include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
-    `msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
-    once with `with_broker_codec(broker, codec, |b| ...)`. See
-    [Codecs](../guides/codecs.md) for the full resolution rules.
+:::tip[Codec defaults]
+
+`include` decodes with the default codec - `json` if enabled, otherwise `cbor`, otherwise
+`msgpack` - so it needs no codec argument. To decode with a different one everywhere, set it
+once with `with_broker_codec(broker, codec, |b| ...)`. See
+[Codecs](../guides/codecs.md) for the full resolution rules.
+
+:::
 
 Run it:
 
@@ -70,13 +74,12 @@ cargo run -- run
 
 To publish a reply, return the reply value and name the destination with `publish(..)`:
 
-```rust title="src/orders.rs"
---8<-- "examples/tutorial/orders.rs:confirm"
+```rust title="src/orders.rs" reference="examples/tutorial/orders.rs#confirm"
 ```
 
 Mount it with a publisher that carries the reply codec:
 
-<!-- inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below -->
+{/* inline-rust: minimal mount fragment isolating the publisher wiring; the full compiled program is examples/tutorial/main.rs:main, pulled in below */}
 ```rust
 use ruststream::runtime::TypedPublisher;
 
@@ -93,12 +96,10 @@ inside a handler.
 As handlers grow, keep them in their own module and collect them into a
 [`Router`](../guides/routing.md):
 
-```rust title="src/routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
+```rust title="src/routes.rs" reference="examples/tutorial/routes.rs#routes"
 ```
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
 ```
 
 ## 6. Inspect the AsyncAPI document
@@ -116,40 +117,48 @@ Nothing above is tied to the in-memory broker. The handlers, router, and codecs 
 the broker construction differs. Add the broker crate as a dependency and swap the `with_broker`
 line:
 
-=== "Memory"
+<Tabs groupId="broker">
+<TabItem value="memory" label="Memory">
 
-    <!-- inline-rust: side-by-side broker-swap comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel -->
-    ```rust
-    use ruststream::memory::MemoryBroker;
+{/* inline-rust: side-by-side broker-swap comparison; the NATS half depends on the external ruststream-nats crate and has no in-repo compiled home, so both halves stay inline to read in parallel */}
+```rust
+use ruststream::memory::MemoryBroker;
 
-    .with_broker(MemoryBroker::new(), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
-    ```
+.with_broker(MemoryBroker::new(), |b| {
+    let router = routes::orders(b.broker());
+    b.include_router(router);
+})
+```
 
-=== "NATS"
+</TabItem>
+<TabItem value="nats" label="NATS">
 
-    <!-- inline-rust: NATS half of the broker-swap comparison; depends on the external ruststream-nats crate, no in-repo compiled home -->
-    ```rust
-    use ruststream_nats::NatsBroker;
+{/* inline-rust: NATS half of the broker-swap comparison; depends on the external ruststream-nats crate, no in-repo compiled home */}
+```rust
+use ruststream_nats::NatsBroker;
 
-    .with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
-        let router = routes::orders(b.broker());
-        b.include_router(router);
-    })
-    ```
+.with_broker(NatsBroker::new("nats://localhost:4222"), |b| {
+    let router = routes::orders(b.broker());
+    b.include_router(router);
+})
+```
+
+</TabItem>
+</Tabs>
 
 Each broker crate documents its own `Config`. Subscriptions that need broker-specific options
 (consumer groups, durable names) use that broker's descriptor in the decorator, see
 [broker-specific descriptors](../guides/subscribers.md#broker-specific-descriptors). The available
 brokers are listed under [Brokers](../brokers/index.md).
 
-!!! info "The complete service is a compiled example"
-    Every snippet on this page is embedded from
-    [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
-    in the repository, which CI builds on every change. Run it yourself with
-    `cargo run --example tutorial --features macros,memory,json -- run`.
+:::info[The complete service is a compiled example]
+
+Every snippet on this page is embedded from
+[`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
+in the repository, which CI builds on every change. Run it yourself with
+`cargo run --example tutorial --features macros,memory,json -- run`.
+
+:::
 
 ## Next steps
 

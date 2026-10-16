@@ -9,7 +9,7 @@ plus lifecycle hooks that run at fixed points around the run loop.
 `State` is a type-map: one value per type. Put ready-made values in at build time with
 `insert_state` (or from a [startup hook](#lifecycle-hooks), as the `Database` below is):
 
-<!-- inline-rust: minimal insert_state fragment with placeholder Config; the startup-hook form is compiled in lifespan.rs:hooks, pulled in below -->
+{/* inline-rust: minimal insert_state fragment with placeholder Config; the startup-hook form is compiled in lifespan.rs:hooks, pulled in below */}
 ```rust
 RustStream::new(info)
     .insert_state(Config::from_env())
@@ -18,8 +18,7 @@ RustStream::new(info)
 
 Read them from any handler or middleware through the `Context`:
 
-```rust
---8<-- "examples/lifespan.rs:handler"
+```rust reference="examples/lifespan.rs#handler"
 ```
 
 `ctx.get::<T>()` returns `Option<&T>`; it is `None` only if no value of that type was inserted.
@@ -64,8 +63,7 @@ The common case: open a pool before serving, share it with every handler, close 
 The `Database` below is a stand-in for any async resource - a `sqlx::PgPool` or an HTTP client
 slots in the same way, only its `connect` / `close` calls differ:
 
-```rust
---8<-- "examples/lifespan.rs:hooks"
+```rust reference="examples/lifespan.rs#hooks"
 ```
 
 The hook's error type is inferred from the `Ok::<_, E>(..)` annotation; it only needs to implement
@@ -80,7 +78,7 @@ By default `run` waits indefinitely for in-flight handlers to finish after shutd
 Bound that wait with `shutdown_timeout`, as the example above does; handlers still running after it
 are aborted:
 
-<!-- inline-rust: isolates the shutdown_timeout call; the full chain is compiled in lifespan.rs:hooks, shown earlier on this page -->
+{/* inline-rust: isolates the shutdown_timeout call; the full chain is compiled in lifespan.rs:hooks, shown earlier on this page */}
 ```rust
 use std::time::Duration;
 

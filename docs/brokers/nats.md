@@ -18,14 +18,12 @@ before opening subscriptions.
 
 A `#[subscriber("subject")]` handler binds straight to a NATS subject:
 
-```rust
---8<-- "examples/nats_core.rs:handler"
+```rust reference="examples/nats_core.rs#handler"
 ```
 
 Wire it onto the broker; the `with_broker` / `include` part is identical to the in-memory broker.
 
-```rust
---8<-- "examples/nats_core.rs:app"
+```rust reference="examples/nats_core.rs#app"
 ```
 
 ## JetStream durable consumer
@@ -35,15 +33,13 @@ naming the stream and a durable consumer so progress survives restarts. The hand
 `HandlerResult::Ack` acks back to JetStream. `include_on` is the source-override form; the codec
 resolves the same way as for `include`.
 
-```rust
---8<-- "examples/nats_jetstream.rs:include_on"
+```rust reference="examples/nats_jetstream.rs#include_on"
 ```
 
 The `SubscribeOptions` builder also sits directly in the `#[subscriber(..)]` decorator (the macro
 follows the chain), which is what the `nats-js` CLI scaffold generates:
 
-```rust
---8<-- "examples/nats_jetstream.rs:decorator"
+```rust reference="examples/nats_jetstream.rs#decorator"
 ```
 
 Beyond `jetstream` and `durable`, the builder carries `queue_group` (Core NATS load balancing),
@@ -57,12 +53,11 @@ NATS supports request-reply natively, so `NatsPublisher` implements the `Request
 `request(msg, timeout)` publishes with a reply inbox and resolves with the reply message, or fails
 with a timeout error when nothing answers in time:
 
-```rust
+```rust reference="examples/nats_request_reply.rs#request"
 use std::time::Duration;
 
 use ruststream::{IncomingMessage, OutgoingMessage, RequestReply};
 
---8<-- "examples/nats_request_reply.rs:request"
 ```
 
 Any NATS responder answers it: another service, or `nats reply questions 'pong'` from the CLI. The

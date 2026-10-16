@@ -11,8 +11,7 @@ ruststream = { version = "0.3", features = ["macros", "memory", "metrics"] }
 
 Create a `Metrics`, install its consume and publish layers, and keep the handle to export later:
 
-```rust
---8<-- "examples/metrics_http.rs:wiring"
+```rust reference="examples/metrics_http.rs#wiring"
 ```
 
 `consume_layer` records every handled message; `publish_layer` records every published message. To
@@ -33,7 +32,7 @@ consume; `ok` or `error` for publish).
 
 `export` renders the current values in the Prometheus exposition format:
 
-<!-- inline-rust: one-line export() API shape; the complete server, including this call, is compiled in metrics_http.rs and pulled in below -->
+{/* inline-rust: one-line export() API shape; the complete server, including this call, is compiled in metrics_http.rs and pulled in below */}
 ```rust
 let body = metrics.export()?;
 ```
@@ -55,6 +54,5 @@ curl -X POST http://127.0.0.1:8080/orders -d '{"id":1,"quantity":3}'
 curl http://127.0.0.1:8080/metrics
 ```
 
-```rust
---8<-- "examples/metrics_http.rs"
+```rust reference="examples/metrics_http.rs"
 ```

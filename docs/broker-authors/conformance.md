@@ -24,10 +24,9 @@ fallible (it returns the `TestClient::start` result) and is invoked once per sce
 cannot leak state into each other. This is the in-memory reference broker's own suite run,
 verbatim; substitute your `TestClient::start` in the factory:
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### What it checks
@@ -54,11 +53,10 @@ not part of the contract and are verified in your own end-to-end suite against a
 subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
 broker-agnostic:
 
-```rust
+```rust reference="tests/doc_conformance_nats.rs#lifecycle"
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
 
---8<-- "tests/doc_conformance_nats.rs:lifecycle"
 ```
 
 - **`make_broker`** is **synchronous** (`Fn() -> B`). A broker that can only be built asynchronously
@@ -84,11 +82,10 @@ without the capability simply do not call it. Each suite takes the same factory 
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
 | `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it |
 
-```rust
+```rust reference="tests/doc_conformance_nats.rs#request_reply"
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
 
---8<-- "tests/doc_conformance_nats.rs:request_reply"
 ```
 
 The in-memory broker implements every capability natively and passes all three suites in-process

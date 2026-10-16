@@ -30,7 +30,7 @@ ruststream run                  # or: cargo run -- run
 ```
 
 `ruststream run` shells out to `cargo run -- run`, which starts a tokio runtime and runs the service
-until you press ++ctrl+c++. The scaffold uses the in-memory broker, so it runs with no external
+until you press <kbd>Ctrl</kbd>+<kbd>C</kbd>. The scaffold uses the in-memory broker, so it runs with no external
 dependencies.
 
 ## Generate the AsyncAPI document
@@ -43,8 +43,7 @@ ruststream asyncapi gen --yaml
 
 ## What the entry point looks like
 
-```rust title="src/main.rs"
---8<-- "examples/tutorial/main.rs:main"
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
 ```
 
 You write a function that builds the service; the macro turns it into a `main` that dispatches
