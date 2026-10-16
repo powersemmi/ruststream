@@ -13,16 +13,14 @@ it.
 `with_broker`. Every handler registered after it is wrapped - both handlers registered directly on
 a broker scope and handlers a router brings in via `include_router`:
 
-```rust
---8<-- "examples/middleware_app_scope.rs:app_scope"
+```rust reference="examples/middleware_app_scope.rs#app_scope"
 ```
 
 **Router scope.** Give a router its own middleware with `Router::layer`, which wraps every handler
 on that router when it is mounted (see [Routing](routing.md#router-middleware)). Handlers mounted
 directly on the broker scope stay outside it:
 
-```rust
---8<-- "examples/middleware_router_scope.rs:router_scope"
+```rust reference="examples/middleware_router_scope.rs#router_scope"
 ```
 
 The two programs are
@@ -35,20 +33,21 @@ and
 The first layer added is the outermost. Both stacks are static: zero runtime dispatch cost, and
 the type grows as you call `layer`.
 
-!!! note "Reaching router handlers requires a `BlanketLayer`"
-    A router hides its handlers' concrete types, so a layer that wraps them (the app stack at
-    `include_router`, or `Router::layer`) must implement `BlanketLayer` - one generic method that
-    wraps any handler. The bundled layers implement it; for a custom layer it is a few lines next
-    to its `Layer` impl (see `LogLayer` in the examples above).
+:::note[Reaching router handlers requires a `BlanketLayer`]
 
+A router hides its handlers' concrete types, so a layer that wraps them (the app stack at
+`include_router`, or `Router::layer`) must implement `BlanketLayer` - one generic method that
+wraps any handler. The bundled layers implement it; for a custom layer it is a few lines next
+to its `Layer` impl (see `LogLayer` in the examples above).
+
+:::
 ## Writing a layer
 
 A layer transforms one handler into another. Implement `Layer<H>`:
 
-```rust
+```rust reference="examples/middleware.rs#layer_impl"
 use ruststream::runtime::{Context, Handler, HandlerResult, Layer};
 
---8<-- "examples/middleware.rs:layer_impl"
 ```
 
 `Identity` is the no-op layer (the default global stack), and `Stack<Inner, Outer>` composes two.
@@ -60,7 +59,7 @@ reads it.
 
 Wrap a single handler with `HandlerExt::with` instead of the whole application:
 
-<!-- inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above -->
+{/* inline-rust: HandlerExt::with API-shape fragment with placeholder handler and layer; the LogLayer impl it composes is compiled in middleware.rs:layer_impl, shown above */}
 ```rust
 use ruststream::runtime::HandlerExt;
 
@@ -92,13 +91,12 @@ into the dynamic stack for exactly those handlers: `DynStack`, `DynMiddleware`, 
 `next.run(..)` to continue or short-circuits with its own result. Because it is object-safe, it
 returns a boxed future explicitly:
 
-```rust
+```rust reference="examples/middleware.rs#dyn_middleware"
 use std::future::Future;
 use std::pin::Pin;
 
 use ruststream::runtime::{Context, DynMiddleware, HandlerResult, Next};
 
---8<-- "examples/middleware.rs:dyn_middleware"
 ```
 
 Only the *list* is dynamic. Build it at runtime, freeze it into a `DynStack`, and the result is an
@@ -106,13 +104,12 @@ ordinary static `Layer` - compose it into the application stack with `layer`, ex
 hand-written one. The rest of the dispatch chain stays static; the boxing cost is paid only inside
 the stack:
 
-```rust
+```rust reference="examples/middleware.rs#dyn_stack"
 use std::sync::Arc;
 
 use ruststream::memory::MemoryMessage;
 use ruststream::runtime::DynStack;
 
---8<-- "examples/middleware.rs:dyn_stack"
 ```
 
 The full program, with the chain toggled by an environment variable, is

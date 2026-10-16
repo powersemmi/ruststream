@@ -8,7 +8,7 @@ so a fresh project runs with zero dependencies.
 ruststream = { version = "0.4", features = ["macros", "memory", "json"] }
 ```
 
-<!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->
+{/* inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) */}
 ```rust
 use ruststream::memory::MemoryBroker;
 
@@ -58,10 +58,9 @@ descriptor form uniform across brokers. From the
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service)
 example:
 
-```rust
+```rust reference="examples/routed_service/orders.rs#descriptor"
 use ruststream::memory::MemorySource;
 
---8<-- "examples/routed_service/orders.rs:descriptor"
 ```
 
 ## As a test client

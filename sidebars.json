@@ -1,0 +1,85 @@
+{
+  "docs": [
+    {
+      "type": "doc",
+      "id": "index",
+      "label": "Home"
+    },
+    {
+      "type": "category",
+      "label": "Getting started",
+      "collapsible": false,
+      "items": [
+        "getting-started/installation",
+        "getting-started/quickstart",
+        "getting-started/tutorial"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Writing services",
+      "collapsible": false,
+      "items": [
+        "guides/subscribers",
+        "guides/publishing",
+        "guides/routing",
+        "guides/codecs",
+        "guides/failure-policy",
+        "guides/middleware",
+        "guides/context",
+        "guides/lifespan"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Observability",
+      "collapsible": false,
+      "items": [
+        "guides/logging",
+        "guides/metrics",
+        "guides/asyncapi"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Testing",
+      "collapsible": false,
+      "items": [
+        "guides/testing"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "CLI",
+      "collapsible": false,
+      "items": [
+        "guides/cli"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Brokers",
+      "collapsible": false,
+      "items": [
+        "brokers/index",
+        "brokers/memory",
+        "brokers/nats"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Broker authors",
+      "collapsible": false,
+      "items": [
+        "broker-authors/index",
+        "broker-authors/example-nats",
+        "broker-authors/conformance"
+      ]
+    },
+    {
+      "type": "doc",
+      "id": "reference",
+      "label": "API reference"
+    }
+  ]
+}

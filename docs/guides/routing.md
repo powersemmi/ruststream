@@ -11,13 +11,12 @@ A `Router` mirrors the broker scope: alongside `include` / `include_on` and `inc
 [Codecs](codecs.md#per-handler)) and the manual `handle` / `subscribe` registrations. Every call
 consumes the router and returns a new one, so registrations chain:
 
-```rust title="routes.rs"
+```rust title="routes.rs" reference="examples/routing.rs#builders"
 use ruststream::runtime::Router;
 
---8<-- "examples/routing.rs:builders"
 ```
 
-<!-- inline-rust: minimal mount fragment with placeholder routes module; the full compiled program is examples/routing.rs (merge form pulled in below) -->
+{/* inline-rust: minimal mount fragment with placeholder routes module; the full compiled program is examples/routing.rs (merge form pulled in below) */}
 ```rust title="main.rs"
 RustStream::new(info).with_broker(broker, |b| {
     b.include_router(routes::orders());
@@ -27,8 +26,7 @@ RustStream::new(info).with_broker(broker, |b| {
 Handlers that publish a reply register on the router the same way as on the scope, with a
 `TypedPublisher` built from the broker:
 
-```rust title="routes.rs"
---8<-- "examples/tutorial/routes.rs:routes"
+```rust title="routes.rs" reference="examples/tutorial/routes.rs#routes"
 ```
 
 ## Router middleware
@@ -38,15 +36,13 @@ The application's global middleware (added with `RustStream::layer`) wraps route
 this way must be a `BlanketLayer` - the router hides its handlers' concrete types, so the wrap
 happens through one generic method; every bundled layer qualifies.
 
-```rust title="main.rs"
---8<-- "examples/logging_middleware.rs:layered_router"
+```rust title="main.rs" reference="examples/logging_middleware.rs#layered_router"
 ```
 
 A router can also carry its own stack: `Router::layer` wraps every handler in that router when it
 is mounted, inside the app's global stack (scopes nest, app outermost):
 
-```rust title="routes.rs"
---8<-- "examples/middleware_router_scope.rs:router_scope"
+```rust title="routes.rs" reference="examples/middleware_router_scope.rs#router_scope"
 ```
 
 See [Middleware](middleware.md) for what a layer is and how to write one, and
@@ -57,7 +53,7 @@ for the app-scope side in a running service.
 
 Build routers per module, then combine them however suits the service:
 
-<!-- inline-rust: illustrative multi-router composition with placeholder route modules; the compiled merge form is examples/routing.rs:merge, pulled in below -->
+{/* inline-rust: illustrative multi-router composition with placeholder route modules; the compiled merge form is examples/routing.rs:merge, pulled in below */}
 ```rust
 // Mount several routers on one broker - include_router can be called more than once.
 RustStream::new(info).with_broker(broker, |b| {
@@ -69,8 +65,7 @@ RustStream::new(info).with_broker(broker, |b| {
 Or merge groups into one router before mounting (the whole program is
 [`examples/routing.rs`](https://github.com/powersemmi/ruststream/blob/main/examples/routing.rs)):
 
-```rust
---8<-- "examples/routing.rs:merge"
+```rust reference="examples/routing.rs#merge"
 ```
 
 `merge` appends another router's registrations in order. Each router keeps its own codec and layer

@@ -24,10 +24,9 @@ fallible (it returns the `TestClient::start` result) and is invoked once per sce
 cannot leak state into each other. This is the in-memory reference broker's own suite run,
 verbatim; substitute your `TestClient::start` in the factory:
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### What it checks
@@ -54,7 +53,7 @@ not part of the contract and are verified in your own end-to-end suite against a
 subscription receives and acks, and finally `shutdown`. It takes three factories that keep it
 broker-agnostic:
 
-<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -95,7 +94,7 @@ without the capability simply do not call it. Each suite takes the same factory 
 | `capabilities::batches` | `BatchSubscriber` | every published message arrives in publish order, distributed over non-empty batches |
 | `capabilities::transactions` | `TransactionalPublisher` | nothing inside a transaction is visible before `commit`, a commit publishes the buffer in order, an abort discards it |
 
-<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};

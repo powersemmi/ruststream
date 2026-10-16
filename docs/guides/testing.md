@@ -8,14 +8,16 @@ RustStream services are tested at two levels:
 2. **Integration tests** run against a real broker, gated behind an environment variable, and cover
    the semantics only a real server has (durable consumers, redelivery timers, partitions).
 
-!!! warning "What the test client does and does not do"
-    An in-memory test broker is a handler-stub dispatcher: publishing fans the message out to the
-    subscribers whose subject matches, runs your handler, and treats ack/nack as broker-side no-ops
-    (a nack with requeue redelivers the same payload to the same subscriber). It does **not** model
-    JetStream durable cursors, `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or
-    consumer groups, or RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns;
-    test them in the [integration suite](#integration-tests-against-a-real-broker).
+:::warning[What the test client does and does not do]
 
+An in-memory test broker is a handler-stub dispatcher: publishing fans the message out to the
+subscribers whose subject matches, runs your handler, and treats ack/nack as broker-side no-ops
+(a nack with requeue redelivers the same payload to the same subscriber). It does **not** model
+JetStream durable cursors, `ack_wait` redelivery, `max_ack_pending`, retention, Kafka offsets or
+consumer groups, or RabbitMQ exchanges and dead-letter routing. Those are real-broker concerns;
+test them in the [integration suite](#integration-tests-against-a-real-broker).
+
+:::
 ## The `TestClient` contract
 
 Every in-memory test transport implements the `TestClient` trait from `ruststream::testing`:
@@ -51,21 +53,21 @@ external producer would, and asserts on what the handler published back.
 The handler under test (in a real service it lives in your handler module and the test imports
 it):
 
-```rust
---8<-- "tests/doc_testing_memory.rs:handler"
+```rust reference="tests/doc_testing_memory.rs#handler"
 ```
 
 The test:
 
-```rust
---8<-- "tests/doc_testing_memory.rs:test"
+```rust reference="tests/doc_testing_memory.rs#test"
 ```
 
-!!! info "This test runs in this repository's CI"
-    The code above is embedded from
-    [`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
-    which `cargo test --all-features` runs on every change - the example cannot silently rot.
+:::info[This test runs in this repository's CI]
 
+The code above is embedded from
+[`tests/doc_testing_memory.rs`](https://github.com/powersemmi/ruststream/blob/main/tests/doc_testing_memory.rs),
+which `cargo test --all-features` runs on every change - the example cannot silently rot.
+
+:::
 Three details carry the pattern:
 
 - **Readiness.** The in-memory broker does not buffer: a message published before the subscription
@@ -91,7 +93,7 @@ ruststream-nats = { version = "0.3", features = ["testing"] }
 
 The same pattern as above, with a wildcard subscriber that audits every order event:
 
-<!-- inline-rust: wildcard-subscriber test against the external ruststream-nats test broker; that broker lives in another repo, so this has no compiled home here -->
+{/* inline-rust: wildcard-subscriber test against the external ruststream-nats test broker; that broker lives in another repo, so this has no compiled home here */}
 ```rust
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -172,7 +174,7 @@ because durable names and ack waits have no in-process meaning. To unit-test tha
 mount the same definition on the test broker with an explicit by-name source - `include_on`
 overrides the macro's source (the codec resolves the same way as for `include`):
 
-<!-- inline-rust: include_on override fragment; the handler under test is declared with a real NatsBroker JetStream descriptor, which has no in-process compiled home, so the by-name remount is shown inline -->
+{/* inline-rust: include_on override fragment; the handler under test is declared with a real NatsBroker JetStream descriptor, which has no in-process compiled home, so the by-name remount is shown inline */}
 ```rust
 use ruststream::Name;
 
@@ -189,7 +191,7 @@ exactly what the integration suite is for.
 Behaviour that depends on real broker semantics belongs in a separate suite gated behind an
 environment variable, so the default `cargo test` stays fast and offline:
 
-<!-- inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here -->
+{/* inline-rust: integration-test skeleton with a pseudocode body; it drives a real NatsBroker (external crate) behind an env gate, so it has no compiled home here */}
 ```rust title="tests/integration_nats.rs"
 fn test_url() -> Option<String> {
     std::env::var("NATS_TEST_URL").ok()

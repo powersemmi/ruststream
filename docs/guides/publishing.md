@@ -8,17 +8,16 @@ handler through a named publisher. Both run through the publish pipeline.
 Name a reply destination with `publish(..)` and return the reply value. The runtime encodes it and
 sends it:
 
-```rust
+```rust reference="examples/publishing.rs#reply"
 use ruststream::subscriber;
 
---8<-- "examples/publishing.rs:reply"
 ```
 
 Mount it with `include_publishing`, handing it a [`TypedPublisher`] that carries the broker
 connection and the reply codec (`TypedPublisher::new` uses the default codec; name one with
 `TypedPublisher::with_codec`). `include_publishing` reuses that codec to decode the request too:
 
-<!-- inline-rust: minimal mount fragment for a reply publisher; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
+{/* inline-rust: minimal mount fragment for a reply publisher; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page */}
 ```rust
 use ruststream::runtime::TypedPublisher;
 
@@ -40,8 +39,7 @@ take control: `Ok(reply)` publishes and acks, `Err(result)` publishes nothing an
 acts on the returned `HandlerResult` (`HandlerResult::drop()` to dead-letter,
 `HandlerResult::retry()` to ask for redelivery):
 
-```rust
---8<-- "examples/publishing.rs:reply_result"
+```rust reference="examples/publishing.rs#reply_result"
 ```
 
 The `Result` form is detected from the written signature, so spell it out (a type alias hiding the
@@ -57,7 +55,7 @@ Make publishing handlers idempotent under redelivery.
 To publish to a destination other than a single reply (fan-out, side effects, routing to a different
 broker), register a named publisher on the application and resolve it from the context.
 
-<!-- inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page -->
+{/* inline-rust: minimal named-publisher registration fragment; the full build wiring is compiled in publishing.rs:pipeline, pulled in later on this page */}
 ```rust
 // register at build time
 let app = RustStream::new(info)
@@ -65,18 +63,19 @@ let app = RustStream::new(info)
     .with_broker(broker, |b| b.include(forward));
 ```
 
-```rust
+```rust reference="examples/publishing.rs#forward"
 use ruststream::codec::{Codec, JsonCodec};
 use ruststream::runtime::{HandlerResult, Outgoing};
 
---8<-- "examples/publishing.rs:forward"
 ```
 
-!!! note "Handlers that publish must own their context"
-    A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
-    handler (as above) or a struct handler with `async fn handle`, both of which own the borrow
-    across awaits.
+:::note[Handlers that publish must own their context]
 
+A closure handler cannot return a future that borrows `&mut Context`. Use a `#[subscriber]`
+handler (as above) or a struct handler with `async fn handle`, both of which own the borrow
+across awaits.
+
+:::
 ## The publish pipeline
 
 Two kinds of transform run before a message leaves the process, and they compose:
@@ -90,21 +89,18 @@ Two kinds of transform run before a message leaves the process, and they compose
 
 A static `PublishLayer` implements `apply(&mut Outgoing<'_>)`:
 
-```rust
---8<-- "examples/publishing.rs:static_layer"
+```rust reference="examples/publishing.rs#static_layer"
 ```
 
 A dynamic middleware implements `PublishMiddleware` with an around/next signature, so it can
 short-circuit, retry, or observe:
 
-```rust
---8<-- "examples/publishing.rs:dynamic_middleware"
+```rust reference="examples/publishing.rs#dynamic_middleware"
 ```
 
 Both levels compose on the application:
 
-```rust
---8<-- "examples/publishing.rs:pipeline"
+```rust reference="examples/publishing.rs#pipeline"
 ```
 
 Manual publishes through `ctx.publisher(..)` run through the dynamic pipeline (the static layer is a
@@ -119,14 +115,12 @@ the reply name and acks the batch; `Err(result)` publishes nothing and settles t
 with `result` (all-or-nothing: selective per-element outcomes do not compose with a
 transaction):
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing"
+```rust reference="examples/publishing.rs#batch_publishing"
 ```
 
 Mount it with `include_batch_publishing`, handing it the reply wiring:
 
-```rust
---8<-- "examples/publishing.rs:batch_publishing_mount"
+```rust reference="examples/publishing.rs#batch_publishing_mount"
 ```
 
 With a plain `TypedPublisher`, each reply publishes independently; a mid-batch failure retries

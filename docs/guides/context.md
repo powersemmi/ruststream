@@ -27,8 +27,7 @@ inserted. The state is shared behind an `Arc` once the service runs, so handlers
 references, not copies; interior mutability (an `AtomicU64`, a mutex-guarded map) is the tool when
 a shared value must change at runtime.
 
-```rust
---8<-- "examples/context.rs:state"
+```rust reference="examples/context.rs#state"
 ```
 
 ## Delivery level: `Context`
@@ -37,8 +36,7 @@ A `#[subscriber]` handler opts in by declaring a second parameter after the payl
 the handler needs nothing but the message. The macro resolves the type itself, so `Context` needs
 no import when it appears only in handler signatures:
 
-```rust
---8<-- "examples/context.rs:handler"
+```rust reference="examples/context.rs#handler"
 ```
 
 What the context exposes:
@@ -66,8 +64,7 @@ handler returns, so one delivery's values never leak into the next. Use it for d
 a single message rather than the whole service - a correlation id, an authenticated user a layer
 resolved, a tracing span.
 
-```rust
---8<-- "examples/context.rs:extensions"
+```rust reference="examples/context.rs#extensions"
 ```
 
 A broker can also seed the map: implementing `IncomingMessage::extensions` lets it hand the handler
@@ -83,15 +80,13 @@ working copy that lives in the context. That makes it a scratchpad for the dispa
 middleware earlier in the chain can stamp values onto it with `headers_mut()`, and the handler
 reads the enriched result:
 
-```rust
---8<-- "examples/context.rs:enrich"
+```rust reference="examples/context.rs#enrich"
 ```
 
 Mounted globally, the layer runs before every handler, so `handle` above always finds
 `x-request-id`:
 
-```rust
---8<-- "examples/context.rs:app"
+```rust reference="examples/context.rs#app"
 ```
 
 Two boundaries to keep in mind:
@@ -109,8 +104,7 @@ returns `None` when nothing is registered under that name. Sends through it run 
 dynamic publish middleware - the same chain as a macro reply - so a manual publish is not a hole
 in the pipeline:
 
-```rust
---8<-- "examples/publishing.rs:forward"
+```rust reference="examples/publishing.rs#forward"
 ```
 
 A closure handler cannot return a future that borrows the context across `.await`; publish from a
@@ -123,8 +117,7 @@ Sometimes a handler needs a side effect to fire *after* the message has been set
 non-critical notification, slow follow-up work - without it gating the ack decision or affecting
 redelivery. Register one on the context:
 
-```rust
---8<-- "examples/context.rs:handler"
+```rust reference="examples/context.rs#handler"
 ```
 
 The handler above ends with `ctx.after_ack(..)`: the continuation runs only once the broker has

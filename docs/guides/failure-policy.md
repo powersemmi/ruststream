@@ -18,8 +18,7 @@ With no clause, a subscriber uses the built-in defaults:
   (a nack without requeue) keeps a single malformed payload from taking the consumer down, which on
   an untrusted topic would be a poison-message or denial-of-service footgun.
 
-```rust
---8<-- "examples/failure_policy.rs:defaults"
+```rust reference="examples/failure_policy.rs#defaults"
 ```
 
 ## Setting a policy
@@ -27,8 +26,7 @@ With no clause, a subscriber uses the built-in defaults:
 `on_failure(panic = .., decode = ..)` overrides either key (both are optional; an omitted key keeps
 its default):
 
-```rust
---8<-- "examples/failure_policy.rs:tuned"
+```rust reference="examples/failure_policy.rs#tuned"
 ```
 
 The policy values are:
@@ -44,8 +42,7 @@ The policy values are:
 `skip` is the deliberate poison-message escape hatch: it advances past a message that cannot be
 processed rather than dropping or retrying it.
 
-```rust
---8<-- "examples/failure_policy.rs:skip"
+```rust reference="examples/failure_policy.rs#skip"
 ```
 
 ## How it behaves
