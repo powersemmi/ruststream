@@ -27,6 +27,7 @@ let broker = MemoryBroker::new();
 
 Сервису с перемоткой нужна история, и он называет её объём:
 
+{/* single-form: a broker constructor, the same call with and without the macros */}
 ```rust reference="examples/seek.rs#retaining"
 ```
 

@@ -25,6 +25,7 @@ let broker = MemoryBroker::new();
 
 需要回放的服务要保留历史，并说明保留多少：
 
+{/* single-form: a broker constructor, the same call with and without the macros */}
 ```rust reference="examples/seek.rs#retaining"
 ```
 
