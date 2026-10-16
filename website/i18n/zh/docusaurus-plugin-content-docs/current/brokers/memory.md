@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # 内存 Broker
 
 `memory` feature 下的 `MemoryBroker` 是一个完整的进程内 Broker。当队列只属于单个应用而不属于网络
@@ -8,22 +11,21 @@
 ruststream = { version = "0.7", features = ["macros", "memory", "json"] }
 ```
 
-<!-- inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) -->
+{/* inline-rust: two-line constructor sketch; the broker in context is exercised by every memory-feature example (e.g. quickstart.rs:app) */}
 ```rust
 use ruststream::memory::MemoryBroker;
 
 let broker = MemoryBroker::new();
 ```
 
-## 它保留多少 { #retention }
+## 它保留多少 {/* #retention */}
 
 `MemoryBroker::new()` 建出的 Broker 什么都不保留。一条消息从发布活到最后一个订阅者读完为止，因此
 长期运行的服务占用的内存只是处理器还没做完的那部分工作，与消息总数无关。
 
 需要回放的服务要保留历史，并说明保留多少：
 
-```rust
---8<-- "examples/seek.rs:retaining"
+```rust reference="examples/seek.rs#retaining"
 ```
 
 `Retention` 约束的是单个主题：`Messages(n)` 为每个主题保留最新的 `n` 条消息，`Bytes(n)` 保留能装进
@@ -35,7 +37,7 @@ let broker = MemoryBroker::new();
 读取、或者读取定位句柄的挂载只在它之上才能编译。在不保留日志的 Broker 上回放是编译错误，而不是一次
 悄悄什么也找不到的回放。
 
-## 挂载点导入的 prelude { #prelude }
+## 挂载点导入的 prelude {/* #prelude */}
 
 `ruststream::memory::prelude` 是该 Broker 的 glob，形状和每个 Broker crate 的 prelude 一样。它先
 重导出核心 prelude，然后是该 Broker 自己的表面（`MemoryBroker` 及其 `Routing`、订阅源
@@ -47,7 +49,7 @@ let broker = MemoryBroker::new();
 `TransactionalPublish` 在这里就是 `Publish` 那一个策略；事务配置独立的 Broker 会把该名字指向
 另一个策略。
 
-<!-- inline-rust: the import shape; every memory-feature example under examples/ mounts through it -->
+{/* inline-rust: the import shape; every memory-feature example under examples/ mounts through it */}
 ```rust
 use ruststream::memory::prelude::*;
 ```
@@ -76,7 +78,7 @@ use ruststream::memory::prelude::*;
 
 处理器、中间件和解码在这里的行为，与在网络 Broker 上一致：运行时用同一条路径分发消息。
 
-## 能力 { #capabilities }
+## 能力 {/* #capabilities */}
 
 下面这些能力 trait 都实现在该 Broker 自己的进程内语义之上：
 
@@ -116,25 +118,28 @@ use ruststream::memory::prelude::*;
 订阅也可以用 `MemorySource` 描述符写出，形式和任何 Broker 描述订阅时一样。下面取自
 [`routed_service`](https://github.com/powersemmi/ruststream/tree/main/examples/routed_service) 示例：
 
-=== "宏"
+<Tabs groupId="api">
+<TabItem value="macros" label="宏">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/routed_service/orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/routed_service/orders.rs:descriptor"
-    ```
+```
 
-=== "手写"
+</TabItem>
+<TabItem value="manual" label="手写">
 
-    ```rust
-    use ruststream::memory::prelude::*;
+```rust reference="examples/manual/routed_service_orders.rs#descriptor"
+use ruststream::memory::prelude::*;
 
-    --8<-- "examples/manual/routed_service_orders.rs:descriptor"
-    ```
+```
 
-## 模式订阅 { #patterns }
+</TabItem>
+</Tabs>
 
-<!-- inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs -->
+## 模式订阅 {/* #patterns */}
+
+{/* inline-rust: the mount-site shape; the compiled twin is the doctest of the `memory` module overview on docs.rs */}
 ```rust
 use ruststream::memory::prelude::*;
 

@@ -25,10 +25,9 @@ ruststream = { version = "0.7", features = ["conformance"] }
 实现了 `TestableBroker` 和 `Subscribe`。下面是内存参考 Broker 自己的套件运行，一字未改。把工厂里的
 构造函数换成你自己 Broker 的构造函数，配置与服务里的一致：
 
-```rust
+```rust reference="tests/conformance_self.rs#run_suite"
 use ruststream::conformance::harness;
 
---8<-- "tests/conformance_self.rs:run_suite"
 ```
 
 ### 它检查什么
@@ -101,7 +100,7 @@ use ruststream::conformance::harness;
 
 这项检查接收三个工厂，因此与具体 Broker 无关：
 
-<!-- inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked lifecycle check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness;
 use ruststream_nats::{NatsBroker, SubscribeOptions};
@@ -143,11 +142,10 @@ async fn passes_lifecycle() {
 或者在进程内由它构造的所有 Broker 共享的同一个世界。内存 Broker 自己的这次运行让各个副本共享一条
 总线：
 
-```rust
+```rust reference="tests/conformance_self.rs#shutdown_flushes"
 use ruststream::conformance::lifecycle;
 use ruststream::testing::Backlog;
 
---8<-- "tests/conformance_self.rs:shutdown_flushes"
 ```
 
 ## 在进程内跑同样的套件
@@ -158,8 +156,7 @@ use ruststream::testing::Backlog;
 模式保持诚实，针对服务器那一遍证明真实传输。下面这个 Broker 的 `connect` 会去连服务器，它在进程内
 通过了路由套件和生命周期检查：
 
-```rust
---8<-- "tests/in_process.rs:suites"
+```rust reference="tests/in_process.rs#suites"
 ```
 
 ## 结算套件
@@ -178,8 +175,7 @@ use ruststream::testing::Backlog;
 可供观察的重投。只提交连续前缀的日志可能把已 ack 的第三条和前两条一起再投递一次；重复可以通过，
 丢失不行。
 
-```rust
---8<-- "src/conformance/settlement/tests.rs:matches_in_process"
+```rust reference="src/conformance/settlement/tests.rs#matches_in_process"
 ```
 
 - **`make_broker`** 每建一个连接就调用一次，而检查会连接两次，所以它返回的每个 Broker 都要到达
@@ -193,7 +189,7 @@ use ruststream::testing::Backlog;
 `harness::InProcessBroker` 运行它，两边回答不同就失败：声称做到了服务器拒绝的结算的进程内传输，
 会让处理器的重试在测试里通过，却在生产环境丢掉消息。
 
-## 重试检查 { #retry-checks }
+## 重试检查 {/* #retry-checks */}
 
 描述符的 `type Copies` 说明一条注册怎样重试，`conformance::retry` 逐一检查那些对服务有所承诺的
 答案。
@@ -207,8 +203,7 @@ use ruststream::testing::Backlog;
 答的是 `Subscribe::Copies = AddressedCopies`，再用光名字的 `Name` 源跑一遍：这个答案就是每条
 `#[subscriber("orders")]` 注册的地址。
 
-```rust
---8<-- "src/conformance/retry/tests.rs:redelivery_address"
+```rust reference="src/conformance/retry/tests.rs#redelivery_address"
 ```
 
 `retry::broker_moves` 接收声明 `BrokerMoves` 的描述符。它声明 `max_attempts(n)` 和一个死信地址，把
@@ -217,7 +212,7 @@ use ruststream::testing::Backlog;
 时，Broker 必须在启动时拒绝。传入你的 Broker 接受的 `n`。`make_source(name)` 也用来打开死信地
 址，所以它要创建发布到 `name` 所需的一切。
 
-<!-- inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked dead-letter check against the external ruststream-lapin crate; its real suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::harness::InProcessBroker;
 use ruststream::conformance::retry;
@@ -242,7 +237,7 @@ async fn a_quorum_queue_dead_letters_at_the_cap() {
 连接 Broker 两次，一次用 `Broker::connect`，一次用 `connect_in_process`，所以要在跑针对服务器的
 套件的地方运行它们：
 
-<!-- inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::in_process::{self, Refusal};
 use ruststream_nats::{CoreSubject, NatsBroker, NatsPublish};
@@ -294,11 +289,10 @@ async fn in_process_matches_the_server() {
 没有键的传输不调用 `keyed_order`：`None` 就是它诚实的回答。传给 `publish_options` 的策略要配置成
 不同于传输默认值的设置，这样忘了策略的发布者不会因为恰好落在默认值上而通过检查。
 
-```rust
---8<-- "tests/conformance_message_shape.rs:keyed_order"
+```rust reference="tests/conformance_message_shape.rs#keyed_order"
 ```
 
-## 能力套件 { #capability-suites }
+## 能力套件 {/* #capability-suites */}
 
 如果你的 Broker 实现了某个能力 trait，就从 `conformance::capabilities` 跑对应的套件，它证明这份
 实现遵守该 trait 的契约。不具备该能力的 Broker 不调用它。每个套件都和 `lifecycle` 一样，用工厂
@@ -317,7 +311,7 @@ async fn in_process_matches_the_server() {
 | `capabilities::carries` | 订阅的投递实现 `Carries` | 已发布值的每次投递都借出这个值，每个值恰好借出一次；在由本进程发布订阅副本的地方（`AddressedCopies`、`NamedCopies`），按运行时发布重试副本或死信的方式，用一次投递的载荷和消息头发布的副本，借出同一个值，而在 `BrokerMoves` 的订阅上，套件不复制任何投递；值已经不在的投递不借出任何值，运行时按 `on_failure(decode = ..)` 策略处理它 |
 | `capabilities::carries_batch` | `BatchSubscriber`，其批实现 `CarriesBatch` | 每个已发布的值在这些批里恰好借出一次，任何一批借出的值都不多于它的投递；两个值如果在五轮之内有一次落进同一批，带重新入队的 `nack` 让这一批的第一次投递回来，回来的投递借出的是该批最先借出的值（从不把它们合进一批的订阅，以及对重新入队回答 `AckError::Unsupported` 的传输，都能通过，顺序对它们不做检查）；在由本进程发布副本的地方，批里一次投递的副本借出同一个值，与 `carries` 相同；值已经不在的投递发布在一个值之前，批不为它借出值，并把它排到有值的投递之后、切片末尾之外，同样用重新入队来检查 |
 
-<!-- inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here -->
+{/* inline-rust: worked request-reply capability check against the external ruststream-nats crate; its real gated suite lives in that repo, so it has no compiled home here */}
 ```rust
 use ruststream::conformance::capabilities;
 use ruststream_nats::{NatsBroker, SubscribeOptions};

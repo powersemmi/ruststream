@@ -13,9 +13,9 @@ pull request 通不过。
 每个 crate 自己测量自己，并公布自己的数字。本页从各 crate 仓库的 `main` 分支读取这些数字，
 放在一起展示。新的测量结果一经合并，就会出现在下面的表格里。
 
-## 结果 { #results }
+## 结果 {/* #results */}
 
-### 与裸客户端对照 { #against-a-raw-client }
+### 与裸客户端对照 {/* #against-a-raw-client */}
 
 数值是三个交替轮次中的最佳值，括号里是这三轮的中位数。最佳的一轮最接近未受干扰的开销，中位的
 一轮则是重跑一次通常会得到的那一轮。最差的一轮同样公布，但不进入单元格。`无法区分` 的判定要
@@ -25,7 +25,7 @@ pull request 通不过。
 
 <div id="benchmark-results" data-benchmark-labels='{"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"}'></div>
 
-### 代码的开销 { #cost-of-the-code }
+### 代码的开销 {/* #cost-of-the-code */}
 
 稳态下每条消息的指令数和内存分配次数。这些是绝对数值，不是对照：框架相对于 Broker 客户端
 多付出多少，看上面那张表。`ruststream` 在进程内传输上测量框架自身的代码。Broker crate
@@ -37,9 +37,9 @@ pull request 通不过。
 次，不按消息计。表格下面那一行先写跑出这些数字的机器，一直写到内存，再写这次测量的 crate
 版本、`ruststream` 版本和测量日期。只有知道两台机器上编译的是同一份代码，指令数才能互相比较。
 
-## 这些数字是什么 { #what-the-numbers-are }
+## 这些数字是什么 {/* #what-the-numbers-are */}
 
-### 与裸客户端的对照 { #the-comparison-against-a-raw-client }
+### 与裸客户端的对照 {/* #the-comparison-against-a-raw-client */}
 
 每一行都由维护该 Broker crate 的人测出，在自己的机器上，对着 localhost 上的 Broker。
 因此行与行之间不可比：一行的绝对吞吐量说明不了另一行的任何事情。可比的只有同一行里的两列，
@@ -52,7 +52,7 @@ localhost 上的 Broker，对框架来说是最苛刻的环境。这里没有网
 原本就在等待的时间里，测出的差异趋近于零。对这类负载来说这是真实结果：饱和的消费者就是这样。
 但这样的数字是分发开销的下界，不是对它的测量，切勿读成“免费”。
 
-### 框架代码的开销 { #the-cost-of-the-code }
+### 框架代码的开销 {/* #the-cost-of-the-code */}
 
 指令数是精确的。在 `ruststream` 里，同一个二进制程序跑两次得到同一个数字，快一倍的机器也得到
 同一个数字，因此 `ruststream` 的各行之间可比，与另一台机器上测出的同一行也可比。指令数说明不了
@@ -75,12 +75,12 @@ Broker crate 在真实的传输上测量自己，多数是对着自己 compose �
 还包含客户端的工作，每次运行之间也会有少许变动。数字包含哪些开销、变动多大、两次运行各投递
 多少条、受哪个上限约束，都写在该 crate 的基准测试页面上。
 
-## 方法论 { #methodology }
+## 方法论 {/* #methodology */}
 
 每个 Broker crate 都遵循下面的流程。这样一来，不同 Broker 公布的数字含义相同。偏离流程的
 Broker 会在自己的页面上说明。
 
-### 三个循环 { #the-three-loops }
+### 三个循环 {/* #the-three-loops */}
 
 一次运行把同一个场景测三遍，三者只有一个区别：消息由什么承载。
 
@@ -107,7 +107,7 @@ Broker 会在自己的页面上说明。
   `otel`）要么每个循环都关，要么每个循环都开。环境里带着 `-C target-cpu=native` 的机器，产出的数字
   别的机器复现不了，因此这些标志与结果一起公布。
 
-### 运行 { #the-run }
+### 运行 {/* #the-run */}
 
 - **消费者在第一条消息发布之前就已连接。** 否则一侧消费的是 Broker 里已有的积压，另一侧收到
   的是实时投递，而在多数 Broker 里这是两条不同的路径。
@@ -120,7 +120,7 @@ Broker 会在自己的页面上说明。
   一个循环整个跑完再跑下一个，会把机器的全部漂移（发热、后台负载、页缓存）算到最后跑的那个
   循环头上。
 
-### 报告 { #the-report }
+### 报告 {/* #the-report */}
 
 - **每个循环都报告三轮：最佳、中位和最差。** 机器上的噪声只会让运行变慢，所以最快的一轮最接近
   未受干扰的开销，中位的一轮是典型的一轮，最慢的一轮则说明机器离安静有多远。单次运行的单个
@@ -133,7 +133,7 @@ Broker 会在自己的页面上说明。
 - **环境与数字一起公布**：CPU 型号与核心数、内核、Broker 如何启动（镜像、容器、主机）、rustc
   版本、各 crate 版本、构建配置和编译标志。没有这些，一个数字既无法复现，也无法判断它是否过时。
 
-### 代码的测量 { #the-code-measurement }
+### 代码的测量 {/* #the-code-measurement */}
 
 每个 crate 都用自己的基准测试命令，生成第二张表里属于它的那几行。
 命令名写在该 crate 的基准测试页面上，在 `ruststream` 里是 `just bench`。这条命令需要 valgrind，
@@ -165,12 +165,12 @@ Broker 会在自己的页面上说明。
   pull request 的作者自己运行对照并引用它的数字，而降低了某个场景的改动，
   也在同一个 pull request 里降低它声明的下限。冷启动也按同样的规则检查。
 
-## 如何公布结果 { #publishing-results }
+## 如何公布结果 {/* #publishing-results */}
 
 Broker crate 用 `just bench` 对着自己 compose 文件里的 Broker 运行自己的基准程序。它把结果
 提交到自己的仓库：一个供人阅读的页面，和一份供本页读取的 JSON 文档。
 
-### 稳定路径 { #the-stable-path }
+### 稳定路径 {/* #the-stable-path */}
 
 ```text
 https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/results.json
@@ -179,7 +179,7 @@ https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/result
 该文件位于 Broker 仓库的 `docs/benchmarks/results.json`，紧挨着解释它的页面。本页从 `main`
 分支读取它，所以新的测量结果合并后立即可见。
 
-### 文档 { #the-document }
+### 文档 {/* #the-document */}
 
 ```json
 {

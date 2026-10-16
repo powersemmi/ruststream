@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # 快速上手
 
 要让服务跑起来，最快的方式是用 `cargo generate` 生成项目骨架。
@@ -33,7 +36,7 @@ cargo run -- run                # 或者：装了 CLI 之后用 ruststream run
 ```
 
 `cargo run -- run` 会启动 tokio 运行时。服务会一直运行，直到你按下
-++ctrl+c++。运行服务不需要外部 Broker。
+<kbd>Ctrl</kbd>+<kbd>C</kbd>。运行服务不需要外部 Broker。
 
 ## 生成 AsyncAPI 文档
 
@@ -46,17 +49,20 @@ cargo run -- asyncapi gen
 
 ## 入口点长什么样
 
-=== "宏"
+<Tabs groupId="api">
+<TabItem value="macros" label="宏">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/tutorial/main.rs#main"
+```
 
-=== "手写"
+</TabItem>
+<TabItem value="manual" label="手写">
 
-    ```rust title="src/main.rs"
-    --8<-- "examples/manual/tutorial/main.rs:main"
-    ```
+```rust title="src/main.rs" reference="examples/manual/tutorial/main.rs#main"
+```
+
+</TabItem>
+</Tabs>
 
 你写的是一个构建服务的函数，`#[ruststream::app]` 把它变成 `main`。
 

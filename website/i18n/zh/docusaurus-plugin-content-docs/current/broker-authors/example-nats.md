@@ -28,7 +28,7 @@ ruststream = { version = "0.7", default-features = false }
 整个 crate 一个错误枚举，变体按来源划分，并标注 `#[non_exhaustive]`，这样新增变体不是破坏性变更。
 各个来源都保存为装进 `Box` 的 `std` 错误，所以公开 API 里不出现 `async-nats` 的错误类型。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::error::Error as StdError;
 
@@ -68,7 +68,7 @@ Broker 作者实现的是 `new` -> `connect(self)` -> `shutdown(self)` 这条阶
 所以连接里有一个关闭标志：`shutdown` 在调用 `drain` 之前把它置位，每个这样的句柄都通过它读取
 客户端。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -182,7 +182,7 @@ Core NATS 是发完即忘的，JetStream 会保存消息并要求确认投递。
 描述符和一个 `NatsSubscriber`。`SubscribeOptions` 就是 `SubscriptionSource`，Broker 依据是否调用过
 `jetstream(..)` 选择分支。每个构建器方法对应 `#[subscriber(..)]` 属性里的一个具名参数。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use async_nats::jetstream::consumer::DeliverPolicy;
 use ruststream::SubscriptionSource;
@@ -258,7 +258,7 @@ impl SubscriptionSource<ConnectedNatsBroker> for SubscribeOptions {
 
 `#[subscriber(..)]` 宏接受构建器的链式调用，所以整个描述符可以直接写在属性里：
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 #[subscriber(SubscribeOptions::new("orders.*").jetstream("ORDERS").durable("worker"))]
 async fn handle(order: &Order) -> HandlerOutcome {
@@ -269,7 +269,7 @@ async fn handle(order: &Order) -> HandlerOutcome {
 按 subject 名订阅走的是同一条路径：你可以实现 `Subscribe`，委托给 `SubscribeOptions::new(name)`，
 于是 `#[subscriber("orders")]` 这种写法也能用。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::Subscribe;
 
@@ -286,7 +286,7 @@ impl Subscribe for ConnectedNatsBroker {
 `durable_ref` 是几个返回 `Option<&str>` 的小 `pub(crate)` getter）；客户端取自那条连接，关闭检查
 也在那里：
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::{self, consumer::pull::Config as PullConfig};
 
@@ -344,7 +344,7 @@ impl ConnectedNatsBroker {
 类型。`stream` 用 `futures::future::Either` 分支，并在首次轮询时取走内部的流，所以它只能用一次：
 契约只允许调用一次 `stream`。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::consumer::pull::Stream as PullStream;
 use futures::{Stream, future::Either};
@@ -390,7 +390,7 @@ impl Subscriber for NatsSubscriber {
 `AckError::Unsupported`，这不是错误，运行时接受这种返回。在 JetStream 上它们确认投递，其中 `nack`
 在处理器要求重新投递时映射为 `nak`，不要求时映射为 `term`（丢弃毒消息）。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use async_nats::jetstream::AckKind;
 use ruststream::{AckError, HeaderMap, IncomingMessage};
@@ -437,7 +437,7 @@ impl IncomingMessage for NatsMessage {
 conformance 的 `lifecycle` 检查接受 `AckError::Unsupported`，所以 Core NATS 能通过。每条消息在
 构造时转换一次自己的消息头。这两个转换函数是唯一跟随 `async-nats` 版本变化的地方：
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use bytes::Bytes;
 
@@ -472,7 +472,7 @@ fn headers_to_nats(headers: &HeaderMap) -> Option<async_nats::HeaderMap> {
 策略在已连接 Broker 上实例化发布者，发布者与该 Broker 共同拥有这条连接。每次发布时，发布者都
 经由关闭检查读取客户端，并在有消息头时把它们一并转发。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{OutgoingMessage, Publisher};
 
@@ -519,7 +519,7 @@ impl Publisher for NatsPublisher {
 NATS 在传输层就有请求-响应，所以你可以在发布者上实现 `RequestReply`。等待由调用方的超时时间限定，
 计时器触发后映射为 `RequestTimeout`。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use std::time::Duration;
 
@@ -573,7 +573,7 @@ JetStream 的拉取消费者在协议层面就按批取消息，所以 `BatchSub
 使用，已连接形态还实现了 `DefaultPublish`（参见[契约](index.md#publishpolicy)），于是没有显式指定
 发布者的 `reply(..)` 处理器也能通过编译。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream::{DefaultPublish, PairError, PublishPolicy};
 
@@ -595,7 +595,7 @@ impl PublishPolicy<ConnectedNatsBroker> for NatsPublish {
 挂载点会整体引入 crate 的 prelude：先是核心 prelude，再是 Broker 和它的描述符，最后是统一名字下的
 策略（见[契约](index.md#broker-prelude)）。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 pub use ruststream::prelude::*;
 
@@ -610,7 +610,7 @@ pub use ruststream::RequestReply;
 
 Broker 就绪之后，应用与其他任何应用没有区别：处理器和编解码器里都没有 NATS 专有的东西。
 
-<!-- inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here -->
+{/* inline-rust: reproduces the sibling ruststream-nats crate source for teaching; that code lives in another repo and has no compilable home here */}
 ```rust
 use ruststream_nats::prelude::*;
 

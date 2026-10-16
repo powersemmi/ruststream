@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # 编写一个 Broker
 
 Broker 是一个实现了核心 trait 的独立 crate。它依赖 `ruststream` 并关闭默认 feature，因此只拿到 trait
@@ -20,7 +23,7 @@ Broker 只负责生命周期。生命周期是一串状态转移：每个状态�
 个状态，因此顺序错乱的调用无法通过编译。Broker 不指定订阅者类型，也不指定发布者类型，所以一个应用可
 以混用不同种类的 Broker。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT traits in src/broker.rs (which carry Send bounds and rustdoc); a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Broker: Send + Sync + Sized {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -52,7 +55,7 @@ Broker 为自己启动的任务，运行在 `connect` 所在的运行时上。�
 这类任务。已连接形态在 `connect` 里保存 `Handle::current()`，并通过这个句柄启动每一个这样的任务，
 不论发布、确认或请求来自哪个线程：
 
-<!-- inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below -->
+{/* inline-rust: sketch of the pattern over placeholder types (Delivery); the in-memory broker keeps the handle the same way in the ladder below */}
 ```rust
 pub struct ConnectedExampleBroker {
     runtime: Handle, // captured in `connect`
@@ -79,8 +82,7 @@ impl ConnectedExampleBroker {
 内存 Broker 用几行就走完整条转移链。本页下面的每一段示例也都出自同一个文件，契约一改，页面上的代码就
 跟着改：
 
-```rust
---8<-- "src/memory/mod.rs:ladder"
+```rust reference="src/memory/mod.rs#ladder"
 ```
 
 `ClosedMemoryBroker` 就是上面说的那种带清理诊断的见证：它报告这次关闭移除了多少个订阅者注册。
@@ -90,7 +92,7 @@ impl ConnectedExampleBroker {
 在已连接形态上实现 `Subscribe`，服务就能按主题、subject 或队列的名字订阅。`#[subscriber("name")]` 用
 的就是它。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/capability.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscribe: ConnectedBroker {
     type Subscriber: Subscriber;
@@ -112,8 +114,7 @@ pub trait Subscribe: ConnectedBroker {
 
 要做的只有建立一条订阅，再说出发布按哪个地址能重新到达它：
 
-```rust
---8<-- "src/memory/mod.rs:subscribe"
+```rust reference="src/memory/mod.rs#subscribe"
 ```
 
 `type Copies` 是按名字订阅的源在你的 Broker 上报出的答案，`#[subscriber("orders")]` 怎么重试由它
@@ -128,7 +129,7 @@ pub trait Subscribe: ConnectedBroker {
 
 订阅者是入站消息的 `Stream`。背压由 `Stream` 本身给出。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscriber.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Subscriber: Send {
     type Message: IncomingMessage;
@@ -151,7 +152,7 @@ pub trait Subscriber: Send {
 的副本、重新入队、重放）就是一次原子自增而不是三次。客户端线程和分发任务位于不同核心的服务，每条
 消息都在付这笔钱。`MemoryBroker` 就是这样写的。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/message.rs, with the defaulted methods annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait IncomingMessage: Send + Sync {
     fn payload(&self) -> &[u8];
@@ -213,8 +214,7 @@ pub trait IncomingMessage: Send + Sync {
 这五个带默认实现的方法，有三个 Broker 一个都没有覆盖：`ruststream-rumqttc`、`ruststream-sea-file`
 和 `ruststream-zeromq`。默认实现的行为由核心的一个测试固定下来：
 
-```rust
---8<-- "src/message.rs:incoming_defaults"
+```rust reference="src/message.rs#incoming_defaults"
 ```
 
 正是 `Unsupported` 这个答复让运行时分得清两种情况：传输没有延迟投递，还是延迟已经生效。分清之后，它
@@ -222,7 +222,7 @@ pub trait IncomingMessage: Send + Sync {
 
 ### `Publisher`
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait Publisher: Send + Sync {
     /// 你的传输层怎样消费载荷：只读它就是 `Lend`，你的客户端要留着它就是 `Take`。
@@ -249,7 +249,7 @@ pub trait Publisher: Send + Sync {
 
 你收到的消息跟着这个声明走，框架在你上面做的事情也一样：
 
-<!-- inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less -->
+{/* inline-rust: the two signatures the declaration produces, side by side; each is one line of a real impl and a compiled pair would say less */}
 ```rust
 // Take：框架写好的那个缓冲区，归你。
 async fn publish(&self, msg: OutgoingMessage<'_, BytesMut>, options: Option<&()>) -> Result<(), Error>
@@ -302,7 +302,7 @@ Broker 的发布者由两部分组成：一份策略（一个 exchange、一个�
 在它上面实现 `PublishPolicy`：策略在已连接形态上构造出活的发布者，而 `pair` 就是这个构造函数。它是异
 步的，也可以返回错误，需要初始化事务性 producer 的 Broker 就在这里做这件事。
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait PublishPolicy<C: ConnectedBroker> {
     type Live; // the live publisher (or live wiring form, for combinator stacks)
@@ -327,7 +327,7 @@ pub trait PublishPolicy<C: ConnectedBroker> {
 就把回复用的发布者实例化出来，只写 `b.include(def)` 也能编译。发布者总是需要显式选项的 Broker 不实现
 `DefaultPublish`，它们的用户在每次注册处理器时指定策略。
 
-<!-- inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real trait in src/publisher.rs; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait DefaultPublish: ConnectedBroker {
     type Policy: PublishPolicy<Self> + Default + Send + 'static;
@@ -336,16 +336,15 @@ pub trait DefaultPublish: ConnectedBroker {
 
 下面是这两半，取自一个策略完全没有选项的 Broker：
 
-```rust
---8<-- "src/memory/mod.rs:publish_policy"
+```rust reference="src/memory/mod.rs#publish_policy"
 ```
 
-## 订阅来源 { #subscription-sources }
+## 订阅来源 {/* #subscription-sources */}
 
 `Subscribe` 覆盖的是一个名字就够用的情形。订阅需要你的 Broker 专有的选项（消费者组、持久化名称、投递
 策略）时，定义一个实现 `SubscriptionSource` 的描述符类型：
 
-<!-- inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise -->
+{/* inline-rust: simplified contract sketch of the real RPITIT trait in src/subscription.rs, with the defaulted method annotated inline for teaching; a compiled copy would just duplicate the source with more noise */}
 ```rust
 pub trait SubscriptionSource<C: ConnectedBroker> {
     type Subscriber: Subscriber;
@@ -382,7 +381,7 @@ pub trait RedeliveryAddressed<C>: SubscriptionSource<C, Copies = AddressedCopies
 给描述符派生 `Clone`：它是配置，挂载点为每次注册重新构造它，所以同一个定义可以同时挂到两个
 Broker 上。
 
-### 谁来发布重试副本 { #who-publishes-a-retry-copy }
+### 谁来发布重试副本 {/* #who-publishes-a-retry-copy */}
 
 每个描述符用 `type Copies` 在三者中声明一个。
 
@@ -410,7 +409,7 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 原生与否取决于字段的取值而不是类型时 - 没有 `.delay(..)` 的 RabbitMQ 队列并没有自己的延迟投递 -
 把这条路径保持开放。
 
-### 注册声明了什么 { #what-the-registration-declares }
+### 注册声明了什么 {/* #what-the-registration-declares */}
 
 `declare_retry` 把挂载处声明的上限和地址交给你，每条注册一次，并且在 `subscribe` 之前。自带机制的
 描述符在这里把它们变成拓扑，而且只在两者都声明时才这么做，因为原生的死信策略同时需要上限和地址。
@@ -429,13 +428,12 @@ Pulsar 的 pattern、一串 topic。这样的订阅读很多地址，于是由�
 `retry::broker_moves` 在声明 `BrokerMoves` 的描述符和光名字上检查这个映射：消息恰好在声明的投递
 次数之后进入死信地址，只声明一半时在启动时被拒绝。
 
-### 重试副本发往哪里 { #where-a-retry-copy-is-published }
+### 重试副本发往哪里 {/* #where-a-retry-copy-is-published */}
 
 没有原生延迟重新投递时，运行时自己兑现 `retry_after`：等延迟过去，它发布一份消息的副本。副本发往
 哪里，由声明了 `AddressedCopies` 的描述符说出来。
 
-```rust
---8<-- "src/memory/mod.rs:source"
+```rust reference="src/memory/mod.rs#source"
 ```
 
 返回的名字，要让指向你的 Broker 的发布者用它就能重新到达这条订阅：NATS 上是 subject，Kafka 上是
@@ -458,8 +456,7 @@ topic，Redis 上是流的键。
 只由一个名字确定、再没有别的标识的订阅方式，还会实现 `FromName`：它唯一的构造函数用这个名字构造出
 值。
 
-```rust
---8<-- "src/memory/mod.rs:from_name"
+```rust reference="src/memory/mod.rs#from_name"
 ```
 
 于是 `#[subscriber(OrdersStream)]` 就合法了：属性指定订阅方式，值由挂载点补上。确实需要不止一个名字
@@ -470,7 +467,7 @@ topic，Redis 上是流的键。
 核心不知道订阅还有流、持久化名称或消费者组，所以只给出一个钩子：`map_source`，一个作用在挂载点正在
 构造的来源之上的变换。你的 crate 在它之上叠加自己的 trait，并约束到你自己的来源类型：
 
-<!-- inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, SubscriberBuilder, SubscriberSettings};
 
@@ -504,7 +501,7 @@ where
 情形由第二个针对包装后来源的 impl 补上。`StartAt::map_inner` 取出里面的描述符，并原样交还位置，所以
 每个方法仍旧只有一行：
 
-<!-- inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home -->
+{/* inline-rust: the second extension impl against the same broker-crate descriptor, which has no in-repo compiled home */}
 ```rust
 use ruststream::StartAt;
 use ruststream::runtime::Fixed;
@@ -537,7 +534,7 @@ where
 用户无需把它写两遍。`dispatch()` 以 `Workers` 返回并发设置（`count()`、`by_key()`、`placement()`），
 `batch_size()` 在 `batch(n)` 指定之后返回批次大小，`subscription_name()` 返回源报告的名称。
 
-<!-- inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home -->
+{/* inline-rust: a step reading the chain's settings against a broker-crate descriptor with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::{Declared, Placement, SubscriberBuilder, SubscriberSettings};
 
@@ -572,7 +569,7 @@ where
 `reply("dest")` 的处理器返回的值，槽位的标记对应 `Out` 槽位。`MapPublisher` 就是作用在这个位置所持
 策略之上的钩子：
 
-<!-- inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home -->
+{/* inline-rust: the extension-trait shape against a broker-crate policy with no in-repo compiled home */}
 ```rust
 use ruststream::runtime::MapPublisher;
 
@@ -594,7 +591,7 @@ impl<T: MapPublisher<Policy = Publish>> NatsPublish for T {
 
 在服务里读起来是这样：
 
-<!-- inline-rust: the call shape against the broker policy sketched above -->
+{/* inline-rust: the call shape against the broker policy sketched above */}
 ```rust
 b.include(confirm).out_reply(Publish).stream("ORDERS");
 b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
@@ -606,7 +603,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 `.out(marker, policy)` 调用本身。已经配置好的值也可以直接传到那里：
 `.out_reply(Publish::default().stream("ORDERS"))`。
 
-### 发布构建器上的逐条设置 { #per-message-settings-on-the-publish-builder }
+### 发布构建器上的逐条设置 {/* #per-message-settings-on-the-publish-builder */}
 
 调用点通过你加到发布构建器上的一个步骤，去改你的 `Publisher::Options` 的某个字段。没有任何东西
 包裹发布者，所以这次发布仍然从挂载点自己的条目走出去，带着那个条目指定的编解码器和变换。
@@ -615,8 +612,7 @@ b.include(mirror).out(Audit, Publish).stream("AUDIT").build();
 以设置类型为约束、写在 `PublishBuilder` 上的扩展 trait。正是这个约束把你的步骤挡在别的 Broker 的发布
 者构建器之外：
 
-```rust
---8<-- "tests/publish_options.rs:broker_side"
+```rust reference="tests/publish_options.rs#broker_side"
 ```
 
 宏路径和手写路径上，Broker 这一半是一样的。把扩展 trait 从你的 prelude 导出，就放在策略别名旁边。
@@ -688,7 +684,7 @@ ack 记账。
 - 你的批量上下文还要为批类型实现 `BuildBatchContext`：在这条路径上，运行时从整个批构建上下文。
 - `capabilities::carries` 和 `capabilities::carries_batch` 检查这两个 trait。
 
-### 批：`BatchSubscriber` {#batches-batchsubscriber}
+### 批：`BatchSubscriber` {/* #batches-batchsubscriber */}
 
 接受 `&[T]` 的处理器消费的是一批消息，挂载点为它写下一个数字，也就是批大小。运行时把这个数字直接
 传给 `BatchSubscriber::batches(size)`。你的订阅者交出的批，就是处理器主体看到的批：运行时既不拆分
@@ -717,8 +713,7 @@ ack 记账。
 
 订阅者的其余部分原样穿过这层包装：
 
-```rust
---8<-- "tests/batch_subscriber.rs:buffered_capability"
+```rust reference="tests/batch_subscriber.rs#buffered_capability"
 ```
 
 挂载点看不出你走的是两条路里的哪一条：服务写下批大小，就拿到批。
@@ -730,7 +725,7 @@ ack 记账。
 `conformance` 的批量套件会检查这项契约：它用小于一轮消息总数的批大小打开订阅，返回的批更长的
 Broker 通不过。它不在 `harness::run_suite` 之内：能力套件由你自己调用，实现了哪项能力就调哪一个。
 
-### 你的 crate 要提供的 prelude { #broker-prelude }
+### 你的 crate 要提供的 prelude {/* #broker-prelude */}
 
 你的类型由挂载点来写，而不是主体，这正是你的 crate prelude 的用处。提供一个 `prelude` 模块，按这个
 顺序分三层：
@@ -772,17 +767,20 @@ trait。
 `impl<M, W: Lanes, E, Pipe, Body> Lanes for Slot<M, W, E, Pipe, Body>`，通过条目的 `Deref` 转发，
 按能力泛型的辅助函数和主体就能原样接收这个条目。具体类型依然不会出现在应用代码里：
 
-=== "宏"
+<Tabs groupId="api">
+<TabItem value="macros" label="宏">
 
-    ```rust
-    --8<-- "tests/out_slots.rs:extension"
-    ```
+```rust reference="tests/out_slots.rs#extension"
+```
 
-=== "手写"
+</TabItem>
+<TabItem value="manual" label="手写">
 
-    ```rust
-    --8<-- "tests/manual_out_slots.rs:extension"
-    ```
+```rust reference="tests/manual_out_slots.rs#extension"
+```
+
+</TabItem>
+</Tabs>
 
 决定 trait 形状的是发送发生在哪里，而形状有两种。
 
@@ -818,7 +816,7 @@ Broker 上，它的签名也把这一点说了出来。
 用一个跟在自己 glob 后面的探针把两半都固定下来：主体所写的那个约束仍然必须解析成核心 trait，挂载点
 的名字仍然必须是你的策略。
 
-<!-- inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob -->
+{/* inline-rust: a compile-time probe that belongs in a broker crate, behind that crate's own prelude glob */}
 ```rust
 // in your crate, behind your own prelude glob
 use crate::prelude::*;
@@ -839,7 +837,7 @@ Broker 有原生的投递元数据（一个分区、一个偏移量、一个流�
 按键用 [`Ctx<K>` 提取器](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#context-and-state)把单个字段绑定成参数。键是空
 结构体，投递路径上既没有 type-map，也没有堆分配。
 
-<!-- inline-rust: sketch; the real trait lives in src/field.rs -->
+{/* inline-rust: sketch; the real trait lives in src/field.rs */}
 ```rust
 /// Per-delivery context of this broker.
 #[non_exhaustive]
@@ -882,7 +880,7 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 范本是内存 Broker 的 `MemoryBatchContext`：订阅的 seeker 用的还是它的投递上下文所发布的那个
 `SeekHandle` 键。订阅这一级上没有东西可交的 Broker 什么都不用实现，批量停在 `()` 这个默认值上。
 
-## 异步边界上的中间件 { #middleware-on-the-async-edges }
+## 异步边界上的中间件 {/* #middleware-on-the-async-edges */}
 
 需要围绕编码和解码做异步 I/O 的集成（一个 schema 注册表、一层传输格式的信封）不属于 `Codec`：核心的
 编解码器是同步的，处理器也应当继续用默认的那一个。
@@ -896,8 +894,7 @@ Kinesis 的分片加序列号字符串），就以借用的方式读：`Field::V
 生成的 AsyncAPI 文档留出了只有你的 Broker 才知道的那部分：RabbitMQ 队列是否持久、Kafka 的消费者组、
 MQTT 的 QoS。规范把这些叫做**绑定**，填写它们的是你的描述符。
 
-```rust
---8<-- "tests/asyncapi.rs:descriptor_bindings"
+```rust reference="tests/asyncapi.rs#descriptor_bindings"
 ```
 
 `Binding::new(protocol, version, &body)` 把 body 序列化一次，并且自己写上 `bindingVersion`，所以你
@@ -915,8 +912,7 @@ SQS 队列的 ARN，都不可能从这里报出来。
 凭据永远不进绑定，理由和 `DescribeServer` 一样。检查放在 `conformance::harness` 里：用一个已知的密码
 配置你的 Broker 和描述符，然后跑这个扫描。
 
-```rust
---8<-- "tests/conformance_self.rs:credentials"
+```rust reference="tests/conformance_self.rs#credentials"
 ```
 
 规范没有为之提供绑定的协议，走 `Binding::extension("x-kinesis", &body)`。协议键是一个封闭列表，
@@ -928,8 +924,7 @@ SQS 队列的 ARN，都不可能从这里报出来。
 另一侧的同样三个名字，由你的发布策略填写。回复、`Out` 槽位，以及死信投递所经过的发布者，都是
 `PublishPolicy`，各自描述自己发布到的通道。
 
-```rust
---8<-- "tests/asyncapi.rs:policy_bindings"
+```rust reference="tests/asyncapi.rs#policy_bindings"
 ```
 
 每个方法拿到的，是挂载点解析出来的目的地。回复拿到的是回复类型自己的名字，或者注册上的
@@ -945,8 +940,7 @@ SNS 主题和 SQS 队列由各自绑定里必填的 `name` 指名，这个名字
 第四个方法只属于回复。如果你的 Broker 通过 reply-to 头路由回复，`reply_address_location` 就说明
 客户端从哪里读这个地址：
 
-```rust
---8<-- "tests/asyncapi.rs:reply_address"
+```rust reference="tests/asyncapi.rs#reply_address"
 ```
 
 这时文档把回复通道报成 `address: null`，并把该表达式放进 `receive` 操作的
@@ -975,7 +969,7 @@ asyncapi = ["ruststream/asyncapi"]
 用 `thiserror` 写一个 crate 级别的错误枚举，变体按来源划分。公开的错误枚举标记 `#[non_exhaustive]`。
 切勿在库 crate 里使用 `anyhow`。
 
-## 测试支持 { #test-support }
+## 测试支持 {/* #test-support */}
 
 服务测试的就是它交付的那个应用：`TestApp::start(app())` 接收 `main` 运行的同一个构造器，在进程内
 连接它的每一个 Broker，测试按生产类型找到你的 Broker：`tb.broker::<YourBroker>()`。这种进程内模式
@@ -995,14 +989,12 @@ Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到�
 
 内存 Broker 没有服务器，它的进程内模式就是普通的 `connect`，参考实现很短：
 
-```rust
---8<-- "src/memory/mod.rs:testable"
+```rust reference="src/memory/mod.rs#testable"
 ```
 
 有服务器的 Broker 在 `connect_in_process` 里构造自己的进程内传输，并登记生产类型：
 
-```rust
---8<-- "tests/in_process.rs:in_process"
+```rust reference="tests/in_process.rs#in_process"
 ```
 
 该传输在每次把消息入队给某个订阅者时调用 `Coordinator::enqueued`，在结算或丢弃一次投递时调用
@@ -1014,7 +1006,7 @@ Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到�
 策略发布。面向用户的那一侧参见 [测试](https://docs.rs/ruststream/latest/ruststream/testing/index.html)；
 [Conformance](conformance.md) 讲的是怎样用 `run_suite` 和其余套件在进程内证明进程内模式。
 
-### 怎样写一个信得过的进程内传输 { #writing-one-you-can-trust }
+### 怎样写一个信得过的进程内传输 {/* #writing-one-you-can-trust */}
 
 一个服务的整套测试都跑在这个进程内传输上。因此它和真实传输之间的每一处差异，都会让一个测试变绿，
 而它测的行为在生产里并不存在。真实 Broker 会失败的地方，它绝不成功：服务器会拒绝或丢下的发布、
@@ -1023,8 +1015,7 @@ Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到�
 **核心的契约套件不能只跑真实服务器，也要在进程内跑。**套件是照着 trait 写的，并不区分应答的是
 服务器还是进程内传输。一个 `#[tokio::test]` 就够：
 
-```rust
---8<-- "tests/conformance_self.rs:run_suite"
+```rust reference="tests/conformance_self.rs#run_suite"
 ```
 
 `lifecycle` 也要在进程内跑，经由 `harness::InProcessBroker`。它会走一遍 `new` -> `connect` -> 订阅
@@ -1032,8 +1023,7 @@ Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到�
 在关闭之后会不会返回错误？真实客户端答的是“未连接”。而发布只是往 channel 里发一条消息的进程内传输
 没有理由返回错误，它会把消息收下。
 
-```rust
---8<-- "tests/conformance_self.rs:lifecycle"
+```rust reference="tests/conformance_self.rs#lifecycle"
 ```
 
 `capabilities::*` 套件照此加上，实现了哪项能力就加哪一个。
@@ -1067,7 +1057,7 @@ Broker（默认分组、prefetch、拓扑声明，以及真实 Broker 会用到�
 **每一处缺口都配一句注释，点名它让哪条断言站不住。**不要写“这个功能没有”，要写读者从此不该再信
 哪个测试，以及真正验证它的是什么：
 
-<!-- inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on -->
+{/* inline-rust: the shape of a gap comment, not code - the in-memory broker has no transactional id to be fenced on */}
 ```rust
 // No fencing: a second producer claiming the same transactional id is not rejected here, so a
 // test cannot assert the first one is fenced out. `capabilities::transactions` against a real
