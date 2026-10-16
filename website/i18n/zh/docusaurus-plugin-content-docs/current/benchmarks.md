@@ -1,6 +1,6 @@
 import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
 
-export const labels = {"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动"};
+export const labels = {"loading": "正在读取已公布的结果...", "broker": "Broker", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "crate": "Crate", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动", "table": "以表格显示数字", "axis": "各循环比裸客户端最佳一轮低多少", "rounds": "各轮，从最佳到最慢", "best": "最佳一轮", "median": "中位一轮", "noise": "轮次的波动范围"};
 
 # 基准测试
 
@@ -15,30 +15,37 @@ Broker 客户端和你的处理器之间隔着一层框架，每条消息都要�
 pull request 通不过。
 
 每个 crate 自己测量自己，并公布自己的数字。本页从各 crate 仓库的 `main` 分支读取这些数字，
-放在一起展示。新的测量结果一经合并，就会出现在下面的表格里。
+放在一起展示。新的测量结果一经合并，就会出现在下面的图表里。
 
 ## 结果 {/* #results */}
 
 ### 与裸客户端对照 {/* #against-a-raw-client */}
 
-数值是三个交替轮次中的最佳值，括号里是这三轮的中位数。最佳的一轮最接近未受干扰的开销，中位的
-一轮则是重跑一次通常会得到的那一轮。最差的一轮同样公布，但不进入单元格。`无法区分` 的判定要
-用到它：判定依据的是最佳一轮到最差一轮之间的波动范围。“Broker crate”一列是该 crate 自己的
-消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比客户端多付多少，运行时又在其上
-多付多少。
-
 <BenchmarkResults labels={labels} />
+
+每个场景画出三个循环，每个循环跑三个交替轮次，坐标轴的零点是裸客户端的最佳一轮。一个循环画成
+一条横条，从最佳一轮延伸到最慢的一轮；圆点标出最佳一轮，缺口标出中位一轮。圆点在零点右侧，
+表示比裸客户端慢。最佳的一轮最接近未受干扰的开销，中位的一轮则是重跑一次通常会得到的那一轮。
+
+零点周围的阴影带是 RustStream 的 `无法区分` 判定的依据：最佳一轮到最差一轮之间的波动范围。
+最佳一轮落在带内，就与裸客户端无法区分。空心圆点标出 crate 判定为无法区分的循环，每行旁边的
+判定由该 crate 自己公布。鼠标悬停或键盘聚焦时，该行
+显示自己的数字；图表下方的表格列出全部数字：最佳一轮，括号里是中位数。
+
+“Broker crate”是该 crate 自己的消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比
+客户端多付多少，运行时又在其上多付多少。
 
 ### 代码的开销 {/* #cost-of-the-code */}
 
 稳态下每条消息的指令数和内存分配次数。这些是绝对数值，不是对照：框架相对于 Broker 客户端
-多付出多少，看上面那张表。`ruststream` 在进程内传输上测量框架自身的代码。Broker crate
+多付出多少，看上面那张图。`ruststream` 在进程内传输上测量框架自身的代码。Broker crate
 在真实的传输上测量自己，数字里包含什么，写在它的基准测试页面上。
 
 <BenchmarkCode labels={labels} />
 
-“冷启动”一列是启动服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一
-次，不按消息计。表格下面那一行先写跑出这些数字的机器，一直写到内存，再写这次测量的 crate
+每个 crate 各用一条坐标轴，因为 Broker crate 的数字里还包含它的客户端的工作。“冷启动”是启动
+服务并处理第一条消息一共花掉的指令数和内存分配次数；这笔开销一个服务只付一次，不按消息计。
+鼠标悬停或聚焦时该行会显示它，图表下方的表格也列出它。每个 crate 图表上方那一行先写跑出这些数字的机器，一直写到内存，再写这次测量的 crate
 版本、`ruststream` 版本和测量日期。只有知道两台机器上编译的是同一份代码，指令数才能互相比较。
 
 ## 这些数字是什么 {/* #what-the-numbers-are */}
@@ -89,8 +96,8 @@ Broker 会在自己的页面上说明。
 一次运行把同一个场景测三遍，三者只有一个区别：消息由什么承载。
 
 - **裸客户端。** Broker 自己的客户端，直接驱动。
-- **Broker crate。** 该 crate 自己的消费者和发布者 —— 它的订阅描述符、它产出的订阅者流、它的
-  确认、它的发布者 —— 由基准测试里的一个循环驱动，上面没有运行时。
+- **Broker crate。** 该 crate 自己的消费者和发布者（它的订阅描述符、它产出的订阅者流、它的
+  确认、它的发布者）由基准测试里的一个循环驱动，上面没有运行时。
 - **RustStream。** 用户写的那整个服务：处理器、应用、分发。
 
 第一项差值是这个 Broker crate 比它所包装的客户端多付出多少，这由 crate 自己负责。第二项是
