@@ -270,6 +270,17 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
+name = "subscriber_batch"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_batch"
+path = "examples/manual/subscriber_batch.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
 name = "codecs"
 required-features = ["macros", "memory", "json", "cbor"]
 
