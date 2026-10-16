@@ -114,7 +114,8 @@ test = true
 [[example]]
 name = "manual_failure_policy"
 path = "examples/manual/failure_policy.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_post_settle"
@@ -254,7 +255,8 @@ test = true
 
 [[example]]
 name = "failure_policy"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "post_settle"
