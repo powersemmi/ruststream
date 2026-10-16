@@ -2,6 +2,7 @@ import React, {type ReactNode} from 'react';
 import Layout from '@theme/Layout';
 import {translate} from '@docusaurus/Translate';
 import Hero from '@site/src/components/Landing/Hero';
+import BrokerStrip from '@site/src/components/Landing/BrokerStrip';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -16,6 +17,7 @@ export default function Home(): ReactNode {
       <main className={styles.landing}>
         <div className={styles.frame}>
           <Hero />
+          <BrokerStrip />
         </div>
       </main>
     </Layout>
