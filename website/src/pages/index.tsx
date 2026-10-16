@@ -6,6 +6,7 @@ import BrokerStrip from '@site/src/components/Landing/BrokerStrip';
 import OldWayNewWay from '@site/src/components/Landing/OldWayNewWay';
 import Architecture from '@site/src/components/Landing/Architecture';
 import Principles from '@site/src/components/Landing/Principles';
+import Numbers from '@site/src/components/Landing/Numbers';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -24,6 +25,7 @@ export default function Home(): ReactNode {
           <OldWayNewWay />
           <Architecture />
           <Principles />
+          <Numbers />
         </div>
       </main>
     </Layout>
