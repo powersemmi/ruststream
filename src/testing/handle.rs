@@ -14,9 +14,9 @@ use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Lend, OutgoingMessage, RawMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
-use super::attribution::{MessageOptions, attribute};
+use super::attribution::{MessageOptions, PublishedEntry, attribute};
 use super::broker::{LivePublish, TestableBroker};
-use super::coordinator::{Coordinator, PublishedEntry};
+use super::coordinator::Coordinator;
 use super::harness::{BrokerEntry, Mode, TestError};
 
 /// A handle to one broker in a [`TestApp`](super::TestApp): inject input and assert on its handlers and publishes.
@@ -113,23 +113,28 @@ impl PublishSink for InjectSink<'_> {
         if harness.shutdown.is_cancelled() {
             return Err(TestError::ShutDown);
         }
+        // The test's own publish is part of the record: in process it is what tells a message
+        // the test put on a destination from a runtime publish the broker has since evicted;
+        // live it is part of what `published` reads and of what a settle waits for the
+        // subscriptions to handle, once the broker took it.
+        let recorded = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
+            .with_headers(msg.headers().clone());
+        let started = harness.coordinator.test_publish_started();
         match transport {
             Transport::InProcess(testable) => testable.inject(msg),
             Transport::Live { connected, publish } => {
                 let publish = publish.ok_or_else(|| TestError::NoTransport(label.clone()))?;
-                // Live, the test's own publish is part of what `published` reads and of what a
-                // settle waits for the subscriptions to handle, once the broker took it.
-                let recorded = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
-                    .with_headers(msg.headers().clone());
                 publish(*connected, msg)
                     .await
                     .map_err(|err| TestError::Publish {
                         broker: label.clone(),
                         source: err,
                     })?;
-                harness.coordinator.record_published(*scope_id, recorded);
             }
         }
+        harness
+            .coordinator
+            .record_published(*scope_id, recorded, started);
         harness
             .mode
             .settle(harness.coordinator, harness.brokers)
@@ -274,8 +279,8 @@ impl BrokerHandle<'_> {
 
     /// Asserts on what was published to `name` on this broker.
     ///
-    /// In process it reads the broker's own publish log, which holds everything the transport
-    /// took. Live the broker's log is out of reach, so it reads the harness's record: the test's
+    /// In process it reads the broker's own publish log: everything the transport took, or the
+    /// newest part of it where the broker bounds its log. Live the broker's log is out of reach, so it reads the harness's record: the test's
     /// own publishes onto this broker, and every message a publisher the runtime paired against
     /// this broker handed it, as the framework handed it over. That covers replies, `Out` slot
     /// publishes and requests, retry copies and dead letters, and a `Bound` token's publishes
@@ -289,27 +294,23 @@ impl BrokerHandle<'_> {
     ///
     /// The per-message options of each message come from the harness's record in both modes:
     /// the options every runtime publish to this broker carried, matched in process to the
-    /// broker's log by payload. A message the test published itself has none.
+    /// broker's log by payload. A message the test published itself has none. Where the broker
+    /// evicted older messages, the record pairs with what is left only when it holds every
+    /// publish the broker took; otherwise a message with the bytes of a recorded publish has no
+    /// options the harness can name.
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
         let recorded = self.harness.coordinator.published(self.scope_id, name);
         let (messages, options) = match self.transport {
             Transport::InProcess(testable) => {
                 let messages = testable.published(name);
-                let runtime: Vec<_> = recorded
-                    .into_iter()
-                    .filter_map(|entry| match entry {
-                        PublishedEntry::Runtime(publish) => Some(publish),
-                        PublishedEntry::Test(_) => None,
-                    })
-                    .collect();
-                let options = attribute(&messages, &runtime);
+                let options = attribute(&messages, &recorded, testable.evicted(name));
                 (messages, options)
             }
             Transport::Live { .. } => recorded
                 .into_iter()
                 .map(|entry| match entry {
-                    PublishedEntry::Test(message) => (message, MessageOptions::Unrecorded),
+                    PublishedEntry::Test { message, .. } => (message, MessageOptions::Unrecorded),
                     PublishedEntry::Runtime(publish) => {
                         (publish.message, MessageOptions::Recorded(publish.options))
                     }

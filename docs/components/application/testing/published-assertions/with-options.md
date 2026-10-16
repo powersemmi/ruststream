@@ -35,7 +35,7 @@ The harness records the settings with every publish the runtime makes (a reply, 
 Both records read them: a slot record, `out::<M>()`, and a destination record, `published::<T>(name)`.
 A message the test publishes itself carries no recorded settings.
 The assertion names the broker's own type and panics when the latest publish carried no settings, carried another type, or carried a different value.
-It also panics when it cannot tell which settings the latest publish carried: two publishes to the destination had the same payload and their order is unknown.
+It also panics when it cannot tell which settings the latest publish carried: another publish to the destination had the same payload, and either their order is unknown or the harness never saw that publish.
 
 ## See also
 

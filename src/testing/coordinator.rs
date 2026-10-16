@@ -27,7 +27,7 @@ use crate::runtime::HandlerResult;
 use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
-use super::attribution::{RecordedOptions, RuntimePublish};
+use super::attribution::{PublishedEntry, RecordedOptions, RuntimePublish, Span};
 
 tokio::task_local! {
     /// The harness driving the current dispatch task, so a slot publisher and the batch settle
@@ -164,8 +164,10 @@ impl PipelinePublish {
                     let publish = RuntimePublish {
                         message: raw_of(msg),
                         options: RecordedOptions::capture(options),
-                        started: scope.coordinator.tick(),
-                        finished: 0,
+                        span: Span {
+                            started: scope.coordinator.tick(),
+                            finished: 0,
+                        },
                     };
                     (scope.coordinator.clone(), publishing(), publish)
                 })
@@ -176,7 +178,7 @@ impl PipelinePublish {
     /// Records the captured message: the broker took it.
     pub(crate) fn sent(self) {
         if let Some((coordinator, origin, mut publish)) = self.0 {
-            publish.finished = coordinator.tick();
+            publish.span.finished = coordinator.tick();
             coordinator.record_sent(origin, publish);
         }
     }
@@ -418,6 +420,10 @@ impl fmt::Debug for Coordinator {
     }
 }
 
+/// How many publishes the record holds before it first grows: a test that counts what its own
+/// publishes allocate (each records one entry) measures the publishes, not the record's growth.
+const PUBLISHED_UP_FRONT: usize = 1024;
+
 struct Inner {
     in_flight: AtomicUsize,
     processed: AtomicUsize,
@@ -445,24 +451,6 @@ struct Inner {
 struct Published {
     scope_id: usize,
     entry: PublishedEntry,
-}
-
-/// One publish the harness recorded on a broker.
-#[derive(Clone, Debug)]
-pub(crate) enum PublishedEntry {
-    /// A publish the test made itself, which reaches no broker's options type.
-    Test(RawMessage),
-    /// A publish the runtime made, with the options it carried.
-    Runtime(RuntimePublish),
-}
-
-impl PublishedEntry {
-    pub(crate) const fn message(&self) -> &RawMessage {
-        match self {
-            Self::Test(message) => message,
-            Self::Runtime(publish) => &publish.message,
-        }
-    }
 }
 
 /// A subscription a live settle waits on: its identity, the broker it belongs to, and its name.
@@ -526,7 +514,7 @@ impl Coordinator {
                 records: Mutex::new(Vec::new()),
                 slot_records: Mutex::new(Vec::new()),
                 clock: AtomicU64::new(0),
-                published: Mutex::new(Vec::new()),
+                published: Mutex::new(Vec::with_capacity(PUBLISHED_UP_FRONT)),
                 brokers: Mutex::new(Vec::new()),
                 redeliveries: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
@@ -709,11 +697,22 @@ impl Coordinator {
             .collect();
     }
 
-    /// Records one publish the test made onto the broker registered at `scope_id`.
-    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage) {
+    /// The clock as the test starts a publish of its own, for
+    /// [`record_published`](Self::record_published) once the broker took it.
+    pub(crate) fn test_publish_started(&self) -> u64 {
+        self.tick()
+    }
+
+    /// Records one publish the test made onto the broker registered at `scope_id`, started at
+    /// `started` on the harness's clock: the broker took it.
+    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage, started: u64) {
+        let span = Span {
+            started,
+            finished: self.tick(),
+        };
         self.push_published(Published {
             scope_id,
-            entry: PublishedEntry::Test(message),
+            entry: PublishedEntry::Test { message, span },
         });
     }
 

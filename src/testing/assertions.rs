@@ -680,7 +680,8 @@ impl<T> PublishedAssertions<T> {
             Some(MessageOptions::Recorded(options)) => options,
             Some(MessageOptions::Ambiguous) => panic!(
                 "the last publish to {:?} has the same payload as another publish there, and the \
-                 harness cannot tell which of them carried which options; cannot assert {what}",
+                 harness cannot tell which of them carried which options: they were in flight at \
+                 once, or the harness never saw the other one; cannot assert {what}",
                 self.name,
             ),
             Some(MessageOptions::Unrecorded) | None => panic!(
@@ -706,7 +707,8 @@ impl<T> PublishedAssertions<T> {
     ///
     /// Panics if nothing was published, the harness cannot say which options the most recent
     /// publish carried (the test published it itself, a publisher the runtime did not pair made
-    /// it, or another publish there has the same payload and the order of the two is unknown),
+    /// it, or another publish there has the same payload and either the order of the two is
+    /// unknown or the harness never saw that one),
     /// it carried none, the broker's options type is not `Options`, or the value differs from
     /// `expected`.
     pub fn with_options<Options>(self, expected: &Options) -> Self

@@ -799,6 +799,57 @@ async fn the_options_of_a_reply_do_not_stand_for_the_tests_own_publish() {
         });
 }
 
+/// The same policy on a broker that retains its log.
+impl PublishPolicy<ConnectedMemoryBroker<Retaining>> for PriorityPublish {
+    type Live = PriorityPublisher;
+
+    async fn pair(
+        self,
+        connected: &ConnectedMemoryBroker<Retaining>,
+    ) -> Result<Self::Live, PairError> {
+        Ok(PriorityPublisher {
+            inner: Publish.pair(connected).await?,
+            default_priority: self.priority,
+            default_ttl: self.ttl,
+        })
+    }
+}
+
+/// A broker that keeps one message per channel: the test's own publish of the reply's bytes
+/// evicts the reply, and the reply's options do not pass to the message that replaced it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "the test published")]
+async fn the_options_of_an_evicted_reply_do_not_stand_for_the_tests_own_publish() {
+    let app = RustStream::new(AppInfo::new("options-evicted", "0.1.0")).with_broker(
+        MemoryBroker::retaining(Retention::Messages(nonzero!(1))),
+        |b| {
+            b.include(acknowledge)
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
+                .transform(Expedite);
+        },
+    );
+    let tb = TestApp::start(app).await.expect("harness start");
+    tb.message(&Order { id: 2 })
+        .to("options.reply.in")
+        .publish()
+        .await
+        .expect("publish");
+    tb.message(&Receipt { id: 2 })
+        .to("options.reply.out")
+        .publish()
+        .await
+        .expect("publish");
+
+    tb.broker::<MemoryBroker<Retaining>>()
+        .published::<Receipt>("options.reply.out")
+        .assert_called_once()
+        .with(&Receipt { id: 2 })
+        .with_options(&PriorityOptions {
+            priority: None,
+            ttl: Some(2),
+        });
+}
+
 /// Two brokers reply on a channel of the same name, one with a transform that sets options and
 /// one without: each broker's view reads its own replies' options.
 async fn two_brokers_one_channel_name() -> TestApp<()> {

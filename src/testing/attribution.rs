@@ -65,23 +65,74 @@ impl fmt::Debug for RecordedOptions {
     }
 }
 
-/// One publish the runtime handed a broker, as the harness recorded it: the message, the options
-/// it went with, and when the hand-over began and ended on the harness's clock.
-#[derive(Clone, Debug)]
-pub(crate) struct RuntimePublish {
-    pub(crate) message: RawMessage,
-    pub(crate) options: RecordedOptions,
-    /// The clock when the message was captured, before the broker's publisher ran.
+/// When one hand-over began and ended on the harness's clock.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Span {
+    /// The clock when the message was captured, before the broker took it.
     pub(crate) started: u64,
     /// The clock once the broker took it.
     pub(crate) finished: u64,
 }
 
-impl RuntimePublish {
+impl Span {
     /// Whether the two hand-overs ran at the same time, so the order their messages reached a
     /// broker's log is not the order they were recorded in.
-    const fn overlaps(&self, other: &Self) -> bool {
+    const fn overlaps(self, other: Self) -> bool {
         self.started < other.finished && other.started < self.finished
+    }
+}
+
+/// One publish the runtime handed a broker, as the harness recorded it: the message, the options
+/// it went with, and when the hand-over ran.
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimePublish {
+    pub(crate) message: RawMessage,
+    pub(crate) options: RecordedOptions,
+    pub(crate) span: Span,
+}
+
+/// One publish the harness recorded on a broker.
+#[derive(Clone, Debug)]
+pub(crate) enum PublishedEntry {
+    /// A publish the test made itself, which reaches no broker's options type.
+    Test { message: RawMessage, span: Span },
+    /// A publish the runtime made, with the options it carried.
+    Runtime(RuntimePublish),
+}
+
+impl PublishedEntry {
+    pub(crate) const fn message(&self) -> &RawMessage {
+        match self {
+            Self::Test { message, .. } => message,
+            Self::Runtime(publish) => &publish.message,
+        }
+    }
+
+    const fn span(&self) -> Span {
+        match self {
+            Self::Test { span, .. } => *span,
+            Self::Runtime(publish) => publish.span,
+        }
+    }
+
+    /// What the assertions know about this publish's options.
+    pub(crate) fn options(&self) -> MessageOptions {
+        match self {
+            Self::Test { .. } => MessageOptions::Unrecorded,
+            Self::Runtime(publish) => MessageOptions::Recorded(publish.options.clone()),
+        }
+    }
+
+    /// Whether the two publishes certainly carried the same options: both the test's own, or
+    /// both the policy's defaults.
+    fn certainly_same_as(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Test { .. }, Self::Test { .. }) => true,
+            (Self::Runtime(one), Self::Runtime(other)) => {
+                one.options.certainly_same_as(&other.options)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -90,8 +141,8 @@ impl RuntimePublish {
 pub(crate) enum MessageOptions {
     /// The runtime published the message with these options.
     Recorded(RecordedOptions),
-    /// The harness has no record of the message: the test published it itself, a publisher the
-    /// runtime did not pair made it, or the broker changed its payload on the way.
+    /// The harness has no record of the message's options: the test published it itself, a
+    /// publisher the runtime did not pair made it, or the broker changed its payload on the way.
     Unrecorded,
     /// The message has the same bytes as other publishes to the destination, and the harness
     /// cannot tell which of them carried which options.
@@ -99,14 +150,53 @@ pub(crate) enum MessageOptions {
 }
 
 /// The options of each message in a broker's publish log for one destination, read off the
-/// runtime's publishes the harness recorded for the same broker and destination.
+/// publishes the harness recorded for the same broker and destination: the runtime's and the
+/// test's own, in the order the broker took them.
+///
+/// `evicted` is how many of the oldest messages the broker no longer holds. The log is then the
+/// newest part of what the broker took, and the record pairs with it only when it holds exactly
+/// what the broker took: a publish the harness never saw, kept in place of a recorded one with
+/// the same bytes, would otherwise inherit that one's options. Without that, every message with
+/// the bytes of a recorded publish is [`MessageOptions::Ambiguous`].
 ///
 /// The broker's own publisher may add headers, so messages are matched by payload, which it hands
-/// on as it was given. Within one payload, the log and the records are paired in order when every
-/// message is recorded and no two of them were in flight at once; otherwise a message is
-/// attributed only when every record it could belong to certainly holds the same options, and is
+/// on as it was given. Within one payload, the log and the records are paired in order when their
+/// counts agree and no two of them were in flight at once; otherwise a message is attributed only
+/// when every record it could belong to certainly holds the same options, and is
 /// [`MessageOptions::Ambiguous`] where a guess could name the options of another publish.
-pub(crate) fn attribute(log: &[RawMessage], records: &[RuntimePublish]) -> Vec<MessageOptions> {
+pub(crate) fn attribute(
+    log: &[RawMessage],
+    records: &[PublishedEntry],
+    evicted: usize,
+) -> Vec<MessageOptions> {
+    if evicted > 0 && records.len() != evicted + log.len() {
+        return log
+            .iter()
+            .map(|message| {
+                if records
+                    .iter()
+                    .any(|record| record.message().payload() == message.payload())
+                {
+                    MessageOptions::Ambiguous
+                } else {
+                    MessageOptions::Unrecorded
+                }
+            })
+            .collect();
+    }
+    let (dropped, kept) = records.split_at(evicted);
+    // A dropped publish in flight with a kept one may have reached the log after it, so which of
+    // the two the broker still holds is unknown: both stay candidates.
+    let candidates: Vec<&PublishedEntry> = dropped
+        .iter()
+        .filter(|one| kept.iter().any(|other| one.span().overlaps(other.span())))
+        .chain(kept)
+        .collect();
+    pair_by_payload(log, &candidates)
+}
+
+/// Pairs each message of `log` with the `records` of its payload; see [`attribute`].
+fn pair_by_payload(log: &[RawMessage], records: &[&PublishedEntry]) -> Vec<MessageOptions> {
     let mut attributed = vec![MessageOptions::Unrecorded; log.len()];
     let mut seen = vec![false; log.len()];
     for first in 0..log.len() {
@@ -120,28 +210,30 @@ pub(crate) fn attribute(log: &[RawMessage], records: &[RuntimePublish]) -> Vec<M
         for &index in &in_log {
             seen[index] = true;
         }
-        let candidates: Vec<&RuntimePublish> = records
+        let candidates: Vec<&PublishedEntry> = records
             .iter()
-            .filter(|record| record.message.payload() == payload)
+            .copied()
+            .filter(|record| record.message().payload() == payload)
             .collect();
         let Some(earliest) = candidates.first() else {
             continue;
         };
-        let concurrent = candidates
-            .iter()
-            .enumerate()
-            .any(|(at, one)| candidates[at + 1..].iter().any(|other| one.overlaps(other)));
+        let concurrent = candidates.iter().enumerate().any(|(at, one)| {
+            candidates[at + 1..]
+                .iter()
+                .any(|other| one.span().overlaps(other.span()))
+        });
         if candidates.len() == in_log.len() && !concurrent {
             for (&index, record) in in_log.iter().zip(&candidates) {
-                attributed[index] = MessageOptions::Recorded(record.options.clone());
+                attributed[index] = record.options();
             }
         } else if candidates.len() >= in_log.len()
             && candidates
                 .iter()
-                .all(|record| record.options.certainly_same_as(&earliest.options))
+                .all(|record| record.certainly_same_as(earliest))
         {
             for &index in &in_log {
-                attributed[index] = MessageOptions::Recorded(earliest.options.clone());
+                attributed[index] = earliest.options();
             }
         } else {
             for &index in &in_log {
@@ -154,19 +246,25 @@ pub(crate) fn attribute(log: &[RawMessage], records: &[RuntimePublish]) -> Vec<M
 
 #[cfg(test)]
 mod tests {
-    use super::{MessageOptions, RecordedOptions, RuntimePublish, attribute};
+    use super::{MessageOptions, PublishedEntry, RecordedOptions, RuntimePublish, Span, attribute};
     use crate::RawMessage;
 
     fn message(payload: &[u8]) -> RawMessage {
         RawMessage::new("orders".to_owned(), payload.to_vec())
     }
 
-    fn sent(payload: &[u8], options: Option<u8>, started: u64, finished: u64) -> RuntimePublish {
-        RuntimePublish {
+    fn sent(payload: &[u8], options: Option<u8>, started: u64, finished: u64) -> PublishedEntry {
+        PublishedEntry::Runtime(RuntimePublish {
             message: message(payload),
             options: RecordedOptions::capture(options.as_ref()),
-            started,
-            finished,
+            span: Span { started, finished },
+        })
+    }
+
+    fn injected(payload: &[u8], started: u64, finished: u64) -> PublishedEntry {
+        PublishedEntry::Test {
+            message: message(payload),
+            span: Span { started, finished },
         }
     }
 
@@ -188,7 +286,7 @@ mod tests {
         let records = [sent(b"reply", Some(1), 0, 1), sent(b"slot", None, 2, 3)];
 
         assert_eq!(
-            read(&attribute(&log, &records)),
+            read(&attribute(&log, &records, 0)),
             [Ok(Some(1)), Err("unrecorded"), Ok(None)],
         );
     }
@@ -199,7 +297,7 @@ mod tests {
         let log = [message(b"order"), message(b"order")];
         let records = [sent(b"order", None, 0, 1), sent(b"order", Some(9), 2, 3)];
 
-        assert_eq!(read(&attribute(&log, &records)), [Ok(None), Ok(Some(9))]);
+        assert_eq!(read(&attribute(&log, &records, 0)), [Ok(None), Ok(Some(9))]);
     }
 
     /// Two publishes of the same bytes in flight at once may reach the log in either order.
@@ -209,7 +307,7 @@ mod tests {
         let records = [sent(b"order", None, 0, 3), sent(b"order", Some(9), 1, 2)];
 
         assert_eq!(
-            read(&attribute(&log, &records)),
+            read(&attribute(&log, &records, 0)),
             [Err("ambiguous"), Err("ambiguous")],
         );
     }
@@ -221,7 +319,7 @@ mod tests {
         let records = [sent(b"order", Some(9), 0, 1)];
 
         assert_eq!(
-            read(&attribute(&log, &records)),
+            read(&attribute(&log, &records, 0)),
             [Err("ambiguous"), Err("ambiguous")],
         );
     }
@@ -232,6 +330,51 @@ mod tests {
         let log = [message(b"order"), message(b"order")];
         let records = [sent(b"order", None, 0, 3), sent(b"order", None, 1, 2)];
 
-        assert_eq!(read(&attribute(&log, &records)), [Ok(None), Ok(None)]);
+        assert_eq!(read(&attribute(&log, &records, 0)), [Ok(None), Ok(None)]);
+    }
+
+    /// The test's own copy of a reply's bytes evicts the reply: the copy carries no options.
+    #[test]
+    fn a_copy_that_evicted_the_reply_does_not_take_its_options() {
+        let log = [message(b"order")];
+        let records = [sent(b"order", Some(9), 0, 1), injected(b"order", 2, 3)];
+
+        assert_eq!(read(&attribute(&log, &records, 1)), [Err("unrecorded")]);
+    }
+
+    /// The broker kept the newest of several recorded publishes, and the newest options with it.
+    #[test]
+    fn eviction_keeps_the_options_of_the_publishes_it_kept() {
+        let log = [message(b"order"), message(b"other")];
+        let records = [
+            sent(b"order", Some(1), 0, 1),
+            sent(b"order", Some(9), 2, 3),
+            sent(b"other", None, 4, 5),
+        ];
+
+        assert_eq!(read(&attribute(&log, &records, 1)), [Ok(Some(9)), Ok(None)],);
+    }
+
+    /// A publish the harness never saw may be the one the broker kept: the bytes alone cannot
+    /// say, so the options of the evicted recorded one do not pass to it.
+    #[test]
+    fn an_unseen_publish_after_eviction_leaves_the_bytes_ambiguous() {
+        let log = [message(b"order"), message(b"own")];
+        let records = [sent(b"order", Some(9), 0, 1)];
+
+        assert_eq!(
+            read(&attribute(&log, &records, 1)),
+            [Err("ambiguous"), Err("unrecorded")],
+        );
+    }
+
+    /// An evicted publish in flight with a kept one may have reached the log after it, so either
+    /// could be the one left.
+    #[test]
+    fn eviction_across_publishes_in_flight_at_once_is_ambiguous() {
+        let log = [message(b"order")];
+        let records = [sent(b"order", Some(1), 0, 3), sent(b"order", Some(9), 1, 2)];
+
+        assert_eq!(read(&attribute(&log, &records, 1)), [Err("ambiguous")]);
     }
 }

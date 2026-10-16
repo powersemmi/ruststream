@@ -96,6 +96,8 @@ pub use capability::{
     MemoryTransaction, PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
 use log::LogState;
+#[cfg(feature = "testing")]
+use log::NameLog;
 pub use log::{Discarding, LogMode, Retaining, Retention};
 pub use pattern::{MemoryPattern, PatternError, Routing};
 use pattern::{Pattern, PatternGroup, PatternReach, has_wildcard};
@@ -1156,6 +1158,17 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
             .name(name)
             .map(|log| log.messages(name))
             .unwrap_or_default()
+    }
+
+    /// How many of the oldest messages under `name` a retaining broker's bound pushed out of its
+    /// log; zero on a discarding broker, whose log records without a bound for a harness run.
+    fn evicted(&self, name: &str) -> usize {
+        self.state
+            .log
+            .lock()
+            .expect("memory broker mutex poisoned")
+            .name(name)
+            .map_or(0, NameLog::first_seq)
     }
 
     /// The broker's own rule, read from the [`Routing`] it was built with: a name with a
