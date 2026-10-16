@@ -308,6 +308,20 @@ required-features = ["macros", "memory", "json", "logging"]
 name = "testing"
 required-features = ["testing", "macros", "memory", "json"]
 
+# The test-client scenarios of the component pages run as tests (`test = true`): each region is a
+# `#[tokio::test]` the way a service writes it, and the manual twin runs the same assertions
+# against the same service written without macros.
+[[example]]
+name = "testing_records"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_testing_records"
+path = "examples/manual/testing_records.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]
