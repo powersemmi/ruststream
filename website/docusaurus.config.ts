@@ -54,6 +54,18 @@ function askAiInSearch(): Plugin {
   };
 }
 
+// The landing page shows files of `examples/` as text, read when the site is built, so the code
+// on the page is the code that compiles. Webpack 5 and Rspack both load a module as its source
+// text with the `asset/source` type, which is what the deprecated `raw-loader` used to do.
+function rustSourceImports(): Plugin {
+  return {
+    name: 'ruststream-rust-source-imports',
+    configureWebpack() {
+      return {module: {rules: [{test: /\.rs$/, type: 'asset/source'}]}};
+    },
+  };
+}
+
 const config: Config = {
   title: 'RustStream',
   tagline: 'Async messaging framework for Rust',
@@ -113,7 +125,11 @@ const config: Config = {
     ],
   ],
 
-  plugins: [askAiInSearch, (context) => redirectsPlugin(context, {redirects})],
+  plugins: [
+    askAiInSearch,
+    rustSourceImports,
+    (context) => redirectsPlugin(context, {redirects}),
+  ],
 
   presets: [
     [
@@ -125,10 +141,8 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           remarkPlugins: [[remarkSnippets, {rootDir: repoRoot, repoUrl: sourceUrl}]],
           editUrl,
-          // The translations live under `website/i18n/`; the other folders feed tools, not pages.
+          // The benchmark results feed the landing page and the benchmarks page; they are not pages.
           exclude: [
-            'ru/**',
-            'zh/**',
             'benchmarks/**',
           ],
         },
@@ -153,6 +167,7 @@ const config: Config = {
         src: 'img/logo.svg',
       },
       items: [
+        {type: 'docSidebar', sidebarId: 'docs', label: 'Docs', position: 'left'},
         {type: 'custom-versionDropdown', position: 'left'},
         {type: 'custom-askAi', position: 'right'},
         {type: 'localeDropdown', position: 'right'},

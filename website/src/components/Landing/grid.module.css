@@ -1,0 +1,132 @@
+/* A grid of bordered cells with shared rules between them. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0;
+  border-top: 1px solid var(--rs-border);
+  border-left: 1px solid var(--rs-border);
+  list-style: none;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 28px 28px 32px;
+  border-right: 1px solid var(--rs-border);
+  border-bottom: 1px solid var(--rs-border);
+}
+
+.index {
+  color: var(--rs-land-accent-text);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.cellTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.cellBody {
+  margin: 0;
+  color: var(--rs-muted);
+  line-height: 1.6;
+}
+
+.big {
+  color: var(--rs-fg);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.unit {
+  color: var(--rs-muted);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.zero {
+  color: var(--rs-land-accent-text);
+}
+
+.note {
+  max-width: 1080px;
+  margin: 20px auto 0;
+  color: var(--rs-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.cellLink {
+  color: inherit;
+  transition: background-color 0.15s;
+}
+
+.cellLink:hover,
+.cellLink:focus-visible {
+  background: var(--rs-surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.cellLink:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -2px;
+}
+
+.cellLink:hover .cellTitle {
+  color: var(--rs-land-accent-text);
+}
+
+.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 996px) {
+  .grid,
+  .four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .grid,
+  .four {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cell {
+    padding: 22px 20px 24px;
+  }
+}
+
+.cellWrap {
+  display: flex;
+  margin: 0;
+}
+
+.cellWrap > .cell {
+  flex: 1;
+}
+
+.note a {
+  color: var(--rs-land-accent-text);
+  text-decoration: underline;
+}
+
+.icon {
+  display: inline-flex;
+  color: var(--rs-land-accent-text);
+}

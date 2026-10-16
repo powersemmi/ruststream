@@ -19,7 +19,6 @@ const brokerSites: Array<[string, string]> = [
 
 const sidebars: SidebarsConfig = {
   docs: [
-    {type: 'doc', id: 'index', label: 'Home'},
     {
       type: 'category',
       label: 'Getting started',

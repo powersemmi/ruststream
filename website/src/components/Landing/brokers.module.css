@@ -1,0 +1,124 @@
+/* A strip of bordered cells; the label holds the middle of the first row, as on a spec sheet. */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  border-top: 1px solid var(--rs-border);
+  /* The next section's top rule doubles as the strip's bottom one. */
+  margin-bottom: -1px;
+}
+
+.label,
+.cell {
+  border-right: 1px solid var(--rs-border);
+  border-bottom: 1px solid var(--rs-border);
+}
+
+.label {
+  grid-column: 4 / span 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--rs-fg);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 128px;
+  padding: 16px 8px;
+  color: var(--rs-muted);
+  text-align: center;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+
+.strip > :nth-child(8n + 7) {
+  border-right: none;
+}
+
+.cell:hover,
+.cell:focus-visible {
+  background: var(--rs-surface);
+  color: var(--rs-fg);
+  text-decoration: none;
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: -2px;
+}
+
+.cell:hover .icon,
+.cell:focus-visible .icon {
+  color: var(--rs-land-accent-text);
+}
+
+.icon {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 4px;
+  color: var(--rs-fg);
+  transition: color 0.15s;
+}
+
+.name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--rs-fg);
+}
+
+.crate {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 996px) {
+  .strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .label {
+    grid-column: 1 / -1;
+  }
+
+  .strip > :nth-child(8n + 7) {
+    border-right: 1px solid var(--rs-border);
+  }
+
+  .strip > :nth-child(4n + 1) {
+    border-right: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .strip > :nth-child(4n + 1) {
+    border-right: 1px solid var(--rs-border);
+  }
+
+  .strip > :nth-child(3n + 1) {
+    border-right: none;
+  }
+
+  .cell {
+    min-height: 108px;
+  }
+}
