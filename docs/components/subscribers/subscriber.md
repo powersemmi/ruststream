@@ -46,6 +46,6 @@ There `Ok(())` acks and `Err(outcome)` settles by that outcome.
 - [Mount-site settings](./mount-settings.md): what the attribute leaves to `include`.
 - [Batch handlers](./batches.md): a `&[T]` parameter.
 - [Ack, retry, drop](./messages/handler-outcome.md): what the body returns.
-- [Context and `Ctx<K>`](./context/context.md) and [Custom extractors](./context/from-context.md): the parameters after the message.
+- [Context and `Ctx<K>`](./context/context-and-ctx.md) and [Custom extractors](./context/from-context.md): the parameters after the message.
 - [Application](../application/app.md): the broker scope `include` belongs to.
 - [`#[subscriber]`](api:ruststream::subscriber), [`subscriber`](api:ruststream::runtime::subscriber), [`Handle`](api:ruststream::runtime::Handle), [`BrokerScope::include`](api:ruststream::runtime::BrokerScope::include), [`HandlerOutcome`](api:ruststream::runtime::HandlerOutcome)
