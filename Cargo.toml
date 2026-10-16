@@ -85,7 +85,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_seek"
 path = "examples/manual/seek.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_publishing"
@@ -214,7 +215,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "seek"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "publishing"
