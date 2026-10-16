@@ -3,6 +3,7 @@ import Layout from '@theme/Layout';
 import {translate} from '@docusaurus/Translate';
 import Hero from '@site/src/components/Landing/Hero';
 import BrokerStrip from '@site/src/components/Landing/BrokerStrip';
+import OldWayNewWay from '@site/src/components/Landing/OldWayNewWay';
 import styles from './index.module.css';
 
 export default function Home(): ReactNode {
@@ -18,6 +19,7 @@ export default function Home(): ReactNode {
         <div className={styles.frame}>
           <Hero />
           <BrokerStrip />
+          <OldWayNewWay />
         </div>
       </main>
     </Layout>
