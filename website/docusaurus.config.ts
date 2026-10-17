@@ -278,10 +278,6 @@ const config: Config = {
         },
       ],
     },
-    footer: {
-      style: 'light',
-      copyright: 'Apache-2.0',
-    },
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,

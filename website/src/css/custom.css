@@ -81,8 +81,6 @@
   --ifm-toc-border-color: var(--rs-border);
   --ifm-code-background: var(--rs-code-bg);
   --ifm-navbar-background-color: var(--rs-surface);
-  --ifm-footer-background-color: var(--rs-surface);
-  --ifm-footer-color: var(--rs-muted);
   --ifm-menu-color-background-hover: var(--rs-raised);
   --ifm-menu-color-background-active: var(--rs-raised);
   --ifm-dropdown-hover-background-color: var(--rs-raised);
@@ -95,10 +93,6 @@
 
 .theme-doc-sidebar-container {
   background: var(--rs-surface);
-}
-
-.footer {
-  border-top: 1px solid var(--rs-border);
 }
 
 /* Code blocks sit on the palette's code surface in both themes; the Prism themes keep only their
