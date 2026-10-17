@@ -33,7 +33,7 @@
 //! A new project is scaffolded with `cargo generate` from a template the broker crate ships,
 //! typically one per transport or topology. The starter template for the in-memory broker lives
 //! in this repository, and the quick start has the command:
-//! <https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/>.
+//! <https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/>.
 //!
 //! # Templates a broker crate ships
 //!

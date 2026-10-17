@@ -91,7 +91,7 @@ ruststream asyncapi gen        # print the AsyncAPI document
 
 Scaffold a fresh project with `cargo generate --git https://github.com/powersemmi/ruststream
 templates/memory --name my-service` (each broker crate ships its own template). See the
-[quick start](https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/).
+[quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/).
 
 ## Test it
 
