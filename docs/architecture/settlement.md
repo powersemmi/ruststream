@@ -44,14 +44,19 @@ settles the delivery like the outcome of the same name, and `skip` acknowledges 
 stops the service and leaves the delivery unsettled, so a broker that redelivers hands it back after
 the restart.
 
-A retry goes back to the broker when the broker redelivers by itself and counts the attempts. Else
-the runtime publishes a copy to the subscription's
-[retry address](../components/subscribers/retry-destination.md) and drops the original. The copy
-carries its attempt count in a header. [`retry_after`](../components/subscribers/messages/retry-after.md)
-waits on the broker's own delayed redelivery where it has one, and otherwise publishes the copy
-after the delay.
+An immediate [`retry()`](../components/subscribers/messages/handler-outcome.md) with no [attempt
+cap](../components/subscribers/retry-cap.md) and no dead letter declared is the broker's own
+requeue. Under a declaration, a broker that counts its redeliveries still requeues, and the count is
+the broker's. On a broker that counts nothing, the runtime publishes a copy to the subscription's
+[retry address](../components/subscribers/retry-destination.md) instead and drops the original. The
+copy carries its attempt count in a header.
 
-The [attempt cap](../components/subscribers/retry-cap.md) is checked before a retry. At the cap, a
-delivery with a declared dead letter is copied there, and one without is rejected.
+A delayed [`retry_after`](../components/subscribers/messages/retry-after.md) waits on the broker's
+own delayed redelivery where it has one. Elsewhere the runtime publishes the copy after the delay,
+with or without a declaration.
+
+A declared cap is checked before either retry. At the cap, a delivery with a declared dead letter is
+copied there, and one without is rejected. A broker that moves a spent delivery itself receives the
+declaration at startup and applies it on its own.
 
 A settlement that the broker refuses is logged, and the loop moves on.

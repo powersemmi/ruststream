@@ -37,8 +37,10 @@ export const words = {
 
 无法解码的内容和发生 panic 的处理器都交给[失败策略](../components/subscribers/failure-policy.md)。除 `fail_fast` 之外的策略，处置方式与同名的结果相同；`skip` 则确认这条消息。`fail_fast` 停止服务，不确认这条消息，能重新投递的 Broker 会在重启之后把它交回来。
 
-如果 Broker 自己会重新投递并统计次数，重试就交还给 Broker。否则运行时把一份副本发布到订阅的[重试地址](../components/subscribers/retry-destination.md)，并拒绝原消息。副本在消息头里带着尝试次数。[`retry_after`](../components/subscribers/messages/retry-after.md) 在 Broker 支持延迟重投时使用它，否则在延迟之后发布副本。
+立即重试 [`retry()`](../components/subscribers/messages/handler-outcome.md) 如果既没有声明[尝试上限](../components/subscribers/retry-cap.md)，也没有声明死信地址，就直接交还给 Broker 重新入队。有了声明，自己统计重投次数的 Broker 仍然重新入队，次数由 Broker 记录。Broker 不统计次数时，运行时把一份副本发布到订阅的[重试地址](../components/subscribers/retry-destination.md)，并拒绝原消息。副本在消息头里带着尝试次数。
 
-重试之前会检查[尝试上限](../components/subscribers/retry-cap.md)。到达上限时，声明了死信地址的消息会复制到那里，没有声明的则被拒绝。
+延迟重试 [`retry_after`](../components/subscribers/messages/retry-after.md) 在 Broker 支持延迟重投时使用它。否则运行时在延迟之后发布副本，无论有没有声明。
+
+声明了上限时，两种重试之前都会先检查上限。到达上限时，声明了死信地址的消息会复制到那里，没有声明的则被拒绝。自己转移耗尽次数的消息的 Broker 在启动时收到声明，由它自己执行。
 
 Broker 拒绝确认时，运行时会记录日志，然后继续处理下一条。
