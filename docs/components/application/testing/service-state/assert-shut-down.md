@@ -7,9 +7,15 @@ description: "TestApp::assert_shut_down asserts a fail-fast failure has shut the
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `assert_shut_down`
+# assert_shut_down
 
-`TestApp::assert_shut_down` asserts a fail-fast failure has shut the service down, as a handler panic does under the default policy.
+[`TestApp::assert_shut_down`](api:ruststream::testing::TestApp::assert_shut_down) asserts a fail-fast failure has shut the service down, as a handler panic does under the default policy.
+
+The panicking delivery is still driven to a standstill, so the publish that caused it returns normally.
+The record of the subscription, [`subscriber(name)`](../records/subscriber.md), shows the call that [`panicked`](../subscriber-assertions/panicked.md).
+After the shutdown every publish through the harness fails with [`TestError::ShutDown`](api:ruststream::testing::TestError::ShutDown).
+The assertion fails when the service is still running, which [`assert_running`](./assert-running.md) asserts.
+[`run_result`](./run-result.md) gives the failure as a value.
 
 ## Example
 
@@ -27,18 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The panicking delivery is still driven to a standstill, so the publish that caused it returns normally.
-The record of the subscription shows the call that panicked.
-After the shutdown every publish through the harness fails with `TestError::ShutDown`.
-The assertion fails when the service is still running.
-
-## See also
-
-- [`assert_running`](./assert-running.md): the opposite assertion.
-- [`run_result`](./run-result.md): the failure as a value.
-- [`subscriber(name)`](../records/subscriber.md): the record that shows the panic.
-- [`panicked`](../subscriber-assertions/panicked.md): the call that panicked.
-- [`TestApp::assert_shut_down`](api:ruststream::testing::TestApp::assert_shut_down), [`TestError::ShutDown`](api:ruststream::testing::TestError::ShutDown)

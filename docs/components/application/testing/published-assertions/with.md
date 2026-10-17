@@ -7,9 +7,17 @@ description: "with checks that the latest payload published to the destination d
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with`
+# with
 
-`with` checks that the latest payload published to the destination decodes to a value; `with_codec` names the codec.
+[`with`](api:ruststream::testing::PublishedAssertions::with) checks that the latest payload published to the destination decodes to a value; [`with_codec`](api:ruststream::testing::PublishedAssertions::with_codec) names the codec.
+
+`with(&value)` decodes the latest payload with the default codec and compares it with `value`.
+It exists when a codec feature is enabled.
+`with_codec(&codec, &value)` decodes with the codec the mount site named.
+Both panic when nothing was published, when the payload does not decode, or when the value differs.
+Both return the record, so further assertions chain.
+[`decoded`](./decoded.md) returns every payload, not only the latest, and [`with_raw`](./with-raw.md) checks the latest payload as bytes.
+A subscriber's [`with`](../subscriber-assertions/with.md) checks the value a handler received.
 
 ## Example
 
@@ -27,18 +35,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-`with(&value)` decodes the latest payload with the default codec and compares it with `value`.
-It exists when a codec feature is enabled.
-`with_codec(&codec, &value)` decodes with the codec the mount site named.
-Both panic when nothing was published, when the payload does not decode, or when the value differs.
-Both return the record, so further assertions chain.
-
-## See also
-
-- [`decoded`](./decoded.md): every payload, not only the latest.
-- [`with_raw`](./with-raw.md): the latest payload as bytes.
-- [Subscriber `with`](../subscriber-assertions/with.md): the value a handler received.
-- [`PublishedAssertions::with`](api:ruststream::testing::PublishedAssertions::with), [`PublishedAssertions::with_codec`](api:ruststream::testing::PublishedAssertions::with_codec)

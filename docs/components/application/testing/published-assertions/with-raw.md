@@ -7,9 +7,15 @@ description: "with_raw checks the bytes of the latest payload published to the d
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with_raw`
+# with_raw
 
-`with_raw` checks the bytes of the latest payload published to the destination.
+[`with_raw`](api:ruststream::testing::PublishedAssertions::with_raw) checks the bytes of the latest payload published to the destination.
+
+The assertion compares the payload byte for byte, with no codec involved.
+It pins the wire form: field names, field order and the codec's formatting.
+It also reads payloads no codec produced, such as a type that serializes itself.
+It panics when nothing was published or the bytes differ.
+[`with`](./with.md) checks the latest payload as a value, and [`messages`](./messages.md) returns every payload.
 
 ## Example
 
@@ -27,16 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The assertion compares the payload byte for byte, with no codec involved.
-It pins the wire form: field names, field order and the codec's formatting.
-It also reads payloads no codec produced, such as a type that serializes itself.
-It panics when nothing was published or the bytes differ.
-
-## See also
-
-- [`with`](./with.md): the latest payload as a value.
-- [`messages`](./messages.md): every payload.
-- [`PublishedAssertions::with_raw`](api:ruststream::testing::PublishedAssertions::with_raw)

@@ -7,9 +7,15 @@ description: "batches_raw() returns the bytes a batch handler received, one list
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `batches_raw`
+# batches_raw
 
-`batches_raw()` returns the bytes a batch handler received, one list per call.
+[`batches_raw()`](api:ruststream::testing::SubscriberAssertions::batches_raw) returns the bytes a batch handler received, one list per call.
+
+It is [`received_raw`](./received-raw.md) with the batch boundaries kept.
+A single-message handler yields lists of one.
+Here the handler takes raw frames, `&[Frame<'_>]`, so no codec runs on the way in or in the check.
+The batches come from a replayed log, as on the [`batches`](./batches.md) page.
+A batch built from a bare publisher is driven with [`settle`](../driving/settle.md).
 
 ## Example
 
@@ -27,17 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It is `received_raw` with the batch boundaries kept.
-A single-message handler yields lists of one.
-Here the handler takes raw frames, `&[Frame<'_>]`, so no codec runs on the way in or in the check.
-The batches come from a replayed log, as on the `batches` page.
-
-## See also
-
-- [`batches`](./batches.md): the same batches decoded.
-- [`received_raw`](./received-raw.md): the same bytes as one flat list.
-- [`settle`](../driving/settle.md): drive a batch built from a bare publisher.
-- [`SubscriberAssertions::batches_raw`](api:ruststream::testing::SubscriberAssertions::batches_raw)

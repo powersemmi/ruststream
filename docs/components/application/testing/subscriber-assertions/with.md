@@ -7,9 +7,17 @@ description: "with(&value) checks that the latest handler call received this val
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with`
+# with
 
-`with(&value)` checks that the latest handler call received this value, decoded with the default codec.
+[`with(&value)`](api:ruststream::testing::SubscriberAssertions::with) checks that the latest handler call received this value, decoded with the default codec.
+
+It reads the most recent call only; the earlier ones are in [`received`](./received.md).
+It decodes the recorded payload with [`DefaultCodec`](api:ruststream::codec::DefaultCodec), the codec the enabled features select (`json` first).
+A handler mounted with another codec is checked with [`with_codec(&codec, &value)`](api:ruststream::testing::SubscriberAssertions::with_codec), which decodes with that codec.
+The value type needs `Deserialize`, `PartialEq` and `Debug`.
+The latest call must hold one delivery: on a batch of several it panics, and the batch is read with `batches`.
+[`with_raw`](./with-raw.md) checks the same call as bytes, and [`with_value`](./with-value.md) the value a carrying delivery lent the handler.
+A destination's [`with`](../published-assertions/with.md) checks the value a publish carried.
 
 ## Example
 
@@ -27,19 +35,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It reads the most recent call only; the earlier ones are in `received`.
-It decodes the recorded payload with `DefaultCodec`, the codec the enabled features select (`json` first).
-A handler mounted with another codec is checked with `with_codec(&codec, &value)`, which decodes with that codec.
-The value type needs `Deserialize`, `PartialEq` and `Debug`.
-The latest call must hold one delivery: on a batch of several it panics, and the batch is read with `batches`.
-
-## See also
-
-- [`with_raw`](./with-raw.md): the same call as bytes.
-- [`received`](./received.md): every decoded payload, not only the latest.
-- [`with_value`](./with-value.md): the value a carrying delivery lent the handler.
-- [Published `with`](../published-assertions/with.md): the value a publish carried.
-- [`SubscriberAssertions::with`](api:ruststream::testing::SubscriberAssertions::with), [`SubscriberAssertions::with_codec`](api:ruststream::testing::SubscriberAssertions::with_codec), [`DefaultCodec`](api:ruststream::codec::DefaultCodec)

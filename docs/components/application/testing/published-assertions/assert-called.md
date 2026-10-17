@@ -1,15 +1,20 @@
 ---
 sidebar_position: 2
-title: assert_called(n)
+title: assert_called
 description: "assert_called(n) checks that exactly n messages were published to the destination."
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `assert_called(n)`
+# assert_called
 
-`assert_called(n)` checks that exactly `n` messages were published to the destination.
+[`assert_called(n)`](api:ruststream::testing::PublishedAssertions::assert_called) checks that exactly `n` messages were published to the destination.
+
+The count is of published messages, so one delivery that publishes three times counts three.
+A subscriber's [`assert_called(n)`](../subscriber-assertions/assert-called.md) counts handler calls instead: the example asserts one call and three publishes.
+The assertion panics with both numbers when they differ, and returns the record for further checks.
+[`assert_called_once`](./assert-called-once.md) and [`assert_not_called`](./assert-not-called.md) cover one message and none, and [`messages`](./messages.md) returns the messages behind the count.
 
 ## Example
 
@@ -27,16 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The count is of published messages, so one delivery that publishes three times counts three.
-A subscriber's `assert_called(n)` counts handler calls instead: the example asserts one call and three publishes.
-The assertion panics with both numbers when they differ, and returns the record for further checks.
-
-## See also
-
-- [`assert_called_once`](./assert-called-once.md), [`assert_not_called`](./assert-not-called.md)
-- [`messages`](./messages.md): the messages behind the count.
-- [Subscriber `assert_called(n)`](../subscriber-assertions/assert-called.md): the count of handler calls.
-- [`PublishedAssertions::assert_called`](api:ruststream::testing::PublishedAssertions::assert_called)

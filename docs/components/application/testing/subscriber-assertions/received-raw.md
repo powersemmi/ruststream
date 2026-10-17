@@ -7,9 +7,14 @@ description: "received_raw() returns the bytes of every payload a subscriber rec
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `received_raw`
+# received_raw
 
-`received_raw()` returns the bytes of every payload a subscriber received, in delivery order.
+[`received_raw()`](api:ruststream::testing::SubscriberAssertions::received_raw) returns the bytes of every payload a subscriber received, in delivery order.
+
+It returns one `Bytes` per delivery; a batch contributes each of its elements.
+No codec runs, so it reads payloads that are no model: here frames the handler takes as a `Deserialized` view.
+The test publishes such bytes through a `#[derive(Outgoing, Serialized)]` newtype, which keeps every codec off them.
+[`with_raw`](./with-raw.md) checks the latest payload only, and [`batches_raw`](./batches-raw.md) groups the same bytes by call.
 
 ## Example
 
@@ -27,15 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It returns one `Bytes` per delivery; a batch contributes each of its elements.
-No codec runs, so it reads payloads that are no model: here frames the handler takes as a `Deserialized` view.
-The test publishes such bytes through a `#[derive(Outgoing, Serialized)]` newtype, which keeps every codec off them.
-
-## See also
-
-- [`with_raw`](./with-raw.md): the latest payload only.
-- [`batches_raw`](./batches-raw.md): the same bytes grouped by call.
-- [`SubscriberAssertions::received_raw`](api:ruststream::testing::SubscriberAssertions::received_raw)

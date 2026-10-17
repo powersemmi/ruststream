@@ -7,9 +7,15 @@ description: "TestApp::run_result returns what the service run would return now:
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `run_result`
+# run_result
 
-`TestApp::run_result` returns what the service `run` would return now: `Ok` while it is healthy, an error once a fail-fast failure stopped it.
+[`TestApp::run_result`](api:ruststream::testing::TestApp::run_result) returns what the service `run` would return now: `Ok` while it is healthy, an error once a fail-fast failure stopped it.
+
+A fail-fast failure is a handler panic under the default failure policy, or a decode failure under a `fail_fast` decode policy.
+After one the result is [`RustStreamError::Dispatch`](api:ruststream::runtime::RustStreamError) with the subscription and the reason.
+`run_result` reads the harness without consuming it, so a test can check it between publishes.
+[`assert_running`](./assert-running.md) and [`assert_shut_down`](./assert-shut-down.md) state the same as an assertion.
+[`shutdown`](../starting-and-stopping/shutdown.md) returns the same result at the end of a test.
 
 ## Example
 
@@ -27,16 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-A fail-fast failure is a handler panic under the default failure policy, or a decode failure under a `fail_fast` decode policy.
-After one the result is `RustStreamError::Dispatch` with the subscription and the reason.
-`run_result` reads the harness without consuming it, so a test can check it between publishes.
-`shutdown` returns the same result at the end of a test.
-
-## See also
-
-- [`assert_running`](./assert-running.md), [`assert_shut_down`](./assert-shut-down.md): the same state as an assertion.
-- [`shutdown`](../starting-and-stopping/shutdown.md): the result at teardown.
-- [`TestApp::run_result`](api:ruststream::testing::TestApp::run_result), [`RustStreamError`](api:ruststream::runtime::RustStreamError)

@@ -7,9 +7,16 @@ description: "TestApp::with_state starts the app with a state the test builds in
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with_state`
+# with_state
 
-`TestApp::with_state` starts the app with a state the test builds in place of `on_startup`, wired to the brokers of the app.
+[`TestApp::with_state`](api:ruststream::testing::TestApp::with_state) starts the app with a state the test builds in place of `on_startup`, wired to the brokers of the app.
+
+It is for a state that reaches outside the service: a catalog, a database, a mail client the test cannot or should not call.
+The harness connects each broker in process first, then calls the builder, so the state's publishers pair against connected brokers.
+[`TestBrokers::broker::<B>()`](api:ruststream::testing::TestBrokers::broker) returns the connected form of the app's broker of type `B`.
+A publisher built from it publishes onto the bus the assertions read, such as [`published::<T>(name)`](../records/published.md) and its [`with`](../published-assertions/with.md).
+The app's `on_startup` does not run; `after_startup` and everything else of startup do, as in [`TestApp::start`](./start.md).
+`TestBrokers::broker` panics when the app has no broker of type `B` or more than one.
 
 ## Example
 
@@ -27,19 +34,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It is for a state that reaches outside the service: a catalog, a database, a mail client the test cannot or should not call.
-The harness connects each broker in process first, then calls the builder, so the state's publishers pair against connected brokers.
-`TestBrokers::broker::<B>()` returns the connected form of the app's broker of type `B`.
-A publisher built from it publishes onto the bus the assertions read.
-The app's `on_startup` does not run; `after_startup` and everything else of startup do.
-`TestBrokers::broker` panics when the app has no broker of type `B` or more than one.
-
-## See also
-
-- [`TestApp::start`](./start.md): start with the app's own `on_startup`.
-- [`published::<T>(name)`](../records/published.md): what the state's publisher sent.
-- [`with`](../published-assertions/with.md): the value a publish carried.
-- [`TestApp::with_state`](api:ruststream::testing::TestApp::with_state), [`TestBrokers::broker`](api:ruststream::testing::TestBrokers::broker)

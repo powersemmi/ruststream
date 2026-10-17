@@ -7,9 +7,14 @@ description: "assert_called_once checks that exactly one message was published t
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `assert_called_once`
+# assert_called_once
 
-`assert_called_once` checks that exactly one message was published to the destination.
+[`assert_called_once`](api:ruststream::testing::PublishedAssertions::assert_called_once) checks that exactly one message was published to the destination.
+
+The assertion counts the messages in the record, [`published::<T>(name)`](../records/published.md), not the handler calls that produced them.
+It panics with the count it found when the record holds none or more than one.
+It returns the record, so `with`, `with_raw` and `with_header` chain after it.
+[`assert_called(n)`](./assert-called.md) checks any other count, and [`assert_not_called`](./assert-not-called.md) checks that nothing was published.
 
 ## Example
 
@@ -27,16 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The assertion counts the messages in the record, not the handler calls that produced them.
-It panics with the count it found when the record holds none or more than one.
-It returns the record, so `with`, `with_raw` and `with_header` chain after it.
-
-## See also
-
-- [`assert_called(n)`](./assert-called.md): any other count.
-- [`assert_not_called`](./assert-not-called.md): nothing published.
-- [`published::<T>(name)`](../records/published.md): the record this reads.
-- [`PublishedAssertions::assert_called_once`](api:ruststream::testing::PublishedAssertions::assert_called_once)

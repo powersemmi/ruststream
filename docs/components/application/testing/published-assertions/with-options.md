@@ -7,9 +7,17 @@ description: "with_options checks the per-message settings the latest recorded p
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with_options`
+# with_options
 
-`with_options` checks the per-message settings the latest recorded publish carried, the value a builder step set.
+[`with_options`](api:ruststream::testing::PublishedAssertions::with_options) checks the per-message settings the latest recorded publish carried, the value a builder step set.
+
+Per-message settings are the broker's [`Publisher::Options`](api:ruststream::Publisher); the memory broker's publisher has none, so the example wraps it with a priority, as a networked broker ships one.
+The harness records the settings with every publish the runtime makes (a reply, a slot publish, a retry copy), on the broker it went to.
+Both records read them: a slot record, [`out::<M>()`](../records/out.md), and a destination record, `published::<T>(name)`.
+A message the test publishes itself carries no recorded settings.
+The assertion names the broker's own type and panics when the latest publish carried no settings, carried another type, or carried a different value.
+It also panics when it cannot tell which settings the latest publish carried: another publish to the destination had the same payload, and either their order is unknown or the harness never saw that publish.
+[`assert_options_default`](./assert-options-default.md) checks that no step set any.
 
 ## Example
 
@@ -27,18 +35,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-Per-message settings are the broker's `Publisher::Options`; the memory broker's publisher has none, so the example wraps it with a priority, as a networked broker ships one.
-The harness records the settings with every publish the runtime makes (a reply, a slot publish, a retry copy), on the broker it went to.
-Both records read them: a slot record, `out::<M>()`, and a destination record, `published::<T>(name)`.
-A message the test publishes itself carries no recorded settings.
-The assertion names the broker's own type and panics when the latest publish carried no settings, carried another type, or carried a different value.
-It also panics when it cannot tell which settings the latest publish carried: another publish to the destination had the same payload, and either their order is unknown or the harness never saw that publish.
-
-## See also
-
-- [`assert_options_default`](./assert-options-default.md): no step ran.
-- [`out::<M>()`](../records/out.md): the record that carries every slot publish's settings.
-- [`PublishedAssertions::with_options`](api:ruststream::testing::PublishedAssertions::with_options), [`Publisher`](api:ruststream::Publisher)
