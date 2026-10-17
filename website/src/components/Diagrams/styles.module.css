@@ -1,0 +1,148 @@
+/* Every colour is one of the site's tokens, which each theme defines; nothing is fixed here. */
+
+.figure {
+  margin: 1.5rem 0 2rem;
+}
+
+.diagram {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 auto;
+  overflow: visible;
+  font-family: var(--ifm-font-family-base);
+  font-size: 12px;
+}
+
+.box rect {
+  fill: var(--rs-surface);
+  stroke: var(--rs-border);
+  stroke-width: 1.25;
+}
+
+.box text {
+  fill: var(--rs-fg);
+}
+
+.code text {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+}
+
+.service rect {
+  fill: var(--rs-bg);
+  stroke: var(--rs-fg);
+}
+
+.core rect {
+  fill: color-mix(in srgb, var(--rs-accent) 14%, var(--rs-bg));
+  stroke: var(--rs-accent);
+}
+
+.broker rect {
+  fill: var(--rs-raised);
+  stroke: var(--rs-control-border);
+}
+
+.good rect {
+  fill: color-mix(in srgb, var(--ifm-color-success) 14%, var(--rs-bg));
+  stroke: var(--ifm-color-success);
+}
+
+.bad rect {
+  fill: color-mix(in srgb, var(--ifm-color-danger) 14%, var(--rs-bg));
+  stroke: var(--ifm-color-danger);
+}
+
+.group rect {
+  fill: none;
+  stroke: var(--rs-control-border);
+  stroke-dasharray: 5 4;
+}
+
+.group text {
+  fill: var(--rs-muted);
+  paint-order: stroke;
+  stroke: var(--rs-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.note rect {
+  fill: none;
+  stroke: none;
+}
+
+.note text {
+  fill: var(--rs-muted);
+  font-size: 11px;
+}
+
+.link path {
+  fill: none;
+  stroke: var(--rs-muted);
+  stroke-width: 1.25;
+}
+
+.link .dashed {
+  stroke-dasharray: 4 3;
+}
+
+.link text {
+  fill: var(--rs-muted);
+  font-size: 10.5px;
+  paint-order: stroke;
+  stroke: var(--rs-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.head {
+  fill: var(--rs-muted);
+}
+
+.lane text {
+  fill: var(--rs-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lane line {
+  stroke: var(--rs-border);
+  stroke-dasharray: 2 4;
+}
+
+.target {
+  outline: none;
+}
+
+.target:hover rect,
+.target:focus-visible rect {
+  stroke: var(--rs-accent);
+  stroke-width: 2.5;
+}
+
+.target:hover,
+.target:hover text {
+  text-decoration: none;
+}
+
+.text {
+  max-width: 576px;
+  margin: 0.5rem auto 0;
+  color: var(--rs-muted);
+  font-size: 0.875rem;
+}
+
+.text summary {
+  cursor: pointer;
+  color: var(--ifm-link-color);
+}
+
+.text ol {
+  margin: 0.5rem 0 0;
+}
