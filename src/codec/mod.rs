@@ -1,165 +1,29 @@
-//! Pluggable serialization codecs.
+//! Pluggable serialization codecs: a [`Codec`] turns a value into wire bytes and back.
 //!
-//! A [`Codec`] turns a value into wire bytes and back. It is not tied to the broker: on the
-//! consume side the pipeline is `bytes -> Codec -> typed payload -> handler`, and on the publish
-//! side the same runs in reverse. The codec is fixed where the handler is mounted, so it costs
-//! nothing on the delivery path.
+//! The codec is a compile-time type fixed where a handler is mounted, so it costs nothing on the
+//! delivery path. Each built-in codec is an additive cargo feature, and `DefaultCodec` is the
+//! one a mounting that names none decodes and encodes with.
 //!
-//! # Cargo features
+//! - [Codecs][codecs]: where a mounting takes its codec from (`with_broker_codec`,
+//!   `Router::with_codec`, `.out_reply(..).codec(..)`) and the default it falls back to.
+//! - [JSON][json]: `JsonCodec` over `serde_json`, the `json` feature and the default.
+//! - [CBOR][cbor]: `CborCodec` over `ciborium`, the `cbor` feature.
+//! - [MessagePack][msgpack]: `MsgpackCodec` over `rmp-serde`, the `msgpack` feature.
+//! - [Codec][custom]: a codec of your own, an implementation of [`Codec`] that returns
+//!   [`CodecError`] and names its [`Codec::CONTENT_TYPE`].
+//! - [Protobuf][protobuf]: a `prost` message on the byte lanes with `#[wire(prost)]`, with no
+//!   codec feature.
+//! - [Bytes][bytes]: payloads that are their own encoding,
+//!   [`Deserialized`](crate::runtime::Deserialized) on the way in and
+//!   [`Serialized`](crate::runtime::Serialized) on the way out.
 //!
-//! Codecs are additive cargo features: enable only what you need. A message type derives
-//! `serde::Deserialize`, and a reply type `Serialize` as well.
-//!
-//! * `json` (default): [`JsonCodec`] via `serde_json`, `application/json`.
-//! * `msgpack`: [`MsgpackCodec`] via `rmp-serde`, `application/msgpack`.
-//! * `cbor`: [`CborCodec`] via `ciborium`, `application/cbor`.
-//!
-//! [`DefaultCodec`] is an alias picked by the enabled features: `json`, else `cbor`, else
-//! `msgpack`. It is what `include(def)` decodes with and what `.out_reply(policy)` encodes with
-//! when nothing names a codec. With no codec feature at all there is nothing to name, so a
-//! mounting that needs the default becomes a compile error listing the ways out: enable a
-//! feature, name a codec, or move the message to a byte lane.
-//!
-//! # Where the codec comes from
-//!
-//! The decode codec comes from the most specific level that names one, and `include` takes no
-//! codec argument:
-//!
-//! 1. per handler, `Router::new().with_codec(codec).include(def)`;
-//! 2. per scope, `with_broker_codec(broker, codec, |b| ..)`;
-//! 3. [`DefaultCodec`].
-//!
-//! The publish side mirrors it at the mount site: `.out_reply(policy).codec(codec)` names the
-//! reply codec, `.out(marker, policy).codec(codec)` a slot's, and `.with_codec(codec)` on the
-//! builder one call's. The request decodes with the scope's codec while the reply travels on the
-//! wiring the chain built, so the two formats differ freely. The codec is a property of the
-//! mounting, never of the message type.
-//!
-//! ```
-//! # #[cfg(all(feature = "macros", feature = "memory", feature = "json", feature = "cbor"))]
-//! # mod demo {
-//! use ruststream::codec::{CborCodec, JsonCodec};
-//! use ruststream::memory::prelude::*;
-//! use serde::Deserialize;
-//!
-//! # #[derive(Deserialize)]
-//! # struct Order {
-//! #     id: u64,
-//! # }
-//! # #[subscriber("orders")]
-//! # async fn handle(order: &Order) -> HandlerOutcome {
-//! #     HandlerOutcome::ack()
-//! # }
-//! # #[subscriber("audit")]
-//! # async fn audit(order: &Order) -> HandlerOutcome {
-//! #     HandlerOutcome::ack()
-//! # }
-//! fn app() -> RustStream {
-//!     RustStream::new(AppInfo::new("codecs", "0.1.0"))
-//!         // per scope: every handler mounted here decodes with CBOR
-//!         .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-//!             b.include(handle);
-//!             // per handler: this mounting decodes with JSON
-//!             b.include_router(Router::new().with_codec(JsonCodec).include(audit));
-//!         })
-//! }
-//! # }
-//! # fn main() {}
-//! ```
-//!
-//! A payload that does not decode is settled by the subscriber's `on_failure(decode = ..)`
-//! policy, a drop by default; see [`FailurePolicy`](crate::runtime::FailurePolicy).
-//!
-//! # Byte lanes
-//!
-//! A value that is its own encoding takes no codec position. A newtype over `&'a [u8]` deriving
-//! [`Deserialized`](macro@crate::Deserialized) receives the delivery's bytes as they arrived,
-//! and a type deriving [`Serialized`](macro@crate::Serialized) publishes the bytes it produces.
-//! A generated Protobuf message goes on both lanes with `#[wire(prost)]` next to the derives;
-//! the general form names the functions, `#[wire(encode = <path>, decode = <path>)]`, and serves
-//! Cap'n Proto, `FlatBuffers` and a hand-rolled frame alike. A service on the lanes alone runs
-//! with no codec feature.
-//!
-//! # A codec of your own
-//!
-//! Implement [`Codec`] and pass the value wherever a built-in one goes. A codec generic over
-//! another composes: the inner one decides the format, the wrapper transforms the bytes around
-//! it, which is the shape of a versioned envelope, a registry header or an encrypting layer.
-//! Both sides return [`CodecError`]; an inner error passes up with `?`, and a failure of the
-//! wrapper becomes [`CodecError::Decode`] or [`CodecError::Encode`] with your error as its
-//! source. [`Codec::CONTENT_TYPE`] names the media type the generated document reports.
-//!
-//! ```
-//! # #[cfg(not(feature = "json"))]
-//! # fn main() {}
-//! # #[cfg(feature = "json")]
-//! # fn main() {
-//! use std::fmt;
-//!
-//! use ruststream::BytesMut;
-//! use ruststream::codec::{Codec, CodecError, JsonCodec};
-//! use serde::Serialize;
-//! use serde::de::DeserializeOwned;
-//!
-//! /// Frames another codec's bytes with a one-byte format version.
-//! #[derive(Clone, Copy)]
-//! struct Versioned<C>(C);
-//!
-//! const VERSION: u8 = 1;
-//!
-//! #[derive(Debug)]
-//! struct BadVersion(u8);
-//!
-//! impl fmt::Display for BadVersion {
-//!     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//!         write!(f, "envelope version {} is not the version this build reads", self.0)
-//!     }
-//! }
-//!
-//! impl std::error::Error for BadVersion {}
-//!
-//! impl<C: Codec> Codec for Versioned<C> {
-//!     const CONTENT_TYPE: &'static str = C::CONTENT_TYPE;
-//!
-//!     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-//!         let mut framed = BytesMut::new();
-//!         self.encode_into(value, &mut framed)?;
-//!         Ok(framed)
-//!     }
-//!
-//!     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
-//!         buf.extend_from_slice(&[VERSION]);
-//!         self.0.encode_into(value, buf)
-//!     }
-//!
-//!     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-//!         match bytes {
-//!             [VERSION, payload @ ..] => self.0.decode(payload),
-//!             [version, ..] => Err(CodecError::Decode(Box::new(BadVersion(*version)))),
-//!             [] => Err(CodecError::Decode(Box::new(BadVersion(0)))),
-//!         }
-//!     }
-//! }
-//!
-//! let codec = Versioned(JsonCodec);
-//! let bytes = codec.encode(&7u32).unwrap();
-//! assert_eq!(bytes[0], VERSION);
-//! let back: u32 = codec.decode(&bytes).unwrap();
-//! assert_eq!(back, 7);
-//! # }
-//! ```
-//!
-//! [`Codec::encode_into`] is the buffer-taking sibling of `encode`, and the one the publish path
-//! calls for a broker that only reads the payload: inside a dispatch loop that buffer is the
-//! loop's own, so a codec that writes into it leaves the publish nothing to allocate. It is
-//! defaulted (encode into a buffer of its own, then copy), so a codec compiles without it and is
-//! faster with it. The wrapper above writes its version byte into the caller's buffer and hands
-//! the rest to the inner codec, which is why its `encode` is the one line that calls it.
-//!
-//! `encode` and `decode` are synchronous, and that is the boundary of what fits: only what a
-//! constant and the bytes at hand decide. An integration that needs I/O to serialize (a schema
-//! registry, a key service) goes around the codec, on the async edges: the broker's delivery
-//! path on the way in, a [`PublishLayer`](crate::runtime::PublishLayer) on the way out.
+//! [codecs]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/
+//! [json]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/json/
+//! [cbor]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/cbor/
+//! [msgpack]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/msgpack/
+//! [custom]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/custom-codec/
+//! [protobuf]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/protobuf/
+//! [bytes]: https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/bytes/
 
 /// The block an encode buffer starts with, in bytes.
 ///
@@ -190,7 +54,9 @@ pub use msgpack::MsgpackCodec;
 /// The codec used when an `include` / publisher call does not name one explicitly.
 ///
 /// Resolved at compile time by feature priority: `json`, then `cbor`, then `msgpack`. It exists
-/// only when at least one codec feature is enabled; with none, every call site must name a codec.
+/// only when at least one codec feature is enabled; with none, a mounting that needs the default
+/// is a compile error listing the ways out: enable a feature, name a codec, or move the message
+/// to a byte lane.
 #[cfg(feature = "json")]
 pub type DefaultCodec = JsonCodec;
 /// The codec used when an `include` / publisher call does not name one explicitly. See the `json`
@@ -259,6 +125,11 @@ pub enum CodecError {
 /// `DeserializeOwned` value. This means `dyn Codec` is not object-safe; use generics or
 /// boxed concrete codecs at the call site.
 ///
+/// `encode` and `decode` are synchronous: a codec holds only what a constant and the bytes at
+/// hand decide. An integration that needs I/O to serialize (a schema registry, a key service)
+/// goes around the codec, on the async edges: the broker's delivery path on the way in, a
+/// [`PublishLayer`](crate::runtime::PublishLayer) on the way out.
+///
 /// # Examples
 ///
 /// ```
@@ -311,6 +182,72 @@ pub enum CodecError {
 /// }
 /// # }
 /// # fn main() {}
+/// ```
+///
+/// A codec generic over another composes: the inner one decides the format, and the wrapper
+/// transforms the bytes around it (a versioned envelope, a registry header, an encrypting layer).
+/// A failure of the wrapper becomes [`CodecError::Decode`] or [`CodecError::Encode`] with its own
+/// error as the source. The wrapper writes its version byte into the caller's buffer in
+/// [`encode_into`](Codec::encode_into) and hands the rest to the inner codec:
+///
+/// ```
+/// # #[cfg(not(feature = "json"))]
+/// # fn main() {}
+/// # #[cfg(feature = "json")]
+/// # fn main() {
+/// use std::fmt;
+///
+/// use ruststream::BytesMut;
+/// use ruststream::codec::{Codec, CodecError, JsonCodec};
+/// use serde::Serialize;
+/// use serde::de::DeserializeOwned;
+///
+/// /// Frames another codec's bytes with a one-byte format version.
+/// #[derive(Clone, Copy)]
+/// struct Versioned<C>(C);
+///
+/// const VERSION: u8 = 1;
+///
+/// #[derive(Debug)]
+/// struct BadVersion(u8);
+///
+/// impl fmt::Display for BadVersion {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         write!(f, "envelope version {} is not the version this build reads", self.0)
+///     }
+/// }
+///
+/// impl std::error::Error for BadVersion {}
+///
+/// impl<C: Codec> Codec for Versioned<C> {
+///     const CONTENT_TYPE: &'static str = C::CONTENT_TYPE;
+///
+///     fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+///         let mut framed = BytesMut::new();
+///         self.encode_into(value, &mut framed)?;
+///         Ok(framed)
+///     }
+///
+///     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
+///         buf.extend_from_slice(&[VERSION]);
+///         self.0.encode_into(value, buf)
+///     }
+///
+///     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+///         match bytes {
+///             [VERSION, payload @ ..] => self.0.decode(payload),
+///             [version, ..] => Err(CodecError::Decode(Box::new(BadVersion(*version)))),
+///             [] => Err(CodecError::Decode(Box::new(BadVersion(0)))),
+///         }
+///     }
+/// }
+///
+/// let codec = Versioned(JsonCodec);
+/// let bytes = codec.encode(&7u32).unwrap();
+/// assert_eq!(bytes[0], VERSION);
+/// let back: u32 = codec.decode(&bytes).unwrap();
+/// assert_eq!(back, 7);
+/// # }
 /// ```
 pub trait Codec: Send + Sync {
     /// The media type of the bytes this codec produces, reported as the `contentType` of every
