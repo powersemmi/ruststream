@@ -46,6 +46,60 @@
 //! # }
 //! # fn main() {}
 //! ```
+//!
+//! # A broker crate's prelude
+//!
+//! A broker crate ships a `prelude` module of its own, because its types are named at the mount
+//! site. It has three layers, in this order:
+//!
+//! 1. `pub use ruststream::prelude::*;`, so one glob serves the whole file;
+//! 2. the crate's own surface a service names: the broker, its subscription source, its `Config`,
+//!    its error, the [`ContextField`](crate::ContextField) keys a body reads, and the extension
+//!    traits that carry its settings (mount-site steps, publish-builder steps);
+//! 3. its publish policies under the names every broker uses, `Publish` and, where it has them,
+//!    `TransactionalPublish` and `Request` (`pub use crate::KafkaTransactionalPublish as
+//!    TransactionalPublish;`), plus the consumer-side capability traits a body reaches through the
+//!    broker ([`Positioned`](crate::Positioned), [`Seeker`](crate::Seeker),
+//!    [`Transaction`](crate::Transaction)) as a manifest.
+//!
+//! The core prelude exports nothing under the three policy names, so a mount site reads the same
+//! on every broker and swapping brokers swaps the glob. The four publisher capabilities are
+//! already here. A broker never aliases a policy to a core trait name ([`Publisher`],
+//! [`TransactionalPublisher`],
+//! [`OwnedTransactions`], [`RequestReply`]): an
+//! explicit re-export shadows a glob silently, so the trait would vanish from every service
+//! writing the glob, and the error would surface in the service's file. Two traits stay out of
+//! the manifest: [`Partitioned`](crate::Partitioned), whose method collides with the defaulted
+//! [`IncomingMessage::partition_key`], and
+//! [`BatchSubscriber`](crate::BatchSubscriber), which the framework calls and no body names.
+//!
+//! The split of imports is what keeps a service portable. A handler body imports this prelude
+//! alone and bounds its slot with a core capability (`Out<impl Publisher>`), so it says what it
+//! needs of a publisher and never which broker provides it. A routes file imports the broker's
+//! prelude, because mounting is where a broker is named. The one exception is a body that adjusts
+//! a per-message setting: it imports the broker's prelude for the step and names the broker's
+//! options type in its bound (`Out<impl Publisher<Options = MqttOptions>, Telemetry>`).
+//!
+//! [`ruststream::memory::prelude`](crate::memory::prelude) is the worked example. A probe behind
+//! the crate's own glob pins both halves: a capability bound still resolves to the core trait, and
+//! the mount-site name is still the crate's policy. Here it is against the in-memory broker's
+//! prelude:
+//!
+//! ```
+//! # #[cfg(feature = "memory")]
+//! # mod demo {
+//! use ruststream::memory::prelude::*;
+//!
+//! // A bound a body states: the core trait, not something of the broker's.
+//! fn _bound<T: Publisher>() {}
+//!
+//! // A mount-site name: the broker's policy, constructible with no connection in sight.
+//! fn _policy() {
+//!     let _: Publish = Publish::default();
+//! }
+//! # }
+//! # fn main() {}
+//! ```
 
 pub use crate::runtime::{
     App, AppInfo, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
