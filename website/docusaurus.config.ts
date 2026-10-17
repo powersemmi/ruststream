@@ -106,6 +106,15 @@ const config: Config = {
     faster: true,
   },
 
+  // One namespace for every language and version build, so a reader's colour theme and tab
+  // choices follow them from /next/ru/ to /latest/. The v4 default hashes url + baseUrl, which
+  // differs per build; a fixed name still keeps the keys apart from the other sites on
+  // powersemmi.github.io.
+  storage: {
+    type: 'localStorage',
+    namespace: 'ruststream',
+  },
+
   url: 'https://powersemmi.github.io',
   baseUrl,
   trailingSlash: true,
