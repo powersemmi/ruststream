@@ -152,10 +152,17 @@ pub(crate) async fn drain_handles(
     timeout: Option<Duration>,
 ) -> Result<(), RustStreamError> {
     let Some(timeout) = timeout else {
+        // Every loop is awaited, so one that panicked does not leave the others running while
+        // the brokers close; the first panic is the one returned.
+        let mut joined = Ok(());
         for handle in handles {
-            handle.await.map_err(RustStreamError::Join)?;
+            if let Err(err) = handle.await
+                && joined.is_ok()
+            {
+                joined = Err(RustStreamError::Join(err));
+            }
         }
-        return Ok(());
+        return joined;
     };
 
     let until = Instant::now() + timeout;
@@ -201,5 +208,48 @@ pub(crate) async fn drain_continuations(continuations: TaskTracker, timeout: Opt
             }
         }
         None => continuations.wait().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    /// A loop that panicked does not end the drain early: the drain returns its error only once
+    /// every other loop has finished, so the brokers never close under a running handler.
+    #[tokio::test]
+    async fn a_panicked_loop_is_reported_after_the_others_finish() {
+        let finished = Arc::new(AtomicBool::new(false));
+        let (release, gate) = oneshot::channel::<()>();
+        let panicked = tokio::spawn(async { panic!("dispatch loop panicked") });
+        let flag = Arc::clone(&finished);
+        let gated = tokio::spawn(async move {
+            let _ = gate.await;
+            flag.store(true, Ordering::SeqCst);
+        });
+
+        let drain = async {
+            let drained = drain_handles(vec![panicked, gated], None).await;
+            (drained, finished.load(Ordering::SeqCst))
+        };
+        let releaser = async {
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
+            let _ = release.send(());
+        };
+        let ((drained, gated_finished), ()) = tokio::join!(drain, releaser);
+
+        assert!(
+            matches!(drained, Err(RustStreamError::Join(_))),
+            "got: {drained:?}"
+        );
+        assert!(
+            gated_finished,
+            "the drain returned while a loop was still running"
+        );
     }
 }
