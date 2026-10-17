@@ -1341,7 +1341,9 @@ async fn dispatch<H, M, C, St>(
             .with_encode_buffer(encode)
             .with_decode_policy(failure.policies.decode);
         // Catch a panicking handler so it cannot silently kill the dispatch loop (which would stop
-        // the subscriber consuming) or leave the message unsettled. AssertUnwindSafe is required
+        // the subscriber consuming) or leave the message unsettled. The call runs inside the
+        // caught future, so a handler (a middleware) that panics while building its future is
+        // caught too. AssertUnwindSafe is required
         // because the future borrows `&mut ctx`; that state is discarded with the failed delivery.
         // Under the harness, the invocation runs in a task-local slot scope so publishes made
         // through injected `Out` publishers are attributed to their slot.
@@ -1350,14 +1352,14 @@ async fn dispatch<H, M, C, St>(
             harness_scope(delivery),
             observed!(
                 delivery,
-                AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+                AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
             ),
         )
         .await;
         #[cfg(not(feature = "testing"))]
         let result = observed!(
             delivery,
-            AssertUnwindSafe(handler.handle(msg, &mut ctx)).catch_unwind()
+            AssertUnwindSafe(async { handler.handle(msg, &mut ctx).await }).catch_unwind()
         )
         .await;
         #[cfg(feature = "testing")]
@@ -1508,14 +1510,16 @@ async fn run_batch<H, Batch, C, St>(
         harness_scope(delivery),
         observed!(
             delivery,
-            AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+            AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+                .catch_unwind()
         ),
     )
     .await;
     #[cfg(not(feature = "testing"))]
     let result = observed!(
         delivery,
-        AssertUnwindSafe(handler.handle_batch(batch, scratch, &mut ctx)).catch_unwind()
+        AssertUnwindSafe(async { handler.handle_batch(batch, scratch, &mut ctx).await })
+            .catch_unwind()
     )
     .await;
     match result {
