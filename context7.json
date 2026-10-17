@@ -1,6 +1,16 @@
 {
+  "$schema": "https://context7.com/schema/context7.json",
   "url": "https://context7.com/powersemmi/ruststream",
   "public_key": "pk_uUlur6QCUlrZ8v1BsB2Wn",
+  "folders": [
+    "docs",
+    "src",
+    "crates/ruststream-macros",
+    "website/static"
+  ],
+  "excludeFolders": [
+    "website/i18n"
+  ],
   "rules": [
     "Import `ruststream::prelude::*` in a service, or the broker crate's own prelude, which re-exports it; the broker and the codec stay explicit choices.",
     "Declare a handler as an `async fn` under `#[subscriber(..)]` whose first parameter is `&T` for one message or `&[T]` for a batch; mount it with `b.include(handler)` inside `with_broker`, and a batch handler with `.batch(n)`.",
