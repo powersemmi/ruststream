@@ -227,6 +227,69 @@ name = "manual_asyncapi_http"
 path = "examples/manual/asyncapi_http.rs"
 required-features = ["memory", "asyncapi"]
 
+# The AsyncAPI component pages: each pair builds the document of one service in both forms, and
+# its tests assert the same part of it. The `manual_*` twins leave `macros` off.
+[[example]]
+name = "asyncapi_generation"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_generation"
+path = "examples/manual/asyncapi_generation.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_schemas"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_schemas"
+path = "examples/manual/asyncapi_schemas.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_reports"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_reports"
+path = "examples/manual/asyncapi_reports.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_content_type"
+required-features = ["macros", "memory", "asyncapi", "cbor"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_content_type"
+path = "examples/manual/asyncapi_content_type.rs"
+required-features = ["memory", "asyncapi", "cbor"]
+test = true
+
+[[example]]
+name = "asyncapi_servers"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_servers"
+path = "examples/manual/asyncapi_servers.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+# No macro in reach: the `info` section is built from plain values, so this file is both forms.
+[[example]]
+name = "asyncapi_info"
+required-features = ["asyncapi"]
+test = true
+
 [[example]]
 name = "manual_metrics"
 path = "examples/manual/metrics.rs"
