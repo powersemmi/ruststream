@@ -1,6 +1,6 @@
 import {useId, type ReactNode} from 'react';
 import Link from '@docusaurus/Link';
-import {extent, route, textVersion, type Box, type Link as Arrow} from './flow';
+import {extent, route, textVersion, type Box, type Lane, type Link as Arrow} from './flow';
 import styles from './styles.module.css';
 
 /*
@@ -13,10 +13,7 @@ import styles from './styles.module.css';
 const WIDTH = 360;
 const LINE = 15;
 
-export interface Lane {
-  x: number;
-  label: string;
-}
+export type {Lane};
 
 export interface FlowProps {
   title: string;
@@ -161,7 +158,7 @@ export function Flow({title, boxes, links, lanes, text, width = WIDTH}: FlowProp
       <details className={styles.text}>
         <summary>{text}</summary>
         <ol>
-          {textVersion(boxes, links).map((line) => (
+          {textVersion(boxes, links, lanes).map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ol>

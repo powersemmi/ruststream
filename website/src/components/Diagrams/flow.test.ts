@@ -43,13 +43,23 @@ describe('a route between two boxes', () => {
   });
 
   it('places its label beside the first stretch of the line', () => {
-    const {label} = route(box('a', 0, 0), box('b', 0, 100), {from: 'a', to: 'b', label: 'x'});
+    const {label} = route(box('a', 0, 0), box('b', 0, 100), {
+      from: 'a',
+      to: 'b',
+      label: 'x',
+    });
     expect(label).toEqual({x: 56, y: 70, align: 'start'});
   });
 });
 
 it('centres a label over a sideways stretch', () => {
-  const link = {from: 'a', to: 'b', label: 'x', exit: 'left', enter: 'top'} as const;
+  const link = {
+    from: 'a',
+    to: 'b',
+    label: 'x',
+    exit: 'left',
+    enter: 'top',
+  } as const;
   expect(route(box('a', 200, 0), box('b', 0, 100), link).label).toEqual({
     x: 125,
     y: 14,
@@ -84,5 +94,47 @@ describe('the text version', () => {
         {from: 'b', to: 'a'},
       ]),
     ).toEqual(['Broker → Sub stream: deliveries', 'Sub stream → Broker']);
+  });
+
+  it('names a box that no link joins on a line of its own', () => {
+    const boxes = [
+      box('a', 0, 0, {lines: ['Broker']}),
+      box('b', 0, 100, {lines: ['Sub']}),
+      box('n', 0, 200, {kind: 'note', lines: ['A note', 'on two lines']}),
+    ];
+    expect(textVersion(boxes, [{from: 'a', to: 'b'}])).toEqual([
+      'Broker → Sub',
+      'A note on two lines',
+    ]);
+  });
+
+  it('opens with each frame and the boxes inside it', () => {
+    const boxes = [
+      box('core', 0, 0, {w: 300, h: 200, kind: 'group', lines: ['Core']}),
+      box('a', 10, 20, {lines: ['Runtime']}),
+      box('b', 150, 20, {lines: ['Codecs']}),
+      box('c', 0, 300, {lines: ['Client']}),
+    ];
+    expect(textVersion(boxes, [{from: 'a', to: 'c'}])).toEqual([
+      'Core: Runtime; Codecs',
+      'Runtime → Client',
+    ]);
+  });
+
+  it('names the column each step of a timeline runs in', () => {
+    const boxes = [
+      box('a', 0, 0, {lines: ['Poll']}),
+      box('b', 200, 50, {lines: ['Decode']}),
+      box('c', 200, 100, {lines: ['Body']}),
+    ];
+    const lanes = [
+      {x: 50, label: 'Loop'},
+      {x: 250, label: 'Handler'},
+    ];
+    expect(textVersion(boxes, [{from: 'a', to: 'b'}], lanes)).toEqual([
+      'Loop: Poll',
+      'Handler: Decode; Body',
+      'Poll → Decode',
+    ]);
   });
 });

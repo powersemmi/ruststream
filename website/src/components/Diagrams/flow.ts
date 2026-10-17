@@ -130,11 +130,50 @@ export const extent = (boxes: Box[]): number =>
 
 const name = (box: Box | undefined): string => box?.lines.join(' ') ?? '';
 
-/** The diagram read aloud: every link as its source, its target and what passes along it. */
-export function textVersion(boxes: Box[], links: Link[]): string[] {
+/** A column of a timeline: a header with a guide line down the drawing, naming who runs a step. */
+export interface Lane {
+  x: number;
+  label: string;
+}
+
+const inside = (outer: Box, inner: Box): boolean =>
+  inner.x >= outer.x &&
+  inner.y >= outer.y &&
+  inner.x + inner.w <= outer.x + outer.w &&
+  inner.y + inner.h <= outer.y + outer.h;
+
+/**
+ * The diagram read aloud, with everything the picture shows: each frame and the boxes inside it,
+ * each column of a timeline and the steps it runs, every link as its source, its target and what
+ * passes along it, and last every box that none of these has named. A list is joined by
+ * semicolons, because a box's own words may hold commas.
+ */
+export function textVersion(boxes: Box[], links: Link[], lanes: Lane[] = []): string[] {
   const byId = new Map(boxes.map((box) => [box.id, box]));
-  return links.map((link) => {
+  const named = new Set<string>();
+  const list = (title: string, members: Box[]): string => {
+    members.forEach((box) => named.add(box.id));
+    return `${title}: ${members.map(name).join('; ')}`;
+  };
+  const frames = boxes.filter((box) => box.kind === 'group');
+  const contents = boxes.filter((box) => box.kind !== 'group');
+  const framed = frames.map((frame) =>
+    list(
+      name(frame),
+      contents.filter((box) => inside(frame, box)),
+    ),
+  );
+  const columns = lanes.map((lane) =>
+    list(
+      lane.label,
+      contents.filter((box) => box.x + box.w / 2 === lane.x),
+    ),
+  );
+  const arrows = links.map((link) => {
+    named.add(link.from).add(link.to);
     const line = `${name(byId.get(link.from))} → ${name(byId.get(link.to))}`;
     return link.label ? `${line}: ${link.label}` : line;
   });
+  const alone = contents.filter((box) => !named.has(box.id)).map(name);
+  return [...framed, ...columns, ...arrows, ...alone];
 }
