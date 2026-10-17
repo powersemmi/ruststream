@@ -60,9 +60,7 @@ fn write_document(dir: &Path) -> Result<(), Box<dyn Error>> {
 // --8<-- [start:viewer]
 /// The page the service serves at `/docs`: it renders the document served at `/asyncapi.json`.
 fn docs_page() -> String {
-    let options = ViewerOptions::default()
-        .title("Orders events")
-        .cdn_base("https://assets.example.com/asyncapi-react");
+    let options = ViewerOptions::default().title("Orders events");
     render_viewer_html("/asyncapi.json", &options)
 }
 // --8<-- [end:viewer]
@@ -126,7 +124,7 @@ mod tests {
         assert!(page.contains("<title>Orders events</title>"));
         assert!(page.contains("url: \"/asyncapi.json\""));
         assert!(
-            page.contains("https://assets.example.com/asyncapi-react/browser/standalone/index.js")
+            page.contains("https://cdn.jsdelivr.net/npm/@asyncapi/react-component@3.1.8/browser/standalone/index.js")
         );
     }
 }
