@@ -7,9 +7,17 @@ description: "TestApp::advance lets a delay pass, fires the delayed redeliveries
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `advance`
+# advance
 
-`TestApp::advance` lets a delay pass, fires the delayed redeliveries now due, and drives their reaction to a standstill.
+[`TestApp::advance`](api:ruststream::testing::TestApp::advance) lets a delay pass, fires the delayed redeliveries now due, and drives their reaction to a standstill.
+
+A handler that answers [`retry_after(delay)`](api:ruststream::runtime::HandlerOutcome::retry_after) settles at once, and the publish returns with the delivery pending.
+`advance(delay)` then delivers the message again, by a broker's native delayed redelivery or by the runtime's deferred copy.
+In process it moves the paused clock, so the test starts paused with `#[tokio::test(start_paused = true)]`.
+On a running clock the in-process `advance` panics.
+In a [`start_live`](../starting-and-stopping/start-live.md) test it lets the time pass for real, because the delay is the broker's own timer.
+A copy the runtime publishes for a zero delay arrives in the same reaction, without `advance`.
+[`settle`](./settle.md) drives a reaction without moving the clock.
 
 ## Example
 
@@ -27,18 +35,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-A handler that answers `retry_after(delay)` settles at once, and the publish returns with the delivery pending.
-`advance(delay)` then delivers the message again, by a broker's native delayed redelivery or by the runtime's deferred copy.
-In process it moves the paused clock, so the test starts paused with `#[tokio::test(start_paused = true)]`.
-On a running clock the in-process `advance` panics.
-In live mode it lets the time pass for real, because the delay is the broker's own timer.
-A copy the runtime publishes for a zero delay arrives in the same reaction, without `advance`.
-
-## See also
-
-- [`settle`](./settle.md): drive a reaction without moving the clock.
-- [`start_live`](../starting-and-stopping/start-live.md): the real clock of a live test.
-- [`TestApp::advance`](api:ruststream::testing::TestApp::advance), [`HandlerOutcome::retry_after`](api:ruststream::runtime::HandlerOutcome::retry_after)

@@ -172,3 +172,20 @@
     padding: 56px 16px;
   }
 }
+
+/* A code term that links to its page: the accent color and an underline mark it as a link. */
+.codeLink {
+  text-decoration: underline;
+  text-decoration-color: var(--rs-land-accent-soft);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.codeLink code {
+  color: var(--rs-land-accent-text);
+}
+
+.codeLink:hover,
+.codeLink:focus-visible {
+  text-decoration-color: var(--rs-land-accent-text);
+}

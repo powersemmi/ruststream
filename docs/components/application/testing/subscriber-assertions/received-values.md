@@ -7,9 +7,14 @@ description: "received_values::<T>() returns every value a subscriber's deliveri
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `received_values`
+# received_values
 
-`received_values::<T>()` returns every value a subscriber's deliveries lent its handler, batch elements included.
+[`received_values::<T>()`](api:ruststream::testing::SubscriberAssertions::received_values) returns every value a subscriber's deliveries lent its handler, batch elements included.
+
+It is the counterpart of [`received`](./received.md) for a broker whose deliveries carry a value ([`Carries<T>`](api:ruststream::Carries)) instead of bytes to decode.
+The list is flat and in delivery order.
+It panics when a delivery lent no `T`.
+The row subscription here is the in-memory stand-in described on the [`with_value`](./with-value.md) page.
 
 ## Example
 
@@ -27,16 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It is the counterpart of `received` for a broker whose deliveries carry a value (`Carries<T>`) instead of bytes to decode.
-The list is flat and in delivery order.
-It panics when a delivery lent no `T`.
-The row subscription here is the in-memory stand-in described on the `with_value` page.
-
-## See also
-
-- [`with_value`](./with-value.md): the latest lent value only.
-- [`received`](./received.md): the same list for decoded payloads.
-- [`SubscriberAssertions::received_values`](api:ruststream::testing::SubscriberAssertions::received_values), [`Carries`](api:ruststream::Carries)

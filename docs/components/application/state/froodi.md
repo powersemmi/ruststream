@@ -9,7 +9,19 @@ import TabItem from '@theme/TabItem';
 
 # froodi
 
-[froodi](https://crates.io/crates/froodi) is a dependency-injection container whose `ruststream` feature builds a handler's dependencies per delivery, as `Inject` parameters.
+froodi ([crates.io](https://crates.io/crates/froodi), [docs.rs](https://docs.rs/froodi), [GitHub](https://github.com/Desiders/froodi)) is a dependency-injection container whose `ruststream` feature builds a handler's dependencies per delivery, as `Inject` parameters.
+
+The registry declares each dependency with the scope it lives in.
+`Config` lives in the `App` scope, as long as the container.
+`Pricing` lives in the `Request` scope and is built from `Config` by its factory.
+`ContainerLayer` is a middleware, mounted with [`RustStream::layer`](api:ruststream::runtime::RustStream::layer): for every delivery it enters a child `Request` scope, runs the handler inside it and closes the scope once the handler has answered.
+Closing the scope runs the finalizers of what it built before the message is settled.
+`Inject<Pricing>` is a [`FromContext`](api:ruststream::runtime::FromContext) extractor that resolves from that child scope, so two parameters of one delivery share an instance.
+`InjectTransient<T>` builds a fresh instance for each parameter instead.
+A dependency the container cannot resolve drops the delivery and logs the channel and the type.
+A handler that takes `Inject` in a service with no `ContainerLayer` drops every delivery the same way.
+The layer builds a child container for every delivery, which allocates; dependencies in the `App` scope are built once.
+With froodi's `async` feature, `AsyncContainerLayer` holds a container whose factories and finalizers can await.
 
 ## Example
 
@@ -204,24 +216,3 @@ pub fn app() -> impl App {
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The registry declares each dependency with the scope it lives in.
-`Config` lives in the `App` scope, as long as the container.
-`Pricing` lives in the `Request` scope and is built from `Config` by its factory.
-`ContainerLayer` is a middleware: for every delivery it enters a child `Request` scope, runs the handler inside it and closes the scope once the handler has answered.
-Closing the scope runs the finalizers of what it built before the message is settled.
-`Inject<Pricing>` resolves from that child scope, so two parameters of one delivery share an instance.
-`InjectTransient<T>` builds a fresh instance for each parameter instead.
-A dependency the container cannot resolve drops the delivery and logs the channel and the type.
-A handler that takes `Inject` in a service with no `ContainerLayer` drops every delivery the same way.
-The layer builds a child container for every delivery, which allocates; dependencies in the `App` scope are built once.
-With froodi's `async` feature, `AsyncContainerLayer` holds a container whose factories and finalizers can await.
-
-## See also
-
-- [Any struct as state](./any-struct.md): state with no container.
-- [shaku](./shaku.md): a container wired by hand.
-- froodi on [crates.io](https://crates.io/crates/froodi), [docs.rs](https://docs.rs/froodi) and [GitHub](https://github.com/Desiders/froodi)
-- [`RustStream::layer`](api:ruststream::runtime::RustStream::layer), [`FromContext`](api:ruststream::runtime::FromContext)

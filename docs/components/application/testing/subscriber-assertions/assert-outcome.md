@@ -7,9 +7,15 @@ description: "assert_outcome(..) checks the latest handler call by its classifie
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `assert_outcome`
+# assert_outcome
 
-`assert_outcome(..)` checks the latest handler call by its classified `Outcome`, failures included.
+[`assert_outcome(..)`](api:ruststream::testing::SubscriberAssertions::assert_outcome) checks the latest handler call by its classified [`Outcome`](api:ruststream::testing::Outcome), failures included.
+
+`Outcome` folds a call into five cases: `Ack`, `Nack`, `Drop`, `DecodeFailed` and `Panicked`.
+`Nack` covers both `retry()` and `retry_after(..)`, so the delay plays no part.
+A panic or a decode failure wins over the settlement: such a call reads as `Panicked` or `DecodeFailed`, which [`panicked`](./panicked.md) and [`assert_last_failed_to_decode`](./assert-last-failed-to-decode.md) check on their own.
+Here the delayed copy waits for [`tb.advance(..)`](../driving/advance.md) on the paused clock, so the record holds one call.
+[`settled`](./settled.md) checks by `HandlerOutcome` instead, and [`outcomes`](./outcomes.md) returns the outcome of every call.
 
 ## Example
 
@@ -27,18 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-`Outcome` folds a call into five cases: `Ack`, `Nack`, `Drop`, `DecodeFailed` and `Panicked`.
-`Nack` covers both `retry()` and `retry_after(..)`, so the delay plays no part.
-A panic or a decode failure wins over the settlement: such a call reads as `Panicked` or `DecodeFailed`.
-Here the delayed copy waits for `tb.advance(..)` on the paused clock, so the record holds one call.
-
-## See also
-
-- [`settled`](./settled.md): the check by `HandlerOutcome`.
-- [`outcomes`](./outcomes.md): the outcome of every call.
-- [`panicked`](./panicked.md), [`assert_last_failed_to_decode`](./assert-last-failed-to-decode.md): the two failures on their own.
-- [`advance`](../driving/advance.md): let a `retry_after` delay pass.
-- [`SubscriberAssertions::assert_outcome`](api:ruststream::testing::SubscriberAssertions::assert_outcome), [`Outcome`](api:ruststream::testing::Outcome)

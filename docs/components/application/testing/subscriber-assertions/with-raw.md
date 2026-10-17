@@ -7,9 +7,14 @@ description: "with_raw(bytes) checks the exact bytes of the latest handler call,
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with_raw`
+# with_raw
 
-`with_raw(bytes)` checks the exact bytes of the latest handler call, before any decoding.
+[`with_raw(bytes)`](api:ruststream::testing::SubscriberAssertions::with_raw) checks the exact bytes of the latest handler call, before any decoding.
+
+It compares the payload as the broker delivered it, so it pins the wire format: here the JSON the default codec wrote.
+It reads the most recent call only, and that call must hold one delivery.
+It is the check for a handler that reads bytes itself, where no codec has a value to compare.
+[`with`](./with.md) checks the same call decoded, and [`received_raw`](./received-raw.md) returns the bytes of every call.
 
 ## Example
 
@@ -27,15 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-It compares the payload as the broker delivered it, so it pins the wire format: here the JSON the default codec wrote.
-It reads the most recent call only, and that call must hold one delivery.
-It is the check for a handler that reads bytes itself, where no codec has a value to compare.
-
-## See also
-
-- [`with`](./with.md): the same call decoded.
-- [`received_raw`](./received-raw.md): the bytes of every call.
-- [`SubscriberAssertions::with_raw`](api:ruststream::testing::SubscriberAssertions::with_raw)

@@ -170,5 +170,53 @@
   "sidebar.components.doc.Overview": {
     "message": "概览",
     "description": "The label for the doc item 'Overview' in sidebar 'components', linking to the doc components/index"
+  },
+  "sidebar.components.category.Running": {
+    "message": "运行",
+    "description": "The label for category 'Running' in sidebar 'components'"
+  },
+  "sidebar.components.category.State": {
+    "message": "状态",
+    "description": "The label for category 'State' in sidebar 'components'"
+  },
+  "sidebar.components.category.Starting and stopping": {
+    "message": "启动与停止",
+    "description": "The label for category 'Starting and stopping' in sidebar 'components'"
+  },
+  "sidebar.components.category.Driving": {
+    "message": "驱动测试",
+    "description": "The label for category 'Driving' in sidebar 'components'"
+  },
+  "sidebar.components.category.Service state": {
+    "message": "服务状态",
+    "description": "The label for category 'Service state' in sidebar 'components'"
+  },
+  "sidebar.components.category.Records": {
+    "message": "记录",
+    "description": "The label for category 'Records' in sidebar 'components'"
+  },
+  "sidebar.components.category.Subscriber assertions": {
+    "message": "订阅者断言",
+    "description": "The label for category 'Subscriber assertions' in sidebar 'components'"
+  },
+  "sidebar.components.category.Published assertions": {
+    "message": "发布断言",
+    "description": "The label for category 'Published assertions' in sidebar 'components'"
+  },
+  "sidebar.components.category.Replay": {
+    "message": "重放",
+    "description": "The label for category 'Replay' in sidebar 'components'"
+  },
+  "sidebar.components.category.Headers": {
+    "message": "消息头",
+    "description": "The label for category 'Headers' in sidebar 'components'"
+  },
+  "sidebar.components.category.Messages": {
+    "message": "消息",
+    "description": "The label for category 'Messages' in sidebar 'components'"
+  },
+  "sidebar.components.category.Context and extractors": {
+    "message": "上下文与提取器",
+    "description": "The label for category 'Context and extractors' in sidebar 'components'"
   }
 }

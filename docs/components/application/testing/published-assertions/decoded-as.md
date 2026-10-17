@@ -7,9 +7,14 @@ description: "decoded_as::<U>() re-types a record, so its payload assertions dec
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `decoded_as`
+# decoded_as
 
-`decoded_as::<U>()` re-types a record, so its payload assertions decode to `U`.
+[`decoded_as::<U>()`](api:ruststream::testing::PublishedAssertions::decoded_as) re-types a record, so its payload assertions decode to `U`.
+
+[`out::<M>()`](../records/out.md) returns an untyped record, because a slot may publish several types; `decoded_as` names the one to read.
+The same call reads a destination record as a type other than the one it was opened with.
+It consumes the record and keeps its messages and their recorded settings.
+After it, [`with`](./with.md), `with_codec`, [`decoded`](./decoded.md) and `decoded_with` decode to `U`.
 
 ## Example
 
@@ -27,16 +32,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-`out::<M>()` returns an untyped record, because a slot may publish several types; `decoded_as` names the one to read.
-The same call reads a destination record as a type other than the one it was opened with.
-It consumes the record and keeps its messages and their recorded settings.
-After it, `with`, `with_codec`, `decoded` and `decoded_with` decode to `U`.
-
-## See also
-
-- [`out::<M>()`](../records/out.md): the slot record that needs it.
-- [`with`](./with.md), [`decoded`](./decoded.md)
-- [`PublishedAssertions::decoded_as`](api:ruststream::testing::PublishedAssertions::decoded_as)

@@ -1,12 +1,22 @@
 ---
 sidebar_position: 5
-title: The ruststream command
+title: CLI
 description: "The ruststream command runs a service and prints its AsyncAPI document through cargo run; cargo generate scaffolds a new one."
 ---
 
-# The `ruststream` command
+# CLI
 
 The `ruststream` command runs a service and prints its AsyncAPI document through `cargo run`; `cargo generate` scaffolds a new one.
+
+`ruststream run` executes `cargo run -- run` against the crate's `Cargo.toml`, and `ruststream asyncapi gen` executes `cargo run -- asyncapi gen`.
+The service's own binary does the work: the `main` that [`#[ruststream::app]`](./app-macro.md) generates understands both commands.
+That `main` hands the commands to [`run_main`](api:ruststream::runtime::cli::run_main), and the [`runtime::cli`](api:ruststream::runtime::cli) module documents them.
+`cargo run -- run` and `cargo run -- asyncapi gen` therefore give the same result without the command installed.
+The same [run](./running/run.md) is one call from code.
+`-p` points at another crate or its `Cargo.toml`, and `--release` builds in release mode.
+`asyncapi gen` needs the service crate's `asyncapi` feature; the starter template enables it.
+The template's console logs come from its `logging` feature.
+`cargo generate` comes from the [cargo-generate](https://github.com/cargo-generate/cargo-generate) project; a broker crate ships templates of its own for its transport.
 
 ## Example
 
@@ -79,19 +89,3 @@ ruststream asyncapi gen --yaml
 ruststream asyncapi gen -o asyncapi.json
 ruststream asyncapi gen -p ../my-service
 ```
-
-## How it works
-
-`ruststream run` executes `cargo run -- run` against the crate's `Cargo.toml`, and `ruststream asyncapi gen` executes `cargo run -- asyncapi gen`.
-The service's own binary does the work: the `main` that `#[ruststream::app]` generates understands both commands.
-`cargo run -- run` and `cargo run -- asyncapi gen` therefore give the same result without the command installed.
-`-p` points at another crate or its `Cargo.toml`, and `--release` builds in release mode.
-`asyncapi gen` needs the service crate's `asyncapi` feature; the starter template enables it.
-The template's console logs come from its `logging` feature.
-`cargo generate` comes from the [cargo-generate](https://github.com/cargo-generate/cargo-generate) project; a broker crate ships templates of its own for its transport.
-
-## See also
-
-- [`#[ruststream::app]`](./app-macro.md): the generated `main` behind both commands.
-- [Running the service](./running.md): the same run from code.
-- [`runtime::cli`](api:ruststream::runtime::cli), [`run_main`](api:ruststream::runtime::cli::run_main)

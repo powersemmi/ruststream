@@ -7,9 +7,16 @@ description: "assert_last_failed_to_decode() checks that the latest delivery did
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `assert_last_failed_to_decode`
+# assert_last_failed_to_decode
 
-`assert_last_failed_to_decode()` checks that the latest delivery did not decode into the handler's input type.
+[`assert_last_failed_to_decode()`](api:ruststream::testing::SubscriberAssertions::assert_last_failed_to_decode) checks that the latest delivery did not decode into the handler's input type.
+
+The verdict comes from the codec, or from the broker when its client reports a decode error itself.
+The record holds the delivery as a call although the body never ran, so `assert_called_once` counts it.
+The decode policy settles it: the default drops the message and keeps the service running, which [`assert_running`](../service-state/assert-running.md) states.
+The test injects the bad bytes through a `#[derive(Outgoing, Serialized)]` newtype, which publishes them as they are.
+It returns nothing, so it ends a chain.
+[`assert_outcome`](./assert-outcome.md) gives the same verdict as `Outcome::DecodeFailed`, and [`panicked`](./panicked.md) checks the other failure a call can end in.
 
 ## Example
 
@@ -27,18 +34,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The verdict comes from the codec, or from the broker when its client reports a decode error itself.
-The record holds the delivery as a call although the body never ran, so `assert_called_once` counts it.
-The decode policy settles it: the default drops the message and keeps the service running.
-The test injects the bad bytes through a `#[derive(Outgoing, Serialized)]` newtype, which publishes them as they are.
-It returns nothing, so it ends a chain.
-
-## See also
-
-- [`assert_outcome`](./assert-outcome.md): the same verdict as `Outcome::DecodeFailed`.
-- [`panicked`](./panicked.md): the other failure a call can end in.
-- [`assert_running`](../service-state/assert-running.md): the service keeps running after a decode failure.
-- [`SubscriberAssertions::assert_last_failed_to_decode`](api:ruststream::testing::SubscriberAssertions::assert_last_failed_to_decode)

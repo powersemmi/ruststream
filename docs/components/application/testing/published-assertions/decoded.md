@@ -7,9 +7,15 @@ description: "decoded returns every payload published to the destination as a va
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `decoded`
+# decoded
 
-`decoded` returns every payload published to the destination as a value; `decoded_with` names the codec.
+[`decoded`](api:ruststream::testing::PublishedAssertions::decoded) returns every payload published to the destination as a value; [`decoded_with`](api:ruststream::testing::PublishedAssertions::decoded_with) names the codec.
+
+The values come in publish order, decoded as the record's type parameter `T`; [`decoded_as`](./decoded-as.md) decodes them as another type.
+`decoded` uses the default codec and exists when a codec feature is enabled.
+`decoded_with(&codec)` decodes with the codec the mount site named, here a `.codec(..)` on the reply.
+Either one panics, naming the destination and the type, when a payload does not decode.
+[`with`](./with.md) checks the latest payload against one value.
 
 ## Example
 
@@ -27,16 +33,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-The values come in publish order, decoded as the record's type parameter `T`.
-`decoded` uses the default codec and exists when a codec feature is enabled.
-`decoded_with(&codec)` decodes with the codec the mount site named, here a `.codec(..)` on the reply.
-Either one panics, naming the destination and the type, when a payload does not decode.
-
-## See also
-
-- [`with`](./with.md): the latest payload against one value.
-- [`decoded_as`](./decoded-as.md): decode as another type.
-- [`PublishedAssertions::decoded`](api:ruststream::testing::PublishedAssertions::decoded), [`PublishedAssertions::decoded_with`](api:ruststream::testing::PublishedAssertions::decoded_with)

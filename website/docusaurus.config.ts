@@ -121,6 +121,8 @@ const config: Config = {
 
   customFields: {
     siteRoot,
+    // The landing page links code terms to the rustdoc of the version built.
+    docsRs: version.docsRs,
     accent,
     sourceUrl,
   },

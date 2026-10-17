@@ -26,6 +26,12 @@ tests that prove it sit in the same file, after the region's end marker) and ope
 or an attribute, so the reader sees the signature of the code it shows, never a statement taken
 out of the middle of a function. An inline fence outside the Testing pages holds no test either. A region on a Testing page is
 the test that calls the documented function, without the handler and `fn app` above it.
+
+A component page reads in one order: the title, a one-sentence summary, the description, then
+`## Example` with the code. So under `components/` no code (a rust fence or a `<Tabs>` block)
+comes before `## Example`, the summary is followed by at least one paragraph of description, and
+the page has no "How it works" or "See also" heading: links to API items and related pages sit
+in the text at their first mention.
 """
 
 import re
@@ -55,6 +61,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # Paths within a documentation tree: the English one under `docs/` and each translation under
 # `website/i18n/<locale>/docusaurus-plugin-content-docs/current/` hold the same pages.
 TESTING_PAGES = ("components/application/testing/",)
+COMPONENT_PAGES = ("components/",)
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+BANNED_HEADINGS = ("how it works", "see also")
 TEST_SUITE_PAGES = ("broker-authors/",)
 
 
@@ -130,6 +139,53 @@ def page_path(path: Path) -> str:
             return Path(*inner).as_posix()
     return resolved.relative_to(ROOT).as_posix()
 
+def component_order_errors(path: Path, lines: list[str]) -> list[str]:
+    """A component page: summary, description, then `## Example`; no How it works or See also."""
+    errors = []
+    title = example = None
+    paragraphs = 0
+    in_paragraph = False
+    in_fence = False
+    for n, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_fence and example is None:
+                errors.append(f"{path}:{n}: code before `## Example` - the description comes first")
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        heading = HEADING.match(line)
+        if heading:
+            level, text = len(heading.group(1)), heading.group(2)
+            if text.lower() in BANNED_HEADINGS:
+                errors.append(
+                    f"{path}:{n}: `{line.strip()}` - a component page has no such section; the"
+                    " description follows the summary, and links sit in the text"
+                )
+            if level == 1 and title is None:
+                title = n
+            elif level == 2 and text == "Example" and example is None:
+                example = n
+                if paragraphs < 2:
+                    errors.append(
+                        f"{path}:{n}: `## Example` right after the summary - the description"
+                        " comes between them"
+                    )
+            in_paragraph = False
+            continue
+        if TABS_OPEN.search(line) and example is None:
+            errors.append(f"{path}:{n}: tabs before `## Example` - the description comes first")
+        if title is not None and example is None:
+            if stripped and not stripped.startswith(("{/*", "<", "import ")):
+                if not in_paragraph:
+                    paragraphs += 1
+                in_paragraph = True
+            elif not stripped:
+                in_paragraph = False
+    return errors
+
+
 def lint(path: Path) -> list[str]:
     errors = []
     lines = path.read_text().splitlines()
@@ -144,6 +200,8 @@ def lint(path: Path) -> list[str]:
     # The Testing pages and the broker contract's pages document test suites: tests are their
     # subject.
     testing_page = relative.startswith(TESTING_PAGES + TEST_SUITE_PAGES)
+    if relative.startswith(COMPONENT_PAGES):
+        errors.extend(component_order_errors(path, lines))
     snippet_fence = False
     for n, line in enumerate(lines, 1):
         stripped = line.strip()

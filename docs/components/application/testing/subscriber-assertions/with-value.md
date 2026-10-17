@@ -7,9 +7,16 @@ description: "with_value(&value) checks the value the latest delivery lent its h
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# `with_value`
+# with_value
 
-`with_value(&value)` checks the value the latest delivery lent its handler, on a broker whose deliveries already hold one.
+[`with_value(&value)`](api:ruststream::testing::SubscriberAssertions::with_value) checks the value the latest delivery lent its handler, on a broker whose deliveries already hold one.
+
+Some brokers decode a delivery in their client and lend the handler that value, such as a database row; the delivery implements [`Carries<T>`](api:ruststream::Carries).
+That value never was bytes, so [`with`](./with.md) has nothing to decode; the harness keeps a clone of the lent value instead.
+The value type needs `Clone`, `PartialEq` and `Debug`.
+It panics when the latest delivery lent no `T`: the handler takes another type, or the delivery carried nothing.
+The row subscription here stands in for such a broker crate: it reads `id:name` payloads of the in-memory broker as rows (`examples/support/carried_rows.rs`).
+[`received_values`](./received-values.md) returns every lent value, not only the latest.
 
 ## Example
 
@@ -27,17 +34,3 @@ import TabItem from '@theme/TabItem';
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-Some brokers decode a delivery in their client and lend the handler that value, such as a database row; the delivery implements `Carries<T>`.
-That value never was bytes, so `with` has nothing to decode; the harness keeps a clone of the lent value instead.
-The value type needs `Clone`, `PartialEq` and `Debug`.
-It panics when the latest delivery lent no `T`: the handler takes another type, or the delivery carried nothing.
-The row subscription here stands in for such a broker crate: it reads `id:name` payloads of the in-memory broker as rows (`examples/support/carried_rows.rs`).
-
-## See also
-
-- [`received_values`](./received-values.md): every lent value, not only the latest.
-- [`with`](./with.md): the check for a payload the codec decodes.
-- [`SubscriberAssertions::with_value`](api:ruststream::testing::SubscriberAssertions::with_value), [`Carries`](api:ruststream::Carries)
