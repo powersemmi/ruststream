@@ -2,11 +2,13 @@ import {existsSync, readFileSync} from 'node:fs';
 import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config, Plugin} from '@docusaurus/types';
+import {getVcsPreset} from '@docusaurus/utils';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
 import remarkApiLinks from './plugins/remarkApiLinks';
 import remarkSnippets from './plugins/remarkSnippets';
 import redirectsPlugin from './plugins/redirects';
+import {siteRelativeVcs} from './plugins/siteRelativeVcs';
 import {redirects as guideRedirects} from './redirects';
 import {translatableLabels} from './sidebarItems';
 import {readBuildVersion, siteRoot} from './versioning';
@@ -109,6 +111,8 @@ const config: Config = {
   future: {
     v4: true,
     faster: true,
+    // The eager Git reader that `faster` selects, made to answer the sitemap's `lastmod` lookups.
+    experimental_vcs: siteRelativeVcs(getVcsPreset('default-v2')),
   },
 
   // One namespace for every language and version build, so a reader's colour theme and tab
@@ -136,14 +140,18 @@ const config: Config = {
     // The landing page links code terms to the rustdoc of the version built.
     docsRs: version.docsRs,
     sourceUrl,
+    // The canonical URLs and language alternates of every page name this copy of the site. A
+    // language's build sees its own base URL, so the version's one travels beside it.
+    buildBaseUrl: version.baseUrl,
+    canonicalBaseUrl: version.canonicalBaseUrl,
   },
 
-  // `next` documents unreleased code; search engines should send readers to `latest`. The tag
-  // goes on every page, the landing page included, not only on the docs.
-  headTags:
-    version.noIndex
-      ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex, nofollow'}}]
-      : [],
+  // `next` documents unreleased code and an archive an old release; search engines should send
+  // readers to `latest`. The tag goes on every page, the landing page included, and still lets a
+  // crawler follow the pages' links to `latest`, which the site option `noIndex` would forbid.
+  headTags: version.noIndex
+    ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex'}}]
+    : [],
 
   i18n: {
     defaultLocale: 'en',
@@ -215,6 +223,19 @@ const config: Config = {
         theme: {
           customCss: './src/css/custom.css',
         },
+        // Only the indexed copy lists its pages. Google ignores `changefreq` and `priority`;
+        // `lastmod` comes from the git history of each page. The search page holds nothing
+        // without a query.
+        sitemap: version.sitemap
+          ? {
+              lastmod: 'date',
+              changefreq: null,
+              priority: null,
+              ignorePatterns: locales.map((locale) =>
+                locale === 'en' ? `${baseUrl}search/**` : `${baseUrl}${locale}/search/**`,
+              ),
+            }
+          : false,
       } satisfies Preset.Options,
     ],
   ],

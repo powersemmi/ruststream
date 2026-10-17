@@ -6,7 +6,8 @@ import path from 'node:path';
  * - `latest`: the newest release, the default; it carries no banner.
  * - `next`: the documentation of `main`, ahead of every release; its pages say so and are
  *   kept out of search engines.
- * - `archive`: an older release; its pages point the reader at `latest`.
+ * - `archive`: an older release; its pages point the reader at `latest` and are kept out of
+ *   search engines, so a search lands on the release a reader should use.
  */
 export type VersionKind = 'latest' | 'next' | 'archive';
 
@@ -27,8 +28,16 @@ export interface BuildVersion {
   contentRoot: string;
   /** The git ref the excerpts' source links point at. */
   sourceRef: string;
-  /** Every page asks search engines to skip it. */
+  /** Every page asks search engines to leave it out of their results. */
   noIndex: boolean;
+  /**
+   * The base URL of the copy search engines should index: `/ruststream/latest/` for the newest
+   * line, which is built twice (under its number and under `latest`), the build's own base URL
+   * otherwise. A page's canonical URL and its language alternates are written against it.
+   */
+  canonicalBaseUrl: string;
+  /** The build publishes a sitemap: only the copy that is indexed under its own address does. */
+  sitemap: boolean;
   /** The docs plugin's options for the one version a build holds. */
   docsVersion: {label: string; banner: 'none' | 'unreleased' | 'unmaintained'};
   /**
@@ -68,6 +77,8 @@ export function readBuildVersion(
   if (archive && kind !== 'archive') {
     throw new Error(`DOCS_CONTENT_ROOT names an archive, which builds as archive, not '${kind}'`);
   }
+  const noIndex = kind !== 'latest';
+  const canonicalBaseUrl = kind === 'latest' ? `${siteRoot}latest/` : baseUrl;
   return {
     baseUrl,
     directory,
@@ -75,7 +86,9 @@ export function readBuildVersion(
     archive,
     contentRoot: archive ? path.resolve(repoRoot, env.DOCS_CONTENT_ROOT!) : repoRoot,
     sourceRef: env.DOCS_SOURCE_REF ?? 'main',
-    noIndex: kind === 'next',
+    noIndex,
+    canonicalBaseUrl,
+    sitemap: !noIndex && canonicalBaseUrl === baseUrl,
     docsVersion: {label: directory, banner: banners[kind]},
     docsRs: `https://docs.rs/ruststream/${kind === 'next' ? 'latest' : (line ?? 'latest')}/`,
   };

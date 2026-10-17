@@ -14,6 +14,8 @@ describe('readBuildVersion', () => {
       contentRoot: repoRoot,
       sourceRef: 'main',
       noIndex: false,
+      canonicalBaseUrl: '/ruststream/latest/',
+      sitemap: true,
       docsVersion: {label: 'latest', banner: 'none'},
       docsRs: 'https://docs.rs/ruststream/latest/',
     });
@@ -27,6 +29,16 @@ describe('readBuildVersion', () => {
       );
       expect(version.docsRs).toBe('https://docs.rs/ruststream/0.7/');
     }
+  });
+
+  it('names latest as the indexed copy of the newest line under its number', () => {
+    const numbered = readBuildVersion(
+      {DOCS_BASE_URL: '/ruststream/0.7/', DOCS_VERSION_KIND: 'latest', DOCS_LINE: '0.7'},
+      repoRoot,
+    );
+    expect(numbered.noIndex).toBe(false);
+    expect(numbered.canonicalBaseUrl).toBe('/ruststream/latest/');
+    expect(numbered.sitemap).toBe(false);
   });
 
   it('links next to the newest release on docs.rs', () => {
@@ -51,15 +63,19 @@ describe('readBuildVersion', () => {
     expect(version.directory).toBe('next');
     expect(version.archive).toBe(false);
     expect(version.noIndex).toBe(true);
+    expect(version.canonicalBaseUrl).toBe('/ruststream/next/');
+    expect(version.sitemap).toBe(false);
     expect(version.docsVersion).toEqual({label: 'next', banner: 'unreleased'});
   });
 
-  it('marks an older release as unmaintained', () => {
+  it('marks an older release as unmaintained and keeps it out of search engines', () => {
     const version = readBuildVersion(
       {DOCS_BASE_URL: '/ruststream/0.6/', DOCS_VERSION_KIND: 'archive'},
       repoRoot,
     );
-    expect(version.noIndex).toBe(false);
+    expect(version.noIndex).toBe(true);
+    expect(version.canonicalBaseUrl).toBe('/ruststream/0.6/');
+    expect(version.sitemap).toBe(false);
     expect(version.docsVersion).toEqual({label: '0.6', banner: 'unmaintained'});
     expect(version.contentRoot).toBe(repoRoot);
     expect(version.docsRs).toBe('https://docs.rs/ruststream/0.6/');
