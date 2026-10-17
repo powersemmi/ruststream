@@ -76,13 +76,13 @@ mod reading {
             }))
         }
     }
-    // --8<-- [end:handler]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Receive).reply().build());
         })
     }
+    // --8<-- [end:handler]
 
     #[tokio::test]
     async fn the_handler_reads_the_channel_and_a_header() -> Result<(), Box<dyn Error>> {

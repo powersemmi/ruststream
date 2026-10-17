@@ -55,7 +55,6 @@ mod start_at {
         MemoryBroker::retaining(Retention::Messages(nonzero!(64)))
     }
     // --8<-- [end:retaining]
-    // --8<-- [end:start_at]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
@@ -67,6 +66,7 @@ mod start_at {
             );
         })
     }
+    // --8<-- [end:start_at]
 
     #[tokio::test]
     async fn the_history_is_replayed() -> Result<(), Box<dyn Error>> {
@@ -140,7 +140,6 @@ mod seek {
             Ok(())
         }
     }
-    // --8<-- [end:seek]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
         RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
@@ -151,6 +150,7 @@ mod seek {
             );
         })
     }
+    // --8<-- [end:seek]
 
     #[tokio::test]
     async fn the_poisoned_region_is_skipped() -> Result<(), Box<dyn Error>> {

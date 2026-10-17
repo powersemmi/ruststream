@@ -147,7 +147,6 @@ mod batch {
                 .collect()))
         }
     }
-    // --8<-- [end:batch]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App<State = Arc<Notifier>> {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
@@ -161,6 +160,7 @@ mod batch {
                 );
             })
     }
+    // --8<-- [end:batch]
 
     #[tokio::test]
     async fn only_the_acked_orders_are_announced() -> Result<(), Box<dyn Error>> {

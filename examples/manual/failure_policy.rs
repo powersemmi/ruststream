@@ -107,7 +107,6 @@ mod skip {
             ready(Ok(()))
         }
     }
-    // --8<-- [end:skip]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -122,6 +121,7 @@ mod skip {
             );
         })
     }
+    // --8<-- [end:skip]
 
     #[tokio::test]
     async fn the_audit_keeps_going_past_failures() -> Result<(), Box<dyn Error>> {
@@ -168,7 +168,6 @@ mod tuned {
             ready(Ok(()))
         }
     }
-    // --8<-- [end:tuned]
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -182,6 +181,7 @@ mod tuned {
             );
         })
     }
+    // --8<-- [end:tuned]
 
     #[tokio::test(start_paused = true)]
     async fn an_unreadable_payload_comes_back_later() -> Result<(), Box<dyn Error>> {
