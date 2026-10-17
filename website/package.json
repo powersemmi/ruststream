@@ -39,6 +39,7 @@
     "@types/mdast": "4.0.4",
     "@types/react": "19.3.0",
     "cross-env": "10.1.0",
+    "postcss": "8.5.30",
     "remark-parse": "11.0.0",
     "typescript": "6.0.3",
     "unified": "11.0.5",
