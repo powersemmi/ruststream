@@ -11,6 +11,11 @@ import {redirects as guideRedirects} from './redirects';
 import {translatableLabels} from './sidebarItems';
 import {readBuildVersion, siteRoot} from './versioning';
 
+// The `build` script sets `WEBPACK_URL_LOADER_LIMIT=0`. Docusaurus otherwise inlines every asset
+// under 10 kB into the file that imports it, and the fonts' `woff` fallbacks, which no current
+// browser downloads, would then fill the render-blocking stylesheet with base64. The variable is
+// read when Docusaurus loads, before this file, so it cannot be set here.
+
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
 // build of the newest line under `/ruststream/latest/` and a build of `main` under
 // `/ruststream/next/`. The deploy script sets the base URL and the kind of version per build, so
