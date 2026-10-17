@@ -83,9 +83,9 @@
     "message": "Авторам брокеров",
     "description": "The label for category 'Broker authors' in sidebar 'architecture'"
   },
-  "sidebar.architecture.doc.Benchmarks": {
+  "sidebar.architecture.category.Benchmarks": {
     "message": "Бенчмарки",
-    "description": "The label for the doc item 'Benchmarks' in sidebar 'architecture', linking to the doc architecture/benchmarks"
+    "description": "The label for category 'Benchmarks' in sidebar 'architecture'"
   },
   "sidebar.components.doc.State": {
     "message": "Состояние",

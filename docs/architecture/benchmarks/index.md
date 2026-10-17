@@ -1,8 +1,15 @@
-import {BenchmarkCode, BenchmarkResults} from '@site/src/components/Benchmarks';
+---
+description: "What RustStream costs on every message: throughput against each broker's raw client, and instructions and allocations of its own code."
+---
 
-export const labels = {"loading": "Loading published results...", "broker": "Broker", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "crate": "Crate", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start", "table": "Show the numbers as a table", "axis": "How far each loop falls below the raw client's best round", "rounds": "rounds, best to slowest", "best": "best round", "median": "median round", "noise": "spread of the rounds"};
+import {BenchmarkTabs, MovedSections} from '@site/src/components/Benchmarks';
+
+export const labels = {"loading": "Loading published results...", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start", "table": "Show the numbers as a table", "axis": "How far each loop falls below the raw client's best round", "rounds": "rounds, best to slowest", "best": "best round", "median": "median round", "noise": "spread of the rounds", "comparison": "Against a raw client", "code": "Cost of the code"};
 
 # Benchmarks
+
+What RustStream costs on every message, measured against each broker's raw client and as the cost
+of its own code.
 
 A framework between the broker client and your handler costs time on every message: the
 subscription stream, the decode, the dispatch, the ack. This page publishes that cost twice, as
@@ -15,20 +22,19 @@ The second is the cost of the code: instructions and allocations per message. In
 the framework's own code, with no broker in the number. It says what changed when the code changed,
 and it is precise enough to fail a pull request that makes a message more expensive.
 
-Each crate measures itself and publishes its own numbers. This page loads them from the `main`
-branch of each crate's repository and shows them together. A new measurement appears in the charts
-below as soon as it is merged.
+Each crate measures itself by one [methodology](methodology.md) and
+[publishes](publishing.md) its own numbers. This page loads them from the `main` branch of each
+crate's repository and shows each crate in a tab of its own. A new measurement appears in its tab
+as soon as it is merged. What the numbers allow you to conclude, and what they do not, is their
+[interpretation](interpretation.md).
 
-## Results
+## Against a raw client
 
-### Against a raw client
-
-<BenchmarkResults labels={labels} />
-
-Each scenario draws three loops of three interleaved rounds against the raw client's best round,
-the zero of its axis. A loop is a bar from its best round to its slowest, with a dot at the best
-round and a notch at the median. A dot right of zero is slower than the raw client. The best round
-is the closest to the undisturbed cost, and the median is the one a rerun typically repeats.
+The first chart of a broker's tab is its comparison. Each scenario draws three loops of three
+interleaved rounds against the raw client's best round, the zero of its axis. A loop is a bar from
+its best round to its slowest, with a dot at the best round and a notch at the median. A dot right
+of zero is slower than the raw client. The best round is the closest to the undisturbed cost, and
+the median is the one a rerun typically repeats.
 
 The shaded band around zero is what the runtime's `indistinguishable` verdict rests on: the spread
 from the best round to the worst. A best round inside it cannot be told from the raw client. A
@@ -40,14 +46,13 @@ and the table under the chart lists them all: the best round, with the median in
 differences read apart: what the crate costs over the client it wraps, and what the runtime costs
 on top of that.
 
-### Cost of the code
+## Cost of the code
 
-Instructions and allocations per message in the steady state. These are absolute figures, not a
-comparison: what the framework costs over a broker's own client is the chart above. `ruststream`
+The cost chart closes every tab, and it is the core's only chart. It shows
+instructions and allocations per message in the steady state. These are absolute figures, not a
+comparison: what the framework costs over a broker's own client is the comparison. `ruststream`
 measures its own code on the in-process transport. A broker crate measures over its real
 transport, and its benchmarks page says what its number covers.
-
-<BenchmarkCode labels={labels} />
 
 Each crate has an axis of its own, because a broker crate counts its client's work too. `Cold
 start` is what starting the service and handling the first delivery cost together, instructions
@@ -57,269 +62,8 @@ run was taken on, down to the memory, then the versions of the crate
 and of `ruststream` it counted and the date it ran: an instruction count is comparable across
 machines only once you know they ran the same code.
 
-## What the numbers are
+## Results
 
-### The comparison against a raw client
+<BenchmarkTabs labels={labels} />
 
-Each row was measured by whoever maintains that broker crate, on their own machine, against a
-broker on localhost. Rows are therefore not comparable with each other: the absolute throughput of
-one says nothing about another. Only the two columns inside a row are comparable, and that is the
-comparison this page exists for.
-
-A broker on localhost is the harshest setting for the framework. There is no network latency here,
-so the same absolute cost per message comes out as a larger percentage than it would against a
-broker across a real network. Read the percentage as an upper bound on what a deployed service
-pays, not as a typical figure.
-
-The `broker-bound` mark means the raw client spent most of the run waiting on the socket. The
-framework does its work inside that wait, and the measured difference comes out near zero. For that
-workload it is a real result: this is what a saturated consumer looks like. But the number is a
-lower bound on the cost of dispatch, not a measurement of it, and you cannot read it as "free".
-
-### The cost of the code
-
-An instruction count is exact. In `ruststream` two runs of the same binary give the same number,
-and a machine twice as fast gives the same number too, so its rows are comparable with each other
-and with the same row measured on another machine. What a count does not tell you is time: the
-same count costs more where it misses the cache.
-
-In `ruststream` the number is the crate's own work and nothing else: the service a user writes,
-over the in-process queue, decoding the payload into a type, reading a field and settling the
-delivery. No broker is in it, so the figure moves when the framework's code moves and at no other
-time, which is what lets two percent count as a defect rather than as noise.
-
-Every per-message figure is the steady state. Starting a service costs what it costs once - the
-connect, the subscription, the first allocations behind them - and dividing that over the messages
-of a run would publish it as a price per message it is not. So a scenario is measured over two
-runs, the second twice as long as the first, and what a message costs is the difference between
-them; the cold start is measured on its own, over a single delivery. In `ruststream` the two runs
-are a thousand deliveries and two thousand.
-
-Allocations are counted per message. In `ruststream` the figure on the delivery path is zero: once
-the service is running, a message goes from the queue to the handler body without the framework
-asking the allocator for anything. On its publish path the figure is what the broker takes to own
-the message it is handed, and nothing above it.
-
-A broker crate measures over its real transport, which in most crates is the broker in its compose
-file, so its number also holds the client's work and moves a little from run to run. Its benchmarks
-page says what the number covers, how far it moves, which delivery counts it uses and which limit it
-is held to.
-
-## Methodology
-
-Every broker crate follows the procedure below, so a number published for one broker means the same
-thing as a number published for another. A broker that departs from the procedure says so on its own
-page.
-
-### The three loops
-
-A run measures the same scenario three times over, and the three differ in exactly one thing: what
-carries the messages.
-
-- **Raw client.** The broker's own client, driven directly.
-- **Broker crate.** The crate's own consumer and publisher - its subscription source, the
-  subscriber stream it yields, its acknowledgement, its publisher - driven by a loop in the
-  benchmark, with no runtime above them.
-- **RustStream.** The whole service a user writes: the handler, the app, the dispatch.
-
-The first difference is what a broker crate costs over the client it wraps, which is the crate's
-own responsibility. The second is what the runtime costs on top, over that broker in particular -
-and it is published per broker because the crates meet the runtime differently: how a stream
-yields, whether deliveries arrive in batches, how back-pressure reaches the consumer.
-
-- **Same client, same client configuration.** Prefetch, ack mode, consumer group, durability,
-  connection count and any broker-specific tuning are identical on both sides. The framework side
-  configures the broker through RustStream, and the resulting client settings still have to match.
-- **Same ack position.** RustStream acks after the handler returns, so the other two loops ack in
-  the same place. Batching acks at the end of the raw run measures a different protocol, not a
-  different framework.
-- **Same decode into the same type.** The loops without a handler deserialize the payload into the same struct
-  with the same codec and touches a field through `std::hint::black_box`. Skipping this is the
-  easiest way to produce a wrong number: the optimizer removes a decode whose result is unused, and
-  the raw side silently stops decoding.
-- **Same payload, byte for byte.** One generator produces the bodies every loop consumes.
-- **Same runtime.** The tokio flavor, the worker thread count and the number of messages processed
-  at once are the same everywhere.
-- **Same build.** Profile, `RUSTFLAGS` and the allocator match, and the observability features
-  (`logging`, `metrics`, `otel`) are enabled for every loop or for none. A machine with
-  `-C target-cpu=native` in the environment produces numbers another machine cannot reproduce. The
-  flags are therefore published with the results.
-
-### The run
-
-- **The consumer is attached before the first message is published.** Otherwise one side works
-  through a backlog the broker already holds, and the other receives messages as they are
-  published. In most brokers those are two different paths.
-- **Every run gets its own names.** A fresh subject, queue, stream or consumer group per run, so
-  run N never sees what run N-1 left behind.
-- **The window starts at the first message received and ends at the ack of the last one.** A
-  calibration run precedes the measured ones and its result is discarded. Connection setup,
-  consumer registration and the first allocations are startup cost, not per-message cost.
-- **The message count makes a run last at least five seconds**, so startup transients and timer
-  resolution stay inside the noise.
-- **The loops are interleaved, not blocked.** Raw, crate, framework, raw, crate, framework and so
-  on, for three rounds. Running one loop to the end and then the next attributes every drift of
-  the machine (thermal, background load, page cache) to whichever ran last.
-
-### The report
-
-- **Every loop reports three rounds: its best, its median and its worst.** Noise on the machine
-  only ever slows a run down, so the fastest round is the closest to the undisturbed cost, the
-  median is the round a rerun typically repeats, and the slowest says how far from quiet the
-  machine was. A single number from a single run is not a result.
-- **The table prints the best round with the median in parentheses.** The worst round stays in the
-  document and out of the cell, because what it is there for is the spread: the distance from the
-  best round to the worst.
-- **A difference smaller than that spread is published as `indistinguishable`,** never as a
-  percentage: a figure below the run-to-run noise reads as precision that was never measured.
-- **A saturated consumer is flagged.** When the raw side spends the run waiting on the broker, the
-  row is marked `broker-bound`.
-- **The environment is published with the numbers**: CPU and core count, kernel, how the broker was
-  started (image, container, host), the rustc version, the crate versions, the build profile and
-  the flags. Without them a number cannot be reproduced or declared out of date.
-
-### The code measurement
-
-Each crate produces its rows of the second table with a benchmark recipe of its own, which its
-benchmarks page names: `just bench` in `ruststream`. The recipe needs valgrind and the benchmark
-runner pinned to the version the crate depends on. `just bench 5000` measures every scenario of
-`ruststream` over five thousand deliveries instead of a thousand: a steadier number for a longer
-run, while the published document stays at the default.
-
-- **Every scenario is the service a user writes**, started through the real runtime with the test
-  harness compiled out, so what is measured is the code that ships. The numbers are absolute, and
-  in `ruststream` they are the framework's own cost. The comparison against a client someone else
-  wrote is the first table, and the broker crates produce it.
-- **In `ruststream` the transport is in process.** The framework's own code is the subject, so the
-  numbers must not move with a socket, a server's load or a network. Both halves pay the same
-  transport cost anyway, and it cancels in the difference. A broker crate measures over its real
-  transport, and its benchmarks page says what that adds to the number.
-- **The queue is filled before the measured region opens.** What a scenario measures is
-  steady-state delivery, never the connect, the subscription open or the first allocation behind
-  them.
-- **Collection covers the measured region and nothing around it.** Setup and teardown run in the
-  same process and through the same framework code, so a measurement that counted them would report
-  the queue being filled as the cost of draining it.
-- **Three runs per scenario, and what they are for.** One delivery, then two longer runs, the second
-  twice the first: a thousand and two thousand deliveries in `ruststream`, and the counts a broker
-  crate's benchmarks page gives. The difference between the last two is what a message costs once
-  the service is running; the single delivery is the cold start. Nothing has to be switched off
-  part way through a run, which is what makes this work for the allocation counter, whose counting
-  cannot be toggled at all.
-- **Two numbers per scenario.** Instructions from callgrind, which is exact and compared;
-  allocations from DHAT, which is exact and held to the floor the scenario declares. In
-  `ruststream`, a separate benchmark measures wall time on scenarios of its own. `just bench`
-  prints those times, which are noisy and informational.
-- **A comparison, not a threshold.** Run with `--baseline=main`, the recipe measures a branch
-  against the same benchmarks run on the branch it targets, and fails when a scenario's
-  instructions grow past the crate's own limit: two percent in `ruststream`, and in a broker crate
-  the limit its benchmarks page states. The limit is relative, so it applies only against a
-  baseline. Allocations are held to what the scenario declares on every run, with a baseline or
-  without. The author of a pull request runs the comparison and cites its numbers, and a change
-  that lowers a scenario lowers its declared floor in the same pull request.
-  The same rules apply to the cold start.
-
-## Publishing results
-
-A broker crate runs its own harness with `just bench` against the broker in its compose file. It
-commits the outcome to its repository: a page a reader can follow, and one JSON document this page
-reads.
-
-### The stable path
-
-```text
-https://raw.githubusercontent.com/powersemmi/<crate>/main/docs/benchmarks/results.json
-```
-
-The file lives at `docs/benchmarks/results.json` in the broker repository, next to the page that
-explains it. This page reads it from `main`, so a measurement shows as soon as it is merged.
-
-### The document
-
-```json
-{
-  "schema": 3,
-  "crate": "ruststream-nats",
-  "crate_version": "0.7.0",
-  "core_version": "0.7.0",
-  "measured_at": "2026-08-20",
-  "environment": {
-    "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
-    "architecture": "x86_64 (x86-64-v3)",
-    "cpu_frequency": "base 3400 MHz, max 4900 MHz",
-    "cores": "16 physical, 32 logical",
-    "memory": "62.7 GiB",
-    "memory_speed": "DDR4, 3600 MT/s",
-    "os": "Linux 6.16.7",
-    "broker": "nats:2.10-alpine in Docker on localhost",
-    "rustc": "1.90.0",
-    "valgrind": "3.25.1",
-    "profile": "bench, inheriting release (opt-level = 3, lto = false, codegen-units = 16)",
-    "features": "--no-default-features --features memory,macros,json",
-    "rustflags": "-C target-cpu=native"
-  },
-  "scenarios": [
-    {
-      "name": "core NATS, 512 B JSON, ack each",
-      "unit": "msg/s",
-      "messages": 200000,
-      "pairs": 3,
-      "raw": { "best": 129604, "median": 128470, "worst": 126980 },
-      "adapter": { "best": 129310, "median": 128040, "worst": 126700 },
-      "framework": { "best": 129020, "median": 127640, "worst": 126100 },
-      "overhead_percent": 0.4,
-      "adapter_overhead_percent": 0.3,
-      "adapter_verdict": "indistinguishable",
-      "verdict": "indistinguishable",
-      "broker_bound": true
-    }
-  ],
-  "code": [
-    {
-      "name": "consume, JSON decode into a small struct",
-      "messages": 1000,
-      "framework": { "instructions": 2839.8, "allocations": 0.0 },
-      "cold": { "instructions": 19219, "allocations": 26 },
-      "gated": true
-    }
-  ]
-}
-```
-
-`schema` is the version of this document: 3 reports each loop as three rounds (`best`, `median` and
-`worst`), 2 added the `code` section, and a schema 1 document carried a median with its extremes.
-The table prints `best` with `median` in parentheses. `worst` is read rather than printed: the
-verdict rule rests on the distance between the best round and the worst. A schema 3 document
-without `median` keeps the worst round in parentheses, which is what it printed before the field
-existed. `unit` is a short
-label rendered next to every value in the row, not a sentence. `verdict` is `measured` or `indistinguishable`, decided by the rule above;
-`overhead_percent` is recorded either way and displayed only when the verdict is `measured`. It is
-the framework against the raw client, end to end. `adapter` and `adapter_overhead_percent` are the
-crate's own consumer and publisher against the same client, measured without the runtime, and
-`adapter_verdict` applies the spread rule to that difference the way `verdict` applies it to the
-other - and where a crate leaves it out, the page applies the same rule to the spreads it did
-publish, so the two columns of a row never disagree about what is visible. A crate that publishes
-none of them leaves the middle column empty. `environment` may carry
-`round_trip`, the probe the `broker_bound` arithmetic rests on, so a reader can redo the sum.
-`broker_bound` marks a run the broker paced rather than the consumer.
-
-`environment` describes the machine and the build. `cpu`, `architecture`, `cpu_frequency`,
-`cores`, `memory` and `memory_speed` are the machine; `profile` and `features` are what the
-benchmarks were built with. A field the machine does not publish is written as `unknown` rather
-than guessed: memory speed comes from the DMI tables, which most systems only let root read.
-Everything but `cpu`, `os` and `rustc` is optional, so a schema 1 document stays readable.
-
-`code` is the second table, one entry per scenario. `framework` is per message in the steady state;
-`cold` is the whole cost of starting the service and taking the first delivery, not divided by
-anything. `gated` says whether a regression in it fails the crate's benchmark recipe. A crate that
-publishes `scenarios` alone declares `schema` 1 and keeps its row in the first table. A crate that
-measures no broker of its own leaves `scenarios` out instead of publishing it empty, and appears in
-the second table only.
-
-A crate that measures its code apart from the comparison records that run in `code_measured`: its
-`measured_at`, `crate_version` and `core_version`. The line under the second table takes its date
-and versions from there, and from the top-level fields in a document without it.
-
-A document that does not load, or that declares a `schema` this page does not know, leaves its
-broker in the "no results published yet" line. A broken publish is visible instead of silently
-missing.
+<MovedSections />

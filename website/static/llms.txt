@@ -78,6 +78,9 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 - [Architecture](https://powersemmi.github.io/ruststream/latest/architecture/): how RustStream is built and what its design costs a service
 - [Benchmarks](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/): what the framework costs over a raw client, and the cost of its own code
+- [Benchmarks: Interpretation](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/interpretation/): what each published number measures, and which numbers compare
+- [Benchmarks: Methodology](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/methodology/): how every crate measures itself, the three loops, the run, the report and the code measurement
+- [Benchmarks: Publishing](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/publishing/): the JSON document a crate publishes its results in, at a stable path
 
 ## Broker authors
 
