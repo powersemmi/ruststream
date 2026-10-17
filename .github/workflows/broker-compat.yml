@@ -103,8 +103,13 @@ jobs:
           # The unpublished members (benchmarks, examples) are built with their own features: a
           # benchmark refuses the `testing` feature on purpose, and every-feature builds are a
           # property of the published crates, which is what the broker's own gates check too.
-          unpublished="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.publish == []) | .name')"
+          # A manifest cargo cannot read fails here; its error goes to the log the report quotes.
+          echo "\$ cargo metadata --no-deps" >> "$log"
+          if ! metadata="$(cargo metadata --no-deps --format-version 1 2>>"$log")"; then
+            cat "$log"
+            exit 1
+          fi
+          unpublished="$(jq -r '.packages[] | select(.publish == []) | .name' <<<"$metadata")"
           exclude=""
           for name in $unpublished; do exclude+=" --exclude $name"; done
           echo "\$ cargo check --workspace$exclude --all-targets --all-features" | tee -a "$log"
