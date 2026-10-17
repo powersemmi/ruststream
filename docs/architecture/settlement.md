@@ -24,7 +24,8 @@ export const words = {
   "reject": ["At the cap,", "no dead letter:", "rejected"],
   "after": ["After settling:", "and_after and hooks run"],
   "decoded": "decoded",
-  "returns": "returns"
+  "returns": "returns",
+  "otherPolicies": "other policies"
 };
 
 # Settlement

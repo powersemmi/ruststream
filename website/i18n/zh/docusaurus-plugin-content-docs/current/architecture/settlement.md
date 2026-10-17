@@ -24,7 +24,8 @@ export const words = {
   "reject": ["到达上限，", "未声明死信：", "直接拒绝"],
   "after": ["确认之后：", "运行 and_after 和钩子"],
   "decoded": "已解码",
-  "returns": "返回"
+  "returns": "返回",
+  "otherPolicies": "其他策略"
 };
 
 # 确认

@@ -15,3 +15,10 @@ it('decides on the attempt cap before a retry goes anywhere', () => {
   // The answers are alternatives: none of them leads on to another.
   expect([...from('belowCap'), ...from('deadLetter'), ...from('reject')]).toEqual([]);
 });
+
+it('reaches an outcome from a panic only under a policy other than the default fail_fast', () => {
+  const {links} = settlement(words);
+  const panic = links.find((link) => link.from === 'panicPolicy' && link.to === 'outcome');
+  // `fail_fast` stops the service with the delivery unsettled; the arrow names the other policies.
+  expect(panic?.label).toBe('otherPolicies');
+});

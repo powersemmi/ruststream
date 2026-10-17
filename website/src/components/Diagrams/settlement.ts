@@ -94,7 +94,16 @@ export function settlement(words: Words): {boxes: Box[]; links: Link[]} {
     {from: 'handler', to: 'outcome', label: word(words, 'returns')},
     {from: 'handler', to: 'panicPolicy'},
     {from: 'decodePolicy', to: 'outcome', exit: 'right', enter: 'right', dashed: true},
-    {from: 'panicPolicy', to: 'outcome', exit: 'bottom', enter: 'right', dashed: true},
+    // The default `fail_fast` stops the service with the delivery unsettled, so only the other
+    // panic policies reach an outcome.
+    {
+      from: 'panicPolicy',
+      to: 'outcome',
+      exit: 'bottom',
+      enter: 'right',
+      dashed: true,
+      label: word(words, 'otherPolicies'),
+    },
     {from: 'outcome', to: 'ack', enterAt: 0.5},
     {from: 'outcome', to: 'drop'},
     {from: 'outcome', to: 'retry'},
