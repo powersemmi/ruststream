@@ -21,8 +21,6 @@ const version = readBuildVersion(process.env, repoRoot);
 const {baseUrl, contentRoot, archive} = version;
 const docsRoot = path.join(contentRoot, 'docs');
 
-const accent = '#ff5722';
-
 // Excerpts on the pages are read from the repository's compiled sources and link back to them.
 const sourceUrl = `https://github.com/powersemmi/ruststream/blob/${version.sourceRef}`;
 const editBase = 'https://github.com/powersemmi/ruststream/edit/main';
@@ -101,7 +99,7 @@ function rustSourceImports(): Plugin {
 const config: Config = {
   title: 'RustStream',
   tagline: 'Async messaging framework for Rust',
-  favicon: 'img/logo.svg',
+  favicon: 'img/favicon.svg',
 
   future: {
     v4: true,
@@ -123,7 +121,6 @@ const config: Config = {
     siteRoot,
     // The landing page links code terms to the rustdoc of the version built.
     docsRs: version.docsRs,
-    accent,
     sourceUrl,
   },
 
@@ -219,6 +216,7 @@ const config: Config = {
       logo: {
         alt: 'RustStream',
         src: 'img/logo.svg',
+        srcDark: 'img/logo-dark.svg',
       },
       items: [
         ...categories,

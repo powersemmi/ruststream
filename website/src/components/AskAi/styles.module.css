@@ -36,7 +36,7 @@
   color: var(--rs-muted);
   cursor: pointer;
   background: transparent;
-  border: 1px solid var(--rs-border);
+  border: 1px solid var(--rs-control-border);
   border-radius: 4px;
 }
 
@@ -98,7 +98,7 @@
   color: var(--rs-fg);
   resize: none;
   background: var(--rs-code-bg);
-  border: 1px solid var(--rs-border);
+  border: 1px solid var(--rs-control-border);
   border-radius: 4px;
 }
 
@@ -113,7 +113,7 @@
   font-weight: 500;
   color: var(--rs-accent-contrast);
   cursor: pointer;
-  background: var(--rs-accent);
+  background: var(--rs-accent-fill);
   border: 0;
   border-radius: 4px;
 }

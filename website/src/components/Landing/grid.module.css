@@ -76,7 +76,7 @@
 
 .cellLink:hover,
 .cellLink:focus-visible {
-  background: var(--rs-surface);
+  background: var(--rs-raised);
   color: inherit;
   text-decoration: none;
 }
