@@ -96,7 +96,9 @@ jobs:
       #
       # Every version lives side by side in the gh-pages tree, so a deploy rebuilds only its own
       # directory. `latest` follows the newest release: `next`, an archive and a fix to a past
-      # release leave it where it is.
+      # release leave it where it is. A release of a new minor line also rebuilds the line it
+      # takes `latest` from as an older version, from that line's newest tag (fetched above with
+      # the full history) and its rustdoc.
       - name: Build and place the site
         env:
           TAG: ${{ github.event_name == 'release' && github.ref_name || '' }}
