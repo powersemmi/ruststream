@@ -241,7 +241,7 @@ function ComparisonChart({
  * first chart.
  */
 function Comparison({
-  group: {title, labels, panel, rows},
+  group: {title, plugin, labels, panel, rows},
   provenance,
 }: {
   group: ComparisonGroup;
@@ -265,6 +265,7 @@ function Comparison({
               <th>{labels.adapter}</th>
               <th>{labels.framework}</th>
               <th>{labels.overhead}</th>
+              {plugin !== null && <th>{labels.pluginOverhead}</th>}
             </tr>
           </thead>
           <tbody>
@@ -275,6 +276,7 @@ function Comparison({
                 <td>{row.adapter}</td>
                 <td>{row.framework}</td>
                 <td>{row.overhead}</td>
+                {plugin !== null && <td>{row.plugin}</td>}
               </tr>
             ))}
           </tbody>

@@ -14,6 +14,7 @@ import {
   machineLine,
   overheadCell,
   pendingLine,
+  pluginVerdict,
   scenarioGroups,
   provenanceLine,
   sideCell,
@@ -55,6 +56,8 @@ const labels: Labels = {
   pluginFramework: "The crate's plugin",
   pluginAxis: 'How far each loop falls below the best round of the app without the plugin',
   pluginAgainst: '({percent} over no plugin)',
+  pluginOverhead: 'Over the plugin by hand',
+  pluginOverHand: '({percent} over by hand)',
 };
 
 const core = JSON.parse(
@@ -294,7 +297,33 @@ const tracked: Scenario = {
   adapter_overhead_percent: 86.6,
   verdict: 'measured',
   adapter_verdict: 'measured',
+  plugin_overhead_percent: -1.1,
+  plugin_verdict: 'indistinguishable',
 };
+// The outbox row with no outbox written by hand to compare the crate's against.
+const untracked: Scenario = {
+  ...tracked,
+  name: 'outbox plugin, an untracked message through both layers',
+  adapter: undefined,
+  adapter_overhead_percent: undefined,
+  adapter_verdict: undefined,
+  plugin_overhead_percent: undefined,
+  plugin_verdict: undefined,
+  overhead_percent: 1.0,
+  verdict: 'indistinguishable',
+};
+
+describe('the plugin verdict', () => {
+  it("is the crate's plugin over the one written by hand, as the document states it", () => {
+    expect(pluginVerdict(tracked, labels)).toBe('indistinguishable');
+    const measured = {...tracked, plugin_overhead_percent: 1.6, plugin_verdict: 'measured'};
+    expect(pluginVerdict(measured, labels)).toBe('+1.6%');
+  });
+
+  it('is empty where no plugin was written by hand', () => {
+    expect(pluginVerdict(untracked, labels)).toBe('-');
+  });
+});
 
 describe('the scenario groups', () => {
   it('put the broker first, then each plugin in the order the document names it', () => {
@@ -345,6 +374,21 @@ describe('the comparison groups', () => {
     ]);
     expect(plugin!.labels.axis).toBe(labels.pluginAxis);
     expect(plugin!.rows[0]!.adapter).toBe('49,800 msg/s (49,500) (+86.6% over no plugin)');
+  });
+
+  it("add the crate's plugin over the one written by hand to the plugin's table", () => {
+    const [broker, plugin] = comparisonGroups(published(amqp, tracked, untracked), 'en', labels);
+    expect([broker!.plugin, plugin!.plugin]).toEqual([null, 'outbox']);
+    expect(broker!.rows[0]!.plugin).toBeUndefined();
+    expect(plugin!.rows.map((row) => row.plugin)).toEqual(['indistinguishable', '-']);
+  });
+
+  it("state the crate's plugin over the one written by hand beside its lane", () => {
+    const [broker, plugin] = comparisonGroups(published(kafka, tracked, untracked), 'en', labels);
+    const [withHand, withoutHand] = plugin!.panel.rows;
+    expect(withHand!.lanes[2]!.verdict).toBe('+86.4% (indistinguishable over by hand)');
+    expect(withoutHand!.lanes.at(-1)!.verdict).toBe('indistinguishable');
+    expect(broker!.panel.rows[0]!.lanes[2]!.verdict).toBe('+20.2%');
   });
 
   it('keep a crate with broker scenarios only as one comparison', () => {

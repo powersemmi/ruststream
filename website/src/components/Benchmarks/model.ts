@@ -41,7 +41,9 @@ export type Labels = Record<
   | 'pluginAdapter'
   | 'pluginFramework'
   | 'pluginAxis'
-  | 'pluginAgainst',
+  | 'pluginAgainst'
+  | 'pluginOverhead'
+  | 'pluginOverHand',
   string
 >;
 
@@ -67,6 +69,9 @@ export interface Scenario {
   adapter_overhead_percent?: number;
   verdict?: string;
   adapter_verdict?: string;
+  // A plugin scenario's headline: the crate's plugin against the one written by hand.
+  plugin_overhead_percent?: number;
+  plugin_verdict?: string;
   broker_bound?: boolean;
 }
 
@@ -225,6 +230,21 @@ export function adapterVerdict(scenario: Scenario, labels: Labels): string {
   return EMPTY;
 }
 
+/** What the crate's plugin costs over the same plugin written by hand, as the document states. */
+export function pluginVerdict(scenario: Scenario, labels: Labels): string {
+  // A scenario with no hand-written variant has nothing to compare the crate's plugin against.
+  if (!scenario.adapter) {
+    return EMPTY;
+  }
+  if (scenario.plugin_verdict === 'indistinguishable') {
+    return labels.indistinguishable;
+  }
+  if (typeof scenario.plugin_overhead_percent === 'number') {
+    return signed(scenario.plugin_overhead_percent);
+  }
+  return EMPTY;
+}
+
 export function adapterCell(scenario: Scenario, lang: string, labels: Labels): string {
   if (!scenario.adapter) {
     return EMPTY;
@@ -241,6 +261,8 @@ export interface ComparisonRow {
   adapter: string;
   framework: string;
   overhead: string;
+  // Only in a plugin's table: the crate's plugin over the one written by hand.
+  plugin?: string;
 }
 
 export function comparisonRows(published: Loaded[], lang: string, labels: Labels): ComparisonRow[] {
@@ -451,6 +473,16 @@ function extent(loop: Loop, measurement: Measurement, raw: Measurement): Extent 
   };
 }
 
+// A plugin's lane states its overhead over no plugin, then the plugin's headline: what the
+// crate's plugin adds over the one written by hand, whose dot it otherwise only covers.
+function frameworkVerdict(scenario: Scenario, labels: Labels): string {
+  const overhead = overheadCell(scenario, labels);
+  const plugin = scenario.plugin === undefined ? EMPTY : pluginVerdict(scenario, labels);
+  return plugin === EMPTY
+    ? overhead
+    : `${overhead} ${labels.pluginOverHand.replace('{percent}', plugin)}`;
+}
+
 /** One group's scenarios, each with its three loops placed against the raw loop's figure. */
 function comparisonPanel(
   entry: Loaded,
@@ -483,7 +515,7 @@ function comparisonPanel(
       lanes: extents[index]!.map((lane): Lane => {
         const verdict =
           lane.loop === 'framework'
-            ? overheadCell(scenario, labels)
+            ? frameworkVerdict(scenario, labels)
             : lane.loop === 'adapter'
               ? adapterVerdict(scenario, labels)
               : undefined;
@@ -546,6 +578,8 @@ const pluginLabels = (labels: Labels): Labels => ({
 /** One chart of a crate's comparison, with the words its legend and table use. */
 export interface ComparisonGroup {
   title: string;
+  // The plugin the group measures, or `null` for the broker's own scenarios.
+  plugin: string | null;
   labels: Labels;
   panel: ComparisonPanel;
   rows: ComparisonRow[];
@@ -566,11 +600,16 @@ export function comparisonGroups(entry: Loaded, lang: string, labels: Labels): C
       ...entry,
       results: {...entry.results!, scenarios},
     };
+    const rows = comparisonRows([group], lang, words);
     return {
       title,
+      plugin,
       labels: words,
       panel: comparisonPanel(entry, scenarios, lang, words),
-      rows: comparisonRows([group], lang, words),
+      rows:
+        plugin === null
+          ? rows
+          : rows.map((row, index) => ({...row, plugin: pluginVerdict(scenarios[index]!, words)})),
     };
   });
 }
