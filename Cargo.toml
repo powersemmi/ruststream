@@ -13,6 +13,7 @@ edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/powersemmi/ruststream"
+homepage = "https://powersemmi.github.io/ruststream/latest/"
 authors = ["RustStream contributors"]
 
 [[bin]]
@@ -1018,6 +1019,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 authors.workspace = true
 description = "Async messaging framework for Rust: broker-agnostic traits, router, codecs, and a conformance harness for broker authors."
 readme = "README.md"
