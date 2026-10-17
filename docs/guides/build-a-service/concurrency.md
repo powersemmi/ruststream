@@ -19,6 +19,7 @@ A subscription with workers or threads no longer keeps its deliveries in order; 
 ## Packing on threads
 
 `pack` splits a paid order into parcels and answers with the plan.
+A paid order past the shop's bounds is dropped before any parcel is planned.
 `threads(2)` starts two threads with the subscription; the deliveries go to them in turn.
 Decoding, the body, the reply and the settlement all run on the thread that got the delivery.
 

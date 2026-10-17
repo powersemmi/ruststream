@@ -37,7 +37,7 @@ use ruststream::memory::prelude::*;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
-use crate::orders::{Order, RequestMeta};
+use crate::orders::{Order, RequestMeta, total_cents};
 use crate::service::shop;
 
 // --8<-- [start:store]
@@ -63,6 +63,12 @@ async fn place_order(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("unknown")
         .to_owned();
+    if total_cents(&order.lines).is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "the order is past the shop's bounds\n",
+        );
+    }
     {
         let mut store = store.lock().await;
         store.orders.push(order.clone());
@@ -166,11 +172,16 @@ mod tests {
         }
     }
 
-    async fn take(store: &Arc<Mutex<Store>>, id: u64) -> StatusCode {
+    async fn place(store: &Arc<Mutex<Store>>, order: Order) -> StatusCode {
         let mut headers = HeaderMap::new();
-        headers.insert("x-request-id", format!("req-{id}").parse().expect("ascii"));
-        let (status, _) = place_order(State(Arc::clone(store)), headers, Json(order(id))).await;
+        let request_id = format!("req-{}", order.id);
+        headers.insert("x-request-id", request_id.parse().expect("ascii"));
+        let (status, _) = place_order(State(Arc::clone(store)), headers, Json(order)).await;
         status
+    }
+
+    async fn take(store: &Arc<Mutex<Store>>, id: u64) -> StatusCode {
+        place(store, order(id)).await
     }
 
     #[tokio::test]
@@ -214,5 +225,27 @@ mod tests {
         assert_eq!(store.orders, [order(2)]);
         assert_eq!(store.outbox.len(), 1);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_order_past_the_bounds_is_refused() {
+        let store = Arc::new(Mutex::new(Store::default()));
+        // A total that does not fit in 64 bits, and a quantity that would fill millions of
+        // parcels.
+        for (quantity, price_cents) in [(2, 1 << 63), (u32::MAX, 0)] {
+            let line = Line {
+                sku: "mug".to_owned(),
+                quantity,
+                price_cents,
+            };
+            let order = Order {
+                lines: vec![line],
+                ..order(5)
+            };
+            assert_eq!(place(&store, order).await, StatusCode::BAD_REQUEST);
+        }
+
+        assert_eq!(store.lock().await.orders, []);
+        assert!(store.lock().await.outbox.is_empty());
     }
 }

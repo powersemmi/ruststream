@@ -43,6 +43,7 @@ The HTTP side and the outbox are plain functions, so both tabs show the same cod
 
 `POST /orders` takes the order as JSON and the request id from the `x-request-id` header.
 It only writes to the store, so it answers `202 Accepted` without waiting on the broker.
+An order past the shop's bounds answers `400 Bad Request` and is not stored.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

@@ -56,7 +56,7 @@ The manual form writes what `#[derive(OutSlot)]` generates: the slot's name, the
 
 ## The subscriber
 
-`accept` drops an order with no lines: there is nothing to charge.
+`accept` drops an order with no lines, since there is nothing to charge, and an order past the shop's bounds, since it has no total.
 It tells the customer the order arrived, through the slot, and asks for a retry if that publish fails.
 Then it returns the payment request, which the runtime publishes as the reply.
 `Ok` publishes the reply and acks; `Err` publishes nothing and settles by the outcome.

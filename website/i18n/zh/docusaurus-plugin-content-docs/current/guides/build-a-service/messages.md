@@ -21,6 +21,7 @@ import TabItem from '@theme/TabItem';
 
 从这里开始，商店的代码放在各个模块里。
 `orders.rs` 存放订单：订单行、总额，以及随订单一起传递的契约。
+上限规定一个订单最多能买多少，总额用带溢出检查的算术累加，所以超出上限的订单没有总额。
 
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">

@@ -43,6 +43,7 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 
 `POST /orders` 以 JSON 接收订单，从 `x-request-id` 消息头读取请求 id。
 它只写入存储，所以不等待 Broker 就以 `202 Accepted` 应答。
+超出商店上限的订单以 `400 Bad Request` 应答，不会被存储。
 
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">

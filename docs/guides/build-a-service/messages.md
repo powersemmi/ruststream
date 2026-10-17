@@ -21,6 +21,7 @@ The [codec](../../components/subscribers/codecs/index.md) belongs to the mount s
 
 From here on, the shop's code lives in modules.
 `orders.rs` holds the order: its lines, the total, and the contract it travels with.
+The bounds cap what one order may ask for, and the total adds up with checked arithmetic, so an order past them has no total.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">

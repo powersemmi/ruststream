@@ -9,7 +9,7 @@ use ruststream::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::notifications::{Notice, Notices};
-use crate::orders::Line;
+use crate::orders::{Line, within_bounds};
 use crate::payments::{INTERNAL, Paid};
 use crate::state::Shop;
 
@@ -85,6 +85,13 @@ impl Handle<Paid, Packed, (), (), Shop> for Pack {
         _outs: &(),
         _ctx: &mut Context<'_, (), Shop>,
     ) -> impl Future<Output = Result<Packed, HandlerOutcome>> {
+        if !within_bounds(&paid.lines) {
+            tracing::warn!(
+                order = paid.order,
+                "a paid order past the shop's bounds, dropped"
+            );
+            return ready(Err(HandlerOutcome::drop()));
+        }
         ready(Ok(Packed {
             order: paid.order,
             customer: paid.customer.clone(),
@@ -154,7 +161,16 @@ pub(crate) fn routes() -> impl RouterDef<MemoryBroker, Shop> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Parcel, plan};
+    use std::error::Error;
+
+    use ruststream::codec::CborCodec;
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Line, Packed, Parcel, plan};
+    use crate::orders::MAX_QUANTITY;
+    use crate::payments::Paid;
+    use crate::service::{shop, test_broker};
 
     fn line(sku: &str, quantity: u32) -> Line {
         Line {
@@ -178,5 +194,30 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_paid_order_past_the_bounds_is_not_packed() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(shop(test_broker())).await?;
+        let broker = tb.broker::<MemoryBroker>();
+        let paid = Paid {
+            order: 12,
+            customer: "ada@example.com".to_owned(),
+            lines: vec![line("mug", MAX_QUANTITY + 1)],
+        };
+        broker
+            .message(&paid)
+            .with_codec(CborCodec)
+            .publish()
+            .await?;
+
+        broker
+            .subscriber("payments.settled")
+            .assert_called_once()
+            .settled(HandlerOutcome::drop());
+        broker
+            .published::<Packed>("shipping.packed")
+            .assert_not_called();
+        Ok(())
     }
 }
