@@ -39,7 +39,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "threads"
-required-features = ["macros", "memory", "json", "logging"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 # No codec feature in the list, and none missing: the message serializes itself, so the whole
 # service builds with the codec layer switched off.
@@ -382,6 +383,78 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "middleware_router_scope"
 required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "workers"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_workers"
+path = "examples/manual/workers.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_threads"
+path = "examples/manual/threads.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "poll_diagnostics"
+required-features = ["testing", "macros", "memory", "json", "poll-diagnostics"]
+test = true
+
+[[example]]
+name = "manual_poll_diagnostics"
+path = "examples/manual/poll_diagnostics.rs"
+required-features = ["testing", "memory", "json", "poll-diagnostics"]
+test = true
+
+[[example]]
+name = "layer"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_layer"
+path = "examples/manual/layer.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_layer"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_layer"
+path = "examples/manual/publish_layer.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "dyn_stack"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_dyn_stack"
+path = "examples/manual/dyn_stack.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_dyn_stack"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_dyn_stack"
+path = "examples/manual/publish_dyn_stack.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "context"
