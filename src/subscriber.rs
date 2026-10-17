@@ -28,6 +28,7 @@ pub trait Subscriber: Send {
 
     /// Returns a stream of broker deliveries.
     ///
-    /// The stream terminates when the subscription is cancelled or the broker connection closes.
+    /// The broker defines its own reconnection policy. The stream ends when the subscription is
+    /// cancelled, the broker shuts down, or the broker's reconnection policy gives up.
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_;
 }
