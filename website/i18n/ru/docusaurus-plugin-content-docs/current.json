@@ -170,5 +170,53 @@
   "sidebar.components.doc.Overview": {
     "message": "Обзор",
     "description": "The label for the doc item 'Overview' in sidebar 'components', linking to the doc components/index"
+  },
+  "sidebar.components.category.Running": {
+    "message": "Запуск",
+    "description": "The label for category 'Running' in sidebar 'components'"
+  },
+  "sidebar.components.category.State": {
+    "message": "Состояние",
+    "description": "The label for category 'State' in sidebar 'components'"
+  },
+  "sidebar.components.category.Starting and stopping": {
+    "message": "Запуск и остановка",
+    "description": "The label for category 'Starting and stopping' in sidebar 'components'"
+  },
+  "sidebar.components.category.Driving": {
+    "message": "Управление тестом",
+    "description": "The label for category 'Driving' in sidebar 'components'"
+  },
+  "sidebar.components.category.Service state": {
+    "message": "Состояние сервиса",
+    "description": "The label for category 'Service state' in sidebar 'components'"
+  },
+  "sidebar.components.category.Records": {
+    "message": "Записи",
+    "description": "The label for category 'Records' in sidebar 'components'"
+  },
+  "sidebar.components.category.Subscriber assertions": {
+    "message": "Проверки подписчика",
+    "description": "The label for category 'Subscriber assertions' in sidebar 'components'"
+  },
+  "sidebar.components.category.Published assertions": {
+    "message": "Проверки публикаций",
+    "description": "The label for category 'Published assertions' in sidebar 'components'"
+  },
+  "sidebar.components.category.Replay": {
+    "message": "Повтор",
+    "description": "The label for category 'Replay' in sidebar 'components'"
+  },
+  "sidebar.components.category.Headers": {
+    "message": "Заголовки",
+    "description": "The label for category 'Headers' in sidebar 'components'"
+  },
+  "sidebar.components.category.Messages": {
+    "message": "Сообщения",
+    "description": "The label for category 'Messages' in sidebar 'components'"
+  },
+  "sidebar.components.category.Context and extractors": {
+    "message": "Контекст и экстракторы",
+    "description": "The label for category 'Context and extractors' in sidebar 'components'"
   }
 }

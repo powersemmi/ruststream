@@ -33,6 +33,9 @@ const pages: Record<string, string> = {
   benchmarks: '/architecture/benchmarks/',
   // A category whose subject is one component holds that component's page itself.
   'components/application/app': '/components/application/',
+  // A page that covered two topics became one page per topic.
+  'components/subscribers/start-at': '/components/subscribers/replay/start-at/',
+  'components/subscribers/context/context-and-ctx': '/components/subscribers/context/delivery-context/',
 };
 
 /**

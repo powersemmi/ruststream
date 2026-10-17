@@ -9,7 +9,15 @@ import TabItem from '@theme/TabItem';
 
 # shaku
 
-[shaku](https://crates.io/crates/shaku) is a dependency-injection container with no RustStream support; the service builds it in `on_startup` and a handler resolves from it.
+shaku ([crates.io](https://crates.io/crates/shaku), [docs.rs](https://docs.rs/shaku), [GitHub](https://github.com/AzureMarker/shaku)) is a dependency-injection container with no RustStream support; the service builds it in [`on_startup`](api:ruststream::runtime::RustStream::on_startup) and a handler resolves from it.
+
+A shaku module is the container: `module!` lists its components, and each component implements an interface trait.
+`on_startup` builds the module with the components' parameters, and the module becomes the application state.
+A [`FromRef`](api:ruststream::runtime::FromRef) impl from the module to `Arc<dyn Pricing>` lets a handler take [`State<Arc<dyn Pricing>>`](api:ruststream::runtime::State), as for [any struct](./any-struct.md) as state.
+The module resolves a component as a clone of its `Arc`, so each delivery pays one reference count and the calls go through `dyn Pricing`.
+A handler that reads `ctx.state().resolve_ref()` borrows the component instead, with no reference count.
+Components are singletons of the module and are `Send + Sync`, so every handler on every worker shares them.
+An interface method that awaits needs a `dyn`-compatible form, such as one returning a boxed future.
 
 ## Example
 
@@ -221,20 +229,3 @@ pub fn app() -> impl App {
 
 </TabItem>
 </Tabs>
-
-## How it works
-
-A shaku module is the container: `module!` lists its components, and each component implements an interface trait.
-`on_startup` builds the module with the components' parameters, and the module becomes the application state.
-A `FromRef` impl from the module to `Arc<dyn Pricing>` lets a handler take `State<Arc<dyn Pricing>>`.
-The module resolves a component as a clone of its `Arc`, so each delivery pays one reference count and the calls go through `dyn Pricing`.
-A handler that reads `ctx.state().resolve_ref()` borrows the component instead, with no reference count.
-Components are singletons of the module and are `Send + Sync`, so every handler on every worker shares them.
-An interface method that awaits needs a `dyn`-compatible form, such as one returning a boxed future.
-
-## See also
-
-- [Any struct as state](./any-struct.md): the state and `FromRef` this page builds on.
-- [froodi](./froodi.md): a container with RustStream support and per-delivery scopes.
-- shaku on [crates.io](https://crates.io/crates/shaku), [docs.rs](https://docs.rs/shaku) and [GitHub](https://github.com/AzureMarker/shaku)
-- [`State`](api:ruststream::runtime::State), [`FromRef`](api:ruststream::runtime::FromRef), [`RustStream::on_startup`](api:ruststream::runtime::RustStream::on_startup)
