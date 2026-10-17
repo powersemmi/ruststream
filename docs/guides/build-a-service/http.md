@@ -21,6 +21,7 @@ A broker outage only delays the events, and none is lost; a crash between a publ
 
 With a real database, the orders and the outbox are two tables written in one transaction.
 The mutex over the pair plays that role here.
+Only a real database lets the events survive a crash: these rows live in memory, and a crash loses the ones not yet published.
 
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
@@ -64,6 +65,7 @@ An order past the shop's bounds answers `400 Bad Request` and is not stored.
 
 The relay publishes the oldest event first, with its header contract, and removes it only after the publish succeeded.
 A refused publish leaves the row for the next round.
+The relay runs until the process stops it, then runs one last round.
 The publisher is any [`Publisher`](../../components/subscribers/publishing/publishers/publisher.md), so the relay does not change with the broker.
 
 <Tabs groupId="api">
@@ -85,6 +87,7 @@ The publisher is any [`Publisher`](../../components/subscribers/publishing/publi
 
 `bindable` lets the process take a publisher token before the shop starts, and [`publisher`](api:ruststream::runtime::RunningApp::publisher) turns it into a live publisher once the broker is connected.
 The server stops on <kbd>Ctrl</kbd>+<kbd>C</kbd>, or when [`stopping`](api:ruststream::runtime::RunningApp::stopping) reports that the shop stopped on its own.
+Once HTTP has drained, the process stops the relay, and its last round hands over the rows still pending while the shop runs.
 The shop then drains with [`shutdown`](../../components/application/running/shutdown.md).
 A hand-written `main` installs the logger itself with `ruststream::logging::init()`.
 

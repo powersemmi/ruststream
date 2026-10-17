@@ -36,6 +36,7 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::orders::{Order, RequestMeta, total_cents};
 use crate::service::shop;
@@ -100,13 +101,23 @@ async fn relay_pending(store: &Mutex<Store>, egress: &impl Publisher) {
     }
 }
 
-/// Runs the relay every 200 milliseconds, for as long as the process runs.
-async fn relay_outbox(store: Arc<Mutex<Store>>, egress: impl Publisher) {
+/// Runs the relay every 200 milliseconds until `stop` completes, then runs it once more.
+async fn relay_outbox(
+    store: Arc<Mutex<Store>>,
+    egress: impl Publisher,
+    stop: impl Future<Output = ()>,
+) {
     let mut rounds = tokio::time::interval(Duration::from_millis(200));
+    tokio::pin!(stop);
     loop {
-        rounds.tick().await;
-        relay_pending(&store, &egress).await;
+        tokio::select! {
+            biased;
+            () = &mut stop => break,
+            _ = rounds.tick() => relay_pending(&store, &egress).await,
+        }
     }
+    // The last round runs once no request writes a row any more, so it empties the outbox.
+    relay_pending(&store, &egress).await;
 }
 // --8<-- [end:relay]
 
@@ -123,7 +134,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let egress = running.publisher(egress).await?;
 
     let store = Arc::new(Mutex::new(Store::default()));
-    tokio::spawn(relay_outbox(Arc::clone(&store), egress));
+    let stop_relay = CancellationToken::new();
+    let relay = tokio::spawn(relay_outbox(
+        Arc::clone(&store),
+        egress,
+        stop_relay.clone().cancelled_owned(),
+    ));
     let router = axum::Router::new()
         .route("/orders", post(place_order))
         .with_state(store);
@@ -140,6 +156,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         })
         .await?;
+    // HTTP has drained, so no request writes a row any more: the relay's last round hands the
+    // pending rows over while the shop still runs, and only then does the shop drain.
+    stop_relay.cancel();
+    relay.await?;
     running.shutdown().await?;
     Ok(())
 }
@@ -148,6 +168,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
+    use std::future::ready;
     use std::sync::Arc;
 
     use axum::extract::{Json, State};
@@ -156,7 +177,7 @@ mod tests {
     use ruststream::testing::TestApp;
     use tokio::sync::Mutex;
 
-    use super::{Store, place_order, relay_pending};
+    use super::{Store, place_order, relay_outbox, relay_pending};
     use crate::orders::{Line, Order};
     use crate::service::{shop, test_broker};
 
@@ -247,5 +268,26 @@ mod tests {
 
         assert_eq!(store.lock().await.orders, []);
         assert!(store.lock().await.outbox.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_relay_hands_pending_rows_over_when_it_stops() -> Result<(), Box<dyn Error>> {
+        let broker = test_broker().bindable();
+        let egress = broker.bind(Publish);
+        let tb = TestApp::start(shop(broker)).await?;
+        let egress = egress.live().await?;
+        let store = Arc::new(Mutex::new(Store::default()));
+        take(&store, 3).await;
+
+        // Told to stop before its first round, so only its last round can hand the row over.
+        relay_outbox(Arc::clone(&store), egress, ready(())).await;
+        tb.settle().await?;
+
+        assert!(store.lock().await.outbox.is_empty());
+        tb.broker::<MemoryBroker>()
+            .published::<Order>("orders.placed")
+            .assert_called_once()
+            .with(&order(3));
+        Ok(())
     }
 }

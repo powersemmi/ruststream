@@ -21,6 +21,7 @@ Broker 故障只会推迟事件，不会丢失任何事件。如果在发布和�
 
 使用真实数据库时，订单和 outbox 是在一个事务中写入的两张表。
 这里由一个保护这两者的互斥锁承担这个角色。
+只有真实数据库能让事件在崩溃后保留下来：这里的行存放在内存中，一旦崩溃，尚未发布的行就会丢失。
 
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
@@ -64,6 +65,7 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 
 中继先发布最早的事件，并带上它的消息头契约，发布成功之后才删除它。
 发布被拒绝时，这一行留到下一轮处理。
+中继一直运行到进程让它停止，然后再执行最后一轮。
 发布者可以是任意 [`Publisher`](../../components/subscribers/publishing/publishers/publisher.md)，所以更换 Broker 时中继不变。
 
 <Tabs groupId="api">
@@ -85,6 +87,7 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 
 `bindable` 让进程在商店启动之前拿到一个发布者令牌，Broker 连接之后，[`publisher`](api:ruststream::runtime::RunningApp::publisher) 把令牌变成可用的发布者。
 服务器在 <kbd>Ctrl</kbd>+<kbd>C</kbd> 时停止，或者在 [`stopping`](api:ruststream::runtime::RunningApp::stopping) 报告商店自行停止时停止。
+HTTP 处理完所有请求之后，进程停止中继，中继的最后一轮在商店仍在运行时交出剩余的行。
 然后商店用 [`shutdown`](../../components/application/running/shutdown.md) 处理完剩余的工作。
 手写的 `main` 自己用 `ruststream::logging::init()` 安装日志记录器。
 
