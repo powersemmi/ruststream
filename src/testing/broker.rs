@@ -32,6 +32,57 @@ use super::Coordinator;
 /// [`MemoryBroker`](crate::memory::MemoryBroker) is the reference: it has no server, so its
 /// in-process transition is its ordinary `connect`.
 ///
+/// The in-process mode lives in the production types: the connected form, its subscriber, its
+/// publishers and its delivery each gain an in-process variant that exists only under the
+/// `testing` feature. Without the feature there is one variant and no branch, and a service's
+/// production build is unchanged, because Cargo does not enable a dev-dependency's features in a
+/// production binary. A mount that compiles against the broker compiles in process, and a
+/// capability is the same type in both.
+///
+/// The same test also runs against a stand: [`TestApp::start_live`](super::TestApp::start_live)
+/// connects the broker through its ordinary `connect` and needs nothing beyond the connected form
+/// and its [`DefaultPublish`] policy, through which the harness publishes a test's input.
+///
+/// # Writing one you can trust
+///
+/// A service's whole test suite runs against this transport, so every difference from the real
+/// one is a green test for behaviour production does not have.
+///
+/// - Run the [`conformance`](crate::conformance) suites in process, not only against a server:
+///   [`run_suite`](crate::conformance::harness::run_suite), then `lifecycle` and the capability
+///   suites through [`InProcessBroker`](crate::conformance::harness::InProcessBroker). `lifecycle`
+///   asks what an in-process transport is rarely asked: whether a publisher created before the
+///   shutdown errors afterwards. A transport whose publish is a channel send accepts the message
+///   instead.
+/// - Settle the way the transport settles. Where the real `ack` answers
+///   [`AckError::Unsupported`](crate::AckError::Unsupported), the in-process one answers the same;
+///   `Ok(())` there is how a handler returning `retry()` passes in a test and loses the message in
+///   production.
+/// - Reproduce what the client does; do not fake what the broker does. Competing consumers, group
+///   distribution, correlation, reply routing and buffering until commit are client-side or
+///   routing-level, and an in-process copy of them is exact. Cluster atomicity, fencing,
+///   broker-held timeouts and exactly-once are broker-side, and the live mode covers them.
+///   Competing consumers matter most: handing every message of a queue to every subscriber of it
+///   is a fan-out, and two workers sharing the queue then each run the whole stream with no error
+///   anywhere.
+/// - Keep what the real broker keeps. A queue or a log that exists before the subscription
+///   delivers what reached it earlier; declare that with [`TestableBroker::backlog`], and read a
+///   setting that decides it (an earliest offset, a deliver-all consumer) off the connected form.
+///   [`backlog_matches_server`](crate::conformance::in_process::backlog_matches_server) checks the
+///   declaration against the server.
+/// - Read the production wiring. A check the real broker makes at subscribe or publish time (a
+///   declaration it refuses, a name too long for the protocol, a header it cannot carry) runs in
+///   process through the same code.
+/// - Give every gap a comment naming the assertion it makes unsound and what covers it instead,
+///   and pin the gap with a test asserting the handler is not reached, which fails the day
+///   someone routes what the transport deliberately does not.
+///
+/// ```text
+/// // No fencing: a second producer claiming the same transactional id is not rejected here, so a
+/// // test cannot assert the first one is fenced out. `capabilities::transactions` against a real
+/// // server is what covers that.
+/// ```
+///
 /// # Examples
 ///
 /// ```
@@ -121,7 +172,7 @@ pub trait InProcess: Broker<Connected: TestableBroker> {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
+/// # #[cfg(all(feature = "memory", feature = "conformance"))]
 /// # async fn run() {
 /// use ruststream::conformance::harness;
 /// use ruststream::memory::MemoryBroker;
