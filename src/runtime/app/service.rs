@@ -502,8 +502,9 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     ///
     /// For a self-describing broker, prefer
     /// [`with_broker_labeled`](Self::with_broker_labeled), which derives this entry from the broker
-    /// under its label in one step. Use this method for brokers without a network address (the
-    /// in-memory broker), or to override a labeled broker's own spec.
+    /// under its label in one step; the in-memory broker describes itself too. Use this method for
+    /// a broker that does not implement `DescribeServer`, or to override a labeled broker's own
+    /// spec.
     #[must_use]
     pub fn server(mut self, name: impl Into<String>, spec: ServerSpec) -> Self {
         self.servers.insert(name.into(), spec);
