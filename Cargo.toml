@@ -39,13 +39,15 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "threads"
-required-features = ["macros", "memory", "json", "logging"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 # No codec feature in the list, and none missing: the message serializes itself, so the whole
 # service builds with the codec layer switched off.
 [[example]]
 name = "protobuf"
-required-features = ["macros", "memory"]
+required-features = ["testing", "macros", "memory"]
+test = true
 
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
@@ -60,7 +62,19 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_protobuf"
 path = "examples/manual/protobuf.rs"
-required-features = ["memory"]
+required-features = ["testing", "memory"]
+test = true
+
+[[example]]
+name = "byte_lanes"
+required-features = ["testing", "macros", "memory"]
+test = true
+
+[[example]]
+name = "manual_byte_lanes"
+path = "examples/manual/byte_lanes.rs"
+required-features = ["testing", "memory"]
+test = true
 
 [[example]]
 name = "manual_tutorial"
@@ -132,12 +146,47 @@ test = true
 [[example]]
 name = "manual_codecs"
 path = "examples/manual/codecs.rs"
-required-features = ["memory", "json", "cbor"]
+required-features = ["testing", "memory", "json", "cbor"]
+test = true
+
+[[example]]
+name = "codec_json"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_codec_json"
+path = "examples/manual/codec_json.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "codec_cbor"
+required-features = ["testing", "macros", "memory", "cbor"]
+test = true
+
+[[example]]
+name = "manual_codec_cbor"
+path = "examples/manual/codec_cbor.rs"
+required-features = ["testing", "memory", "cbor"]
+test = true
+
+[[example]]
+name = "codec_msgpack"
+required-features = ["testing", "macros", "memory", "msgpack"]
+test = true
+
+[[example]]
+name = "manual_codec_msgpack"
+path = "examples/manual/codec_msgpack.rs"
+required-features = ["testing", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "manual_custom_codec"
 path = "examples/manual/custom_codec.rs"
-required-features = ["memory", "json", "cbor"]
+required-features = ["testing", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "manual_middleware"
@@ -315,11 +364,13 @@ test = true
 
 [[example]]
 name = "codecs"
-required-features = ["macros", "memory", "json", "cbor"]
+required-features = ["testing", "macros", "memory", "json", "cbor"]
+test = true
 
 [[example]]
 name = "custom_codec"
-required-features = ["macros", "memory", "json", "cbor"]
+required-features = ["testing", "macros", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "middleware"
@@ -332,6 +383,78 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "middleware_router_scope"
 required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "workers"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_workers"
+path = "examples/manual/workers.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_threads"
+path = "examples/manual/threads.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "poll_diagnostics"
+required-features = ["testing", "macros", "memory", "json", "poll-diagnostics"]
+test = true
+
+[[example]]
+name = "manual_poll_diagnostics"
+path = "examples/manual/poll_diagnostics.rs"
+required-features = ["testing", "memory", "json", "poll-diagnostics"]
+test = true
+
+[[example]]
+name = "layer"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_layer"
+path = "examples/manual/layer.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_layer"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_layer"
+path = "examples/manual/publish_layer.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "dyn_stack"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_dyn_stack"
+path = "examples/manual/dyn_stack.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_dyn_stack"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_dyn_stack"
+path = "examples/manual/publish_dyn_stack.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "context"

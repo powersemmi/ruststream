@@ -1,128 +1,112 @@
-//! A wrapper codec from the Codecs guide: an envelope that frames another codec's bytes with a
-//! format version, plus the three levels a codec mounts at.
+//! A codec of your own over a serde format: `MessagePack` with field names, the form a peer in a
+//! dynamic language writes and reads. The scenario is a test.
 //!
 //! ```text
-//! cargo run --example custom_codec --features macros,memory,json,cbor -- run
+//! cargo test --example custom_codec --no-default-features --features testing,macros,memory,msgpack
 //! ```
 
-use bytes::BytesMut;
-use ruststream::codec::{CborCodec, Codec, CodecError, JsonCodec};
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
+
+use bytes::{BufMut, BytesMut};
+use ruststream::codec::{Codec, CodecError};
 use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-// --8<-- [start:codec]
-/// The marker byte that says these bytes are an envelope at all.
-const MAGIC: u8 = 0xE1;
-/// The envelope layout this build writes, and the only one it reads.
-const VERSION: u8 = 1;
-
-/// A codec that frames another codec's output: `inner` decides the payload format, the envelope
-/// only puts a versioned header in front of it.
-///
-/// The version is a constant on purpose. Resolving it against a schema registry would need async
-/// I/O, and a codec is synchronous - that integration goes on the async edges instead.
-#[derive(Debug, Clone, Copy, Default)]
-struct Envelope<C> {
-    inner: C,
-}
-
-impl<C> Envelope<C> {
-    const fn new(inner: C) -> Self {
-        Self { inner }
-    }
-}
-
-impl<C: Codec> Codec for Envelope<C> {
-    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
-        let payload = self.inner.encode(value)?;
-        let mut framed = BytesMut::with_capacity(2 + payload.len());
-        framed.extend_from_slice(&[MAGIC, VERSION]);
-        framed.extend_from_slice(&payload);
-        Ok(framed)
-    }
-
-    fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
-        // The inner codec's failure already is a `CodecError` and travels up with `?`; only the
-        // envelope's own failures need wrapping, and they carry their own error type as the
-        // source so the message names the layer that rejected the payload.
-        let payload = open(bytes).map_err(|err| CodecError::Decode(Box::new(err)))?;
-        self.inner.decode(payload)
-    }
-}
-
-/// Strips the header, naming which of its two bytes was wrong.
-fn open(bytes: &[u8]) -> Result<&[u8], EnvelopeError> {
-    match bytes {
-        [MAGIC, VERSION, payload @ ..] => Ok(payload),
-        [MAGIC, version, ..] => Err(EnvelopeError::Version(*version)),
-        [magic, _, ..] => Err(EnvelopeError::Magic(*magic)),
-        _ => Err(EnvelopeError::Truncated(bytes.len())),
-    }
-}
-
-/// What the envelope rejects on its own, as opposed to what the inner codec rejects.
-#[derive(Debug, Error)]
-enum EnvelopeError {
-    #[error("too short to carry an envelope header: {0} byte(s)")]
-    Truncated(usize),
-    #[error("not an envelope: leading byte {0:#04x}")]
-    Magic(u8),
-    #[error("envelope version {0} is not the version this build reads")]
-    Version(u8),
-}
-// --8<-- [end:codec]
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
 struct Order {
     id: u64,
 }
 
-#[derive(Debug, Serialize, Outgoing)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
 struct Receipt {
     id: u64,
 }
 
-#[subscriber("orders")]
-async fn handle(order: &Order) -> HandlerOutcome {
-    println!("got order {}", order.id);
-    HandlerOutcome::ack()
-}
+/// Bytes published as themselves: how the test plays the peer.
+#[derive(Outgoing, Serialized)]
+struct Wire(Vec<u8>);
 
-#[subscriber("audit")]
-async fn audit(order: &Order) -> HandlerOutcome {
-    println!("audited order {}", order.id);
-    HandlerOutcome::ack()
-}
+/// `{"id": 7}` as a `MessagePack` map, the way the peer writes it.
+const NAMED: &[u8] = b"\x81\xa2id\x07";
 
-#[subscriber("billing", reply("receipts"))]
-async fn bill(order: &Order) -> Receipt {
-    Receipt { id: order.id }
-}
+// --8<-- [start:codec]
+/// `MessagePack` that writes a struct as a map of field names, not as an array of values.
+#[derive(Debug, Clone, Copy, Default)]
+struct NamedMsgpack;
 
-#[ruststream::app]
-fn app() -> RustStream {
-    let info = AppInfo::new("custom-codec", "0.1.0");
+impl Codec for NamedMsgpack {
+    const CONTENT_TYPE: &'static str = "application/msgpack";
+
+    fn encode<T: Serialize>(&self, value: &T) -> Result<BytesMut, CodecError> {
+        let mut buf = BytesMut::new();
+        self.encode_into(value, &mut buf)?;
+        Ok(buf)
+    }
+
+    fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
+        // Straight into the publish path's buffer: nothing else is allocated.
+        rmp_serde::encode::write_named(&mut buf.writer(), value)
+            .map_err(|err| CodecError::Encode(Box::new(err)))
+    }
+
+    fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError> {
+        rmp_serde::from_slice(bytes).map_err(|err| CodecError::Decode(Box::new(err)))
+    }
+}
+// --8<-- [end:codec]
+
+mod service {
+    use std::error::Error;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{NAMED, NamedMsgpack, Order, Receipt, Wire};
+
+    #[subscriber("orders", reply("receipts"))]
+    async fn checkout(order: &Order) -> Receipt {
+        tracing::info!(order.id, "checked out");
+        Receipt { id: order.id }
+    }
+
     // --8<-- [start:mount]
-    RustStream::new(info).with_broker_codec(
-        MemoryBroker::new(),
-        // per scope: every handler mounted here decodes through the envelope
-        Envelope::new(JsonCodec),
-        |b| {
-            b.include(handle);
-            // per chain: this router names its own codec for what it mounts
-            b.include_router(
-                Router::new()
-                    .with_codec(Envelope::new(CborCodec))
-                    .include(audit),
-            );
-            // per reply: the reply leaves under the envelope, the request still arrives under
-            // the scope codec
-            b.include(bill)
-                .out_reply(Publish)
-                .codec(Envelope::new(JsonCodec));
-        },
-    )
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker_codec(
+            MemoryBroker::new(),
+            NamedMsgpack,
+            |b| {
+                b.include(checkout).out_reply(Publish).codec(NamedMsgpack);
+            },
+        )
+    }
     // --8<-- [end:mount]
+
+    #[tokio::test]
+    async fn the_reply_travels_as_a_map() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let broker = tb.broker::<MemoryBroker>();
+
+        broker
+            .message(&Wire(NAMED.to_vec()))
+            .to("orders")
+            .publish()
+            .await?;
+
+        broker
+            .subscriber("orders")
+            .assert_called_once()
+            .with_codec(&NamedMsgpack, &Order { id: 7 })
+            .settled(HandlerOutcome::ack());
+        // The receipt `{"id": 7}` is the same map, byte for byte.
+        broker
+            .published::<Receipt>("receipts")
+            .assert_called_once()
+            .with_raw(NAMED);
+        Ok(())
+    }
 }
+
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}
