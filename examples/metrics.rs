@@ -39,13 +39,13 @@ async fn confirm(order: &Order) -> Confirmation {
     }
 }
 
-fn app(metrics: &Metrics) -> impl App {
+fn app(metrics: &Metrics, broker: MemoryBroker) -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         // Counts and times every delivery, by subscription and outcome.
         .layer(metrics.consume_layer())
         // Counts every publish, the replies included, by destination and outcome.
         .publish_layer(metrics.publish_layer())
-        .with_broker(MemoryBroker::new(), |b| {
+        .with_broker(broker, |b| {
             b.include(confirm);
         })
 }
@@ -64,7 +64,17 @@ async fn scrape(State(metrics): State<Metrics>) -> Result<String, StatusCode> {
 async fn main() -> Result<(), Box<dyn Error>> {
     // One collector per process, on the global registry.
     let metrics = Metrics::new()?;
-    let running = app(&metrics).start().await?;
+    let broker = MemoryBroker::new();
+    let orders = broker.publisher();
+    let running = app(&metrics, broker).start().await?;
+    // A few orders, so the first scrape already shows deliveries, replies and their timings.
+    for (id, quantity) in [(1, 3), (2, 0), (3, 5)] {
+        orders
+            .message(&Order { id, quantity })
+            .to("orders")
+            .publish()
+            .await?;
+    }
 
     let router = Router::new()
         .route("/metrics", get(scrape))
@@ -101,7 +111,7 @@ mod tests {
     async fn the_scrape_counts_the_delivery_and_the_reply() -> Result<(), Box<dyn Error>> {
         // A registry of the test's own, so nothing else in the process writes into it.
         let metrics = Metrics::with_registry(Registry::new())?;
-        let tb = TestApp::start(app(&metrics)).await?;
+        let tb = TestApp::start(app(&metrics, MemoryBroker::new())).await?;
         let orders = tb.broker::<MemoryBroker>();
         orders
             .message(&Order { id: 1, quantity: 3 })
