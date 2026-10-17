@@ -34,6 +34,43 @@
 //! typically one per transport or topology. The starter template for the in-memory broker lives
 //! in this repository, and the quick start has the command:
 //! <https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/>.
+//!
+//! # Templates a broker crate ships
+//!
+//! A broker crate ships a [`cargo generate`](https://github.com/cargo-generate/cargo-generate)
+//! template for each transport or topology it serves (`nats` and `nats-js`; `redis-stream`,
+//! `redis-pubsub` and `redis-list`), and its own CI keeps the scaffold in step with its API. The
+//! core owns one, `templates/memory`, so a default `cargo generate` works offline with no broker
+//! dependency.
+//!
+//! ```text
+//! templates/<name>/
+//!   cargo-generate.toml   manifest: description, any declared placeholders
+//!   Cargo.toml.liquid     name = "{{project-name}}"; pins ruststream and the broker crate
+//!   src/main.rs           the #[ruststream::app] builder
+//!   src/orders.rs         #[subscriber] handlers
+//!   src/routes.rs         a Router collecting the handlers
+//! ```
+//!
+//! - Placeholders use cargo-generate's Liquid syntax. `{{project-name}}` is built in and takes the
+//!   `--name` value, so a minimal template declares none of its own.
+//! - The manifest is named `Cargo.toml.liquid`. Cargo parses every `Cargo.toml` of a git source
+//!   and ignores `exclude`, so a placeholder in a package name would break every user who depends
+//!   on the crate by git. Any other templated file cargo parses gets the suffix too.
+//! - The manifest pins `ruststream` to the supported minor version and the broker crate to its
+//!   own.
+//! - Template sources parse as neither Rust nor TOML until rendered, so the crate's workspace
+//!   keeps them out with `exclude = ["templates"]`.
+//! - A feature block only adds code: no `{% else %}` and no negative `{% if not flag %}`. The
+//!   scaffold rendered without flags is then a subset of the one rendered with all of them, and
+//!   one all-features check per template catches every drift from the API.
+//!
+//! The crate's CI installs `cargo-generate`, renders each template
+//! (`cargo generate --path templates/<name> --name smoke`) and runs `cargo check` in the
+//! scaffold. Before the check it rewrites the rendered `ruststream` requirement to the version
+//! being built, because `[patch.crates-io]` redirects where a crate comes from but not which
+//! versions a requirement accepts, and then adds the `[patch.crates-io]` entry pointing at a
+//! sibling checkout of `ruststream`.
 
 use std::io;
 use std::num::NonZeroUsize;
