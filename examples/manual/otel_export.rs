@@ -1,9 +1,11 @@
-//! The OpenTelemetry example written without the `macros` feature: the handler is a named type
-//! that reads the business instruments off the context, and the entry point is the same
-//! hand-written `main` the original already needs for the final flush.
+//! The service of `examples/otel_export.rs` without the `macros` feature: the handler is a named
+//! type that reads the business instruments off the context; `main` is the same.
 //!
 //! ```text
-//! cargo run --example manual_otel_export --no-default-features --features otel,memory,json -- run
+//! cargo run --example manual_otel_export --no-default-features \
+//!     --features testing,memory,json,otel -- run
+//! cargo test --example manual_otel_export --no-default-features \
+//!     --features testing,memory,json,otel
 //! ```
 //!
 //! Point `otlp_endpoint` at a running collector (`docker run -p 4317:4317 otel/opentelemetry-collector`)
@@ -11,6 +13,7 @@
 //! background while the service keeps working.
 
 use std::convert::Infallible;
+use std::error::Error;
 use std::future::{Future, ready};
 use std::process::ExitCode;
 
@@ -20,25 +23,31 @@ use opentelemetry::metrics::Counter;
 use ruststream::memory::prelude::*;
 use ruststream::otel::Otel;
 use ruststream::runtime::cli::run_main;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
+// `#[derive(Outgoing)]` with no `name`, by hand: the call site names the destination.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
+
 // --8<-- [start:business_metric]
-/// The service's business instruments: one storage object, built once at startup against the
-/// global meter `Otel::init` installed, so everything in it rides the same OTLP pipeline as the
-/// framework's dispatch metrics.
+/// The service's own instruments, built once at startup against the global meter, so they
+/// export through the same pipeline as the dispatch metrics.
 #[derive(Clone)]
 struct OrderMetrics {
     accepted: Counter<u64>,
 }
 
-/// `#[derive(FromRef)]` exists so a `State<OrderMetrics>` parameter can project this field out
-/// of the app state. A hand-written handler reads the state whole off the context, so there is
-/// no projection to declare and no derive to replace.
+// A hand-written handler reads the state whole off the context, so it needs no `FromRef`.
 #[derive(Clone)]
 struct AppState {
     metrics: OrderMetrics,
@@ -46,10 +55,11 @@ struct AppState {
 
 struct Accept;
 
+// The state is the last axis of `Handle`; the mount checks it against the app's.
 impl Handle<Order, (), (), (), AppState> for Accept {
     fn handle(
         &self,
-        order: &Order,
+        _order: &Order,
         _outs: &(),
         ctx: &mut Context<'_, (), AppState>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
@@ -57,31 +67,23 @@ impl Handle<Order, (), (), (), AppState> for Accept {
             .metrics
             .accepted
             .add(1, &[KeyValue::new("region", "eu")]);
-        // Deserialized for schema realism; the example only counts orders.
-        let _ = order.id;
         ready(Ok(()))
     }
 }
-
-// The typed `AppState` is the last axis of the body's own `impl Handle`, so `subscriber(source,
-// body)` mounts it unchanged: the mount reads that state off the impl and checks it against the
-// app's.
 // --8<-- [end:business_metric]
 
-// --8<-- [start:init]
-// `use<>` opts out of capturing the `otel` borrow: the layers `Arc`-share the instruments, so
-// the built app owns its half and `main` keeps the other for the final flush.
+// --8<-- [start:app]
+// `use<>`: the app keeps its own handles to the instruments, not a borrow of `otel`.
 fn app(otel: &Otel) -> impl App + use<> {
-    RustStream::new(AppInfo::new("orders-svc", "0.1.0"))
-        // per-delivery metrics: consumed, process duration, outcomes, in-flight, queue time
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        // Per delivery: consumed, processing time, outcomes, in flight, queue time.
         .layer(otel.consume_layer())
-        // per-publish metrics: sent, operation duration, payload size, queue-time stamp
+        // Per publish: sent, operation time, payload size, the publish-time stamp.
         .publish_layer(otel.publish_layer())
-        // business instruments: built once against the global meter, shared as typed state
         .on_startup(async move |()| {
             Ok::<_, Infallible>(AppState {
                 metrics: OrderMetrics {
-                    accepted: global::meter("orders-svc")
+                    accepted: global::meter("orders")
                         .u64_counter("orders_accepted")
                         .build(),
                 },
@@ -91,24 +93,80 @@ fn app(otel: &Otel) -> impl App + use<> {
             b.include(subscriber("orders", Accept).build());
         })
 }
+// --8<-- [end:app]
 
-// The entry point is hand-written with or without the attribute: the macro's generated main ends
-// at run_main, and the exporters batch in the background, so flushing them needs one call after
-// the app has drained.
-fn main() -> ExitCode {
-    // Installs the global tracer + meter providers, the OTLP exporters, and the tracing bridge;
-    // every span the propagation module opens and every metric the service records now exports.
+// --8<-- [start:main]
+// Written by hand rather than by `#[ruststream::app]`: the exporters batch in the background,
+// so `main` flushes them once the app has drained.
+fn main() -> Result<ExitCode, Box<dyn Error>> {
     let otel = Otel::builder()
-        .service_name("orders-svc")
+        .service_name("orders")
         .otlp_endpoint("http://localhost:4317")
         .messaging_system("memory")
         .attribute("deployment.environment", "dev")
-        .init()
-        .expect("otel init failed");
+        .init()?;
 
     let code = run_main(|| app(&otel));
-    // Ships the last buffered spans and metric points to the collector; dropping `Otel` does not.
-    otel.shutdown().expect("otel shutdown failed");
-    code
+    // Ships the last spans and metric points; dropping `Otel` does not.
+    otel.shutdown()?;
+    Ok(code)
 }
-// --8<-- [end:init]
+// --8<-- [end:main]
+
+// `main` exports to a collector; this test attaches in-memory providers to the same app instead.
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use opentelemetry::global;
+    use opentelemetry_sdk::metrics::data::{ResourceMetrics, ScopeMetrics};
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use ruststream::memory::prelude::*;
+    use ruststream::otel::Otel;
+    use ruststream::testing::TestApp;
+
+    use super::{Order, app};
+
+    #[tokio::test]
+    async fn the_dispatch_and_business_metrics_are_exported() -> Result<(), Box<dyn Error>> {
+        let exporter = InMemoryMetricExporter::default();
+        let meters = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter.clone())
+            .build();
+        // What `init` does for the business instruments: the global meter is this provider.
+        global::set_meter_provider(meters.clone());
+        let otel = Otel::builder()
+            .messaging_system("memory")
+            .attach(SdkTracerProvider::default(), meters.clone());
+
+        let tb = TestApp::start(app(&otel)).await?;
+        let orders = tb.broker::<MemoryBroker>();
+        orders
+            .message(&Order { id: 7 })
+            .to("orders")
+            .publish()
+            .await?;
+        orders.subscriber("orders").assert_called_once();
+
+        meters.force_flush()?;
+        let batches = exporter.get_finished_metrics()?;
+        let names: Vec<String> = batches
+            .iter()
+            .flat_map(ResourceMetrics::scope_metrics)
+            .flat_map(ScopeMetrics::metrics)
+            .map(|metric| metric.name().to_owned())
+            .collect();
+        for name in [
+            "messaging.client.consumed.messages",
+            "ruststream.messages.processed",
+            "orders_accepted",
+        ] {
+            assert!(
+                names.iter().any(|n| n == name),
+                "`{name}` not exported: {names:?}"
+            );
+        }
+        Ok(())
+    }
+}

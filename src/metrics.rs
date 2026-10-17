@@ -46,7 +46,7 @@
 //! [`PollDiagnostics`]: the time a handler spent in one sampled poll, and its moving average.
 //!
 //! `name` is the subscription or destination, and `status` the outcome: `ack` or `nack` on the
-//! consume side, `ok` or `error` on the publish side. `examples/metrics_http.rs` in the
+//! consume side, `ok` or `error` on the publish side. `examples/metrics.rs` in the
 //! repository serves `/metrics` with axum. A service exporting through the `otel` feature
 //! instead has a Grafana dashboard in
 //! [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana).
