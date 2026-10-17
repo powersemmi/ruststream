@@ -57,7 +57,6 @@ mod start {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:start]
     struct IssueReceipt;
 
     impl Handle<Order, Receipt> for IssueReceipt {
@@ -78,20 +77,15 @@ mod start {
         })
     }
 
-    /// Starts the service beside other work of the process, and stops it once that work is done.
-    async fn serve(
-        broker: MemoryBroker,
-        work: impl Future<Output = ()> + Send,
-    ) -> Result<(), Box<dyn Error>> {
-        // `start` returns once every subscription is open.
-        let running = app(broker).start().await?;
-        let health = running.health();
-        work.await;
-        running.shutdown().await?;
-        tracing::info!(state = ?health.state(), "stopped");
+    // --8<-- [start:run]
+    /// Runs the service until `SIGINT` or `SIGTERM`, then shuts it down gracefully.
+    async fn serve_forever(broker: MemoryBroker) -> Result<(), Box<dyn Error>> {
+        app(broker).run().await?;
         Ok(())
     }
+    // --8<-- [end:run]
 
+    // --8<-- [start:run_until]
     /// Runs the service until `work` resolves; `work` starts once the service has started.
     async fn serve_until(
         broker: MemoryBroker,
@@ -100,7 +94,31 @@ mod start {
         app(broker).run_until(work).await?;
         Ok(())
     }
+    // --8<-- [end:run_until]
+
+    // --8<-- [start:start]
+    /// Starts the service beside other work of the process, and stops it once that work is done.
+    async fn serve(
+        broker: MemoryBroker,
+        work: impl Future<Output = ()> + Send,
+    ) -> Result<(), Box<dyn Error>> {
+        // `start` returns once every subscription is open.
+        let running = app(broker).start().await?;
+        work.await;
+        running.shutdown().await?;
+        Ok(())
+    }
     // --8<-- [end:start]
+
+    // --8<-- [start:shutdown]
+    /// Stops a started service: the shutdown hooks run and the handlers in flight finish first.
+    async fn stop(running: RunningApp) -> Result<(), Box<dyn Error>> {
+        let health = running.health();
+        running.shutdown().await?;
+        tracing::info!(state = ?health.state(), "stopped");
+        Ok(())
+    }
+    // --8<-- [end:shutdown]
 
     /// The next receipt a downstream reader sees, or `None` after five seconds.
     async fn next_receipt(receipts: &mut MemorySubscriber) -> Option<Receipt> {
@@ -155,8 +173,67 @@ mod start {
             Some(Receipt { order_id: 7 })
         );
 
-        running.shutdown().await?;
+        stop(running).await?;
         assert_eq!(health.state(), HealthState::Stopped);
+        Ok(())
+    }
+
+    /// Sends `SIGTERM` to this process through the shell (the example takes no libc dependency).
+    #[cfg(unix)]
+    fn raise_sigterm() -> Result<(), Box<dyn Error>> {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("kill -TERM {}", std::process::id()))
+            .status()?;
+        assert!(status.success(), "kill -TERM failed: {status:?}");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_serves_until_a_termination_signal() -> Result<(), Box<dyn Error>> {
+        // A listener registered first replaces the default disposition, so a signal that lands
+        // before `run` installs its own handler cannot kill the test binary.
+        let _guard = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let broker = MemoryBroker::new();
+        let mut receipts = broker.subscribe("receipts");
+        let orders = broker.publisher();
+
+        let mut run = tokio::spawn(async move {
+            serve_forever(broker)
+                .await
+                .map_err(|error| error.to_string())
+        });
+        // The service answers before the signal: `run` has started it. An order published
+        // before the subscription opens reaches no one, so it is sent again until one is answered.
+        let receipt = timeout(Duration::from_secs(30), async {
+            loop {
+                orders
+                    .message(&Order { id: 7 })
+                    .to("orders")
+                    .publish()
+                    .await?;
+                let answered = timeout(Duration::from_millis(100), next_receipt(&mut receipts));
+                if let Ok(Some(receipt)) = answered.await {
+                    return Ok::<_, Box<dyn Error>>(receipt);
+                }
+            }
+        })
+        .await??;
+        assert_eq!(receipt, Receipt { order_id: 7 });
+
+        // `run` installs its signal handler after startup and nothing reports the moment, so the
+        // signal is re-sent until the run returns.
+        let stopped = timeout(Duration::from_secs(30), async {
+            loop {
+                raise_sigterm()?;
+                if let Ok(joined) = timeout(Duration::from_millis(50), &mut run).await {
+                    return Ok::<_, Box<dyn Error>>(joined?);
+                }
+            }
+        })
+        .await??;
+        assert_eq!(stopped, Ok(()), "the signalled shutdown must be graceful");
         Ok(())
     }
 
