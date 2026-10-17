@@ -9,11 +9,12 @@ import {
   adapterVerdict,
   codePanels,
   codeRows,
-  comparisonPanels,
+  comparisonGroups,
   niceAxis,
   machineLine,
   overheadCell,
   pendingLine,
+  scenarioGroups,
   provenanceLine,
   sideCell,
   tabContent,
@@ -47,6 +48,13 @@ const labels: Labels = {
   noise: 'spread of the rounds',
   comparison: 'Against a raw client',
   code: 'Cost of the code',
+  broker: 'The broker',
+  plugin: 'The {plugin} plugin',
+  pluginRaw: 'Without the plugin',
+  pluginAdapter: 'Plugin written by hand',
+  pluginFramework: "The crate's plugin",
+  pluginAxis: 'How far each loop falls below the best round of the app without the plugin',
+  pluginAgainst: '({percent} over no plugin)',
 };
 
 const core = JSON.parse(
@@ -205,14 +213,16 @@ const published = (...scenarios: Scenario[]): Loaded => ({
   results: {...core, crate: 'ruststream-amqp', scenarios},
 });
 
+const panels = (entry: Loaded) => comparisonGroups(entry, 'en', labels).map((group) => group.panel);
+
 describe('the comparison chart', () => {
   it('draws the raw client, the crate and the runtime in that order', () => {
-    const [panel] = comparisonPanels([published(amqp)], 'en', labels);
+    const [panel] = panels(published(amqp));
     expect(panel!.rows[0]!.lanes.map((lane) => lane.loop)).toEqual(['raw', 'adapter', 'framework']);
   });
 
   it('places each loop by how far it falls below the raw best round', () => {
-    const [panel] = comparisonPanels([published(kafka)], 'en', labels);
+    const [panel] = panels(published(kafka));
     const [raw, , framework] = panel!.rows[0]!.lanes;
     // The raw best round is the zero of the axis, and the runtime sits 20.2% to its right.
     expect(raw!.best).toBe(panel!.zero);
@@ -225,7 +235,7 @@ describe('the comparison chart', () => {
   });
 
   it('draws the spread a verdict rests on around the zero of each compared loop', () => {
-    const [panel] = comparisonPanels([published(amqp)], 'en', labels);
+    const [panel] = panels(published(amqp));
     const framework = panel!.rows[0]!.lanes[2]!;
     const width = panel!.ticks.at(-1)!.value - panel!.ticks[0]!.value;
     // The wider of the two spreads: the runtime's 9,901 msg/s over a raw best of 167,723.
@@ -233,7 +243,7 @@ describe('the comparison chart', () => {
   });
 
   it('keeps the verdict of the document', () => {
-    const [panel] = comparisonPanels([published(amqp, kafka)], 'en', labels);
+    const [panel] = panels(published(amqp, kafka));
     const [quiet, loud] = panel!.rows;
     expect(quiet!.lanes[2]).toMatchObject({inside: true, verdict: 'indistinguishable'});
     expect(loud!.lanes[2]).toMatchObject({inside: false, verdict: '+20.2%'});
@@ -241,7 +251,7 @@ describe('the comparison chart', () => {
   });
 
   it('leaves the crate lane out when the crate measured only the two ends', () => {
-    const [panel] = comparisonPanels([published({...amqp, adapter: undefined})], 'en', labels);
+    const [panel] = panels(published({...amqp, adapter: undefined}));
     expect(panel!.rows[0]!.lanes.map((lane) => lane.loop)).toEqual(['raw', 'framework']);
   });
 
@@ -252,7 +262,7 @@ describe('the comparison chart', () => {
       adapter: {best: 999, median: 999, worst: 999},
       framework: {best: 1000, median: 999, worst: 998},
     };
-    const [panel] = comparisonPanels([published(flat)], 'en', labels);
+    const [panel] = panels(published(flat));
     expect(panel!.ticks[0]!.value).toBeLessThanOrEqual(-2);
     expect(panel!.ticks.at(-1)!.value).toBeGreaterThanOrEqual(2);
   });
@@ -264,11 +274,90 @@ describe('the comparison chart', () => {
       adapter: undefined,
       framework: {median: 95, min: 85, max: 100},
     };
-    const [panel] = comparisonPanels([published(first)], 'en', labels);
+    const [panel] = panels(published(first));
     const framework = panel!.rows[0]!.lanes[1]!;
     expect(framework.from).toBeLessThan(framework.best);
     expect(framework.to).toBeGreaterThan(framework.best);
     expect(framework.median).toBeUndefined();
+  });
+});
+
+// The sqlx tab: broker rows within a few percent of the client, outbox rows far above it.
+const tracked: Scenario = {
+  name: 'outbox plugin, a tracked delivery fetched and marked',
+  unit: 'msg/s',
+  plugin: 'outbox',
+  raw: {best: 372146, median: 370000, worst: 365000},
+  adapter: {best: 49800, median: 49500, worst: 49000},
+  framework: {best: 50600, median: 50000, worst: 49500},
+  overhead_percent: 86.4,
+  adapter_overhead_percent: 86.6,
+  verdict: 'measured',
+  adapter_verdict: 'measured',
+};
+
+describe('the scenario groups', () => {
+  it('put the broker first, then each plugin in the order the document names it', () => {
+    const queue = {...tracked, name: 'queue', plugin: 'queue'};
+    const groups = scenarioGroups([tracked, amqp, queue, kafka]);
+    expect(groups.map((group) => group.plugin)).toEqual([null, 'outbox', 'queue']);
+    expect(groups[0]!.scenarios).toEqual([amqp, kafka]);
+  });
+
+  it('read the group from the document, never from the name', () => {
+    const named = {
+      ...amqp,
+      name: 'outbox plugin, but the broker measured it',
+    };
+    expect(scenarioGroups([named, tracked]).map((group) => group.scenarios)).toEqual([
+      [named],
+      [tracked],
+    ]);
+  });
+
+  it('leave a crate with one kind of scenario as one group', () => {
+    expect(scenarioGroups([amqp, kafka])).toEqual([{plugin: null, scenarios: [amqp, kafka]}]);
+  });
+});
+
+describe('the comparison groups', () => {
+  it('give each group a chart of its own, on an axis of its own', () => {
+    const [broker, plugin] = comparisonGroups(published(amqp, tracked), 'en', labels);
+    expect(broker!.panel.rows.map((row) => row.scenario)).toEqual([amqp.name]);
+    expect(plugin!.panel.rows.map((row) => row.scenario)).toEqual([tracked.name]);
+    expect(broker!.panel.ticks.at(-1)!.value).toBeLessThanOrEqual(10);
+    expect(plugin!.panel.ticks.at(-1)!.value).toBeGreaterThanOrEqual(90);
+    expect(plugin!.rows.map((row) => row.scenario)).toEqual([tracked.name]);
+  });
+
+  it('title each group and name a plugin by the document', () => {
+    const groups = comparisonGroups(published(amqp, tracked), 'en', labels);
+    expect(groups.map((group) => group.title)).toEqual(['The broker', 'The outbox plugin']);
+  });
+
+  it("name a plugin's loops as the variants of one app", () => {
+    const [broker, plugin] = comparisonGroups(published(amqp, tracked), 'en', labels);
+    expect(broker!.labels).toEqual(labels);
+    expect([plugin!.labels.raw, plugin!.labels.adapter, plugin!.labels.framework]).toEqual([
+      'Without the plugin',
+      'Plugin written by hand',
+      "The crate's plugin",
+    ]);
+    expect(plugin!.labels.axis).toBe(labels.pluginAxis);
+    expect(plugin!.rows[0]!.adapter).toBe('49,800 msg/s (49,500) (+86.6% over no plugin)');
+  });
+
+  it('keep a crate with broker scenarios only as one comparison', () => {
+    const [only, ...rest] = comparisonGroups(published(amqp, kafka), 'en', labels);
+    expect(rest).toEqual([]);
+    expect(only!.title).toBe('Against a raw client');
+    expect(only!.labels).toEqual(labels);
+  });
+
+  it('title a crate that measured a plugin alone by the plugin', () => {
+    const [only] = comparisonGroups(published(tracked), 'en', labels);
+    expect(only!.title).toBe('The outbox plugin');
+    expect(only!.labels.raw).toBe('Without the plugin');
   });
 });
 
@@ -327,7 +416,7 @@ describe('the tabs of the results', () => {
 
   it('give the core its cost chart and no comparison', () => {
     const content = tabContent({broker: CORE, results: core}, 'en', labels);
-    expect(content.comparison).toBeNull();
+    expect(content.comparison).toEqual([]);
     expect(content.code!.panel.broker).toBe(CORE);
     expect(content.code!.rows[0]!.crate).toBe('RustStream');
     expect(content.pending).toBeNull();
@@ -344,15 +433,15 @@ describe('the tabs of the results', () => {
       },
     };
     const content = tabContent(nats, 'en', labels);
-    expect(content.comparison!.panel.rows.map((row) => row.scenario)).toEqual(['core NATS']);
-    expect(content.comparison!.rows[0]!.overhead).toBe('+5%');
+    expect(content.comparison[0]!.panel.rows.map((row) => row.scenario)).toEqual(['core NATS']);
+    expect(content.comparison[0]!.rows[0]!.overhead).toBe('+5%');
     expect(content.code!.rows.map((row) => row.scenario)).toEqual(['pull']);
     expect(content.pending).toBeNull();
   });
 
   it('list a crate with no readable document as pending in its own tab', () => {
     const content = tabContent({broker: BROKERS[3]!, results: null}, 'en', labels);
-    expect(content.comparison).toBeNull();
+    expect(content.comparison).toEqual([]);
     expect(content.code).toBeNull();
     expect(content.pending).toBe('No results published yet: Kafka.');
   });

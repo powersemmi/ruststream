@@ -34,7 +34,14 @@ export type Labels = Record<
   | 'median'
   | 'noise'
   | 'comparison'
-  | 'code',
+  | 'code'
+  | 'broker'
+  | 'plugin'
+  | 'pluginRaw'
+  | 'pluginAdapter'
+  | 'pluginFramework'
+  | 'pluginAxis'
+  | 'pluginAgainst',
   string
 >;
 
@@ -50,6 +57,9 @@ export interface Measurement {
 export interface Scenario {
   name: string;
   unit: string;
+  // A scenario of a plugin the crate ships rather than of its broker. Its three loops are one
+  // app without the plugin, with the plugin written by hand, and with the crate's plugin.
+  plugin?: string;
   raw?: Measurement;
   adapter?: Measurement;
   framework?: Measurement;
@@ -441,66 +451,128 @@ function extent(loop: Loop, measurement: Measurement, raw: Measurement): Extent 
   };
 }
 
-/** Per broker, each scenario's three loops placed against the raw client's figure. */
-export function comparisonPanels(
-  published: Loaded[],
+/** One group's scenarios, each with its three loops placed against the raw loop's figure. */
+function comparisonPanel(
+  entry: Loaded,
+  measured: Scenario[],
   lang: string,
   labels: Labels,
-): ComparisonPanel[] {
-  return published
-    .filter((entry) => entry.results?.scenarios?.length)
-    .map((entry) => {
-      const scenarios = entry.results!.scenarios!.filter((scenario) => figure(scenario.raw));
-      const extents = scenarios.map((scenario) =>
-        (['raw', 'adapter', 'framework'] as const)
-          .filter((loop) => scenario[loop] && figure(scenario[loop]) !== undefined)
-          .map((loop) => extent(loop, scenario[loop]!, scenario.raw!)),
-      );
-      const reach = extents
-        .flat()
-        .flatMap((lane) => [lane.from, lane.to, lane.band ?? 0, -(lane.band ?? 0)]);
-      const axis = niceAxis(
-        Math.min(-MIN_SPAN, ...reach),
-        Math.max(MIN_SPAN, ...reach),
-        (value) => `${value > 0 ? '+' : ''}${value.toLocaleString(lang)}%`,
-      );
-      return {
-        broker: entry.broker,
-        provenance: provenanceLine(entry, labels),
-        zero: axis.place(0),
-        ticks: axis.ticks,
-        rows: scenarios.map((scenario, index) => ({
-          scenario: scenario.name,
-          unit: scenario.unit,
-          lanes: extents[index]!.map((lane): Lane => {
-            const verdict =
-              lane.loop === 'framework'
-                ? overheadCell(scenario, labels)
-                : lane.loop === 'adapter'
-                  ? adapterVerdict(scenario, labels)
-                  : undefined;
-            const inside =
-              lane.loop === 'framework'
-                ? scenario.verdict === 'indistinguishable'
-                : lane.loop === 'adapter' && verdict === labels.indistinguishable;
-            return {
-              loop: lane.loop,
-              from: axis.place(lane.from),
-              to: axis.place(lane.to),
-              best: axis.place(lane.best),
-              median: lane.median === undefined ? undefined : axis.place(lane.median),
-              band:
-                lane.band === undefined
-                  ? undefined
-                  : {from: axis.place(-lane.band), to: axis.place(lane.band)},
-              inside,
-              value: sideCell(lane.measurement, scenario.unit, lang),
-              verdict,
-            };
-          }),
-        })),
-      };
-    });
+): ComparisonPanel {
+  const scenarios = measured.filter((scenario) => figure(scenario.raw));
+  const extents = scenarios.map((scenario) =>
+    (['raw', 'adapter', 'framework'] as const)
+      .filter((loop) => scenario[loop] && figure(scenario[loop]) !== undefined)
+      .map((loop) => extent(loop, scenario[loop]!, scenario.raw!)),
+  );
+  const reach = extents
+    .flat()
+    .flatMap((lane) => [lane.from, lane.to, lane.band ?? 0, -(lane.band ?? 0)]);
+  const axis = niceAxis(
+    Math.min(-MIN_SPAN, ...reach),
+    Math.max(MIN_SPAN, ...reach),
+    (value) => `${value > 0 ? '+' : ''}${value.toLocaleString(lang)}%`,
+  );
+  return {
+    broker: entry.broker,
+    provenance: provenanceLine(entry, labels),
+    zero: axis.place(0),
+    ticks: axis.ticks,
+    rows: scenarios.map((scenario, index) => ({
+      scenario: scenario.name,
+      unit: scenario.unit,
+      lanes: extents[index]!.map((lane): Lane => {
+        const verdict =
+          lane.loop === 'framework'
+            ? overheadCell(scenario, labels)
+            : lane.loop === 'adapter'
+              ? adapterVerdict(scenario, labels)
+              : undefined;
+        const inside =
+          lane.loop === 'framework'
+            ? scenario.verdict === 'indistinguishable'
+            : lane.loop === 'adapter' && verdict === labels.indistinguishable;
+        return {
+          loop: lane.loop,
+          from: axis.place(lane.from),
+          to: axis.place(lane.to),
+          best: axis.place(lane.best),
+          median: lane.median === undefined ? undefined : axis.place(lane.median),
+          band:
+            lane.band === undefined
+              ? undefined
+              : {from: axis.place(-lane.band), to: axis.place(lane.band)},
+          inside,
+          value: sideCell(lane.measurement, scenario.unit, lang),
+          verdict,
+        };
+      }),
+    })),
+  };
+}
+
+/** The scenarios of one chart: the broker's own (`plugin` null), or those of one plugin. */
+export interface ScenarioGroup {
+  plugin: string | null;
+  scenarios: Scenario[];
+}
+
+/**
+ * The broker's scenarios first, then each plugin's in the order the document first names it. The
+ * group is the document's `plugin` field: a plugin's loops are other variants than the broker's,
+ * and its overhead is on another scale, so it is never drawn on the broker's axis.
+ */
+export function scenarioGroups(scenarios: Scenario[]): ScenarioGroup[] {
+  const groups = new Map<string | null, Scenario[]>([[null, []]]);
+  for (const scenario of scenarios) {
+    const plugin = scenario.plugin ?? null;
+    groups.set(plugin, [...(groups.get(plugin) ?? []), scenario]);
+  }
+  return [...groups]
+    .filter(([, members]) => members.length)
+    .map(([plugin, members]) => ({plugin, scenarios: members}));
+}
+
+// A plugin's loops are one app in three variants, so the page's words for them replace the
+// client, the crate and the runtime wherever the chart and its table name a loop.
+const pluginLabels = (labels: Labels): Labels => ({
+  ...labels,
+  raw: labels.pluginRaw,
+  adapter: labels.pluginAdapter,
+  framework: labels.pluginFramework,
+  axis: labels.pluginAxis,
+  against: labels.pluginAgainst,
+});
+
+/** One chart of a crate's comparison, with the words its legend and table use. */
+export interface ComparisonGroup {
+  title: string;
+  labels: Labels;
+  panel: ComparisonPanel;
+  rows: ComparisonRow[];
+}
+
+/** A crate's comparison, a chart per group; a crate measuring its broker alone draws one. */
+export function comparisonGroups(entry: Loaded, lang: string, labels: Labels): ComparisonGroup[] {
+  const groups = scenarioGroups(entry.results?.scenarios ?? []);
+  return groups.map(({plugin, scenarios}) => {
+    const words = plugin === null ? labels : pluginLabels(labels);
+    const title =
+      plugin !== null
+        ? labels.plugin.replace('{plugin}', plugin)
+        : groups.length > 1
+          ? labels.broker
+          : labels.comparison;
+    const group: Loaded = {
+      ...entry,
+      results: {...entry.results!, scenarios},
+    };
+    return {
+      title,
+      labels: words,
+      panel: comparisonPanel(entry, scenarios, lang, words),
+      rows: comparisonRows([group], lang, words),
+    };
+  });
 }
 
 export interface CodeBar {
@@ -513,7 +585,12 @@ export interface CodePanel {
   machine: string;
   instructions: Tick[];
   allocations: Tick[];
-  rows: {scenario: string; instructions: CodeBar; allocations: CodeBar; cold: string}[];
+  rows: {
+    scenario: string;
+    instructions: CodeBar;
+    allocations: CodeBar;
+    cold: string;
+  }[];
 }
 
 /**
@@ -558,19 +635,17 @@ export function codePanels(published: Loaded[], lang: string, labels: Labels): C
 
 /** What one crate's tab shows: each chart with the rows of its table, or the pending line. */
 export interface TabContent {
-  comparison: {panel: ComparisonPanel; rows: ComparisonRow[]} | null;
+  comparison: ComparisonGroup[];
   code: {panel: CodePanel; rows: CodeRow[]} | null;
   pending: string | null;
 }
 
 export function tabContent(entry: Loaded, lang: string, labels: Labels): TabContent {
-  const [comparison] = comparisonPanels([entry], lang, labels);
+  const comparison = comparisonGroups(entry, lang, labels);
   const [code] = codePanels([entry], lang, labels);
   return {
-    comparison: comparison
-      ? {panel: comparison, rows: comparisonRows([entry], lang, labels)}
-      : null,
+    comparison,
     code: code ? {panel: code, rows: codeRows([entry], lang)} : null,
-    pending: comparison || code ? null : pendingLine([entry], labels),
+    pending: comparison.length || code ? null : pendingLine([entry], labels),
   };
 }

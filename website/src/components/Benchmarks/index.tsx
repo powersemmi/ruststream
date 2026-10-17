@@ -16,8 +16,8 @@ import {
   type CodeBar,
   type CodePanel,
   type CodeRow,
+  type ComparisonGroup,
   type ComparisonPanel,
-  type ComparisonRow,
   type Labels,
   type Lane,
   type Loaded,
@@ -166,12 +166,22 @@ function ComparisonLegend({labels}: {labels: Labels}): ReactNode {
   );
 }
 
-function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Labels}): ReactNode {
+function ComparisonChart({
+  panel,
+  labels,
+  provenance,
+}: {
+  panel: ComparisonPanel;
+  labels: Labels;
+  provenance: boolean;
+}): ReactNode {
   return (
     <section className={styles.panel}>
-      <p className={styles.panelHead}>
-        {panel.provenance}. <a href={detailsUrl(panel.broker)}>{labels.details}</a>
-      </p>
+      {provenance && (
+        <p className={styles.panelHead}>
+          {panel.provenance}. <a href={detailsUrl(panel.broker)}>{labels.details}</a>
+        </p>
+      )}
       <div className={`${styles.row} ${styles.axisRow}`}>
         <TickLabels ticks={panel.ticks} />
       </div>
@@ -222,24 +232,26 @@ function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Label
   );
 }
 
-/** Throughput against the broker's raw client, as the broker crate measures it. */
+/**
+ * Throughput against the raw loop, as the crate measures it: one chart per group, so a plugin
+ * whose overhead is on another scale gets an axis of its own. The run is named once, above the
+ * first chart.
+ */
 function Comparison({
-  panel,
-  rows,
-  labels,
+  group: {title, labels, panel, rows},
+  provenance,
 }: {
-  panel: ComparisonPanel;
-  rows: ComparisonRow[];
-  labels: Labels;
+  group: ComparisonGroup;
+  provenance: boolean;
 }): ReactNode {
   return (
     <figure className={styles.chart}>
       <figcaption className={styles.caption}>
-        <strong>{labels.comparison}</strong>
+        <strong>{title}</strong>
         <span>{labels.axis}</span>
       </figcaption>
       <ComparisonLegend labels={labels} />
-      <ComparisonChart panel={panel} labels={labels} />
+      <ComparisonChart panel={panel} labels={labels} provenance={provenance} />
       <details className={styles.table}>
         <summary>{labels.table}</summary>
         <table>
@@ -380,7 +392,9 @@ function CrateResults({
   const {comparison, code, pending} = tabContent(entry, lang, labels);
   return (
     <>
-      {comparison && <Comparison {...comparison} labels={labels} />}
+      {comparison.map((group, index) => (
+        <Comparison key={group.title} group={group} provenance={index === 0} />
+      ))}
       {code && <Code {...code} labels={labels} />}
       {pending && <p>{pending}</p>}
     </>

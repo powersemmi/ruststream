@@ -4,7 +4,7 @@ description: "RustStream 在每条消息上的开销：与各 Broker 裸客户�
 
 import {BenchmarkTabs, MovedSections} from '@site/src/components/Benchmarks';
 
-export const labels = {"loading": "正在读取已公布的结果...", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动", "table": "以表格显示数字", "axis": "各循环比裸客户端最佳一轮低多少", "rounds": "各轮，从最佳到最慢", "best": "最佳一轮", "median": "中位一轮", "noise": "轮次的波动范围", "comparison": "与裸客户端对照", "code": "代码的开销"};
+export const labels = {"loading": "正在读取已公布的结果...", "scenario": "场景", "raw": "裸客户端", "adapter": "Broker crate", "framework": "RustStream", "overhead": "额外开销", "against": "（比客户端 {percent}）", "indistinguishable": "无法区分", "brokerBound": "受 Broker 限制", "measured": "测量于", "details": "完整结果与方法论", "pending": "尚未公布结果：{brokers}。", "instructions": "指令数", "allocations": "内存分配", "cold": "冷启动", "table": "以表格显示数字", "axis": "各循环比裸客户端最佳一轮低多少", "rounds": "各轮，从最佳到最慢", "best": "最佳一轮", "median": "中位一轮", "noise": "轮次的波动范围", "comparison": "与裸客户端对照", "code": "代码的开销", "broker": "Broker", "plugin": "{plugin} 插件", "pluginRaw": "不用插件", "pluginAdapter": "手写的插件", "pluginFramework": "crate 自带的插件", "pluginAxis": "各循环比不用插件的应用最佳一轮低多少", "pluginAgainst": "（比不用插件 {percent}）"};
 
 # 基准测试
 
@@ -37,6 +37,9 @@ Broker 标签页里的第一张图是对照图。每个场景画出三个循环�
 
 “Broker crate”是该 crate 自己的消费者和发布者，不带运行时，因此两项差值可以分开读：crate 比
 客户端多付多少，运行时又在其上多付多少。
+
+如果 crate 还提供插件，插件的场景画在单独的一张图上，用自己的坐标轴。图中的三个循环是同一个应用的
+三种写法：不用插件、手写插件、使用 crate 自带的插件。
 
 ## 代码的开销 {/* #cost-of-the-code */}
 

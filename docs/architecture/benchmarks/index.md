@@ -4,7 +4,7 @@ description: "What RustStream costs on every message: throughput against each br
 
 import {BenchmarkTabs, MovedSections} from '@site/src/components/Benchmarks';
 
-export const labels = {"loading": "Loading published results...", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start", "table": "Show the numbers as a table", "axis": "How far each loop falls below the raw client's best round", "rounds": "rounds, best to slowest", "best": "best round", "median": "median round", "noise": "spread of the rounds", "comparison": "Against a raw client", "code": "Cost of the code"};
+export const labels = {"loading": "Loading published results...", "scenario": "Scenario", "raw": "Raw client", "adapter": "Broker crate", "framework": "RustStream", "overhead": "Overhead", "against": "({percent} over the client)", "indistinguishable": "indistinguishable", "brokerBound": "broker-bound", "measured": "measured", "details": "Full results and methodology", "pending": "No results published yet: {brokers}.", "instructions": "Instructions", "allocations": "Allocations", "cold": "Cold start", "table": "Show the numbers as a table", "axis": "How far each loop falls below the raw client's best round", "rounds": "rounds, best to slowest", "best": "best round", "median": "median round", "noise": "spread of the rounds", "comparison": "Against a raw client", "code": "Cost of the code", "broker": "The broker", "plugin": "The {plugin} plugin", "pluginRaw": "Without the plugin", "pluginAdapter": "Plugin written by hand", "pluginFramework": "The crate's plugin", "pluginAxis": "How far each loop falls below the best round of the app without the plugin", "pluginAgainst": "({percent} over no plugin)"};
 
 # Benchmarks
 
@@ -45,6 +45,10 @@ and the table under the chart lists them all: the best round, with the median in
 `Broker crate` is the crate's own consumer and publisher driven without the runtime, so the two
 differences read apart: what the crate costs over the client it wraps, and what the runtime costs
 on top of that.
+
+A crate that ships a plugin draws the plugin's scenarios on a chart of their own, on an axis of
+its own. Its three loops are one app: without the plugin, with the plugin written by hand, and
+with the crate's plugin.
 
 ## Cost of the code
 
