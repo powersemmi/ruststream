@@ -90,28 +90,41 @@ impl Teardown {
 
         shutdown.cancel();
         debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
-        drain_handles(handles, shutdown_timeout).await?;
+        // Every later step still runs when one fails: a dispatch loop that panicked or a broker
+        // that refuses to close must not leave the other brokers open or skip `after_shutdown`.
+        // The first failure is the one returned.
+        let drained = drain_handles(handles, shutdown_timeout).await;
 
         // Handlers have stopped, so no new post-settle continuations can be spawned: close the
         // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
         // at-most-once, so timing one out only abandons follow-up work, never a settlement.
         drain_continuations(continuations, shutdown_timeout).await;
 
+        let mut closed = Ok(());
         for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
             let name = lifecycle.name();
-            lifecycle
-                .shutdown()
-                .await
-                .map_err(RustStreamError::Shutdown)?;
-            debug!(
-                target: "ruststream::lifecycle",
-                broker = label.as_deref().unwrap_or(name),
-                "broker shut down",
-            );
+            let broker = label.as_deref().unwrap_or(name);
+            match lifecycle.shutdown().await {
+                Ok(()) => debug!(target: "ruststream::lifecycle", broker, "broker shut down"),
+                Err(err) => {
+                    warn!(
+                        target: "ruststream::lifecycle",
+                        broker,
+                        error = %err,
+                        "broker shutdown failed",
+                    );
+                    if closed.is_ok() {
+                        closed = Err(RustStreamError::Shutdown(err));
+                    }
+                }
+            }
         }
 
         run_hooks(hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
+
+        drained?;
+        closed?;
 
         // A fail-fast failure tore the service down: surface it so an orchestrator restarts the
         // service and the operator sees a non-zero exit, not a silent stop.

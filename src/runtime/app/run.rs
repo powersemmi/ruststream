@@ -369,6 +369,8 @@ impl RunningApp {
     /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
     /// the service had already torn itself down on a fail-fast failure (surfaced as
     /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
+    /// A failure does not cut the teardown short: every broker is still shut down and the
+    /// `after_shutdown` hooks still run before the first failure is returned.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
         let Self { teardown, health } = self;
         health.send_replace(HealthState::ShuttingDown);

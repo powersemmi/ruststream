@@ -451,6 +451,45 @@ async fn a_broker_that_refuses_to_shut_down_fails_the_teardown_and_the_probe() {
     );
 }
 
+/// One broker that refuses to shut down does not leave the others open or skip the
+/// `after_shutdown` hooks: the teardown closes every broker, runs the hooks, then reports the
+/// refusal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdown() {
+    let ingress = MemoryBroker::new();
+    let publisher = ingress.publisher();
+    let after_shutdown_ran = Arc::new(AtomicBool::new(false));
+    let ran = Arc::clone(&after_shutdown_ran);
+    let app = RustStream::new(AppInfo::new("cov-stubborn-last", "0.1.0"))
+        .after_shutdown(async move |_: Arc<()>| {
+            ran.store(true, Ordering::SeqCst);
+            Ok::<_, io::Error>(())
+        })
+        .register_broker(ingress)
+        .register_broker(StubbornBroker);
+
+    let err = app
+        .start()
+        .await
+        .expect("startup failed")
+        .shutdown()
+        .await
+        .expect_err("a refused broker shutdown must surface");
+
+    assert!(matches!(err, RustStreamError::Shutdown(_)), "got: {err:?}");
+    let refused = publisher
+        .message(&Wire::of(b"x"))
+        .to("cov.stubborn")
+        .publish()
+        .await
+        .expect_err("the memory broker must be shut down too");
+    assert!(
+        matches!(refused, PublishError::Publish(MemoryError::ShutDown)),
+        "got: {refused:?}",
+    );
+    assert!(after_shutdown_ran.load(Ordering::SeqCst));
+}
+
 /// The unwind of a failed startup is best effort: a broker that refuses to shut down is logged,
 /// and the original startup error stays the caller's answer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
