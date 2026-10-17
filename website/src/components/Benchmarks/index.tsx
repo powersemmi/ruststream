@@ -3,12 +3,15 @@ import {useHistory, useLocation} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import TabItem from '@theme/TabItem';
 import Tabs from '@theme/Tabs';
+import core from '../../../../docs/benchmarks/results.json';
 import {movedSection} from './anchors';
 import {
   BROKERS,
   CORE,
   CRATE_TABS,
   SCHEMAS,
+  codePanels,
+  codeRows,
   detailsUrl,
   resultsUrl,
   tabContent,
@@ -399,6 +402,17 @@ function CrateResults({
       {pending && <p>{pending}</p>}
     </>
   );
+}
+
+/**
+ * The core's cost of the code, read from its results document when the site is built, so a page
+ * that explains the cost quotes the measurement committed beside it.
+ */
+export function CoreCost({labels}: {labels: Labels}): ReactNode {
+  const lang = useLang();
+  const entry: Loaded = {broker: CORE, results: core as Results};
+  const [panel] = codePanels([entry], lang, labels);
+  return <Code panel={panel!} rows={codeRows([entry], lang)} labels={labels} />;
 }
 
 /**

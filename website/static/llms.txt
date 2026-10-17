@@ -85,6 +85,13 @@ This site holds the entry pages. How each topic is done lives in the module over
 ## Architecture
 
 - [Architecture](https://powersemmi.github.io/ruststream/latest/architecture/): how RustStream is built and what its design costs a service
+- [Design](https://powersemmi.github.io/ruststream/latest/architecture/design/): the broker-agnostic core, the traits a broker crate implements, and where broker settings live
+- [Path](https://powersemmi.github.io/ruststream/latest/architecture/path/): the stages of one delivery, from the broker's stream through layers, decode, handler and reply to its settlement
+- [Async](https://powersemmi.github.io/ruststream/latest/architecture/async/): the Tokio runtime, the tasks of each dispatch form (`workers(n)`, `threads(n)`), one delivery's timeline and the order of a graceful shutdown
+- [Lifecycle](https://powersemmi.github.io/ruststream/latest/architecture/lifecycle/): the broker's states as types, `new`, `connect(self)`, `shutdown(self)`, and the app's start and shutdown
+- [Settlement](https://powersemmi.github.io/ruststream/latest/architecture/settlement/): how a delivery is settled: outcomes, failure policies, retries, the attempt cap and the dead letter
+- [Guarantees](https://powersemmi.github.io/ruststream/latest/architecture/guarantees/): the mistakes that do not compile, with the compiler's message for each
+- [Cost](https://powersemmi.github.io/ruststream/latest/architecture/cost/): the framework's instructions and allocations per message, and where the cost goes
 - [Benchmarks](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/): what the framework costs over a raw client, and the cost of its own code
 - [Benchmarks: Numbers](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/numbers/): what each published number measures, and which numbers compare
 - [Benchmarks: Methodology](https://powersemmi.github.io/ruststream/latest/architecture/benchmarks/methodology/): how every crate measures itself, the three loops, the run, the report and the code measurement
