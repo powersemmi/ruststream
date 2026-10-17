@@ -22,7 +22,7 @@ pull request 通不过。
 
 每个 crate 按同一套[方法论](methodology.md)测量自己，并[公布](publishing.md)自己的数字。
 本页从各 crate 仓库的 `main` 分支读取这些数字，每个 crate 占一个标签页。新的测量结果一经合并，
-就会出现在它的标签页里。这些数字能说明什么、不能说明什么，见[解读](interpretation.md)。
+就会出现在它的标签页里。这些数字能说明什么、不能说明什么，见[数字](numbers.md)。
 
 ## 与裸客户端对照 {/* #against-a-raw-client */}
 

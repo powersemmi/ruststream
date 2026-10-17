@@ -25,8 +25,8 @@ and it is precise enough to fail a pull request that makes a message more expens
 Each crate measures itself by one [methodology](methodology.md) and
 [publishes](publishing.md) its own numbers. This page loads them from the `main` branch of each
 crate's repository and shows each crate in a tab of its own. A new measurement appears in its tab
-as soon as it is merged. What the numbers allow you to conclude, and what they do not, is their
-[interpretation](interpretation.md).
+as soon as it is merged. What the numbers allow you to conclude, and what they do not, is on the
+[Numbers](numbers.md) page.
 
 ## Against a raw client
 

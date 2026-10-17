@@ -57,7 +57,7 @@ const sidebars: SidebarsConfig = {
       link: {type: 'doc', id: 'architecture/benchmarks/index'},
       collapsible: false,
       items: [
-        'architecture/benchmarks/interpretation',
+        'architecture/benchmarks/numbers',
         'architecture/benchmarks/methodology',
         'architecture/benchmarks/publishing',
       ],

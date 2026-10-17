@@ -2,7 +2,7 @@
 description: "What each published benchmark number measures, and which numbers can be compared with each other."
 ---
 
-# Interpretation
+# Numbers
 
 What each published number measures, and which numbers can be compared with each other.
 

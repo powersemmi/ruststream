@@ -11,7 +11,7 @@ const MOVED: Record<string, string[]> = {
     'the-report',
     'the-code-measurement',
   ],
-  'interpretation/': [
+  'numbers/': [
     'what-the-numbers-are',
     'the-comparison-against-a-raw-client',
     'the-cost-of-the-code',
