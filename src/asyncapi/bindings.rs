@@ -256,6 +256,35 @@ impl Binding {
 /// Empty by default, and an empty set never reaches the document. A broker that says nothing
 /// changes nothing.
 ///
+/// # Where a broker crate fills them
+///
+/// - The server level is a field: [`ServerSpec::bindings`](crate::ServerSpec::bindings) in the
+///   broker's [`DescribeServer`](crate::DescribeServer) impl, because a server is described once
+///   per broker.
+/// - A subscription descriptor fills its channel, its `receive` operation and its messages
+///   ([`SubscriptionSource::channel_bindings`](crate::SubscriptionSource::channel_bindings) and
+///   its two siblings). A subscription opened by a bare name carries none, so a broker that wants
+///   bindings ships a descriptor.
+/// - A publish policy fills the same three for the channel it publishes to
+///   ([`PublishPolicy::channel_bindings`](crate::PublishPolicy::channel_bindings) and its
+///   siblings), handed the destination the mount site resolved: a reply's name, a slot entry's
+///   own name, a `dead_letter(..)` destination. A reply has no `send` operation of its own, so a
+///   reply policy's operation bindings reach no document.
+///   [`reply_address_location`](crate::PublishPolicy::reply_address_location) tells a client
+///   where an answer routed through a reply-to header is addressed.
+///
+/// Each hook computes its value from the descriptor or policy alone and never carries a
+/// credential: configure the broker, a descriptor and a policy with a known password, and
+/// `conformance::harness::describes_without_credentials`,
+/// `conformance::message_shape::publishes_without_credentials` and
+/// `describes_addresses_without_credentials` scan the description for it. A protocol the specification does not
+/// list fills nothing on the publish side either: the in-memory broker's `MemoryPublish` stays
+/// silent rather than invent a key.
+///
+/// The hooks are gated on the core's `asyncapi` feature. A broker crate forwards it
+/// (`asyncapi = ["ruststream/asyncapi"]`) and puts `#[cfg(feature = "asyncapi")]` on each method
+/// it fills in.
+///
 /// # Examples
 ///
 /// ```
