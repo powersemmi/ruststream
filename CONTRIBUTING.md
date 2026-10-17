@@ -127,3 +127,6 @@ as it was, uncommitted edits included. A broker without a lock file gets one fro
 - Documentation changes with the code. An item's rustdoc says what it is and does. A module
   overview says how a topic is done. The site holds the entry pages in English, Russian and
   Chinese, and an edit reaches all three.
+- The agent skills in `.agents/skills/` change with the behaviour they teach. Their eval suite in
+  `.agents/evals/` runs with `claude plugin eval . --allow-tools Write Edit`, which compares each
+  case with and without the plugin.

@@ -1,0 +1,37 @@
+schema_version: "1.1"
+name: core-public-item
+description: A new public constructor in the core crate, prepared for review.
+tags: [ruststream-core]
+runs: 3
+execution:
+  max_turns: 20
+  allowed_tools: [Read, Write, Edit, Glob, Grep, Skill]
+  prompt: |
+    You are contributing to the ruststream core crate (powersemmi/ruststream). The maintainer asked for a new public function `ruststream::Name::try_new(name: impl Into<String>) -> Result<Name, NameError>` that rejects an empty name and a name containing whitespace. Write the new items into `name_patch.rs`, and in `NOTES.md` list what you run and do before opening the pull request.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?ruststream-core"'
+  - name: non-exhaustive-error
+    type: regex
+    target: files
+    pattern: '#\[non_exhaustive\]'
+    match: contains
+  - name: errors-section
+    type: regex
+    target: files
+    pattern: '# Errors'
+    match: contains
+  - name: gates
+    type: regex
+    target: files
+    pattern: 'just ci'
+    match: contains
+  - name: rubric
+    type: llm
+    focus: files
+    criteria: |
+      PASS if the error enum derives `thiserror::Error`, the function carries an `# Examples` doctest that uses `?`
+      rather than `unwrap()`, and the notes open the pull request as a draft.
+      FAIL if it uses `anyhow` in the library or panics on the input.

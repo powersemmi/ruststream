@@ -1,0 +1,4 @@
+interface:
+  display_name: "RustStream broker crates"
+  short_description: "Write a RustStream broker crate: the lifecycle, publishers, subscriptions, capabilities, testing mode and conformance"
+  default_prompt: "Use $ruststream-broker when writing a RustStream broker crate, so it follows the broker contract and passes the conformance suites"

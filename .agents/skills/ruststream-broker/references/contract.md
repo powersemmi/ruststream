@@ -1,0 +1,174 @@
+# The broker contract, rule by rule
+
+Each rule names the trait it concerns; the rustdoc of that trait is the reference, starting from the [`Broker`](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html) hub. The conformance suites hold a crate to these rules.
+
+- A broker is its own crate that depends on `ruststream` with `default-features = false` (broker
+  clients never go into core). Pre-1.0 the broker crate's version tracks the core minor line
+  (core 0.7.x -> broker 0.7.x); breaking broker changes ship as a patch within the line.
+- The lifecycle is a ladder of consuming transitions, not a flag: `Broker::connect(self) ->
+  Connected` and `ConnectedBroker::shutdown(self) -> Closed`. Each state is a distinct type, so
+  subscribing before connect, publishing after shutdown, or a double shutdown do not compile for
+  the owner of the handle. The broker itself carries no subscriber or publisher type, so one
+  application can mix broker kinds.
+- Construction stays synchronous and I/O-free: `new(addrs)` only records config, all network work
+  happens in `connect`, and the connected form holds the live client directly - it never checks a
+  "maybe connected" state. A shared cell that `connect` fills is a legal internal pattern for
+  handles given out before connect, but it is not the contract.
+- A task the broker starts on its own behalf (a delayed-redelivery timer, a reply dispatcher, a
+  commit window) runs on the runtime `connect` ran on: keep `Handle::current()` from `connect` in
+  the connected form and spawn through it, never `tokio::spawn` from a publish, settle or request
+  path. `harness::lifecycle` and the `request_reply`, `batches`, `transactions`,
+  `owned_transactions` and `seeking` suites call from a runtime that stops.
+- What stays a runtime rule is aliasing: publishers handed out earlier and clones of a shareable
+  broker must surface an error when used after shutdown, never a silent success against a dead
+  connection. `shutdown` never blocks or panics; do all fallible teardown there.
+- Implement `Subscribe` on the **connected** form for the by-name `#[subscriber("topic")]` form,
+  and ship a `SubscriptionSource<Connected<B>>` descriptor for broker-specific options (even a
+  parameter-less broker ships one). Give the descriptor a constructor and derive `Clone`; add
+  `FromName` when a name alone is enough to build it.
+- Every descriptor declares `type Copies`, one of three. `AddressedCopies`: this process publishes
+  the copies a retry is made of and the descriptor knows where they go (a subject, a topic, a
+  stream, a queue); implement `RedeliveryAddressed` beside `SubscriptionSource`, which is what
+  makes the address a property of the type. `NamedCopies`: this process publishes them but the
+  descriptor addresses none (a wildcard subject, an MQTT filter, a Pulsar pattern, a list of
+  topics), and the mount site names one with `.out_retry(policy).to(name)` or with a naming
+  transform. `BrokerMoves`:
+  the server or the client library moves the delivery itself (a delivery limit with a dead-letter
+  exchange, a Pub/Sub dead-letter policy, an SQS redrive policy), so `.out_retry(..)` is a compile
+  error at every mount site of that descriptor. The first two pair a retry publisher from
+  `DefaultPublish`, so either over a broker without it does not compile.
+- `Subscribe` carries the same `type Copies` for the by-name form: `AddressedCopies` where a
+  publish under a subscribe name reaches the subscription opened by it, and the name is then the
+  address; `NamedCopies` where it is not (a Pub/Sub subscription, an MQTT filter).
+  `harness::redelivery_address` holds an addressed descriptor, and the bare `Name` where
+  `Subscribe::Copies` is `AddressedCopies`, to its answer; `retry::broker_moves` holds a
+  `BrokerMoves` descriptor to the cap and dead-letter destination it declares; and
+  `harness::lifecycle` covers the rest of the ladder.
+- `declare_retry` hands the descriptor the registration's `max_attempts(..)` and `dead_letter(..)`
+  before it subscribes. Apply them to your own topology where the broker has a mechanism for them,
+  and only when both are declared; keep the default otherwise and the runtime applies them.
+- Override `IncomingMessage::redelivery_count` where the transport counts its own deliveries
+  (JetStream `num_delivered`, SQS `ApproximateReceiveCount`, Pub/Sub `delivery_attempt`), so a
+  registration's cap counts the broker's redeliveries and not only the copies the runtime
+  published. The first delivery answers 1. That count is then the only one a cap reads, the
+  framework's header never mixed in; increment `RETRY_COUNT_HEADER` on a copy your crate
+  republishes (a wait queue, a retry topic) only where the transport counts nothing.
+- Override `IncomingMessage::decode_error` where your broker reads a delivery into a value itself
+  and can fail where no codec runs (a column whose type differs from the field's): return the
+  error, and the runtime settles the delivery by the subscription's decode policy before any
+  handler sees it, on every input lane and for each delivery of a batch. A batch that lends its
+  values as one slice has no value for such a delivery: put it past the end of the slice.
+- Publishers split into policy plus live form: ship a freely constructible policy type carrying the
+  options, implement `PublishPolicy<Connected>` to pair it into the live publisher, and implement
+  `DefaultPublish` on the connected form when the plain policy works as-is (so `b.include(def)`
+  compiles with no `.out_reply(..)`). Make mode selection a policy type transition, not a runtime
+  flag: only the transactional policy's live form implements `TransactionalPublisher`.
+- Per-message settings (a QoS, a priority, an ordering key, an expiration) are `Publisher::Options`,
+  a type you own with every field optional (`()` when you have none). The policy holds the defaults,
+  `publish(msg, options)` resolves the call's fields over them, and `options` is `None` on every
+  path with no call site - a reply, a deferred retry. `Transaction` names an `Options` of its own,
+  because a transaction may honour a different set than the publisher it was opened from. A value
+  you cannot honour is a publish error, never a silent fallback;
+  `conformance::message_shape::publish_options` checks all three.
+- `DescribeServer` reports a coordinate, not the configuration: the host and port clients connect
+  to, never credentials - the generated document is published. A broker configured from a URL
+  builds its `ServerSpec` with `ServerSpec::from_url` (several addresses: `host_from_url` each);
+  trimming the scheme off the URL and passing the rest to `ServerSpec::new` keeps the userinfo, and
+  that bug shipped in more than one broker crate.
+- Protocol bindings ride the descriptor: `channel_bindings`, `operation_bindings` and
+  `message_bindings` on `SubscriptionSource`, and `ServerSpec::bindings` for the server.
+  Build each with `Binding::new(protocol, version, &body)`, which writes `bindingVersion` and
+  checks the protocol against the specification's closed list, or with `Binding::extension("x-..")`
+  where the specification has no binding for the transport. They are computed from the descriptor
+  alone (the document is built before connect, so a live partition count or a queue ARN cannot
+  appear) and never carry a credential; `conformance::harness::describes_without_credentials`
+  checks that, and `conformance::message_shape` extends it to publish-policy bindings and to a
+  server built from several addresses. All of it is gated on the core's `asyncapi` feature, which
+  your crate forwards.
+- Implement capability traits (`BatchSubscriber`, `TransactionalPublisher`, `OwnedTransactions`,
+  `RequestReply`, `Partitioned`, `Seekable`/`Seeker`, `Positioned`, `DescribeServer`) only for what
+  the broker natively supports - never emulate. `BatchSubscriber` is the exception worth stretching
+  for: a transport that delivers one message at a time still offers it, assembled on the client
+  with the core's `BufferedSubscriber`, whose `batches` honours the size the mount named. The size
+  is the framework's word and not yours; the deadline that closes a partial batch is yours, so put
+  it on your descriptor (`.max_wait(..)`) - the 10 ms default is sized for an in-process bus, and
+  the shipping broker crates settle between 10 and 50 ms. Put the capability on
+  `Subscribe::Subscriber` too, or a `&[T]` body on `#[subscriber("topic")]` fails to compile.
+  Declining it is still right where batching breaks a guarantee the transport carries (a ZeroMQ
+  `ROUTER` answers each peer at its own address, and a batch's replies share one context); say so
+  in your crate's docs.
+- A delivery that already holds a decoded value (a row a database driver read) implements
+  `Carries<T>`, answering `None` where the value is gone so the runtime settles it by the decode
+  policy; a batch that keeps its values in one buffer implements `CarriesBatch<T>`, value `i`
+  belonging to delivery `i` and value-less deliveries last. Where the service publishes the
+  copies (`AddressedCopies`, `NamedCopies`), such a delivery answers `payload()` with the
+  message's bytes: the runtime's retry and dead-letter copies carry them and the headers, and your
+  broker reads the same value back from a copy; on `BrokerMoves` the broker moves the delivery
+  itself and the runtime publishes no copy. Your derive writes the type's `Input`
+  impl with the `SoloCarried` axis; the type needs `Clone` and no `Deserialize`. On this lane a
+  batch context of yours is built from the batch (`BuildBatchContext<YourBatch>`) and, for retry
+  copies, from each delivery. Run `capabilities::carries` and `capabilities::carries_batch`.
+- Expose the per-delivery context as a `#[non_exhaustive]` typed struct plus `ContextField` key
+  types (unit structs with an associated `Context` and owned `Value`), so handlers can take
+  `Ctx<Partition>`-style parameters. No type-map, no heap on the delivery path. A position that is
+  not `Copy` borrows on the read side (`Field::Value<'a>` is generic over the source's lifetime);
+  only the `ContextField::Value` behind `Ctx<K>` has to be owned and `'static`, so that key clones.
+- Your prelude has three layers in this order: `pub use ruststream::prelude::*;`, the crate surface
+  a service names (the broker, its subscription source, its `Config`, its error, the `ContextField`
+  keys a body reads), and your publish policies aliased to the uniform mount-site names
+  (`NatsPublish as Publish`, `KafkaTransactionalPublish as TransactionalPublish`,
+  `LapinRequest as Request`), with the consumer-side capability traits you implement added next to
+  them as a manifest. A handler body imports only the core prelude and bounds a slot with the
+  broker capability trait (`Out<impl Publisher>`, `Out<impl TransactionalPublisher>`,
+  `Out<impl OwnedTransactions>`, `Out<impl RequestReply>`); a routes file imports yours. The one
+  exception is a body adjusting a per-message setting: it imports your prelude for the step and
+  names your options type in the bound, and its signature then says which broker it is tied to.
+  The core exports no trait under the policy names, so the aliases collide with nothing - but your
+  prelude must never shadow a core name with anything of yours, because an explicit re-export beats
+  the core glob silently and the error lands in the service's file. Leave out a trait whose method
+  collides with a defaulted core one (`Partitioned::partition_key` against
+  `IncomingMessage::partition_key`), and leave `BatchSubscriber` out of the manifest entirely: the
+  framework calls it and no body ever writes it as a bound. Pin both halves behind your own glob:
+  `fn _p<T: Publisher>() {}` and `let _: Publish = Publish::default();`.
+- `ack` consumes `self`; for transports without acks return `AckError::Unsupported`, at every
+  settling site. That answer is what lets the runtime tell a transport that honoured a delay from
+  one that cannot hold a message back, and the conformance suite passes on it. A handle that
+  carries a constant for a run of messages (a tenant, a producer name, a schema id) returns it from
+  `base_headers` rather than writing it inside `publish`; the builder writes the call site's
+  headers over that base key by key. A delivery setting is not one of those - it belongs to the
+  message, as a field of `Options`. Errors and logs are self-explanatory: name the subscription and
+  the type involved, not just the raw error.
+- Ship a `cargo generate` template per transport or topology (`templates/nats`, `templates/nats-js`)
+  and render plus `cargo check` it in your own CI, so an API change breaks your build rather than a
+  user's first one. Template blocks are additive only, and the package manifest is
+  `Cargo.toml.liquid`: cargo parses every `Cargo.toml` in a git source and a placeholder in the
+  package name breaks every dependent.
+- Integrations that need async I/O around encode/decode (schema registries, wire-format envelopes)
+  are middleware on the async edges: transcode on the subscription's delivery path for consuming,
+  and a core `PublishLayer` (`RustStream::publish_layer`) for publishing. Never a custom sync
+  `Codec` and never hooks threaded through the publisher - handlers stay on the default codec.
+- Raw librdkafka-style client options go through a passthrough builder (`config(key, value)`), not
+  one wrapper method per option. Auth (TLS, SASL) rides that passthrough; surface only the cargo
+  features that build hermetically everywhere, and let users enable exotic client features by
+  depending on the client crate directly (cargo features are additive).
+- Testing: the in-process mode is part of the broker contract. Under a `testing` feature implement
+  `InProcess` on the production broker (`connect_in_process(self)`: the consuming transition to the
+  broker's own connected form over an in-process transport, no I/O), `TestableBroker` on that
+  connected form, and register the production type with `register_testable_broker!(YourBroker)`,
+  so `TestApp::start` runs a service's production app in process and a test addresses the broker
+  as `tb.broker::<YourBroker>()`. The connected form, subscriber, publishers and delivery type each
+  gain an in-process variant that exists only under the feature (without it: one variant, no
+  branch); the transport has no configuration of its own and reads every setting from the
+  production broker. It never succeeds where the real broker fails: a publish, ack, requeue or
+  subscription the server rejects or strands is rejected in process the same way, and it keeps
+  what the server keeps: a queue or a log returns `Backlog::Delivered` from
+  `TestableBroker::backlog` and delivers what was published before a subscription opened
+  (publish/subscribe keeps the default `Backlog::Missed`). Run the contract
+  suites in process as well as against a real server (`run_suite` connects in process; wrap the
+  broker in `harness::InProcessBroker` for `lifecycle` and the capability suites), and run
+  `lifecycle` because it asks whether a publisher made before the shutdown errors afterwards. Acks
+  are answered the way the real transport answers them, including `AckError::Unsupported`.
+  Reproduce what the client does (competing consumers, group distribution, correlation, buffering
+  until commit); broker-side semantics (fencing, cluster atomicity, broker-held timeouts) are
+  tested live with `TestApp::start_live`, and every gap gets a comment naming the assertion it
+  makes unsound plus a test pinning it.

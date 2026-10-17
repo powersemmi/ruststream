@@ -1,0 +1,4 @@
+interface:
+  display_name: "RustStream without macros"
+  short_description: "Build a RustStream service without the macros feature: Handle impls, subscriber(..).build() and a hand-written main"
+  default_prompt: "Use $ruststream-without-macros when a RustStream service is built without the macros feature, so the hand-written handlers and impls match what the macros generate"

@@ -1,0 +1,38 @@
+schema_version: "1.1"
+name: without-macros
+description: A service written without the macros feature, with a reply and a raw-bytes handler.
+tags: [ruststream-without-macros]
+runs: 3
+execution:
+  max_turns: 20
+  allowed_tools: [Read, Write, Edit, Glob, Grep, Skill]
+  prompt: |
+    This crate uses ruststream 0.7 with `default-features = false, features = ["memory", "json"]` (no `macros` feature, by policy). Write `src/main.rs`: a handler on `orders` that receives `Order { id: u64 }`, logs it with tracing, and replies with `Confirmation { id: u64 }` to `confirmations`; a second handler on `audit` that receives raw bytes (not a serialized value) and logs their length. Include `main`.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?ruststream-without-macros"'
+  - name: handle-impl
+    type: regex
+    target: files
+    pattern: 'impl\s*(<[^>]*>)?\s*Handle<'
+    match: contains
+  - name: subscriber-chain
+    type: regex
+    target: files
+    pattern: 'subscriber\("orders",\s*\w+\)\s*\.reply\(\)\s*\.to\("confirmations"\)\s*\.build\(\)'
+    match: contains
+  - name: no-attribute-macros
+    type: regex
+    target: files
+    pattern: '#\[subscriber|#\[ruststream::app\]|derive\([^)]*Outgoing'
+    match: not_contains
+  - name: rubric
+    type: llm
+    focus: files
+    criteria: |
+      PASS if the raw handler takes a `Deserialized` newtype with its `Input` impl, the reply type implements
+      `OutgoingDestination` and `MessageHeaders`, registrations go through `b.include(..)` inside `with_broker`,
+      and `main` is `#[tokio::main]` calling `app().run().await`.
+      FAIL if it passes closures or plain async fns to a builder, or takes `&[u8]` or `Bytes` as the input.

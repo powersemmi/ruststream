@@ -13,6 +13,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Installation](https://powersemmi.github.io/ruststream/latest/guides/getting-started/installation/): the crate, its cargo features and a broker crate
 - [Quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/): a running service scaffolded with `cargo generate`
 - [Tutorial](https://powersemmi.github.io/ruststream/latest/guides/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
+- [Agent skills](https://powersemmi.github.io/ruststream/latest/guides/getting-started/agent-skills/): the skills a coding agent installs from this repository to write services, tests and broker crates
 - [Build a service, step by step](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/): eleven chapters that grow one shop service on the in-memory broker, from its first subscriber to NATS
 - [The service and its first subscriber](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/service/): `#[subscriber]`, `include` and `#[ruststream::app]`
 - [Messages: payloads, headers, codecs](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/messages/): a payload type, a header contract read with `Headers<T>`, and a codec per topic
