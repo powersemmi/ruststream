@@ -24,8 +24,9 @@
 #
 # The script keeps versions.json in mike's format (a development version such as next above the
 # releases, releases newest first, an alias on one version only), the root redirect to latest/,
-# the root sitemap index, the root 404 page and the root copy of llms.txt. Committing and pushing
-# the checkout is the caller's job.
+# the root sitemap index, the root 404 page, the root copy of llms.txt and, on a next deploy, the
+# theme the broker sites share under theme/v1/. Committing and pushing the checkout is the
+# caller's job.
 set -euo pipefail
 
 usage() {
@@ -159,6 +160,11 @@ if [ "$alias_name" = "latest" ] && [ -f "$site/versions.json" ]; then
 fi
 
 build_into "$version"
+# The broker sites load the shared theme from one address outside the versions. It follows
+# main, which only the next deploy builds; a release tag may carry an older stylesheet.
+if [ "$version" = "next" ]; then
+  (cd "$website" && node shared-theme.mjs "$site/theme/v1")
+fi
 if [ -n "$alias_name" ]; then
   build_into "$alias_name"
 fi
