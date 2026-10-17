@@ -373,7 +373,7 @@ suites call `conformance::helpers::unique_subject` for that, and your own end-to
 same problem and the same answer.
 
 The in-memory broker implements request / reply, batches, transactions and seeking natively and
-passes their seven suites in process (see [Memory](../brokers/memory.md#capabilities)); it is the
+passes their seven suites in process (see [Memory](../components/memory/index.md#capabilities)); it is the
 executable reference for what each of them expects. The suites of `Carries` and `CarriesBatch` are
 for brokers whose deliveries hold a decoded value, such as a database queue.
 
