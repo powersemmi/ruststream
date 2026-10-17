@@ -39,20 +39,27 @@
 //!
 //! # Where things are
 //!
-//! * [`runtime`]: everything a service is made of. Subscribers and what a handler may take,
-//!   replies and `Out` slots, routers, the per-delivery context and the shared state, typed
-//!   headers, lifecycle hooks, middleware, failure policies, running beside another server.
-//! * [`codec`]: how payload bytes become values and back, where a codec is chosen, and the byte
-//!   lanes that need none.
+//! Each module's documentation is a map of its items, and each topic links to its component page
+//! on the [site][components], which shows how to use it.
+//!
+//! * [`runtime`]: everything a service is made of: the [application][application] (builder,
+//!   lifecycle, running, state) and its [subscribers][subscribers] (settings, messages, context,
+//!   dispatch, middleware, publishing).
+//! * [`codec`]: how payload bytes become values and back, and the byte lanes that need none.
 //! * [`memory`]: the in-process broker, a real broker and the reference implementation.
 //! * [`testing`]: testing the service's own app, in process or against a running broker.
-//! * [`asyncapi`]: the generated document. [`metrics`], [`logging`], [`otel`]: observability.
+//! * [`asyncapi`]: the generated document. [`metrics`], [`logging`], [`otel`]:
+//!   [observability][observability].
 //! * [`runtime::cli`]: the generated entry point and the `ruststream` command.
 //! * [`conformance`]: the contract suite a broker crate runs against itself.
 //!
 //! The broker crates document their own descriptors and publish policies. Installation, the
-//! tutorial and the list of brokers are on the site:
-//! <https://powersemmi.github.io/ruststream/>.
+//! guides and the list of brokers are on the site: <https://powersemmi.github.io/ruststream/>.
+//!
+//! [components]: https://powersemmi.github.io/ruststream/latest/components/
+//! [application]: https://powersemmi.github.io/ruststream/latest/components/application/
+//! [subscribers]: https://powersemmi.github.io/ruststream/latest/components/subscribers/
+//! [observability]: https://powersemmi.github.io/ruststream/latest/components/observability/
 //!
 //! # Cargo features
 //!
