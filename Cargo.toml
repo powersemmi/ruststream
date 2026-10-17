@@ -888,6 +888,45 @@ path = "examples/manual/app_lifecycle.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
+# The shop the "Build a service" guide builds: `guide_first` is the service as its first chapter
+# leaves it, `guide` the finished one, `guide_http` the same shop beside an HTTP server. The
+# `manual_guide*` twins are the same service without the `macros` feature.
+[[example]]
+name = "guide_first"
+path = "examples/guide/first.rs"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "guide"
+path = "examples/guide/main.rs"
+required-features = ["testing", "macros", "memory", "json", "cbor", "asyncapi"]
+test = true
+
+[[example]]
+name = "guide_http"
+path = "examples/guide/http.rs"
+required-features = ["testing", "macros", "memory", "json", "cbor", "asyncapi", "logging"]
+test = true
+
+[[example]]
+name = "manual_guide_first"
+path = "examples/manual/guide/first.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_guide"
+path = "examples/manual/guide/main.rs"
+required-features = ["testing", "memory", "json", "cbor", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_guide_http"
+path = "examples/manual/guide/http.rs"
+required-features = ["testing", "memory", "json", "cbor", "asyncapi", "logging"]
+test = true
+
 [[test]]
 name = "app_dispatch"
 required-features = ["memory", "json"]

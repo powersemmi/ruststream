@@ -1,0 +1,497 @@
+{
+  "asyncapi": "3.1.0",
+  "info": {
+    "title": "shop",
+    "version": "0.1.0",
+    "description": "Takes orders, charges them, ships them and tells the customer.",
+    "contact": {
+      "name": "Shop team",
+      "email": "shop@example.com"
+    },
+    "license": {
+      "name": "Apache-2.0"
+    },
+    "tags": [
+      {
+        "name": "orders"
+      }
+    ]
+  },
+  "channels": {
+    "notices": {
+      "address": "notices",
+      "messages": {
+        "Notice": {
+          "$ref": "#/components/messages/Notice"
+        }
+      }
+    },
+    "orders.placed": {
+      "address": "orders.placed",
+      "messages": {
+        "Order": {
+          "$ref": "#/components/messages/Order"
+        }
+      }
+    },
+    "payments.dead": {
+      "address": "payments.dead",
+      "messages": {
+        "PaymentRequest": {
+          "$ref": "#/components/messages/PaymentRequest"
+        }
+      }
+    },
+    "payments.requested": {
+      "address": "payments.requested",
+      "messages": {
+        "PaymentRequest": {
+          "$ref": "#/components/messages/PaymentRequest"
+        }
+      }
+    },
+    "payments.settled": {
+      "address": "payments.settled",
+      "messages": {
+        "Paid": {
+          "$ref": "#/components/messages/Paid"
+        }
+      }
+    },
+    "shipping.packed": {
+      "address": "shipping.packed",
+      "messages": {
+        "Packed": {
+          "$ref": "#/components/messages/Packed"
+        }
+      }
+    }
+  },
+  "operations": {
+    "receive_notices": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/notices"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notices/messages/Notice"
+        }
+      ],
+      "description": "E-mails a notice to the customer."
+    },
+    "receive_orders_placed": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/orders.placed"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/orders.placed/messages/Order"
+        }
+      ],
+      "description": "Writes every placed order to the audit log, with the request that placed it."
+    },
+    "receive_orders_placed_2": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/orders.placed"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/orders.placed/messages/Order"
+        }
+      ],
+      "description": "Accepts an order: asks payments to charge it, and tells the customer it arrived.",
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/payments.requested"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/payments.requested/messages/PaymentRequest"
+          }
+        ]
+      }
+    },
+    "receive_payments_requested": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/payments.requested"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/payments.requested/messages/PaymentRequest"
+        }
+      ],
+      "description": "Charges an order through the payment provider.",
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/payments.settled"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/payments.settled/messages/Paid"
+          }
+        ]
+      },
+      "x-ruststream-retry": {
+        "maxAttempts": 5,
+        "deadLetter": "payments.dead"
+      }
+    },
+    "receive_payments_settled": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/payments.settled"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/payments.settled/messages/Paid"
+        }
+      ],
+      "description": "Packs a paid order into parcels.",
+      "reply": {
+        "channel": {
+          "$ref": "#/channels/shipping.packed"
+        },
+        "messages": [
+          {
+            "$ref": "#/channels/shipping.packed/messages/Packed"
+          }
+        ]
+      }
+    },
+    "receive_shipping_packed": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/shipping.packed"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/shipping.packed/messages/Packed"
+        }
+      ],
+      "description": "Books a courier for a packed order and tells the customer."
+    },
+    "send_orders_placed_notices": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/notices"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notices/messages/Notice"
+        }
+      ]
+    },
+    "send_payments_requested_payments_dead": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/payments.dead"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/payments.dead/messages/PaymentRequest"
+        }
+      ]
+    },
+    "send_shipping_packed_notices": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/notices"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/notices/messages/Notice"
+        }
+      ]
+    }
+  },
+  "components": {
+    "messages": {
+      "Notice": {
+        "name": "Notice",
+        "description": "What the shop tells a customer.",
+        "contentType": "application/json",
+        "payload": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "description": "What the shop tells a customer.",
+          "properties": {
+            "customer": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "customer",
+            "text"
+          ],
+          "title": "Notice",
+          "type": "object"
+        }
+      },
+      "Order": {
+        "name": "Order",
+        "description": "An order placed in the storefront. It travels with the headers of the request that placed it.",
+        "contentType": "application/json",
+        "payload": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "Line": {
+              "description": "One line of an order: what the customer buys, how many, and at what price.",
+              "properties": {
+                "price_cents": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "quantity": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sku": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sku",
+                "quantity",
+                "price_cents"
+              ],
+              "type": "object"
+            }
+          },
+          "description": "An order placed in the storefront. It travels with the headers of the request that placed it.",
+          "properties": {
+            "customer": {
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "lines": {
+              "items": {
+                "$ref": "#/definitions/Line"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "customer",
+            "lines"
+          ],
+          "title": "Order",
+          "type": "object"
+        },
+        "headers": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "description": "The headers of a placed order: each field is one header.",
+          "properties": {
+            "request_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "request_id"
+          ],
+          "title": "RequestMeta",
+          "type": "object"
+        }
+      },
+      "Packed": {
+        "name": "Packed",
+        "description": "A packed order, waiting for a courier.",
+        "contentType": "application/cbor",
+        "payload": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "Parcel": {
+              "description": "One parcel of a packed order: the SKUs in it and how many of each.",
+              "properties": {
+                "items": {
+                  "items": {
+                    "items": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    ],
+                    "maxItems": 2,
+                    "minItems": 2,
+                    "type": "array"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "type": "object"
+            }
+          },
+          "description": "A packed order, waiting for a courier.",
+          "properties": {
+            "customer": {
+              "type": "string"
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "parcels": {
+              "items": {
+                "$ref": "#/definitions/Parcel"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "order",
+            "customer",
+            "parcels"
+          ],
+          "title": "Packed",
+          "type": "object"
+        }
+      },
+      "Paid": {
+        "name": "Paid",
+        "description": "A charged order, on its way to shipping.",
+        "contentType": "application/cbor",
+        "payload": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "Line": {
+              "description": "One line of an order: what the customer buys, how many, and at what price.",
+              "properties": {
+                "price_cents": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "quantity": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sku": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sku",
+                "quantity",
+                "price_cents"
+              ],
+              "type": "object"
+            }
+          },
+          "description": "A charged order, on its way to shipping.",
+          "properties": {
+            "customer": {
+              "type": "string"
+            },
+            "lines": {
+              "items": {
+                "$ref": "#/definitions/Line"
+              },
+              "type": "array"
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "order",
+            "customer",
+            "lines"
+          ],
+          "title": "Paid",
+          "type": "object"
+        }
+      },
+      "PaymentRequest": {
+        "name": "PaymentRequest",
+        "description": "What the orders side asks payments to charge.",
+        "contentType": "application/cbor",
+        "payload": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "Line": {
+              "description": "One line of an order: what the customer buys, how many, and at what price.",
+              "properties": {
+                "price_cents": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "quantity": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sku": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sku",
+                "quantity",
+                "price_cents"
+              ],
+              "type": "object"
+            }
+          },
+          "description": "What the orders side asks payments to charge.",
+          "properties": {
+            "amount_cents": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "customer": {
+              "type": "string"
+            },
+            "lines": {
+              "items": {
+                "$ref": "#/definitions/Line"
+              },
+              "type": "array"
+            },
+            "order": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "order",
+            "customer",
+            "lines",
+            "amount_cents",
+            "request_id"
+          ],
+          "title": "PaymentRequest",
+          "type": "object"
+        }
+      }
+    }
+  }
+}
