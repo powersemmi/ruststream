@@ -45,7 +45,8 @@ required-features = ["macros", "memory", "json", "logging"]
 # service builds with the codec layer switched off.
 [[example]]
 name = "protobuf"
-required-features = ["macros", "memory"]
+required-features = ["testing", "macros", "memory"]
+test = true
 
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
@@ -60,7 +61,19 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_protobuf"
 path = "examples/manual/protobuf.rs"
-required-features = ["memory"]
+required-features = ["testing", "memory"]
+test = true
+
+[[example]]
+name = "byte_lanes"
+required-features = ["testing", "macros", "memory"]
+test = true
+
+[[example]]
+name = "manual_byte_lanes"
+path = "examples/manual/byte_lanes.rs"
+required-features = ["testing", "memory"]
+test = true
 
 [[example]]
 name = "manual_tutorial"
@@ -132,12 +145,47 @@ test = true
 [[example]]
 name = "manual_codecs"
 path = "examples/manual/codecs.rs"
-required-features = ["memory", "json", "cbor"]
+required-features = ["testing", "memory", "json", "cbor"]
+test = true
+
+[[example]]
+name = "codec_json"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_codec_json"
+path = "examples/manual/codec_json.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "codec_cbor"
+required-features = ["testing", "macros", "memory", "cbor"]
+test = true
+
+[[example]]
+name = "manual_codec_cbor"
+path = "examples/manual/codec_cbor.rs"
+required-features = ["testing", "memory", "cbor"]
+test = true
+
+[[example]]
+name = "codec_msgpack"
+required-features = ["testing", "macros", "memory", "msgpack"]
+test = true
+
+[[example]]
+name = "manual_codec_msgpack"
+path = "examples/manual/codec_msgpack.rs"
+required-features = ["testing", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "manual_custom_codec"
 path = "examples/manual/custom_codec.rs"
-required-features = ["memory", "json", "cbor"]
+required-features = ["testing", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "manual_middleware"
@@ -315,11 +363,13 @@ test = true
 
 [[example]]
 name = "codecs"
-required-features = ["macros", "memory", "json", "cbor"]
+required-features = ["testing", "macros", "memory", "json", "cbor"]
+test = true
 
 [[example]]
 name = "custom_codec"
-required-features = ["macros", "memory", "json", "cbor"]
+required-features = ["testing", "macros", "memory", "msgpack"]
+test = true
 
 [[example]]
 name = "middleware"

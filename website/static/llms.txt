@@ -28,6 +28,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Subscribers](https://powersemmi.github.io/ruststream/latest/components/subscribers/): `#[subscriber]`, subscription sources, mount-site settings, batches, start positions, routers, the retry cap and destination, failure policy, typed headers
 - [Messages](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/): what a handler returns: ack, retry, drop, `retry_after`, `and_after` and post-settle hooks
 - [Context and extractors](https://powersemmi.github.io/ruststream/latest/components/subscribers/context/): the per-delivery `Context`, `Ctx<K>` and custom extractors
+- [Codecs](https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/): where a mounting's codec comes from, JSON, CBOR, MessagePack, a codec of your own, Protobuf and the byte lanes
 
 ## Module overviews on docs.rs
 

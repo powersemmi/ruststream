@@ -10,13 +10,17 @@
 //! Note the feature list: no `macros`, and no codec either. Neither lane resolves one.
 //!
 //! ```text
-//! cargo run --example manual_protobuf --no-default-features --features memory
+//! cargo test --example manual_protobuf --no-default-features --features testing,memory
 //! ```
+
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use std::error::Error;
 use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
+use ruststream::testing::TestApp;
 
 // --8<-- [start:message]
 /// What `prost-build` emits from the schema. On the macro path a `message_attribute` line adds
@@ -106,14 +110,14 @@ impl Handle<Order> for Receive {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("order {} of {}", order.id, order.sku);
+        tracing::info!(order.id, order.sku, "ordered");
         ready(Ok(()))
     }
 }
 // --8<-- [end:handler]
 
 // --8<-- [start:app]
-fn app() -> RustStream {
+fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("orders", Receive).build());
         // The outgoing half of the same declaration: the value encodes itself on the way out
@@ -129,10 +133,25 @@ fn app() -> RustStream {
         });
     })
 }
+// --8<-- [end:app]
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
+#[tokio::test]
+async fn the_order_crosses_both_lanes() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+    // The publish of `after_startup` reaches the handler.
+    tb.settle().await?;
+    let order = Order {
+        id: 7,
+        sku: "widget".to_owned(),
+    };
+
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .assert_called_once()
+        .with_raw(&prost::Message::encode_to_vec(&order))
+        .settled(HandlerOutcome::ack());
     Ok(())
 }
-// --8<-- [end:app]
+
+// The scenario is the test above; the command in the header runs it.
+fn main() {}

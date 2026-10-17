@@ -1,101 +1,180 @@
-//! Codec selection without the `macros` feature: the ladder is the same, and every rung is a call
-//! on the mount - the scope codec, the per-definition `codec(..)` override, and the
-//! decode-failure policy next to it.
+//! The service of `examples/codecs.rs` written without the `macros` feature: the scope names the
+//! codec for every registration, a registration names its own with `.codec(..)`, and a reply
+//! position names the codec its replies leave with.
 //!
 //! ```text
-//! cargo run --example manual_codecs --no-default-features --features memory,json,cbor
+//! cargo test --example manual_codecs --no-default-features --features testing,memory,json,cbor
 //! ```
 
-use std::error::Error;
-use std::future::{Future, ready};
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use ruststream::codec::{CborCodec, JsonCodec};
 use ruststream::memory::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-/// The definition value `#[subscriber("orders")]` would have minted.
-struct Receive;
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+struct Receipt {
+    id: u64,
+}
 
-impl Handle<Order> for Receive {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("got order {}", order.id);
-        ready(Ok(()))
+// `#[derive(Outgoing)]` with no `name`, by hand: the call site names the destination.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
+
+impl OutgoingDestination for Receipt {
+    type Form = CallerName;
+}
+
+impl MessageHeaders for Receipt {
+    type Contract = NoHeaders;
+}
+
+mod ladder {
+    use std::error::Error;
+    use std::future::{Future, ready};
+
+    use ruststream::codec::{CborCodec, JsonCodec};
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Order, Receipt};
+
+    struct Bill;
+
+    impl Handle<Order> for Bill {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            tracing::info!(order.id, "billed");
+            ready(Ok(()))
+        }
+    }
+
+    struct Audit;
+
+    impl Handle<Order> for Audit {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            tracing::info!(order.id, "audited");
+            ready(Ok(()))
+        }
+    }
+
+    struct Checkout;
+
+    impl Handle<Order, Receipt> for Checkout {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+            ready(Ok(Receipt { id: order.id }))
+        }
+    }
+
+    // --8<-- [start:app]
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("codecs", "0.1.0")).with_broker_codec(
+            MemoryBroker::new(),
+            // Every registration of this scope decodes CBOR.
+            CborCodec,
+            |b| {
+                b.include(subscriber("orders", Bill).build());
+                // A registration names its own codec.
+                b.include(subscriber("audit", Audit).codec(JsonCodec).build());
+                // A reply takes the default codec, JSON, unless its position names one.
+                b.include(
+                    subscriber("checkout", Checkout)
+                        .reply()
+                        .to("receipts")
+                        .build(),
+                )
+                .out_reply(Publish)
+                .codec(CborCodec);
+            },
+        )
+    }
+    // --8<-- [end:app]
+
+    #[tokio::test]
+    async fn each_mounting_reads_its_own_codec() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let broker = tb.broker::<MemoryBroker>();
+        let order = Order { id: 7 };
+
+        broker
+            .message(&order)
+            .to("orders")
+            .with_codec(CborCodec)
+            .publish()
+            .await?;
+        broker
+            .message(&order)
+            .to("audit")
+            .with_codec(JsonCodec)
+            .publish()
+            .await?;
+        broker
+            .message(&order)
+            .to("checkout")
+            .with_codec(CborCodec)
+            .publish()
+            .await?;
+
+        broker
+            .subscriber("orders")
+            .assert_called_once()
+            .with_codec(&CborCodec, &order)
+            .settled(HandlerOutcome::ack());
+        broker
+            .subscriber("audit")
+            .assert_called_once()
+            .with_codec(&JsonCodec, &order)
+            .settled(HandlerOutcome::ack());
+        broker
+            .published::<Receipt>("receipts")
+            .assert_called_once()
+            .with_codec(&CborCodec, &Receipt { id: 7 });
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_scope_handler_does_not_read_json() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let broker = tb.broker::<MemoryBroker>();
+
+        broker
+            .message(&Order { id: 7 })
+            .to("orders")
+            .with_codec(JsonCodec)
+            .publish()
+            .await?;
+
+        broker
+            .subscriber("orders")
+            .assert_called_once()
+            .assert_last_failed_to_decode();
+        Ok(())
     }
 }
 
-/// A second handler, to show a scope holding more than one subscription.
-struct Audit;
-
-impl Handle<Order> for Audit {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("audited order {}", order.id);
-        ready(Ok(()))
-    }
-}
-
-/// The handler behind the retrying registration below.
-struct Strict;
-
-impl Handle<Order> for Strict {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("strictly decoded order {}", order.id);
-        ready(Ok(()))
-    }
-}
-
-fn app() -> RustStream {
-    let info = AppInfo::new("codecs", "0.1.0");
-    // --8<-- [start:scope]
-    // Every subscription in the scope decodes with CBOR: the scope codec is the default the
-    // `include` family reads off the mount site, so no registration repeats it.
-    RustStream::new(info)
-        .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-            b.include(subscriber("orders", Receive).build());
-            b.include(subscriber("audit", Audit).build());
-        })
-        // --8<-- [end:scope]
-        .with_broker(MemoryBroker::new(), |b| {
-            // --8<-- [start:per_handler]
-            // one handler on a codec of its own: the override sits on the definition, so no
-            // router is needed to keep the choice from reaching the neighbours
-            b.include(subscriber("orders", Receive).codec(JsonCodec).build());
-            // --8<-- [end:per_handler]
-
-            // --8<-- [start:decode_failure]
-            // A payload that fails to decode is redelivered instead of dropped. The policy is a
-            // setting on the same chain, the counterpart of `on_failure(decode = retry)` on the
-            // declaration.
-            b.include(
-                subscriber("orders", Strict)
-                    .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Retry))
-                    .build(),
-            );
-            // --8<-- [end:decode_failure]
-        })
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}
