@@ -14,7 +14,7 @@ That `main` hands the commands to [`run_main`](api:ruststream::runtime::cli::run
 `cargo run -- run` and `cargo run -- asyncapi gen` therefore give the same result without the command installed.
 The same [run](./running/run.md) is one call from code.
 `-p` points at another crate or its `Cargo.toml`, and `--release` builds in release mode.
-`asyncapi gen` needs the service crate's `asyncapi` feature; the starter template enables it.
+[`asyncapi gen`](../asyncapi/generation/cli-gen.md) needs the service crate's `asyncapi` feature; the starter template enables it.
 The template's console logs come from its `logging` feature.
 `cargo generate` comes from the [cargo-generate](https://github.com/cargo-generate/cargo-generate) project; a broker crate ships templates of its own for its transport.
 
