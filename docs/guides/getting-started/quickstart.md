@@ -1,3 +1,7 @@
+---
+description: "Scaffold a service with cargo generate, run it, and generate its AsyncAPI document."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

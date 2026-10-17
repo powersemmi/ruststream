@@ -48,4 +48,26 @@ describe('redirectPages', () => {
     new Function('location', script)({hash: '#old', replace});
     expect(opened).toEqual(['https://docs.rs/r/index.html#routing']);
   });
+
+  it('leaves the choice of the indexed address to the refresh and the canonical link', () => {
+    const [page] = redirectPages({'guides/x': 'https://docs.rs/r/'}, '/ruststream/latest/');
+    expect(page!.html).not.toContain('name="robots"');
+    expect(page!.html).toContain('<link rel="canonical" href="https://docs.rs/r/">');
+  });
+
+  it('names the indexed copy of a target on the site as the canonical address', () => {
+    const [page] = redirectPages(
+      {'getting-started/tutorial': '/guides/getting-started/tutorial/'},
+      '/ruststream/0.7/ru/',
+      {
+        siteUrl: 'https://powersemmi.github.io',
+        baseUrl: '/ruststream/0.7/',
+        canonicalBaseUrl: '/ruststream/latest/',
+      },
+    );
+    expect(target(page!.html)).toBe('/ruststream/0.7/ru/guides/getting-started/tutorial/');
+    expect(page!.html).toContain(
+      '<link rel="canonical" href="https://powersemmi.github.io/ruststream/latest/ru/guides/getting-started/tutorial/">',
+    );
+  });
 });

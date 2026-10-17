@@ -1,6 +1,7 @@
 ---
+title: assert_called (subscriber assertions)
+sidebar_label: assert_called
 sidebar_position: 2
-title: assert_called
 description: "assert_called(n) checks that a subscriber's handler ran exactly n times, counting a batch as one call."
 ---
 

@@ -1,3 +1,7 @@
+---
+description: "RustStream 支持的 Broker：核心自带的内存 Broker，以及每个外部 Broker 各自的 crate，每个 crate 都有自己的文档。"
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

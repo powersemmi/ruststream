@@ -1,6 +1,7 @@
 ---
+title: Retry in AsyncAPI
+sidebar_label: Retry
 sidebar_position: 5
-title: Retry
 description: "The attempt cap and the dead-letter destination of a registration appear on its receive operation as the x-ruststream-retry extension."
 ---
 

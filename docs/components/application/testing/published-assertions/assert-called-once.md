@@ -1,6 +1,7 @@
 ---
+title: assert_called_once (published assertions)
+sidebar_label: assert_called_once
 sidebar_position: 1
-title: assert_called_once
 description: "assert_called_once checks that exactly one message was published to the destination."
 ---
 

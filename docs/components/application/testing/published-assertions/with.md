@@ -1,6 +1,7 @@
 ---
+title: with (published assertions)
+sidebar_label: with
 sidebar_position: 7
-title: with
 description: "with checks that the latest payload published to the destination decodes to a value; with_codec names the codec."
 ---
 

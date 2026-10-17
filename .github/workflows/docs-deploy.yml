@@ -96,13 +96,19 @@ jobs:
       #
       # Every version lives side by side in the gh-pages tree, so a deploy rebuilds only its own
       # directory. `latest` follows the newest release: `next`, an archive and a fix to a past
-      # release leave it where it is.
+      # release leave it where it is. A release of a new minor line also rebuilds the line it
+      # takes `latest` from as an older version, from that line's newest tag (fetched above with
+      # the full history) and its rustdoc.
       - name: Build and place the site
         env:
           TAG: ${{ github.event_name == 'release' && github.ref_name || '' }}
           EVENT: ${{ github.event_name }}
           ARCHIVE_VERSION: ${{ inputs.version }}
           ARCHIVE_REF: ${{ inputs.archive_ref }}
+          # Ownership tokens of Google Search Console and Bing Webmaster Tools, written into the
+          # site's root page; repository variables, empty until the maintainer sets them.
+          DOCS_GOOGLE_SITE_VERIFICATION: ${{ vars.DOCS_GOOGLE_SITE_VERIFICATION }}
+          DOCS_BING_SITE_VERIFICATION: ${{ vars.DOCS_BING_SITE_VERIFICATION }}
         run: |
           git fetch origin gh-pages
           git worktree add -B gh-pages gh-pages origin/gh-pages

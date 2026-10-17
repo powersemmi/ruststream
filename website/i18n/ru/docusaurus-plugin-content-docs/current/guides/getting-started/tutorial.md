@@ -1,3 +1,7 @@
+---
+description: "Сервис заказов шаг за шагом: тип сообщения, обработчик, ответ и роутер на in-memory брокере, а затем переход на настоящий брокер."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

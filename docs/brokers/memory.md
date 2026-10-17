@@ -1,3 +1,7 @@
+---
+description: "MemoryBroker is a complete broker inside the service's process: it needs no server and comes with the memory feature of ruststream."
+---
+
 # Memory
 
 `MemoryBroker` is a complete broker that runs inside the service's process. It comes with the

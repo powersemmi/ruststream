@@ -1,4 +1,5 @@
 ---
+title: 基准测试
 description: "RustStream 在每条消息上的开销：与各 Broker 裸客户端对照的吞吐量，以及框架自身代码的指令数和内存分配次数。"
 ---
 

@@ -1,6 +1,7 @@
 ---
+title: Headers in AsyncAPI
+sidebar_label: Headers
 sidebar_position: 3
-title: Headers
 description: "A header contract becomes the headers schema of its message, from a Headers<T> parameter or from #[outgoing(headers = ..)]."
 ---
 

@@ -15,9 +15,17 @@
 # checkout (its pages, the sources they include, its sidebar) with this repository's site code;
 # `--source-ref` is the ref the excerpts link to. An archive never takes an alias.
 #
+# A release that takes latest from another minor line turns that line into an older one in the
+# same run: its directory is rebuilt from the line's newest release tag, with the tag's own site
+# code (its pages are written against it), as an older version, so its pages carry the banner,
+# ask search engines to leave them out and name themselves as canonical. A tag whose site code
+# predates those rules gets them here: its sitemaps go and every page takes the `noindex` tag. The
+# rebuild needs the repository's tags and a Rust toolchain for the tag's rustdoc.
+#
 # The script keeps versions.json in mike's format (a development version such as next above the
 # releases, releases newest first, an alias on one version only), the root redirect to latest/,
-# and the root copy of llms.txt. Committing and pushing the checkout is the caller's job.
+# the root sitemap index, the root 404 page and the root copy of llms.txt. Committing and pushing
+# the checkout is the caller's job.
 set -euo pipefail
 
 usage() {
@@ -76,6 +84,14 @@ if [ -z "$content" ] && [ -n "$source_ref" ]; then
   exit 2
 fi
 
+# The site verification tokens go into an HTML attribute of the root page.
+for token in "${DOCS_GOOGLE_SITE_VERIFICATION:-}" "${DOCS_BING_SITE_VERIFICATION:-}"; do
+  if ! [[ "$token" =~ ^[A-Za-z0-9_-]*$ ]]; then
+    echo "a site verification token holds letters, digits, '-' and '_' only, got '$token'" >&2
+    exit 2
+  fi
+done
+
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 site="$(cd "${GH_PAGES_DIR:-$repo/gh-pages}" && pwd)"
 website="$repo/website"
@@ -96,9 +112,57 @@ build_into() {
   fi
 }
 
+# Rebuilds a minor line that has lost latest from its newest release tag, as an older version.
+worktree=""
+archive_release() {
+  local line="$1" tag
+  tag="$(git -C "$repo" tag --list "v$line.*" | grep -E "^v${line//./\\.}\.[0-9]+$" | sort -V | tail -1)"
+  if [ -z "$tag" ]; then
+    echo "$line leaves latest, but the repository has no release tag of it to rebuild it from" >&2
+    exit 1
+  fi
+  worktree="$(mktemp -d "${TMPDIR:-/tmp}/ruststream-docs-$line.XXXXXX")"
+  # The checkout goes when the script ends, a failed build included.
+  trap 'git -C "$repo" worktree remove --force "$worktree"' EXIT
+  git -C "$repo" worktree add --quiet --detach "$worktree" "$tag"
+  if [ ! -f "$worktree/website/package.json" ]; then
+    echo "$tag holds no site code; $line cannot be rebuilt as an older version from it" >&2
+    exit 1
+  fi
+  echo "Building /ruststream/$line/ from $tag as an older version"
+  (cd "$worktree" && cargo doc --locked --all-features --no-deps -p ruststream)
+  (cd "$worktree/website" && npm ci &&
+    DOCS_BASE_URL="/ruststream/$line/" DOCS_VERSION_KIND=archive DOCS_LINE="$line" \
+      DOCS_SOURCE_REF="$tag" npm run build -- --out-dir "build/$line")
+  rm -rf "${site:?}/$line"
+  mv "$worktree/website/build/$line" "$site/$line"
+  # Only latest is indexed: an older line lists no pages and its pages ask to be left out. A
+  # redirect page stays as the tag built it; search engines follow it to its target.
+  find "$site/$line" -name sitemap.xml -delete
+  rm -f "$site/$line/llms.txt"
+  while IFS= read -r -d '' page; do
+    if ! grep -q -e 'name="robots" content="noindex"' -e 'http-equiv="refresh"' "$page"; then
+      sed -i '0,/<head>/s//<head><meta name="robots" content="noindex">/' "$page"
+    fi
+  done < <(find "$site/$line" -name '*.html' -print0)
+}
+
+# The line that holds latest before this deploy, if any.
+previous_latest=""
+if [ "$alias_name" = "latest" ] && [ -f "$site/versions.json" ]; then
+  previous_latest="$(VERSIONS="$site/versions.json" node -e '
+    const versions = require(process.env.VERSIONS);
+    const holder = versions.find((entry) => entry.aliases.includes("latest"));
+    console.log(holder ? holder.version : "");
+  ')"
+fi
+
 build_into "$version"
 if [ -n "$alias_name" ]; then
   build_into "$alias_name"
+fi
+if [ -n "$previous_latest" ] && [ "$previous_latest" != "$version" ]; then
+  archive_release "$previous_latest"
 fi
 
 VERSION="$version" TITLE="$title" ALIAS="$alias_name" VERSIONS="$site/versions.json" node <<'NODE'
@@ -125,29 +189,58 @@ const updated = [...others, {version, title, aliases: [...aliases]}].sort((a, b)
 fs.writeFileSync(file, `${JSON.stringify(updated, null, 2)}\n`);
 NODE
 
-if [ "$alias_name" = "latest" ]; then
-  cat >"$site/index.html" <<'HTML'
+# The root files lead to latest/ and are rewritten by every deploy, so a change to them (a
+# verification tag) reaches the site with the next push to main rather than the next release.
+if [ -d "$site/latest" ]; then
+  # The site's address is a page of its own: search consoles verify ownership on it, so the
+  # verification tags (DOCS_GOOGLE_SITE_VERIFICATION, DOCS_BING_SITE_VERIFICATION, empty by
+  # default) go here. An instant refresh is a permanent redirect to search engines; the script
+  # keeps the query and the anchor of the address a reader followed.
+  verification=""
+  if [ -n "${DOCS_GOOGLE_SITE_VERIFICATION:-}" ]; then
+    verification+="  <meta name=\"google-site-verification\" content=\"${DOCS_GOOGLE_SITE_VERIFICATION}\">"$'\n'
+  fi
+  if [ -n "${DOCS_BING_SITE_VERIFICATION:-}" ]; then
+    verification+="  <meta name=\"msvalidate.01\" content=\"${DOCS_BING_SITE_VERIFICATION}\">"$'\n'
+  fi
+  cat >"$site/index.html" <<HTML
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Redirecting</title>
-  <noscript>
-    <meta http-equiv="refresh" content="1; url=latest/" />
-  </noscript>
-  <script>
+  <title>RustStream documentation</title>
+  <meta http-equiv="refresh" content="0; url=latest/">
+  <link rel="canonical" href="https://powersemmi.github.io/ruststream/latest/">
+${verification}  <script>
     window.location.replace(
       "latest/" + window.location.search + window.location.hash
     );
   </script>
 </head>
 <body>
-  Redirecting to <a href="latest/">latest/</a>...
+  <a href="latest/">RustStream documentation</a>
 </body>
 </html>
 HTML
+  # The sitemaps of the indexed copy, one per language, behind one address that robots.txt names.
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    for sitemap in "$site"/latest/sitemap.xml "$site"/latest/*/sitemap.xml; do
+      [ -f "$sitemap" ] || continue
+      echo "  <sitemap><loc>https://powersemmi.github.io/ruststream/${sitemap#"$site"/}</loc></sitemap>"
+    done
+    echo '</sitemapindex>'
+  } >"$site/sitemap.xml"
+  # GitHub Pages serves the 404 page from the root of the site for any missing address; the
+  # latest build's own page brings the reader back into the documentation.
+  if [ -f "$site/latest/404.html" ]; then
+    cp "$site/latest/404.html" "$site/404.html"
+  fi
   # The llms.txt convention looks for the file at the site root.
-  cp "$site/latest/llms.txt" "$site/llms.txt"
+  if [ -f "$site/latest/llms.txt" ]; then
+    cp "$site/latest/llms.txt" "$site/llms.txt"
+  fi
 fi
 touch "$site/.nojekyll"
 echo "Deployed $version${alias_name:+ as $alias_name} into $site"

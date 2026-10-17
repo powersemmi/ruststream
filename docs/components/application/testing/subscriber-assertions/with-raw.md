@@ -1,6 +1,7 @@
 ---
+title: with_raw (subscriber assertions)
+sidebar_label: with_raw
 sidebar_position: 5
-title: with_raw
 description: "with_raw(bytes) checks the exact bytes of the latest handler call, before any decoding."
 ---
 

@@ -201,7 +201,7 @@
     "message": "任意 Broker"
   },
   "landing.meta.description": {
-    "message": "RustStream 是 Rust 的异步消息框架：在与 Broker 无关的核心之上编写 #[subscriber] 处理器，配有十三个 Broker crate、AsyncAPI 生成和进程内测试。"
+    "message": "RustStream 是 Rust 的异步消息框架：在与 Broker 无关的核心之上编写 #[subscriber] 处理器，支持十四种传输、AsyncAPI 生成和进程内测试。"
   },
   "landing.meta.title": {
     "message": "Rust 的异步消息框架"
@@ -349,6 +349,14 @@
   },
   "landing.quickstart.note": {
     "message": "{app} 会生成 {main}，其中包含运行时的全部样板代码：{run} 启动服务，{gen} 打印该服务的 AsyncAPI 文档。"
+  },
+  "notFound.moved": {
+    "message": "文档调整结构时，这个页面可能已经移动。可以从{home}继续，或者用搜索查找。",
+    "description": "The 404 page's way back into the documentation"
+  },
+  "notFound.moved.home": {
+    "message": "文档首页",
+    "description": "The 404 page's way back into the documentation"
   },
   "theme.IconExternalLink.ariaLabel": {
     "message": "（在新标签页中打开）",

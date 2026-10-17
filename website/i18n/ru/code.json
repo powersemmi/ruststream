@@ -201,7 +201,7 @@
     "message": "любом брокере"
   },
   "landing.meta.description": {
-    "message": "RustStream - фреймворк асинхронного обмена сообщениями для Rust: обработчики #[subscriber] поверх ядра, не зависящего от брокера, тринадцать адаптаций библиотек брокеров, генерация AsyncAPI и тесты внутри процесса."
+    "message": "RustStream - асинхронный обмен сообщениями на Rust: обработчики #[subscriber] над ядром, не зависящим от брокера, четырнадцать транспортов, AsyncAPI и тесты."
   },
   "landing.meta.title": {
     "message": "Асинхронный обмен сообщениями для Rust"
@@ -349,6 +349,14 @@
   },
   "landing.quickstart.note": {
     "message": "{app} генерирует {main} со всем шаблонным кодом рантайма: {run} запускает сервис, а {gen} печатает его AsyncAPI-документ."
+  },
+  "notFound.moved": {
+    "message": "Страница могла переехать, когда документацию перестроили. Продолжите с {home} или найдите её поиском.",
+    "description": "The 404 page's way back into the documentation"
+  },
+  "notFound.moved.home": {
+    "message": "главной страницы документации",
+    "description": "The 404 page's way back into the documentation"
   },
   "theme.DocSidebarItem.collapseCategoryAriaLabel": {
     "message": "Свернуть раздел «{label}»",
