@@ -530,6 +530,35 @@ impl RetryDeclaration {
 /// broker can offer several subscription kinds with different subscriber types (for example
 /// `Redis` pub/sub versus streams).
 ///
+/// # Implementing it
+///
+/// [`Subscribe`](crate::Subscribe) covers a subscription a name alone identifies. One that needs
+/// settings of the broker's own (a consumer group, a durable name, a delivery policy) gets a
+/// descriptor type implementing this trait.
+///
+/// - Give it an associated constructor, `OrdersStream::new("orders", "workers")`, not a free
+///   function: a service names it in the attribute, `#[subscriber(OrdersStream::new(..))]`, and
+///   the macro reads the type out of the call. A builder chain on it works too
+///   (`OrdersStream::new("orders").durable("workers")`) as long as each method returns `Self`.
+/// - Derive `Clone`: a mount rebuilds the configuration per registration, so one definition can
+///   be mounted on two brokers at once.
+/// - A kind identified by one name and nothing else also implements [`FromName`], which makes the
+///   bare kind legal in the attribute.
+/// - Answer [`Copies`](Self::Copies). [`AddressedCopies`] and [`NamedCopies`] pair a retry
+///   publisher for every registration from the broker's
+///   [`DefaultPublish`](crate::DefaultPublish) policy, so a descriptor declaring either over a
+///   broker without one does not compile. Where native redelivery depends on a field's value
+///   rather than on the type (a queue without a delay setting has none of its own), the
+///   descriptor keeps a copy path open.
+/// - Read the registration's cap and dead-letter destination in
+///   [`declare_retry`](Self::declare_retry) where the broker has a mechanism for them.
+///
+/// `conformance::harness::redelivery_address` checks an [`AddressedCopies`] descriptor's answer,
+/// and `conformance::retry::broker_moves` a [`BrokerMoves`] descriptor's mapping of the cap.
+/// Settings a service adds at the mount site reach the descriptor through an extension trait over
+/// [`SubscriberBuilder`](crate::runtime::SubscriberBuilder), and protocol bindings for the
+/// `AsyncAPI` document come from its `*_bindings` methods.
+///
 /// [`subscribe`]: Self::subscribe
 ///
 /// # Examples
@@ -857,6 +886,13 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 /// again, resolving it against `connected` when only the live connection knows it (a Pub/Sub
 /// subscription has to be looked up to learn its topic). Called once per subscription at startup,
 /// never on the delivery path.
+///
+/// A `.to(name)` on the retry position overrides the answer. The generated document reports such
+/// a name with a `send` operation; the answered address is the subscription's own channel, which
+/// the document already carries.
+/// [`conformance::harness::redelivery_address`](crate::conformance::harness::redelivery_address)
+/// holds the answer to its promise: a copy published there arrives at the subscription that
+/// reported it, once per group, with its headers.
 ///
 /// # Examples
 ///
