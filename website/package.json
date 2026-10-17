@@ -5,7 +5,7 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "cross-env WEBPACK_URL_LOADER_LIMIT=0 docusaurus build",
+    "build": "cross-env WEBPACK_URL_LOADER_LIMIT=0 node build.mjs",
     "swizzle": "docusaurus swizzle",
     "clear": "docusaurus clear",
     "serve": "docusaurus serve",
