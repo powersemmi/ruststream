@@ -70,6 +70,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Some broker clients generate their protocol code at build time (pulsar's build script
+      # runs protoc), as the broker's own CI does after installing it.
+      - name: Install protoc
+        run: sudo apt-get install -y --no-install-recommends protobuf-compiler
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: broker
@@ -95,8 +100,26 @@ jobs:
           status=0
           log="$RUNNER_TEMP/check.log"
           : > "$log"
-          echo "\$ cargo check --workspace --all-targets --all-features" | tee -a "$log"
-          cargo check --workspace --all-targets --all-features 2>&1 | tee -a "$log" || status=1
+          # The unpublished members (benchmarks, examples) are built with their own features: a
+          # benchmark refuses the `testing` feature on purpose, and every-feature builds are a
+          # property of the published crates, which is what the broker's own gates check too.
+          # A manifest cargo cannot read fails here; its error goes to the log the report quotes.
+          echo "\$ cargo metadata --no-deps" >> "$log"
+          if ! metadata="$(cargo metadata --no-deps --format-version 1 2>>"$log")"; then
+            cat "$log"
+            exit 1
+          fi
+          unpublished="$(jq -r '.packages[] | select(.publish == []) | .name' <<<"$metadata")"
+          exclude=""
+          for name in $unpublished; do exclude+=" --exclude $name"; done
+          echo "\$ cargo check --workspace$exclude --all-targets --all-features" | tee -a "$log"
+          cargo check --workspace $exclude --all-targets --all-features 2>&1 | tee -a "$log" \
+            || status=1
+          for name in $unpublished; do
+            echo | tee -a "$log"
+            echo "\$ cargo check -p $name --all-targets" | tee -a "$log"
+            cargo check -p "$name" --all-targets 2>&1 | tee -a "$log" || status=1
+          done
           echo | tee -a "$log"
           echo "\$ cargo check --workspace --no-default-features" | tee -a "$log"
           cargo check --workspace --no-default-features 2>&1 | tee -a "$log" || status=1
@@ -140,8 +163,9 @@ jobs:
           body="$(printf '%s\n' \
             "ruststream v$version was released and this crate does not build against it." \
             "Checked by [this probe]($RUN_URL): the version requirement replaced by a path" \
-            "dependency on the released core, then \`cargo check --workspace --all-targets" \
-            "--all-features\` and \`--no-default-features\`." \
+            "dependency on the released core, then \`cargo check --all-targets\` of the" \
+            "published crates with every feature and of the others with their own, and" \
+            "\`--no-default-features\`." \
             "" \
             "<details><summary>error log</summary>" \
             "" \
