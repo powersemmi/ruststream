@@ -56,5 +56,13 @@
   },
   "engines": {
     "node": ">=22.12"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5",
+    "postcss-selector-parser": "^7.1.6",
+    "tinypool": "^2.1.2",
+    "sockjs": {
+      "uuid": "^11.1.1"
+    }
   }
 }
