@@ -3,7 +3,7 @@ Application testing support, behind the `testing` feature.
 [`TestApp`] runs the service's production app, the same builder `main` runs, with every broker
 connected in process and no server; the same test body runs against a running stand. A test
 addresses each broker by its production type, `tb.broker::<KafkaBroker>()`.
-[Testing](https://powersemmi.github.io/ruststream/latest/components/application/testing//) on the site walks through it.
+[Testing](https://powersemmi.github.io/ruststream/latest/components/application/testing/) on the site walks through it.
 
 A broker crate provides the in-process mode under its own `testing` feature: it implements
 [`InProcess`] and [`TestableBroker`] and registers the broker with
