@@ -1,3 +1,7 @@
+---
+description: "Брокеры, с которыми работает RustStream: in-memory брокер из ядра и отдельный крейт для каждого внешнего брокера, у каждого своя документация."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

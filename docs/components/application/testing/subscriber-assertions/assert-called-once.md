@@ -1,6 +1,7 @@
 ---
+title: assert_called_once (subscriber assertions)
+sidebar_label: assert_called_once
 sidebar_position: 1
-title: assert_called_once
 description: "assert_called_once checks that a subscriber's handler ran exactly once: one delivery, or one batch."
 ---
 

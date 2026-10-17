@@ -1,6 +1,7 @@
 ---
+title: assert_not_called (published assertions)
+sidebar_label: assert_not_called
 sidebar_position: 3
-title: assert_not_called
 description: "assert_not_called checks that nothing was published to the destination."
 ---
 

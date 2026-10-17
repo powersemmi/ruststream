@@ -1,6 +1,7 @@
 ---
+title: with (subscriber assertions)
+sidebar_label: with
 sidebar_position: 4
-title: with
 description: "with(&value) checks that the latest handler call received this value, decoded with the default codec."
 ---
 

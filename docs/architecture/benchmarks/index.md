@@ -1,4 +1,5 @@
 ---
+title: Benchmarks
 description: "What RustStream costs on every message: throughput against each broker's raw client, and instructions and allocations of its own code."
 ---
 

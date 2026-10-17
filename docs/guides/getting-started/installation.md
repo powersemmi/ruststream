@@ -1,3 +1,7 @@
+---
+description: "Add the ruststream crate, choose its cargo features and codec, and add the crate of your broker."
+---
+
 # Installation
 
 RustStream ships as a single crate, `ruststream`, whose surface is enabled by additive cargo

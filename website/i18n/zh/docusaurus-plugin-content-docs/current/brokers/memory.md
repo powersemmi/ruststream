@@ -1,3 +1,7 @@
+---
+description: "MemoryBroker 是运行在服务进程内的完整 Broker：不需要服务器，由 ruststream 的 memory feature 提供。"
+---
+
 # 内存 Broker
 
 `MemoryBroker` 是一个运行在服务进程内部的完整 Broker。它属于 `ruststream` 的 `memory` feature，

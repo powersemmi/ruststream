@@ -1,3 +1,7 @@
+---
+description: "Every broker RustStream runs on: the in-memory broker of the core and one crate per external broker, each with its own documentation."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

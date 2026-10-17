@@ -1,3 +1,7 @@
+---
+description: "一步步构建订单服务：消息类型、处理器、回复和路由器，先跑在内存 Broker 上，再换成真正的 Broker。"
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

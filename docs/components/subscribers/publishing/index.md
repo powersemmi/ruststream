@@ -1,4 +1,6 @@
 ---
+title: Publishing from a handler
+sidebar_label: Publishing
 description: "How a handler answers a message and publishes to other destinations."
 ---
 

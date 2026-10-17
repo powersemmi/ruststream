@@ -1,3 +1,7 @@
+---
+description: "Build an orders service step by step: a message type, a handler, a reply and a router on the in-memory broker, then a real broker."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

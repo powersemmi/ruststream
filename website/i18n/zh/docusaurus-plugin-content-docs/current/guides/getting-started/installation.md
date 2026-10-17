@@ -1,3 +1,7 @@
+---
+description: "添加 ruststream crate，选择它的 cargo feature 和编解码器，再加入你所用 Broker 的 crate。"
+---
+
 # 安装
 
 RustStream 以单个 crate `ruststream` 发布，它的接口全部由可加的 cargo feature 控制。把它加进你的

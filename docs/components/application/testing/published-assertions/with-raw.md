@@ -1,6 +1,7 @@
 ---
+title: with_raw (published assertions)
+sidebar_label: with_raw
 sidebar_position: 8
-title: with_raw
 description: "with_raw checks the bytes of the latest payload published to the destination."
 ---
 

@@ -1,6 +1,7 @@
 ---
+title: Lifecycle hooks
+sidebar_label: Lifecycle
 sidebar_position: 3
-title: Lifecycle
 description: "Four hooks run around the brokers' connection: on_startup, after_startup, on_shutdown and after_shutdown."
 ---
 

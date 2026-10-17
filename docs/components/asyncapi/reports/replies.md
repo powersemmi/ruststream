@@ -1,6 +1,7 @@
 ---
+title: Replies in AsyncAPI
+sidebar_label: Replies
 sidebar_position: 1
-title: Replies
 description: "A reply is the reply of the receive operation it answers: the document names its channel and its message."
 ---
 

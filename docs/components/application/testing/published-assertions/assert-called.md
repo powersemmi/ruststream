@@ -1,6 +1,7 @@
 ---
+title: assert_called (published assertions)
+sidebar_label: assert_called
 sidebar_position: 2
-title: assert_called
 description: "assert_called(n) checks that exactly n messages were published to the destination."
 ---
 

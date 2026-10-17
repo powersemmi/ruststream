@@ -1,3 +1,7 @@
+---
+description: "用 cargo generate 生成服务骨架，运行它，并生成它的 AsyncAPI 文档。"
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 

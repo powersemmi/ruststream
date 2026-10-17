@@ -1,3 +1,7 @@
+---
+description: "Заготовка сервиса через cargo generate, первый запуск и документ AsyncAPI этого сервиса."
+---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
