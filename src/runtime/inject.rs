@@ -78,6 +78,65 @@ use super::typed::{refused, unmaterialized};
 /// }
 /// # }
 /// ```
+///
+/// A handler with two publishers names a slot marker for each, and the mount site binds both:
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, Outgoing)]
+/// #[outgoing(name = "orders.confirmed")]
+/// struct Confirmed {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// struct Audit {
+///     id: u64,
+/// }
+///
+/// #[derive(OutSlot)]
+/// #[publishes(Confirmed)]
+/// struct Orders;
+///
+/// #[derive(OutSlot)]
+/// #[publishes(Audit)]
+/// struct Trail;
+///
+/// #[subscriber("orders.incoming")]
+/// async fn route(
+///     event: &Confirmed,
+///     Out(orders): Out<impl Publisher, Orders>,
+///     Out(trail): Out<impl Publisher, Trail>,
+/// ) -> HandlerOutcome {
+///     // `Confirmed` fixes its destination; `Audit` leaves it to the call.
+///     if orders.message(event).publish().await.is_err()
+///         || trail
+///             .message(&Audit { id: event.id })
+///             .to("audit")
+///             .publish()
+///             .await
+///             .is_err()
+///     {
+///         return HandlerOutcome::retry();
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(route)
+///             .out(Orders, Publish)
+///             .out(Trail, Publish)
+///             .build();
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[derive(Debug)]
 pub struct Out<P, M = DefaultSlot, Body = ()>(OutVocabulary<P, M, Body>);
 

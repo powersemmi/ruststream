@@ -1,44 +1,13 @@
-//! Colorful, environment-driven console logging built on [`tracing_subscriber`].
+//! Colored, `RUST_LOG`-driven console logging built on [`tracing_subscriber`] (`logging`
+//! feature).
 //!
-//! RustStream emits structured [`tracing`] events throughout dispatch, publishing and the service
-//! lifecycle, and installs no subscriber on its own. One call here wires up a human-friendly,
-//! colored formatter whose verbosity is read from the `RUST_LOG` environment variable, so
-//! `RUST_LOG=debug cargo run -- run` just works.
+//! - [Logging][logging]: [`init`] installs the console logger, and [`Logging`] tunes its
+//!   defaults; the generated `run` command calls [`init`] itself.
+//! - [TracingLayer][tracing-layer]: [`TracingLayer`](crate::runtime::layers::TracingLayer) logs
+//!   every delivery and its outcome as `tracing` events.
 //!
-//! Output goes to **stderr** (keeping stdout clean for machine-readable command output such as
-//! `asyncapi gen`), and ANSI colors are enabled automatically when stderr is a terminal.
-//!
-//! The generated [`#[ruststream::app]`](macro@crate::app) CLI calls [`init`] for you on the `run`
-//! command when the `logging` feature is enabled; reach for [`Logging`] directly only when you want
-//! to override the defaults.
-//!
-//! Available with the `logging` feature.
-//!
-//! Any other `tracing` subscriber works in its place: one built on `tracing-subscriber`, a JSON
-//! formatter, or the stack your service already installs. A subscriber installed earlier stays
-//! in place, and [`init`] reports [`LoggingInitError::AlreadyInitialized`]. The per-message
-//! events come from [`TracingLayer`](crate::runtime::layers::TracingLayer): mount it to see
-//! every delivery arrive and settle.
-//!
-//! # Examples
-//!
-//! ```no_run
-//! ruststream::logging::init()?;
-//! tracing::info!("service starting");
-//! # Ok::<(), ruststream::logging::LoggingInitError>(())
-//! ```
-//!
-//! Tuning the defaults through the builder:
-//!
-//! ```no_run
-//! use ruststream::logging::Logging;
-//!
-//! Logging::new()
-//!     .with_default_filter("ruststream=debug,info")
-//!     .with_target(false)
-//!     .try_init()?;
-//! # Ok::<(), ruststream::logging::LoggingInitError>(())
-//! ```
+//! [logging]: https://powersemmi.github.io/ruststream/latest/components/observability/logging/
+//! [tracing-layer]: https://powersemmi.github.io/ruststream/latest/components/observability/tracing-layer/
 
 use std::fmt;
 use std::fmt::Write as _;
@@ -110,6 +79,18 @@ impl Logging {
     /// Accepts the [`tracing_subscriber` directive syntax](EnvFilter), e.g. `"info"`,
     /// `"warn,ruststream=debug"`. Parsing is deferred to [`try_init`](Self::try_init), so an invalid
     /// directive surfaces there as [`LoggingInitError::Filter`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ruststream::logging::Logging;
+    ///
+    /// Logging::new()
+    ///     .with_default_filter("ruststream=debug,info")
+    ///     .with_target(false)
+    ///     .try_init()?;
+    /// # Ok::<(), ruststream::logging::LoggingInitError>(())
+    /// ```
     #[must_use]
     pub fn with_default_filter(mut self, filter: impl Into<String>) -> Self {
         self.default_filter = filter.into();

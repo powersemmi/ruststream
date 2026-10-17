@@ -6,12 +6,13 @@
 //!
 //! - `run` (the default) builds the Tokio runtime the attribute names (a multi-threaded one
 //!   unless `flavor = "current_thread"` or `worker_threads = n` says otherwise, see
-//!   [`AppRuntime`]) and runs the service until an interrupt, mirroring [`RustStream::run`](crate::runtime::RustStream::run). With the `logging`
-//!   feature enabled it first installs
-//!   the colored console logger ([`crate::logging`]), so a scaffolded service prints logs without
-//!   any setup; an app that installs its own subscriber keeps it.
-//! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for the
-//!   service and writes it to stdout or a file. Requires the crate to enable the `asyncapi` feature.
+//!   [`AppRuntime`]) and runs the service until an interrupt, mirroring
+//!   [`RustStream::run`](crate::runtime::RustStream::run). With the `logging` feature enabled it
+//!   first installs the colored console logger ([`crate::logging`]), so a scaffolded service
+//!   prints logs without any setup; an app that installs its own subscriber keeps it.
+//! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for
+//!   the service and writes it to stdout or a file. Requires the crate to enable the `asyncapi`
+//!   feature.
 //!
 //! The standalone `ruststream` CLI drives these by shelling out to `cargo run -- <command>`, so the
 //! same dispatch serves both `cargo run` and `ruststream run`.
@@ -33,7 +34,44 @@
 //! A new project is scaffolded with `cargo generate` from a template the broker crate ships,
 //! typically one per transport or topology. The starter template for the in-memory broker lives
 //! in this repository, and the quick start has the command:
-//! <https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/>.
+//! <https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/>.
+//!
+//! # Templates a broker crate ships
+//!
+//! A broker crate ships a [`cargo generate`](https://github.com/cargo-generate/cargo-generate)
+//! template for each transport or topology it serves (`nats` and `nats-js`; `redis-stream`,
+//! `redis-pubsub` and `redis-list`), and its own CI keeps the scaffold in step with its API. The
+//! core owns one, `templates/memory`, so a default `cargo generate` works offline with no broker
+//! dependency.
+//!
+//! ```text
+//! templates/<name>/
+//!   cargo-generate.toml   manifest: description, any declared placeholders
+//!   Cargo.toml.liquid     name = "{{project-name}}"; pins ruststream and the broker crate
+//!   src/main.rs           the #[ruststream::app] builder
+//!   src/orders.rs         #[subscriber] handlers
+//!   src/routes.rs         a Router collecting the handlers
+//! ```
+//!
+//! - Placeholders use cargo-generate's Liquid syntax. `{{project-name}}` is built in and takes the
+//!   `--name` value, so a minimal template declares none of its own.
+//! - The manifest is named `Cargo.toml.liquid`. Cargo parses every `Cargo.toml` of a git source
+//!   and ignores `exclude`, so a placeholder in a package name would break every user who depends
+//!   on the crate by git. Any other templated file cargo parses gets the suffix too.
+//! - The manifest pins `ruststream` to the supported minor version and the broker crate to its
+//!   own.
+//! - Template sources parse as neither Rust nor TOML until rendered, so the crate's workspace
+//!   keeps them out with `exclude = ["templates"]`.
+//! - A feature block only adds code: no `{% else %}` and no negative `{% if not flag %}`. The
+//!   scaffold rendered without flags is then a subset of the one rendered with all of them, and
+//!   one all-features check per template catches every drift from the API.
+//!
+//! The crate's CI installs `cargo-generate`, renders each template
+//! (`cargo generate --path templates/<name> --name smoke`) and runs `cargo check` in the
+//! scaffold. Before the check it rewrites the rendered `ruststream` requirement to the version
+//! being built, because `[patch.crates-io]` redirects where a crate comes from but not which
+//! versions a requirement accepts, and then adds the `[patch.crates-io]` entry pointing at a
+//! sibling checkout of `ruststream`.
 
 use std::io;
 use std::num::NonZeroUsize;
@@ -124,6 +162,50 @@ enum Command {
 ///     run_main_on(AppRuntime::CurrentThread, app)
 /// }
 /// # }
+/// ```
+///
+/// The attribute form, with a subscription that computes on eight threads of its own and reaches
+/// the current-thread runtime only through [`MainRuntime`](crate::runtime::MainRuntime):
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Resize {
+///     id: u64,
+/// }
+///
+/// fn render(_job: &Resize) {}
+///
+/// async fn notify(_id: u64) {}
+///
+/// async fn lookup(id: u64) -> u64 {
+///     id
+/// }
+///
+/// #[subscriber("images.resize", threads(8))]
+/// async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
+///     // Runs on one of the subscription's eight threads, from the first poll to the end.
+///     render(job);
+///     // The explicit ways to the app's runtime; what they send must be `Send`.
+///     main.spawn(notify(job.id));
+///     match main.run(lookup(job.id)).await {
+///         Ok(_) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+///
+/// #[ruststream::app(flavor = "current_thread")]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(resize);
+///     })
+/// }
+/// # }
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]

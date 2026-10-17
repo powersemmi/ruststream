@@ -26,7 +26,6 @@ use ruststream::{
 };
 use serde::{Deserialize, Serialize};
 
-// --8<-- [start:buffered_capability]
 /// What a broker crate writes when its transport has no batches of its own: the subscriber it
 /// already has, wrapped in the core's client-side buffer, and `BatchSubscriber` delegated to it.
 /// The deadline that closes a partial batch is the broker's own choice; the batch size is not -
@@ -104,7 +103,6 @@ impl RedeliveryAddressed<ConnectedMemoryBroker<Retaining>> for Trickle {
         ready(Ok(RedeliveryAddress::new(self.name)))
     }
 }
-// --8<-- [end:buffered_capability]
 
 /// A batch handler on that broker: nothing in the mount says the batches are assembled on the
 /// client, which is the point - the size is the one word the mount site has either way.

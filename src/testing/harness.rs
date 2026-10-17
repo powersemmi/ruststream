@@ -225,6 +225,12 @@ impl TestBrokers<'_> {
 /// input with [`broker`](Self::broker) / [`broker_named`](Self::broker_named) and assert on what
 /// happened.
 ///
+/// Every subscription loop and every worker of `workers(n)` runs as a task on the
+/// test's own runtime, whatever runtime the generated `main` builds, and a `threads(n)`
+/// subscription runs as `n` such workers rather than on threads of its own, so
+/// [`advance`](Self::advance) reaches every timer the app arms and [`settle`](Self::settle)
+/// sees every delivery.
+///
 /// # Examples
 ///
 /// ```
@@ -360,9 +366,86 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Returns [`TestError::NoTransport`] if a broker of the app has no in-process mode,
     /// [`TestError::Startup`] if a lifecycle hook fails, [`TestError::Connect`] if a broker fails
     /// to connect in process, or [`TestError::Subscribe`] if a subscription fails to open.
+    ///
     /// The app's publish pipeline is whatever it was built with: an app-wide
     /// [`publish_layer`](crate::runtime::RustStream::publish_layer) is already baked into the mounted routes, so
     /// the harness drives the same stack production would.
+    ///
+    /// # Examples
+    ///
+    /// The publish drives the whole reaction to completion before it returns: the handler, its
+    /// downstream publishes, any cross-broker cascade. Then the test asserts.
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "testing", feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::testing::TestApp;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
+    /// struct Order {
+    ///     id: u64,
+    ///     quantity: u32,
+    /// }
+    ///
+    /// #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]
+    /// #[outgoing(name = "confirmations")]
+    /// struct Confirmation {
+    ///     id: u64,
+    ///     accepted: bool,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn confirm(order: &Order) -> Confirmation {
+    ///     Confirmation {
+    ///         id: order.id,
+    ///         accepted: order.quantity > 0,
+    ///     }
+    /// }
+    ///
+    /// /// The app `main` runs, and the one the tests hand the harness.
+    /// pub fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(confirm).out_reply(Publish);
+    ///     })
+    /// }
+    ///
+    /// pub async fn confirms_valid_orders() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let tb = TestApp::start(app()).await?;
+    ///     tb.broker::<MemoryBroker>()
+    ///         .message(&Order { id: 1, quantity: 2 })
+    ///         .to("orders")
+    ///         .publish()
+    ///         .await?;
+    ///
+    ///     tb.broker::<MemoryBroker>()
+    ///         .subscriber("orders")
+    ///         .assert_called_once()
+    ///         .with(&Order { id: 1, quantity: 2 })
+    ///         .settled(HandlerOutcome::ack());
+    ///     tb.broker::<MemoryBroker>()
+    ///         .published::<Confirmation>("confirmations")
+    ///         .assert_called_once()
+    ///         .with(&Confirmation {
+    ///             id: 1,
+    ///             accepted: true,
+    ///         });
+    ///     Ok(())
+    /// }
+    /// # }
+    /// # #[cfg(all(feature = "testing", feature = "macros", feature = "memory", feature = "json"))]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// #     tokio::runtime::Builder::new_multi_thread()
+    /// #         .enable_all()
+    /// #         .build()?
+    /// #         .block_on(demo::confirms_valid_orders())
+    /// # }
+    /// # #[cfg(not(all(
+    /// #     feature = "testing", feature = "macros", feature = "memory", feature = "json"
+    /// # )))]
+    /// # fn main() {}
+    /// ```
     pub async fn start<A>(app: A) -> Result<Self, TestError>
     where
         A: App<State = State>,
@@ -410,6 +493,47 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// Returns [`TestError::PausedClock`] on a paused clock, [`TestError::Startup`] if a lifecycle
     /// hook fails, [`TestError::Connect`] if a broker fails to connect, or
     /// [`TestError::Subscribe`] if a subscription fails to open.
+    ///
+    /// # What a live test sees
+    ///
+    /// What changes live is how the harness knows the reaction is over. It cannot read a broker's
+    /// queues, so it records what is published through the app's own wiring: the test's publishes,
+    /// and every message a publisher the runtime paired for the app's wiring hands a broker. That
+    /// covers replies, `Out` slot publishes and requests, retry copies, dead letters, and a `Bound`
+    /// token's publishes through any of them. Each is recorded on the broker it goes to: the one
+    /// the test named, or the one the publisher was paired against. A handler on one broker holding
+    /// a `Bound` token for another publishes to the other, and the publish is that broker's.
+    ///
+    /// A publish, a settle and an advance then wait until every subscription has handled each
+    /// recorded publish its broker delivers to it, and every redelivery that fell due, and no
+    /// handler is running. Which subscriptions a publish reaches is the broker's own routing, which
+    /// the broker answers through [`TestableBroker::routes`](super::TestableBroker::routes): an
+    /// equal name for [`MemoryBroker`](crate::memory::MemoryBroker), every matching subscription
+    /// for a broker that fans out, the one it picks for a broker that picks one. A subscription of
+    /// another broker never owes it. Each subscription counts what it handled itself, so two
+    /// subscriptions reporting one name (two subscriptions on one topic) each owe the publish. The
+    /// wait is bounded: ten seconds by default, [`start_live_within`](Self::start_live_within) sets
+    /// another, and past it the call fails with [`TestError::NotSettled`] naming the subscription
+    /// it was waiting on. A live [`advance`](Self::advance) lets the time pass for real, because
+    /// the delay is the broker's own timer, so a live test runs on the running clock, and
+    /// `start_live` refuses a paused one.
+    ///
+    /// A publisher the service uses itself is outside this record: one kept in its state, one an
+    /// `after_startup` hook is handed or pairs, one from
+    /// [`Bound::live`](crate::runtime::Bound::live) or
+    /// [`RunningApp::publisher`](crate::runtime::RunningApp::publisher), and one a broker crate
+    /// builds outside the runtime's pairing. The harness neither waits for its publishes nor lists
+    /// them; a test sends its own input through `tb.broker::<B>().message(..)`.
+    ///
+    /// `subscriber(..)` and `settled(..)` read the same record in both modes.
+    /// `published::<T>(name)` reads the broker's log in process and the harness's record live: the
+    /// test's publishes onto that broker, and the app's publishes that went to it, each as the
+    /// framework handed it over. A test that runs in both modes asserts on those. What only the
+    /// broker does is asserted in process: a setting its publisher turns into a header or a prefix,
+    /// and a transaction, which commits on the broker. What a broker moves on its own (a native
+    /// delayed redelivery, its own dead-lettering) is asserted through the subscription that
+    /// receives it. Each mode covers what the other cannot: in process the broker's server-side
+    /// semantics are the transport's model of them, and live they are the server's own.
     ///
     /// # Examples
     ///

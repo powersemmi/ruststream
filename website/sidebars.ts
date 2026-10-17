@@ -62,17 +62,6 @@ const sidebars: SidebarsConfig = {
         'architecture/benchmarks/publishing',
       ],
     },
-    {
-      type: 'category',
-      label: 'Broker authors',
-      collapsible: false,
-      items: [
-        'broker-authors/index',
-        'broker-authors/example-nats',
-        'broker-authors/conformance',
-        'broker-authors/templates',
-      ],
-    },
   ],
 };
 

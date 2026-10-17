@@ -91,7 +91,7 @@ ruststream asyncapi gen        # print the AsyncAPI document
 
 Scaffold a fresh project with `cargo generate --git https://github.com/powersemmi/ruststream
 templates/memory --name my-service` (each broker crate ships its own template). See the
-[quick start](https://powersemmi.github.io/ruststream/latest/getting-started/quickstart/).
+[quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/).
 
 ## Test it
 
@@ -138,8 +138,8 @@ Full compiling example: `examples/testing.rs`.
 | SQL databases (Postgres, MySQL / MariaDB, SQLite) | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) |
 
 What each broker supports is on the
-[broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, see
-the [broker-authors guide](https://powersemmi.github.io/ruststream/latest/broker-authors/).
+[broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, start at
+the [`Broker` trait](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html).
 
 ## Documentation
 

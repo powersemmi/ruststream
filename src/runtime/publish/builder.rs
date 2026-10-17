@@ -709,6 +709,54 @@ impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, Headers
     ///
     /// The position is filled once. A borrow is cheap - nothing is serialized until the publish
     /// runs.
+    ///
+    /// # Examples
+    ///
+    /// A type that declares a header contract publishes only with it:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct ChunkMeta {
+    ///     task_id: u64,
+    ///     chunk_no: u32,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "chunks.done", headers = ChunkMeta)]
+    /// struct ChunkDone {
+    ///     output_key: String,
+    /// }
+    ///
+    /// #[derive(OutSlot)]
+    /// #[publishes(ChunkDone)]
+    /// struct Events;
+    ///
+    /// #[derive(Deserialized)]
+    /// struct Chunk<'a>(&'a [u8]);
+    ///
+    /// #[subscriber("chunks.raw")]
+    /// async fn convert(
+    ///     chunk: &Chunk<'_>,
+    ///     Headers(meta): Headers<ChunkMeta>,
+    ///     Out(events): Out<impl Publisher, Events>,
+    /// ) -> HandlerOutcome {
+    ///     let done = ChunkDone {
+    ///         output_key: format!("chunks/{}/{}.part", meta.task_id, meta.chunk_no),
+    ///     };
+    ///     if events.message(&done).with_headers(&meta).publish().await.is_err() {
+    ///         return HandlerOutcome::retry();
+    ///     }
+    ///     let _ = chunk.0.len();
+    ///     HandlerOutcome::ack()
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub fn with_headers<S: HeaderSource>(
         self,
         headers: S,

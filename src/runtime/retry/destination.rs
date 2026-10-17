@@ -4,7 +4,8 @@
 //! ([`AddressedCopies`]) answers at startup. A mount site answers statically with
 //! [`to`](crate::runtime::RouterWith::to) after `out_retry(policy)`. A publish transform on the
 //! position answers per delivery, reading the delivery being retried. A registration on a
-//! descriptor that addresses nothing ([`NamedCopies`]) and says neither does not compile.
+//! descriptor that addresses nothing ([`NamedCopies`]) and says neither does not compile on a
+//! router chain; mounted directly in a broker scope, it fails at startup.
 //!
 //! The position offers a transform the right to name the destination exactly where nothing else
 //! declared it, which is the same rule a reply follows: a declared destination and a naming

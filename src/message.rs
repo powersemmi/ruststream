@@ -494,6 +494,41 @@ impl<Payload: AsRef<[u8]>> OutgoingMessage<'_, Payload> {
 /// exactly once. The consuming `self` receiver in those methods makes double acknowledgement
 /// a compile-time error.
 ///
+/// # Implementing it
+///
+/// Every accessor hands back a borrow, so one delivery needs one reference count, not one per
+/// field. A client's message usually holds its name, payload and headers as three counted values;
+/// a broker's delivery puts them in one block behind one `Arc` and keeps outside it what differs
+/// per copy (a log position, an attempt count). A hand-over (a copy per subscriber, a requeue, a
+/// replay) then costs one atomic increment instead of three, which a service whose client thread
+/// and dispatch task sit on different cores pays on every message. `MemoryBroker` is written that
+/// way.
+///
+/// The five defaulted methods are optional, and a broker that overrides none of them still works
+/// with every runtime feature:
+///
+/// - without [`supports_nack_after`](Self::supports_nack_after) and
+///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
+///   delivery and, after the delay, publishes a copy through the registration's retry publisher
+///   with an incremented [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER), to the
+///   address the subscription reports
+///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed));
+/// - without [`redelivery_count`](Self::redelivery_count), a `max_attempts(..)` cap reads that
+///   header;
+/// - without [`partition_key`](Self::partition_key), keyed worker lanes hand messages out
+///   round-robin;
+/// - without [`decode_error`](Self::decode_error), every delivery reads as whole.
+///
+/// The two delayed-redelivery methods are a pair: the runtime asks `supports_nack_after` first,
+/// so a `nack_after` overridden alone is never called.
+///
+/// A broker may honour a delay with a copy of its own (a wait queue behind a dead-letter
+/// exchange, a retry topic). It increments `RETRY_COUNT_HEADER` on that copy only where the
+/// transport counts nothing. Where the transport counts, the copy is a new message counted from
+/// one again, so a delivery that went round the wait queue reaches the cap as a first attempt:
+/// that is the behaviour of the broker's delay scheme, documented by its crate, with the header
+/// left out.
+///
 /// # Cancel safety
 ///
 /// Implementations must document whether [`ack`] and [`nack`] are cancel-safe. If a future is
@@ -789,11 +824,9 @@ mod tests {
         use crate::AckError;
 
         // A minimal IncomingMessage that overrides nothing optional, pinning the trait defaults
-        // (the in-memory and broker impls override them). The broker-authors page shows this
-        // test, because it is the one place the defaults are visible: every broker in the
-        // workspace overrides them, so nothing else can be pointed at to say what "do nothing"
-        // gets you, and a default that changes under the page fails here.
-        // --8<-- [start:incoming_defaults]
+        // (the in-memory and broker impls override them). It is the one place the defaults are
+        // visible, because every broker in the workspace overrides them; the "Implementing it"
+        // section of the `IncomingMessage` docs states what each default answers.
         struct Stub {
             payload: Vec<u8>,
             headers: HeaderMap,
@@ -833,6 +866,5 @@ mod tests {
             stub.nack_after(Duration::from_secs(1)).await,
             Err(AckError::Unsupported)
         ));
-        // --8<-- [end:incoming_defaults]
     }
 }

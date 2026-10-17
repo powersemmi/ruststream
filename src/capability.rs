@@ -25,12 +25,40 @@ use crate::{
 /// parameter, and those whose transport delivers one message at a time assemble batches on the
 /// client through the [`Buffered`](crate::Buffered) adapter. The batch a handler sees is exactly
 /// the batch the broker delivered: the runtime never splits or merges one.
+///
+/// # Implementing it
+///
+/// The mount site names one number, the batch size, and the runtime passes it to
+/// [`batches`](Self::batches) unchanged. Everything else about how a batch forms (a block timeout,
+/// a consumer group, a prefetch window) is the broker's own vocabulary on its subscription
+/// source, so a service writes the core's word first and the broker's after it:
+/// `b.include(handler.batch(nonzero!(6)).block(Duration::from_secs(5)))`.
+///
+/// Put the capability on every subscriber a mount can reach. `#[subscriber("topic")]` opens
+/// [`Subscribe::Subscriber`], so a `&[T]` body on that form asks for `BatchSubscriber` there too;
+/// a crate that wires it onto its descriptor's subscriber alone leaves the string-literal form
+/// failing to compile.
+///
+/// A transport that delivers one message at a time implements it anyway, through
+/// [`Buffered`](crate::Buffered). The size is not the broker's to choose; the deadline that closes
+/// a partial batch is. Expose it on the subscription descriptor (`.max_wait(..)`) and hand it to
+/// the wrapper as the subscription opens: the wrapper's 10 ms default suits an in-process bus,
+/// and the broker crates that sit behind a network round trip settle between 10 and 50 ms.
+///
+/// Declining the capability is legitimate where batching would break a guarantee the transport
+/// carries. A `ZeroMQ` `ROUTER` answers each peer at its own address, while a whole batch reaches
+/// its reply wiring with one context, so a batch's replies would all go to one peer. A crate that
+/// declines says so in its docs: a `&[T]` body then does not compile on that transport.
+///
+/// [`conformance::capabilities::batches`](crate::conformance::capabilities::batches) checks that
+/// a batch never comes back larger than the size it was opened with. It is not part of
+/// `harness::run_suite`: a crate calls it for this capability itself.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not deliver messages in batches",
     label = "this subscription has no batching of its own",
     note = "a handler taking `&[T]` is handed whole batches: mount it on a subscription kind \
             that batches. A broker whose transport has no native batches gives its subscriber \
-            this capability through the `Buffered` adapter (see the broker-authors guide)"
+            this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)"
 )]
 pub trait BatchSubscriber: Subscriber {
     /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
@@ -69,6 +97,14 @@ pub trait BatchSubscriber: Subscriber {
 /// life of the returned stream, and the runtime holds that stream for the life of the service,
 /// so repositioning goes through a [`Seeker`] handle minted before the stream is opened, the
 /// same way publishers are handed out at build time.
+///
+/// Positions belong to the broker: its crate declares the constructors (earliest, a timestamp,
+/// an offset) on a position type of its own, and a position captured from a delivery through
+/// [`Positioned::position`] pins the contract that seeking to it redelivers that message. For a
+/// handler body to seek, the broker carries the delivery's position and the subscription's seeker
+/// in its per-delivery context and publishes [`ContextField`](crate::ContextField) keys for them;
+/// the batch forms take the seeker from the batch context, which carries no position. The
+/// in-memory broker's `MemoryContext`, with its `Position` and `SeekHandle` keys, is the model.
 ///
 /// # Examples
 ///
@@ -443,8 +479,14 @@ pub trait RequestReply: Publisher {
 /// Messages or publishers that carry a routing key for broker-side partitioning.
 ///
 /// Implemented by message types whose broker assigns partitions / shards based on a key
-/// (`Kafka`, `NATS` partitioned streams). The router uses this to preserve per-key ordering when
-/// dispatching to handlers.
+/// (`Kafka`, `NATS` partitioned streams), so code that holds the concrete type can read the key
+/// through a named capability. The runtime places no bound on this trait: keyed dispatch
+/// (`workers(n, by_key)`) reads [`IncomingMessage::partition_key`], which a delivery that
+/// implements this trait overrides to return the same key.
+///
+/// A broker's prelude leaves this trait out of its manifest: its method shares a name with the
+/// defaulted [`IncomingMessage::partition_key`], which is the one the runtime reads, and a service
+/// that needs this trait imports it explicitly.
 pub trait Partitioned {
     /// Returns the partition key for this item, or `None` if the broker should pick a partition.
     fn partition_key(&self) -> Option<&[u8]>;
@@ -461,7 +503,10 @@ pub trait Partitioned {
 /// [`SubscriptionSource`](crate::SubscriptionSource) instead.
 ///
 /// Implemented on the [`ConnectedBroker`](crate::ConnectedBroker) form: a subscription needs a
-/// live connection.
+/// live connection. `#[subscriber("orders")]` and every mount by a bare name subscribe through it,
+/// so opening the subscription and saying where a publish reaches it (the
+/// [`Copies`](Self::Copies) answer) is all a broker writes for that form; the in-memory broker's
+/// implementation is the reference.
 ///
 /// # Examples
 ///

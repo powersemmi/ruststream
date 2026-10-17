@@ -10,7 +10,6 @@ use ruststream::{
     testing::Backlog,
 };
 
-// --8<-- [start:run_suite]
 /// The suites that read a broker's publish log back - the routing contract's log check and the
 /// seeking capability - need a broker that keeps one.
 fn replaying() -> MemoryBroker<Retaining> {
@@ -21,9 +20,7 @@ fn replaying() -> MemoryBroker<Retaining> {
 async fn memory_broker_passes_conformance_suite() {
     harness::run_suite(replaying).await;
 }
-// --8<-- [end:run_suite]
 
-// --8<-- [start:lifecycle]
 // `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked
 // (`Fn(&str) -> _` / `Fn(&B) -> _`), so a bare method path - which binds one concrete lifetime -
 // would not type-check.
@@ -37,9 +34,7 @@ async fn memory_broker_passes_lifecycle() {
     )
     .await;
 }
-// --8<-- [end:lifecycle]
 
-// --8<-- [start:shutdown_flushes]
 // Every broker the factory builds is a clone of one bus, so the second connection reaches what the
 // first one published, the way two connections reach one server.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
@@ -66,7 +61,6 @@ async fn memory_broker_clones_close_with_the_original() {
     )
     .await;
 }
-// --8<-- [end:shutdown_flushes]
 
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -124,7 +118,6 @@ async fn memory_broker_passes_seeking_suite() {
     .await;
 }
 
-// --8<-- [start:credentials]
 /// The in-memory broker has no network address and no binding, so nothing it describes can leak a
 /// password. A broker configured from a URL runs this with the password it was configured with.
 #[cfg(feature = "asyncapi")]
@@ -136,4 +129,3 @@ fn memory_broker_describes_without_credentials() {
         "hunter2",
     );
 }
-// --8<-- [end:credentials]

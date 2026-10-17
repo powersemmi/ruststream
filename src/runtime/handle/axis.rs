@@ -248,6 +248,114 @@ pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
 /// The single carried input: `In = T` for a `T` the subscription's deliveries lend
 /// ([`Carries<T>`](crate::Carries)). A broker crate's derive selects it for the type, with
 /// `impl Input for Row { type Axis = SoloCarried<Row>; }`.
+///
+/// # Examples
+///
+/// A handler of one carried value and one of a batch, over a broker crate whose derive puts `SendEmail` on this lane:
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory"))]
+/// # mod demo {
+/// # mod db_queue {
+/// #     // The broker crate's side: its broker, its descriptor, its deliveries and pages of rows.
+/// #     use std::num::NonZeroUsize;
+/// #     use futures::Stream;
+/// #     use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
+/// #     use ruststream::runtime::{Input, SoloCarried};
+/// #     use ruststream::{AckError, AddressedCopies, BatchSubscriber, Carries, CarriesBatch};
+/// #     use ruststream::{HeaderMap, IncomingMessage, RedeliveryAddress, RedeliveryAddressed};
+/// #     use ruststream::{Subscriber, SubscriptionSource};
+/// #     use super::SendEmail;
+/// #     pub mod prelude {
+/// #         pub use ruststream::prelude::*;
+/// #         pub use super::{QueueBroker, QueueTable};
+/// #     }
+/// #     pub type QueueBroker = ruststream::memory::MemoryBroker;
+/// #     #[derive(Clone)]
+/// #     pub struct QueueTable(&'static str);
+/// #     impl QueueTable { pub fn new(table: &'static str) -> Self { Self(table) } }
+/// #     pub struct Claims;
+/// #     pub struct Claimed { bytes: Vec<u8>, headers: HeaderMap, row: Option<SendEmail> }
+/// #     pub struct Page { rows: Vec<SendEmail>, claims: Vec<Claimed> }
+/// #     impl SubscriptionSource<ConnectedMemoryBroker> for QueueTable {
+/// #         type Subscriber = Claims;
+/// #         type Copies = AddressedCopies;
+/// #         fn name(&self) -> &str { self.0 }
+/// #         async fn subscribe(self, _: &ConnectedMemoryBroker) -> Result<Claims, MemoryError> {
+/// #             Ok(Claims)
+/// #         }
+/// #     }
+/// #     impl RedeliveryAddressed<ConnectedMemoryBroker> for QueueTable {
+/// #         async fn redelivery_address(&self, _: &ConnectedMemoryBroker)
+/// #             -> Result<RedeliveryAddress, MemoryError> {
+/// #             Ok(RedeliveryAddress::new(self.0))
+/// #         }
+/// #     }
+/// #     impl Subscriber for Claims {
+/// #         type Message = Claimed;
+/// #         type Error = MemoryError;
+/// #         fn stream(&mut self) -> impl Stream<Item = Result<Claimed, MemoryError>> + Send + '_ {
+/// #             futures::stream::empty()
+/// #         }
+/// #     }
+/// #     impl BatchSubscriber for Claims {
+/// #         type Batch = Page;
+/// #         fn batches(&mut self, _: NonZeroUsize)
+/// #             -> impl Stream<Item = Result<Page, MemoryError>> + Send + '_ {
+/// #             futures::stream::empty()
+/// #         }
+/// #     }
+/// #     impl Carries<SendEmail> for Claimed {
+/// #         fn carried(&self) -> Option<&SendEmail> { self.row.as_ref() }
+/// #     }
+/// #     impl CarriesBatch<SendEmail> for Page {
+/// #         fn carried(&self) -> &[SendEmail] { &self.rows }
+/// #     }
+/// #     impl IntoIterator for Page {
+/// #         type Item = Claimed;
+/// #         type IntoIter = std::vec::IntoIter<Claimed>;
+/// #         fn into_iter(self) -> Self::IntoIter { self.claims.into_iter() }
+/// #     }
+/// #     impl IncomingMessage for Claimed {
+/// #         fn payload(&self) -> &[u8] { &self.bytes }
+/// #         fn headers(&self) -> &HeaderMap { &self.headers }
+/// #         async fn ack(self) -> Result<(), AckError> { Ok(()) }
+/// #         async fn nack(self, _: bool) -> Result<(), AckError> { Ok(()) }
+/// #     }
+/// #     // What the broker crate's derive writes.
+/// #     impl Input for SendEmail { type Axis = SoloCarried<Self>; }
+/// # }
+/// use db_queue::prelude::*;
+///
+/// /// One row of the queue table, as the database driver reads it.
+/// // The broker crate's derive, beside `Clone`, puts the type on this lane.
+/// #[derive(Clone)]
+/// struct SendEmail {
+///     to: String,
+/// }
+///
+/// #[subscriber(QueueTable::new("email_jobs"))]
+/// async fn send(email: &SendEmail) -> HandlerOutcome {
+///     tracing::info!(to = %email.to, "sent");
+///     HandlerOutcome::ack()
+/// }
+///
+/// /// One SMTP session per page of rows.
+/// #[subscriber(QueueTable::new("newsletter_jobs"))]
+/// async fn send_newsletter(emails: &[SendEmail]) -> HandlerOutcome {
+///     tracing::info!(count = emails.len(), "sent a page");
+///     HandlerOutcome::ack()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("mailer", "0.1.0")).with_broker(QueueBroker::new(), |b| {
+///         b.include(send);
+///         b.include(send_newsletter.batch(nonzero!(64)));
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[derive(Debug)]
 pub struct SoloCarried<T>(core::marker::PhantomData<T>);
 

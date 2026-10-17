@@ -123,6 +123,45 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
 
     /// Names the publish policy the handler's reply leaves through: [`out`](Self::out) with the
     /// [`Reply`] marker, and the same chain afterwards.
+    ///
+    /// # Examples
+    ///
+    /// The reply type fixes its destination, and the mount site names the policy the reply leaves through:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Request {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// The reply type fixes its destination, so the clause names none.
+    /// #[derive(Serialize, Outgoing)]
+    /// #[outgoing(name = "receipts")]
+    /// struct Receipt {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("requests", reply)]
+    /// async fn issue(req: &Request) -> Result<Receipt, HandlerOutcome> {
+    ///     if req.id == 0 {
+    ///         return Err(HandlerOutcome::drop());
+    ///     }
+    ///     Ok(Receipt { id: req.id })
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("receipts", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(issue).out_reply(Publish);
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out_reply<Policy>(
         self,

@@ -2,9 +2,10 @@
 // address, in every language, lands on the module that took the topic over. `latest` there is
 // the newest stable release. A page that moves within the site gets an entry here too.
 const docsRs = 'https://docs.rs/ruststream/latest/ruststream';
+const templates = `${docsRs}/runtime/cli/index.html#templates-a-broker-crate-ships`;
 
 const guides: Record<string, string> = {
-  templates: '/broker-authors/templates/',
+  templates,
   subscribers: `${docsRs}/runtime/index.html#subscribers`,
   publishing: `${docsRs}/runtime/index.html#publishing`,
   routing: `${docsRs}/runtime/index.html#routing`,
@@ -38,6 +39,15 @@ const pages: Record<string, string> = {
   'components/subscribers/context/context-and-ctx': '/components/subscribers/context/delivery-context/',
 };
 
+// A broker author reads the contract next to the code: each page lands on the rustdoc that took
+// it over, and the worked example on the NATS crate it was cut from.
+const brokerAuthors: Record<string, string> = {
+  'broker-authors': `${docsRs}/trait.Broker.html`,
+  'broker-authors/conformance': `${docsRs}/conformance/index.html`,
+  'broker-authors/templates': templates,
+  'broker-authors/example-nats': 'https://docs.rs/ruststream-nats/latest/ruststream_nats/',
+};
+
 /**
  * Old address to its target; every language of a build gets the same set. `docsRs` is the
  * crate's rustdoc for the version built, which took over the API reference page.
@@ -46,6 +56,7 @@ export function redirects(docsRs: string): Record<string, string> {
   return {
     ...Object.fromEntries(Object.entries(guides).map(([guide, to]) => [`guides/${guide}`, to])),
     ...pages,
+    ...brokerAuthors,
     reference: `${docsRs}ruststream/`,
   };
 }

@@ -1,89 +1,20 @@
 //! In-process broker: the bus, and what it keeps of what went over it.
 //!
-//! [`MemoryBroker`] implements [`Broker`] with broadcast semantics: each subscriber receives a
-//! copy of every message published to its name after the subscription was opened. There is no
-//! durability, no consumer-group routing, and no on-disk state.
+//! [`MemoryBroker`] is a complete broker inside the service's process and the reference
+//! implementation the [`conformance`](crate::conformance) suites run against. A service mounting
+//! on it globs [`prelude`].
 //!
-//! It is a real, usable broker for single-process applications, prototypes, examples, and
-//! local development, as well as the reference implementation the [`crate::conformance`]
-//! harness runs against. It does not model any broker-specific semantics (`JetStream` ack
-//! timing, `Kafka` offsets, `RabbitMQ` exchanges); for those, use the corresponding broker
-//! crate.
+//! - [Memory broker][memory]: [`MemoryBroker`], its subscription source [`MemorySource`], its
+//!   publish policies, and how its deliveries settle and come back.
+//! - [Retention][retention]: [`MemoryBroker::retaining`] keeps the newest messages of every name
+//!   within a [`Retention`] bound, and its subscriptions replay over them through
+//!   [`MemoryPosition`] and [`MemorySeeker`].
+//! - [Patterns][patterns]: a [`MemoryPattern`] subscription reads every name its pattern
+//!   matches, and the broker's [`Routing`] decides who receives a shared match.
 //!
-//! These capabilities have native implementations here, on the broker's own in-process
-//! semantics: request / reply via [`MemoryRequester`], batch consumption on
-//! [`MemorySubscriber`], transactions on [`MemoryPublisher`], partition keys on
-//! [`MemoryMessage`], and log repositioning through [`MemorySeeker`] over the per-name publish
-//! log.
-//!
-//! A [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome is this broker's own
-//! affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is
-//! republished. Every delivery carries the count of what the broker has handed that subscriber,
-//! the first delivery included, and [`MemoryMessage`] reports it through
-//! [`IncomingMessage::redelivery_count`]. A registration's `max_attempts(..)` is therefore spent
-//! on these redeliveries, and the delivery that spends it goes to the `dead_letter(..)`
-//! destination, or is terminated where the registration named none.
-//!
-//! How much a broker keeps is its own declaration. [`MemoryBroker::new`] keeps nothing: memory
-//! does not grow with the message count, and repositioning a subscription does not compile.
-//! [`MemoryBroker::retaining`] keeps the newest messages of every name within a [`Retention`]
-//! bound, and its subscriptions replay over that log.
-//!
-//! A service mounting on this broker globs [`prelude`], which carries the core prelude plus this
-//! broker's surface and its publish policies under the uniform names a mount site writes.
-//!
-//! # Pattern subscriptions
-//!
-//! ```
-//! # #[cfg(all(feature = "macros", feature = "json"))]
-//! # mod demo {
-//! use ruststream::memory::prelude::*;
-//! # #[derive(serde::Deserialize)]
-//! # struct Order { id: u64 }
-//!
-//! #[subscriber("orders.eu")]
-//! async fn europe(order: &Order) -> HandlerOutcome {
-//!     let _ = order.id;
-//!     HandlerOutcome::ack()
-//! }
-//!
-//! #[subscriber(MemoryPattern::new("orders.*"))]
-//! async fn other_regions(order: &Order) -> HandlerOutcome {
-//!     let _ = order.id;
-//!     HandlerOutcome::ack()
-//! }
-//!
-//! fn app() -> RustStream {
-//!     // `orders.eu` goes to `europe` alone; `orders.us` goes to `other_regions`.
-//!     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
-//!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-//!         b.include(europe);
-//!         b.include(other_regions);
-//!     })
-//! }
-//! # }
-//! # fn main() {}
-//! ```
-//!
-//! A [`MemoryPattern`] subscription reads every name its pattern matches. Names split into
-//! tokens at `.`; `*` matches one token, and `>` as the last token matches one or more. This is
-//! the NATS subject syntax. A pattern is checked when the subscription opens, so a bad one stops
-//! the service at startup with [`MemoryError::InvalidPattern`]. A subscription by name
-//! ([`MemorySource`] or `#[subscriber("..")]`) reads one name and refuses a wildcard token.
-//!
-//! The broker's [`Routing`] decides who receives a publish that several subscriptions match:
-//!
-//! - [`Routing::EveryMatch`], the default, hands it to every match, as NATS does. Use it when a
-//!   pattern reads alongside the handlers of single names: an audit trail, a metrics tap.
-//! - [`Routing::MostSpecific`] hands it to the subscriptions of the exact name, or, where there
-//!   are none, to the most specific matching pattern. Use it when a pattern is the fallback for
-//!   names without a handler of their own. Specificity is compared token by token from the left:
-//!   a literal beats `*`, and `*` beats `>`.
-//!
-//! A broker with no pattern subscription routes by the exact name alone and pays nothing for
-//! patterns. A pattern subscription is not [`Seekable`](crate::Seekable), even on a retaining
-//! broker, because the log is kept per name. Under [`TestApp`](crate::testing::TestApp), in
-//! process and live alike, a publish is awaited on exactly the subscriptions the rule picks.
+//! [memory]: https://powersemmi.github.io/ruststream/latest/components/memory/
+//! [retention]: https://powersemmi.github.io/ruststream/latest/components/memory/retention/
+//! [patterns]: https://powersemmi.github.io/ruststream/latest/components/memory/patterns/
 
 mod capability;
 mod log;
@@ -613,6 +544,22 @@ impl MemoryState {
 /// which keeps the newest messages of every name within its [`Retention`] bound and replays them
 /// on demand.
 ///
+/// Every subscription of a name receives a copy of every message published to that name after
+/// it opened, and the whole state lives in the process's memory. The capabilities are native to
+/// the bus: request and reply through
+/// [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
+/// [`MemoryPublisher`], partition keys on [`MemoryMessage`], and repositioning through
+/// [`MemorySeeker`] over the per-name publish log.
+///
+/// A [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome is the broker's own
+/// affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is
+/// republished. Every delivery carries the count of what the broker has handed that subscriber,
+/// the first delivery included, which [`MemoryMessage`] reports through
+/// [`IncomingMessage::redelivery_count`]. A
+/// registration's `max_attempts(..)` is therefore spent on these redeliveries, and the delivery
+/// that spends it goes to the `dead_letter(..)` destination, or is terminated where the
+/// registration named none.
+///
 /// # Examples
 ///
 /// ```
@@ -831,7 +778,6 @@ impl<Log> fmt::Debug for MemoryBroker<Log> {
     }
 }
 
-// --8<-- [start:ladder]
 impl<Log: LogMode> Broker for MemoryBroker<Log> {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker<Log>;
@@ -950,8 +896,6 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
     }
 }
 
-// --8<-- [end:ladder]
-
 /// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
 ///
 /// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`], filling the same
@@ -1000,7 +944,6 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 #[must_use]
 pub struct MemoryPublish;
 
-// --8<-- [start:publish_policy]
 impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
     type Live = MemoryPublisher;
 
@@ -1015,8 +958,6 @@ impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
 impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
     type Policy = MemoryPublish;
 }
-
-// --8<-- [end:publish_policy]
 
 /// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
 ///
@@ -1118,7 +1059,6 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
     }
 }
 
-// --8<-- [start:testable]
 // The bus is in-process by nature, so the transition the harness connects through is the ordinary
 // `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
@@ -1190,9 +1130,7 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
 crate::register_testable_broker!(MemoryBroker<Discarding>);
 #[cfg(feature = "testing")]
 crate::register_testable_broker!(MemoryBroker<Retaining>);
-// --8<-- [end:testable]
 
-// --8<-- [start:subscribe]
 impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     type Subscriber = MemorySubscriber<Log>;
     // One subject is both ends of the bus here, so a publish under the name a subscription reads
@@ -1222,8 +1160,6 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     }
 }
 
-// --8<-- [end:subscribe]
-
 /// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
 ///
 /// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
@@ -1248,16 +1184,12 @@ impl MemorySource {
 
 // The in-memory subscription needs nothing beyond a name, so it offers the name-only
 // constructor the `#[subscriber(MemorySource)]` form builds through.
-// --8<-- [start:from_name]
 impl FromName for MemorySource {
     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
         Self::new(name.into().into_owned())
     }
 }
 
-// --8<-- [end:from_name]
-
-// --8<-- [start:source]
 impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
     type Subscriber = MemorySubscriber<Log>;
     // The bus moves nothing on its own, and one subject is both ends of it, so a copy goes back
@@ -1285,7 +1217,6 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
-// --8<-- [end:source]
 
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.

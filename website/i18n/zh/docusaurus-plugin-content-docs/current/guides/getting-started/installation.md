@@ -63,4 +63,4 @@ ruststream = { version = "0.7", default-features = false }
 处理器测试的 `testing` feature。同一份文档还描述了它的连接选项和各项能力。
 
 可用的 Broker 列在 [Broker](../../brokers/index.md) 一节，从那里可以进到每个 Broker 的文档。
-想自己写一个 Broker，参见 [Broker 作者](../../broker-authors/index.md)。
+想自己写一个 Broker，参见 [`Broker`](api:ruststream::Broker) trait 的文档。

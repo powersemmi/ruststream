@@ -1300,7 +1300,6 @@ mod protocol_bindings {
         message_type: &'static str,
     }
 
-    // --8<-- [start:descriptor_bindings]
     /// A descriptor of the shape a broker crate ships: it reads its own private fields and says
     /// what the protocol calls them.
     #[derive(Clone)]
@@ -1349,7 +1348,6 @@ mod protocol_bindings {
                 .unwrap_or_default()
         }
     }
-    // --8<-- [end:descriptor_bindings]
 
     impl<C: Subscribe> RedeliveryAddressed<C> for RabbitQueue {
         fn redelivery_address(
@@ -1614,7 +1612,6 @@ mod publish_bindings {
         <MemoryPublish as PublishPolicy<ConnectedMemoryBroker>>::pair(MemoryPublish, connected)
     }
 
-    // --8<-- [start:policy_bindings]
     /// A publish policy of the shape a broker crate ships: an SNS topic is named by its binding's
     /// required `name`, and the hook is handed the destination the mount site resolved.
     #[derive(Clone, Copy, Default)]
@@ -1653,9 +1650,7 @@ mod publish_bindings {
             one("sns", "0.1.0", &body)
         }
     }
-    // --8<-- [end:policy_bindings]
 
-    // --8<-- [start:reply_address]
     /// The reply's own policy: it answers where a client reads the address of an answer.
     #[derive(Clone, Copy, Default)]
     struct ReplyToPublish;
@@ -1681,7 +1676,6 @@ mod publish_bindings {
             Some("$message.header#/reply-to")
         }
     }
-    // --8<-- [end:reply_address]
 
     /// The publisher a dead-lettered delivery leaves through.
     #[derive(Clone, Copy, Default)]

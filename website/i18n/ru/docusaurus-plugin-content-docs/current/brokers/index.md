@@ -30,8 +30,8 @@ import TabItem from '@theme/TabItem';
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Потоки данных Kinesis (аренда шардов, контрольные точки, перемотка) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
 | SQL-базы данных | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | Очереди задач в собственных таблицах сервиса (Postgres, MySQL/MariaDB, SQLite) и транзакционный outbox поверх любого брокера; SQL-запросы проверяются при запуске или на этапе компиляции | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
-Как написать адаптацию библиотеки брокера для другого транспорта, объясняет раздел
-[Авторам брокеров](../broker-authors/index.md).
+Как написать адаптацию библиотеки брокера для другого транспорта, объясняет документация трейта
+[`Broker`](api:ruststream::Broker): в ней описан контракт крейта брокера и проверки соответствия ему.
 
 ## Переключение брокеров {/* #switching-brokers */}
 

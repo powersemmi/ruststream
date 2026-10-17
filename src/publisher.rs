@@ -345,6 +345,109 @@ pub trait Publisher: Send + Sync {
     /// `Clone` and `'static` are what the test harness needs: it copies the options of each
     /// publish the runtime makes and hands them back to the test as this type (`with_options(..)`
     /// on `tb.out::<Marker>()` or on a broker's `published(..)`, under the `testing` feature).
+    /// Deriving `Debug` and `PartialEq` as well lets a service's test assert on the value
+    /// `publish` received rather than on the protocol field it became.
+    ///
+    /// A setting takes one shape: a field here, a default on the policy, and a step on the
+    /// publish builder, shipped from the broker's prelude. The step writes through
+    /// [`PublishBuilder::options_mut`](crate::runtime::PublishBuilder::options_mut), so nothing
+    /// wraps the publisher and the publish still goes through the mount site's entry, with its
+    /// codec and transforms. A send in a trait of the broker's own would pass outside the slot
+    /// view a test asserts on, and a setting carried as a header would be bytes `publish` parses
+    /// back. A value the transport cannot honour fails the publish; it never falls back to the
+    /// default silently.
+    ///
+    /// # Examples
+    ///
+    /// A priority the policy defaults and a call site adjusts:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros"))]
+    /// # mod demo {
+    /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
+    /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
+    /// use ruststream::{
+    ///     BytesMut, OutgoingMessage, Outgoing, PairError, PublishPolicy, Publisher, Serialized,
+    ///     Take,
+    /// };
+    ///
+    /// /// Every field optional: what a call leaves unset keeps what the policy fixed.
+    /// #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    /// pub struct PriorityOptions {
+    ///     priority: Option<u8>,
+    /// }
+    ///
+    /// /// The policy: constructible anywhere, and the place the default is configured.
+    /// #[derive(Debug, Clone, Copy, Default)]
+    /// pub struct PriorityPublish {
+    ///     priority: u8,
+    /// }
+    ///
+    /// /// The live publisher: the connection and the default the policy carried.
+    /// pub struct PriorityPublisher {
+    ///     inner: MemoryPublisher,
+    ///     default_priority: u8,
+    /// }
+    ///
+    /// impl PublishPolicy<ConnectedMemoryBroker> for PriorityPublish {
+    ///     type Live = PriorityPublisher;
+    ///
+    ///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
+    ///         let inner = MemoryPublish.pair(connected).await?;
+    ///         Ok(PriorityPublisher { inner, default_priority: self.priority })
+    ///     }
+    /// }
+    ///
+    /// impl Publisher for PriorityPublisher {
+    ///     type Payload = Take;
+    ///     type Error = MemoryError;
+    ///     type Options = PriorityOptions;
+    ///
+    ///     async fn publish(
+    ///         &self,
+    ///         msg: OutgoingMessage<'_, BytesMut>,
+    ///         options: Option<&Self::Options>,
+    ///     ) -> Result<(), Self::Error> {
+    ///         let priority = options
+    ///             .and_then(|options| options.priority)
+    ///             .unwrap_or(self.default_priority);
+    ///         // A real client takes `priority` as the protocol field it is; the in-memory bus
+    ///         // has none, so this one passes the message on unchanged.
+    ///         let _ = priority;
+    ///         self.inner.publish(msg, None).await
+    ///     }
+    /// }
+    ///
+    /// /// The step a service imports from the broker's prelude. The bound on the sink's options
+    /// /// keeps it off a builder over any other broker's publisher.
+    /// pub trait PriorityStep {
+    ///     /// Sends this one message at `priority`.
+    ///     #[must_use]
+    ///     fn priority(self, priority: u8) -> Self;
+    /// }
+    ///
+    /// impl<Sink, Body, Enc, Hdrs, Dest> PriorityStep for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
+    /// where
+    ///     Sink: PublishSink<Options = PriorityOptions>,
+    /// {
+    ///     fn priority(mut self, priority: u8) -> Self {
+    ///         self.options_mut().get_or_insert_with(PriorityOptions::default).priority =
+    ///             Some(priority);
+    ///         self
+    ///     }
+    /// }
+    ///
+    /// // Bytes that are already the payload, so this example needs no codec feature.
+    /// #[derive(Outgoing, Serialized)]
+    /// pub struct Alert(Vec<u8>);
+    ///
+    /// pub async fn page(publisher: &PriorityPublisher) -> Result<(), Box<dyn std::error::Error>> {
+    ///     publisher.message(&Alert(b"disk full".to_vec())).to("alerts").priority(9).publish().await?;
+    ///     Ok(())
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     type Options: Clone + Send + Sync + 'static;
 
     /// Publishes a message to the broker, with the per-message settings the call site adjusted.
@@ -475,7 +578,18 @@ pub trait Publisher: Send + Sync {
 ///
 /// `pair` is async and fallible because some brokers do real work when a publisher comes alive
 /// (a transactional producer initializing its transactions); for most it is a cheap constructor
-/// call. It reports the type-erased [`PairError`].
+/// call. It reports the type-erased [`PairError`]: a broker wraps its own error with
+/// [`PairError::new`]. A policy pairs once, at startup, so `pair` never reaches the hot path.
+///
+/// # Implementing it
+///
+/// A broker ships one policy and one live form per genuine publishing mode, and the choice of mode
+/// is a transition of the policy type, not a runtime flag: a `transactional_id(..)` step moves
+/// the plain policy to a distinct transactional policy whose live form implements
+/// [`TransactionalPublisher`](crate::TransactionalPublisher), and the plain publisher has no
+/// transactional surface at all. Where the plain policy is usable with its defaults, the
+/// connected form also implements [`DefaultPublish`]. The in-memory broker's `MemoryPublish` and
+/// `MemoryRequest`, empty structs because they have no options, are the minimal reference.
 ///
 /// # Examples
 ///

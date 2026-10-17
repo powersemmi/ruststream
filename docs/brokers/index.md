@@ -29,7 +29,8 @@ Each broker crate has its own documentation site, linked in the Docs column and 
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis data streams (shard leasing, checkpointing, repositioning) | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
 | SQL databases | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | Task queues in the service's own Postgres, MySQL/MariaDB and SQLite tables, and a transactional outbox over any broker; statements checked at startup or at compile time | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
-To implement a broker for another transport, see [Broker authors](../broker-authors/index.md).
+To implement a broker for another transport, start at the [`Broker`](api:ruststream::Broker) trait: its
+rustdoc holds the contract a broker crate implements and the conformance suites that check it.
 
 ## Switching brokers
 

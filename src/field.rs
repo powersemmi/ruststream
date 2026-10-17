@@ -65,6 +65,16 @@ pub trait Field<Src: ?Sized> {
 /// Broker crates implement it next to [`Field`] on the same zero-sized keys; a key typically
 /// implements both, so it works as a context read and as an extractor.
 ///
+/// A broker with native delivery metadata (a partition, an offset, a stream sequence) exposes it
+/// as a `#[non_exhaustive]` context struct its subscriber names, plus unit-struct keys like this
+/// one; the delivery path carries no type map and no heap allocation. A value that is not `Copy`
+/// (a Pulsar message id, a Kinesis shard and sequence) is read by borrowing through
+/// [`Field::Value<'a>`](Field::Value), so a body reading it with `ctx.context(..)` copies nothing,
+/// and this key clones what the borrowing one returns. A broker with no per-delivery fields uses
+/// `()`. Subscription-scoped values for batch bodies go in a second struct built through
+/// [`BuildBatchContext`]. The in-memory broker's `MemoryContext` and `MemoryBatchContext`, which
+/// publish the `Position` and `SeekHandle` keys, are the model.
+///
 /// # Examples
 ///
 /// ```

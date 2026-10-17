@@ -1,113 +1,96 @@
 //! `AsyncAPI` 3.1 document generation from a [`RustStream`](crate::runtime::RustStream) service.
 //!
-//! [`build_spec`] turns a service's registered handlers and metadata into a [`Spec`] that
-//! serializes with [`to_json`](Spec::to_json) or [`to_yaml`](Spec::to_yaml). Each subscriber
-//! becomes a channel and a `receive` operation, a reply rides that operation as its `reply`,
-//! every message type an `Out` slot declares gets a `send` operation, and payload and header
-//! types contribute schemas. The generated CLI prints the same document with
-//! `ruststream asyncapi gen` (see [`cli`](crate::runtime::cli)).
+//! [`build_spec`] turns the app `main` runs into a [`Spec`]: each subscriber becomes a channel
+//! and a `receive` operation, a reply rides that operation, every `Out` slot message gets a `send`
+//! operation, and payload and header types contribute schemas.
 //!
-//! # Examples
+//! # Generation
 //!
-//! ```
-//! # #[cfg(all(feature = "asyncapi", feature = "macros", feature = "memory", feature = "json"))]
-//! # mod demo {
-//! use ruststream::asyncapi::build_spec;
-//! use ruststream::memory::prelude::*;
-//! use ruststream::schemars::JsonSchema;
-//! use serde::{Deserialize, Serialize};
-//!
-//! /// An order placed by a customer.
-//! #[derive(Deserialize, JsonSchema)]
-//! struct Order {
-//!     id: u64,
-//! }
-//!
-//! /// The confirmation an order gets back.
-//! #[derive(Serialize, Outgoing, JsonSchema)]
-//! struct Confirmed {
-//!     id: u64,
-//! }
-//!
-//! /// Answers every request on `requests` with a confirmation on `responses`.
-//! #[subscriber("requests", reply("responses"))]
-//! async fn confirm(order: &Order) -> Confirmed {
-//!     Confirmed { id: order.id }
-//! }
-//!
-//! fn document() -> Result<String, serde_json::Error> {
-//!     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_labeled(
-//!         "in-process",
-//!         MemoryBroker::new(),
-//!         |b| {
-//!             b.include(confirm);
-//!         },
-//!     );
-//!     build_spec(&app).to_json()
-//! }
-//! # }
-//! # fn main() {}
-//! ```
+//! - [AsyncAPI][asyncapi]: what the `asyncapi` feature adds to a service.
+//! - [Generation][generation]: how the document is produced, serialized and served.
+//! - [build_spec][build-spec]: [`build_spec`] reads the document from the app value.
+//! - [Formats][formats]: [`Spec::to_json`] and [`Spec::to_yaml`].
+//! - [Command][command]: `ruststream asyncapi gen` prints the document from the generated `main`
+//!   (see [`cli`](crate::runtime::cli)).
+//! - [Viewer][viewer]: [`render_viewer_html`] and [`ViewerOptions`] serve a page that renders it.
+//! - [describe][describe]: the operation description of a manual registration.
+//! - [undocumented][undocumented]: a manual registration left out of the document.
 //!
 //! # Schemas
 //!
-//! A payload type appears with a schema when it derives `JsonSchema`; the crate re-exports
-//! [`schemars`] for it. On the attribute path a type without the derive still
-//! works and contributes no schema: the generator logs a `WARN` naming the subscription and the
-//! type, and [`Spec::messages_without_schema`] lists the gaps for a test to assert on. The
-//! manual `subscriber(..)` chain is documented by default and demands the derive at compile
-//! time; `.undocumented()` takes a registration out of the document. A message that is its own
-//! wire format, a [`Deserialized`](macro@crate::Deserialized) input or a
-//! [`Serialized`](macro@crate::Serialized) output, appears under its own name with no schema and
-//! no warning: the bytes are the format. A value a broker's delivery already holds
-//! ([`Carries`](crate::Carries)) is documented like a decoded payload, through its `JsonSchema`
-//! derive, and reports no content type, since no codec reads it. A payload type's doc comment
-//! becomes the message description, and [`MessageInfo`](crate::MessageInfo) names the component
-//! explicitly, so renaming the Rust type does not change the wire contract.
+//! - [Schemas][schemas]: a payload type that derives `JsonSchema` (re-exported as [`schemars`])
+//!   gets a payload schema.
+//! - [MessageInfo][message-info]: [`MessageInfo`](crate::MessageInfo) names and describes a
+//!   message component whatever the Rust type is called.
+//! - [messages_without_schema][without-schema]: [`Spec::messages_without_schema`] lists the gaps
+//!   for a test to fail on.
 //!
-//! # What else the document says
+//! # What the document reports
 //!
-//! * A reply is the `receive` operation's `reply`, naming the channel and the message it
-//!   answers with. A reply named per delivery by a transform reports no fixed address and says
-//!   where a client reads one, in the broker's own expression.
-//! * A name template such as `orders.{tenant}.v1` becomes a channel with `parameters`; a type
-//!   declaring no destination contributes no channel.
-//! * A header contract, from a `Headers<T>` parameter or from `#[outgoing(headers = ..)]`,
-//!   becomes the message's headers schema.
-//! * The media type comes from the codec that decodes or encodes the message,
-//!   [`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE), and a message no codec touches
-//!   names none. The root `defaultContentType` appears only when every message names the same
-//!   media type: a reader takes it for each message that names none of its own.
-//! * A retry cap, a dead-letter destination and a named retry destination appear on the
-//!   operation as the extension `x-ruststream-retry`, and each of the two destinations gets a
-//!   channel with a `send` operation: the registration publishes there. The address a
-//!   subscription takes its own copies back at is not reported - it is the subscription's
-//!   channel, which the document already carries.
-//! * A channel says which servers it lives on, from the label the broker was registered under.
+//! - [What the document reports][reports]: what it says beyond the channels.
+//! - [Replies][replies]: a reply is the `reply` of the operation it answers.
+//! - [Parameters][parameters]: a name template becomes a channel with `parameters`.
+//! - [Headers][headers]: a header contract becomes the message's headers schema.
+//! - [Content][content]: each message names its codec's
+//!   [`CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE).
+//! - [Retry][retry]: the attempt cap and the retry destinations as `x-ruststream-retry`.
 //!
-//! # Servers and security
+//! # Servers
 //!
-//! [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled) records the broker
-//! under a label that is its server name, and a broker implementing
-//! [`DescribeServer`](crate::DescribeServer) fills the entry itself, in its protocol's vocabulary
-//! and with its bindings; every shipped broker does.
-//! [`server`](crate::runtime::RustStream::server) declares one explicitly from a
-//! [`ServerSpec`](crate::ServerSpec): [`protocol_version`](crate::ServerSpec::protocol_version)
-//! where one protocol name covers incompatible versions, and
-//! [`security`](crate::ServerSpec::security) with a [`SecurityScheme`](crate::SecurityScheme)
-//! constructor for how clients authenticate. Security is the author's statement, never the
-//! broker's: to secure an automatically registered server, declare it again under the same label
-//! with the scheme attached. The `info` section takes what [`AppInfo`](crate::runtime::AppInfo)
-//! carries: description, contact, license, tags, and an [`id`](crate::runtime::AppInfo::id)
-//! parsed as a URI on construction.
+//! - [Servers][servers]: the brokers a service connects to, how clients authenticate, and the
+//!   protocol bindings.
+//! - [with_broker_labeled][with-broker-labeled]:
+//!   [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled) registers a broker
+//!   under its server name, and a broker implementing [`DescribeServer`](crate::DescribeServer)
+//!   describes the server.
+//! - [Server][server]: [`server`](crate::runtime::RustStream::server) declares one from a
+//!   [`ServerSpec`](crate::ServerSpec).
+//! - [Security][security]: [`ServerSpec::security`](crate::ServerSpec::security) with a
+//!   [`SecurityScheme`](crate::SecurityScheme).
+//! - [Bindings][bindings]: [`Bindings`] carry what one protocol says about a server, a channel,
+//!   an operation or a message.
 //!
-//! # Serving it
+//! # Service info
 //!
-//! Serve the document's bytes from the HTTP stack you already run. [`render_viewer_html`]
-//! returns a self-contained page that renders the specification at a URL with the `AsyncAPI`
-//! React component, and [`ViewerOptions`] sets the page title and another asset base for an
-//! offline deployment. `examples/asyncapi_http.rs` in the repository serves both routes with
-//! axum.
+//! - [Service info][service-info]: the `info` section, what the service is and who owns it.
+//! - [Info][app-info]: [`AppInfo`](crate::runtime::AppInfo), the title, the version and the
+//!   description.
+//! - [AppId][app-id]: [`AppId`], the service's identifier, parsed as a URI.
+//! - [Contact][contact]: [`Contact`], who answers for the service.
+//! - [License][license]: [`License`].
+//! - [Tag][tag]: [`Tag`], a label that groups services.
+//! - [ExternalDocs][external-docs]: [`ExternalDocs`], documentation kept
+//!   outside the document.
+//!
+//! [asyncapi]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/
+//! [generation]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/
+//! [reports]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/
+//! [build-spec]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/build-spec/
+//! [formats]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/to-json-yaml/
+//! [command]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/cli-gen/
+//! [viewer]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/viewer/
+//! [describe]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/describe/
+//! [undocumented]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/undocumented/
+//! [schemas]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/schemas/
+//! [message-info]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/message-info/
+//! [without-schema]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/messages-without-schema/
+//! [replies]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/replies/
+//! [parameters]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/channel-parameters/
+//! [headers]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/header-schemas/
+//! [content]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/content-type/
+//! [retry]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/retry-extension/
+//! [servers]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/
+//! [with-broker-labeled]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/with-broker-labeled/
+//! [server]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/server/
+//! [security]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/security-schemes/
+//! [bindings]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/bindings/
+//! [service-info]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/
+//! [app-info]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/app-info/
+//! [app-id]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/app-id/
+//! [contact]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/contact/
+//! [license]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/license/
+//! [tag]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/tag/
+//! [external-docs]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/external-docs/
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -165,6 +148,48 @@ impl Spec {
     /// # Errors
     ///
     /// Returns [`serde_json::Error`] if serialization fails (not expected for a well-formed spec).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "asyncapi", feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::asyncapi::build_spec;
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::schemars::JsonSchema;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// /// An order placed by a customer.
+    /// #[derive(Deserialize, JsonSchema)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// The confirmation an order gets back.
+    /// #[derive(Serialize, Outgoing, JsonSchema)]
+    /// struct Confirmed {
+    ///     id: u64,
+    /// }
+    ///
+    /// /// Answers every request on `requests` with a confirmation on `responses`.
+    /// #[subscriber("requests", reply("responses"))]
+    /// async fn confirm(order: &Order) -> Confirmed {
+    ///     Confirmed { id: order.id }
+    /// }
+    ///
+    /// fn document() -> Result<String, serde_json::Error> {
+    ///     let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker_labeled(
+    ///         "in-process",
+    ///         MemoryBroker::new(),
+    ///         |b| {
+    ///             b.include(confirm);
+    ///         },
+    ///     );
+    ///     build_spec(&app).to_json()
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
@@ -526,7 +551,7 @@ impl Reference {
     }
 }
 
-/// Builds an [`AsyncAPI`](Spec) 3.0 document from a service's handlers and metadata.
+/// Builds an [`AsyncAPI`](Spec) 3.1.0 document from a service's handlers and metadata.
 ///
 /// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
 /// and a message component named after the handler's input type.

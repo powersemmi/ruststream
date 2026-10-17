@@ -89,6 +89,94 @@ use crate::{
 /// # }
 /// # fn main() {}
 /// ```
+///
+/// # Extending the vocabulary (broker authors)
+///
+/// An `Out<impl X, Marker>` parameter accepts any `X` the live value behind the slot implements,
+/// and the core delegates its own capabilities ([`Publisher`],
+/// [`TransactionalPublisher`], [`OwnedTransactions`], [`RequestReply`]). A broker whose live value
+/// offers more, or is not a publisher at all (a per-partition producer cache, a shard router),
+/// declares a capability trait of its own and implements it for that value.
+///
+/// The body holds the arena entry, [`Slot`](super::Slot), a transparent window onto the value.
+/// Autoderef carries a method call through it but not a trait bound, so a helper written as
+/// `fn issue<L: Lanes>(lanes: &L)` rejects the entry. One blanket impl over `Slot` that delegates
+/// through its `Deref` makes helpers and bodies generic over the capability take the entry as it
+/// is, and the concrete type still never appears in application code.
+///
+/// A capability like this is router-shaped: it hands out a publisher and never sends itself. A
+/// publish through that publisher passes outside the slot view, so the test harness does not
+/// attribute it to the slot; a test asserts it on the broker's publish log. A capability that sets
+/// one per-message setting and ends in one publish is no trait at all: it is a field of
+/// [`Publisher::Options`](crate::Publisher::Options) and a step on the publish builder.
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+/// use ruststream::runtime::Slot;
+/// use ruststream::PairError;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, Outgoing)]
+/// struct Event {
+///     id: u64,
+/// }
+///
+/// /// The broker's live value: a lane router, not a publisher.
+/// pub struct LaneRouter {
+///     publisher: MemoryPublisher,
+/// }
+///
+/// /// The broker-defined capability: pick a destination lane for a shard.
+/// pub trait ShardLanes {
+///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str);
+/// }
+///
+/// impl ShardLanes for LaneRouter {
+///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+///         let dest = if shard % 2 == 0 { "lanes.even" } else { "lanes.odd" };
+///         (&self.publisher, dest)
+///     }
+/// }
+///
+/// // The one blanket impl: the entry a body holds now satisfies the bound.
+/// impl<M, W: ShardLanes, E, Pipe, Body> ShardLanes for Slot<M, W, E, Pipe, Body> {
+///     fn lane(&self, shard: u64) -> (&MemoryPublisher, &'static str) {
+///         (**self).lane(shard)
+///     }
+/// }
+///
+/// /// The policy that pairs into the router.
+/// pub struct LanePolicy;
+///
+/// impl PublishPolicy<ConnectedMemoryBroker> for LanePolicy {
+///     type Live = LaneRouter;
+///
+///     async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<LaneRouter, PairError> {
+///         Ok(LaneRouter { publisher: Publish.pair(connected).await? })
+///     }
+/// }
+///
+/// async fn sent<L: ShardLanes + Sync>(lanes: &L, event: &Event) -> bool {
+///     let (publisher, dest) = lanes.lane(event.id);
+///     publisher.message(event).to(dest).publish().await.is_ok()
+/// }
+///
+/// #[subscriber("events")]
+/// async fn route(event: &Event, Out(lanes): Out<impl ShardLanes>) -> HandlerOutcome {
+///     if sent(lanes, event).await { HandlerOutcome::ack() } else { HandlerOutcome::retry() }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("lanes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(route).out(DefaultSlot, LanePolicy).build();
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 pub trait OutSlot: 'static {
     /// The human-readable slot name, used by diagnostics and test assertions.
     const NAME: &'static str;

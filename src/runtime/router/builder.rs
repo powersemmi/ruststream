@@ -205,6 +205,51 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// The merged router's handlers stay wrapped by its own layers; this router's layers wrap
     /// around them as well once mounted (scopes nest).
+    ///
+    /// # Examples
+    ///
+    /// Two modules' routers mounted as one group:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// # #[derive(Deserialize)]
+    /// # struct Order {
+    /// #     id: u64,
+    /// # }
+    /// # #[derive(Deserialize)]
+    /// # struct Shipment {
+    /// #     order_id: u64,
+    /// # }
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// #[subscriber("shipments")]
+    /// async fn dispatch(shipment: &Shipment) -> HandlerOutcome {
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn orders() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     Router::new().include(accept)
+    /// }
+    ///
+    /// fn shipping() -> Router<MemoryBroker, impl RouterDef<MemoryBroker>> {
+    ///     Router::new().include(dispatch)
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("routing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include_router(orders().merge(shipping()));
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     #[must_use]
     pub fn merge<R2, C2, L2, P2>(
         self,

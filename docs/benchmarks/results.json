@@ -202,7 +202,7 @@
       "gated": true
     },
     {
-      "name": "a delivery that asks to be redelivered, and the copy",
+      "name": "a delivery that asks to be redelivered, natively by the broker",
       "messages": 1000,
       "framework": {
         "instructions": 3157.7,

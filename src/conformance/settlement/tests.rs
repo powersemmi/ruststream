@@ -489,7 +489,6 @@ async fn the_memory_broker_passes_and_settles_everything() {
     );
 }
 
-// --8<-- [start:matches_in_process]
 // `make_source` stays a closure: its bound is higher-ranked, so a bare constructor path would bind
 // one concrete lifetime and fail to type-check.
 #[allow(clippy::redundant_closure)]
@@ -506,7 +505,6 @@ async fn the_memory_broker_answers_alike_in_process() {
     )
     .await;
 }
-// --8<-- [end:matches_in_process]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_memory_broker_per_connection_passes_too() {

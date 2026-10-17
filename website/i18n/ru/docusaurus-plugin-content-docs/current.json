@@ -79,10 +79,6 @@
     "message": "AsyncAPI",
     "description": "The label for category 'AsyncAPI' in sidebar 'components'"
   },
-  "sidebar.architecture.category.Broker authors": {
-    "message": "Авторам брокеров",
-    "description": "The label for category 'Broker authors' in sidebar 'architecture'"
-  },
   "sidebar.architecture.category.Benchmarks": {
     "message": "Бенчмарки",
     "description": "The label for category 'Benchmarks' in sidebar 'architecture'"
