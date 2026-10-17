@@ -3,12 +3,15 @@ import {useHistory, useLocation} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import TabItem from '@theme/TabItem';
 import Tabs from '@theme/Tabs';
+import core from '../../../../docs/benchmarks/results.json';
 import {movedSection} from './anchors';
 import {
   BROKERS,
   CORE,
   CRATE_TABS,
   SCHEMAS,
+  codePanels,
+  codeRows,
   detailsUrl,
   resultsUrl,
   tabContent,
@@ -16,8 +19,8 @@ import {
   type CodeBar,
   type CodePanel,
   type CodeRow,
+  type ComparisonGroup,
   type ComparisonPanel,
-  type ComparisonRow,
   type Labels,
   type Lane,
   type Loaded,
@@ -166,12 +169,22 @@ function ComparisonLegend({labels}: {labels: Labels}): ReactNode {
   );
 }
 
-function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Labels}): ReactNode {
+function ComparisonChart({
+  panel,
+  labels,
+  provenance,
+}: {
+  panel: ComparisonPanel;
+  labels: Labels;
+  provenance: boolean;
+}): ReactNode {
   return (
     <section className={styles.panel}>
-      <p className={styles.panelHead}>
-        {panel.provenance}. <a href={detailsUrl(panel.broker)}>{labels.details}</a>
-      </p>
+      {provenance && (
+        <p className={styles.panelHead}>
+          {panel.provenance}. <a href={detailsUrl(panel.broker)}>{labels.details}</a>
+        </p>
+      )}
       <div className={`${styles.row} ${styles.axisRow}`}>
         <TickLabels ticks={panel.ticks} />
       </div>
@@ -222,24 +235,26 @@ function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Label
   );
 }
 
-/** Throughput against the broker's raw client, as the broker crate measures it. */
+/**
+ * Throughput against the raw loop, as the crate measures it: one chart per group, so a plugin
+ * whose overhead is on another scale gets an axis of its own. The run is named once, above the
+ * first chart.
+ */
 function Comparison({
-  panel,
-  rows,
-  labels,
+  group: {title, plugin, labels, panel, rows},
+  provenance,
 }: {
-  panel: ComparisonPanel;
-  rows: ComparisonRow[];
-  labels: Labels;
+  group: ComparisonGroup;
+  provenance: boolean;
 }): ReactNode {
   return (
     <figure className={styles.chart}>
       <figcaption className={styles.caption}>
-        <strong>{labels.comparison}</strong>
+        <strong>{title}</strong>
         <span>{labels.axis}</span>
       </figcaption>
       <ComparisonLegend labels={labels} />
-      <ComparisonChart panel={panel} labels={labels} />
+      <ComparisonChart panel={panel} labels={labels} provenance={provenance} />
       <details className={styles.table}>
         <summary>{labels.table}</summary>
         <table>
@@ -250,6 +265,7 @@ function Comparison({
               <th>{labels.adapter}</th>
               <th>{labels.framework}</th>
               <th>{labels.overhead}</th>
+              {plugin !== null && <th>{labels.pluginOverhead}</th>}
             </tr>
           </thead>
           <tbody>
@@ -260,6 +276,7 @@ function Comparison({
                 <td>{row.adapter}</td>
                 <td>{row.framework}</td>
                 <td>{row.overhead}</td>
+                {plugin !== null && <td>{row.plugin}</td>}
               </tr>
             ))}
           </tbody>
@@ -380,11 +397,24 @@ function CrateResults({
   const {comparison, code, pending} = tabContent(entry, lang, labels);
   return (
     <>
-      {comparison && <Comparison {...comparison} labels={labels} />}
+      {comparison.map((group, index) => (
+        <Comparison key={group.title} group={group} provenance={index === 0} />
+      ))}
       {code && <Code {...code} labels={labels} />}
       {pending && <p>{pending}</p>}
     </>
   );
+}
+
+/**
+ * The core's cost of the code, read from its results document when the site is built, so a page
+ * that explains the cost quotes the measurement committed beside it.
+ */
+export function CoreCost({labels}: {labels: Labels}): ReactNode {
+  const lang = useLang();
+  const entry: Loaded = {broker: CORE, results: core as Results};
+  const [panel] = codePanels([entry], lang, labels);
+  return <Code panel={panel!} rows={codeRows([entry], lang)} labels={labels} />;
 }
 
 /**
