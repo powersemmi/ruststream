@@ -154,7 +154,9 @@ impl CopyPath for AddressedCopies {}
 /// One subscription like this reads many destinations, so the descriptor has no single answer and
 /// the mount site names one: `.out_retry(policy).to("orders")` for a fixed destination, or a
 /// publish transform that names it per delivery. A registration that names neither does not
-/// compile.
+/// compile on a [`Router`](crate::runtime::Router) chain; mounted directly in a broker scope, it
+/// compiles and the app refuses to start, with an error naming the subscription and the
+/// descriptor.
 ///
 /// # Examples
 ///
