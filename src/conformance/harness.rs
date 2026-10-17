@@ -63,6 +63,20 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// broker running `run_suite` alone has not checked its batches - `capabilities::batches` is the
 /// call that does, against the broker's own subscription source.
 ///
+/// # What it checks
+///
+/// | Scenario | Asserts |
+/// |---|---|
+/// | ordering | messages are delivered in publish order |
+/// | publish before subscribe | the earlier message arrives first under [`Backlog::Delivered`], never under [`Backlog::Missed`]; the later one arrives either way |
+/// | ack consumes the delivery | an acked message is not redelivered |
+/// | nack with requeue | `nack(true)` delivers the message again |
+/// | nack without requeue | `nack(false)` leaves no redelivery |
+/// | headers | message headers reach the subscriber unchanged |
+/// | publish log | `published(name)` records every publish, the broker's own default publisher's included, in order and with headers |
+/// | two subscriptions of one name | each message reaches exactly the subscriptions [`TestableBroker::routes`] names, once each |
+/// | coordinator counts | on a paused clock, a delivery is counted in flight before the publish returns and released once when settled; a requeue counts it again, an unreceived publish is not counted, a delayed redelivery is counted when its timer falls due |
+///
 /// # A message published before the subscription opened
 ///
 /// A publish/subscribe transport delivers a subscription only what is published after it opens,
