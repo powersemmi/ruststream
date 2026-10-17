@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use ruststream::memory::{MemoryBroker, MemoryPosition, Retaining, Retention};
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
-// needs no import (matching the `examples/publishing.rs` pattern).
+// needs no import.
 use ruststream::runtime::{
     AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream, SubscriberSettings,
 };

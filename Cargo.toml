@@ -103,11 +103,6 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
-name = "manual_publishing"
-path = "examples/manual/publishing.rs"
-required-features = ["memory", "json"]
-
-[[example]]
 name = "manual_retry"
 path = "examples/manual/retry.rs"
 required-features = ["testing", "memory", "json"]
@@ -189,21 +184,6 @@ required-features = ["testing", "memory", "msgpack"]
 test = true
 
 [[example]]
-name = "manual_middleware"
-path = "examples/manual/middleware.rs"
-required-features = ["memory", "json"]
-
-[[example]]
-name = "manual_middleware_app_scope"
-path = "examples/manual/middleware_app_scope.rs"
-required-features = ["memory", "json"]
-
-[[example]]
-name = "manual_middleware_router_scope"
-path = "examples/manual/middleware_router_scope.rs"
-required-features = ["memory", "json"]
-
-[[example]]
 name = "manual_context"
 path = "examples/manual/context.rs"
 required-features = ["testing", "memory", "json"]
@@ -283,10 +263,6 @@ required-features = ["macros", "memory", "json"]
 name = "seek"
 required-features = ["testing", "macros", "memory", "json"]
 test = true
-
-[[example]]
-name = "publishing"
-required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "retry"
@@ -373,18 +349,6 @@ required-features = ["testing", "macros", "memory", "msgpack"]
 test = true
 
 [[example]]
-name = "middleware"
-required-features = ["macros", "memory", "json"]
-
-[[example]]
-name = "middleware_app_scope"
-required-features = ["macros", "memory", "json"]
-
-[[example]]
-name = "middleware_router_scope"
-required-features = ["macros", "memory", "json"]
-
-[[example]]
 name = "workers"
 required-features = ["testing", "macros", "memory", "json"]
 test = true
@@ -453,6 +417,149 @@ test = true
 [[example]]
 name = "manual_publish_dyn_stack"
 path = "examples/manual/publish_dyn_stack.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "replies"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_replies"
+path = "examples/manual/replies.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "out_slots"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_out_slots"
+path = "examples/manual/out_slots.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "destinations"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_destinations"
+path = "examples/manual/destinations.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_builder"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_builder"
+path = "examples/manual/publish_builder.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "per_message_options"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_per_message_options"
+path = "examples/manual/per_message_options.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "cross_broker"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_cross_broker"
+path = "examples/manual/cross_broker.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publisher"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publisher"
+path = "examples/manual/publisher.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "transactional_publisher"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_transactional_publisher"
+path = "examples/manual/transactional_publisher.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "owned_transactions"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_owned_transactions"
+path = "examples/manual/owned_transactions.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "requester"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_requester"
+path = "examples/manual/requester.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_transform"
+path = "examples/manual/publish_transform.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "naming_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_naming_transform"
+path = "examples/manual/naming_transform.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "batch_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_batch_transform"
+path = "examples/manual/batch_transform.rs"
 required-features = ["testing", "memory", "json"]
 test = true
 
