@@ -65,6 +65,8 @@ import TabItem from '@theme/TabItem';
 Слот использует кодек роутера, если не задаёт свой, поэтому уведомления задают JSON.
 В ручной форме обе настройки - шаги цепочки монтирования: [`threads`](api:ruststream::runtime::SubscriberSettings::threads) и [`workers`](api:ruststream::runtime::SubscriberSettings::workers).
 
+Счётная часть работает на своих потоках, поэтому рантайм приложения только ждёт ввода-вывода, и магазин запускает его в потоке, который вызывает `main`: `#[ruststream::app(flavor = "current_thread")]`, а в ручной форме [`run_main_on(AppRuntime::CurrentThread, app)`](api:ruststream::runtime::cli::run_main_on). Точка входа с HTTP из главы про HTTP делает то же через `#[tokio::main(flavor = "current_thread")]`.
+
 <Tabs groupId="api">
 <TabItem value="macros" label="Макросы">
 

@@ -65,6 +65,8 @@ A reply takes the default codec unless its position names one, so `pack`'s reply
 A slot takes the router's codec unless it names one, so the notices name JSON.
 In the manual form the two settings are steps of the mount chain: [`threads`](api:ruststream::runtime::SubscriberSettings::threads) and [`workers`](api:ruststream::runtime::SubscriberSettings::workers).
 
+With the computing step on threads of its own, the app's runtime only waits on I/O, so the shop runs it on the thread that calls `main`: `#[ruststream::app(flavor = "current_thread")]`, or [`run_main_on(AppRuntime::CurrentThread, app)`](api:ruststream::runtime::cli::run_main_on) in the manual form. The HTTP entry point of a later chapter does the same with `#[tokio::main(flavor = "current_thread")]`.
+
 <Tabs groupId="api">
 <TabItem value="macros" label="Macros">
 

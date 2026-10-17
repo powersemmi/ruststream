@@ -22,7 +22,7 @@ use crate::state::Shop;
 
 // --8<-- [start:main]
 /// `run` starts the shop; `asyncapi gen` prints its AsyncAPI document.
-#[ruststream::app]
+#[ruststream::app(flavor = "current_thread")]
 fn app() -> impl App<State = Shop> {
     service::shop(MemoryBroker::new())
 }

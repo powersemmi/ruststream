@@ -65,6 +65,8 @@ import TabItem from '@theme/TabItem';
 槽位使用路由器的编解码器，除非它另行指定，所以通知指定了 JSON。
 在手写形式中，这两项设置是挂载链上的步骤：[`threads`](api:ruststream::runtime::SubscriberSettings::threads) 和 [`workers`](api:ruststream::runtime::SubscriberSettings::workers)。
 
+计算步骤运行在自己的线程上，应用运行时只需等待 I/O，因此商店把它放在调用 `main` 的线程上运行：`#[ruststream::app(flavor = "current_thread")]`，手写形式为 [`run_main_on(AppRuntime::CurrentThread, app)`](api:ruststream::runtime::cli::run_main_on)。后面一章中带 HTTP 的入口用 `#[tokio::main(flavor = "current_thread")]` 做同样的事。
+
 <Tabs groupId="api">
 <TabItem value="macros" label="宏">
 

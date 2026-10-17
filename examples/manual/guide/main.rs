@@ -20,7 +20,7 @@ mod state;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::cli::run_main;
+use ruststream::runtime::cli::{AppRuntime, run_main_on};
 
 use crate::state::Shop;
 
@@ -32,7 +32,7 @@ fn app() -> impl App<State = Shop> {
 /// What `#[ruststream::app]` writes: `run` starts the shop; `asyncapi gen` prints its AsyncAPI
 /// document.
 fn main() -> ExitCode {
-    run_main(app)
+    run_main_on(AppRuntime::CurrentThread, app)
 }
 // --8<-- [end:main]
 

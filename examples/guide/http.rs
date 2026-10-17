@@ -122,7 +122,7 @@ async fn relay_outbox(
 // --8<-- [end:relay]
 
 // --8<-- [start:main]
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
     ruststream::logging::init()?;
     let broker = MemoryBroker::new().bindable();
