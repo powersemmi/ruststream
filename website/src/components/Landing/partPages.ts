@@ -19,7 +19,7 @@ export const PART_PAGES: Record<NodeId, string> = {
   handler: '/components/subscribers/',
   reply: '/components/subscribers/publishing/replies/',
   publisher: '/components/subscribers/publishing/publishers/publisher/',
-  asyncapi: '/components/asyncapi/',
+  asyncapi: '/components/asyncapi/generation/build-spec/',
   testapp: '/components/application/testing/',
 };
 

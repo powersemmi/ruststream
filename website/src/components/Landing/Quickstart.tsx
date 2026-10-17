@@ -39,7 +39,7 @@ export default function Quickstart(): ReactNode {
             app: <CodeLink to="/components/application/app-macro/">#[ruststream::app]</CodeLink>,
             main: <CodeLink to="/components/application/app-macro/">main</CodeLink>,
             run: <CodeLink to="/components/application/running/run/">cargo run -- run</CodeLink>,
-            gen: <CodeLink to="/components/application/cli/">cargo run -- asyncapi gen</CodeLink>,
+            gen: <CodeLink to="/components/asyncapi/generation/cli-gen/">cargo run -- asyncapi gen</CodeLink>,
           }}>
           {
             '{app} generates {main} with all the runtime boilerplate: {run} starts the service, and {gen} prints its AsyncAPI document.'

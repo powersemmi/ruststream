@@ -25,8 +25,20 @@ name = "macro_app"
 required-features = ["macros", "memory"]
 
 [[example]]
+name = "otel_propagation"
+required-features = ["testing", "macros", "memory", "json", "otel"]
+test = true
+
+[[example]]
+name = "manual_otel_propagation"
+path = "examples/manual/otel_propagation.rs"
+required-features = ["testing", "memory", "json", "otel"]
+test = true
+
+[[example]]
 name = "otel_export"
-required-features = ["otel", "macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json", "otel"]
+test = true
 
 [[example]]
 name = "routed_service"
@@ -215,10 +227,74 @@ name = "manual_asyncapi_http"
 path = "examples/manual/asyncapi_http.rs"
 required-features = ["memory", "asyncapi"]
 
+# The AsyncAPI component pages: each pair builds the document of one service in both forms, and
+# its tests assert the same part of it. The `manual_*` twins leave `macros` off.
 [[example]]
-name = "manual_metrics_http"
-path = "examples/manual/metrics_http.rs"
-required-features = ["memory", "metrics", "json"]
+name = "asyncapi_generation"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_generation"
+path = "examples/manual/asyncapi_generation.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_schemas"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_schemas"
+path = "examples/manual/asyncapi_schemas.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_reports"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_reports"
+path = "examples/manual/asyncapi_reports.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "asyncapi_content_type"
+required-features = ["macros", "memory", "asyncapi", "cbor"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_content_type"
+path = "examples/manual/asyncapi_content_type.rs"
+required-features = ["memory", "asyncapi", "cbor"]
+test = true
+
+[[example]]
+name = "asyncapi_servers"
+required-features = ["macros", "memory", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_asyncapi_servers"
+path = "examples/manual/asyncapi_servers.rs"
+required-features = ["memory", "asyncapi"]
+test = true
+
+# No macro in reach: the `info` section is built from plain values, so this file is both forms.
+[[example]]
+name = "asyncapi_info"
+required-features = ["asyncapi"]
+test = true
+
+[[example]]
+name = "manual_metrics"
+path = "examples/manual/metrics.rs"
+required-features = ["testing", "memory", "json", "metrics"]
+test = true
 
 [[example]]
 name = "manual_http_outbox"
@@ -226,9 +302,16 @@ path = "examples/manual/http_outbox.rs"
 required-features = ["memory", "json"]
 
 [[example]]
-name = "manual_logging_middleware"
-path = "examples/manual/logging_middleware.rs"
-required-features = ["memory", "json", "logging"]
+name = "manual_logging"
+path = "examples/manual/logging.rs"
+required-features = ["testing", "memory", "json", "logging"]
+test = true
+
+[[example]]
+name = "manual_tracing_layer"
+path = "examples/manual/tracing_layer.rs"
+required-features = ["testing", "memory", "json", "logging"]
+test = true
 
 [[example]]
 name = "manual_routed_service_orders"
@@ -238,7 +321,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_otel_export"
 path = "examples/manual/otel_export.rs"
-required-features = ["otel", "memory", "json"]
+required-features = ["testing", "memory", "json", "otel"]
+test = true
 
 [[example]]
 name = "tutorial"
@@ -258,6 +342,39 @@ required-features = ["macros", "memory", "json", "asyncapi"]
 [[example]]
 name = "subscribers"
 required-features = ["macros", "memory", "json"]
+
+[[example]]
+name = "memory_broker"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_memory_broker"
+path = "examples/manual/memory_broker.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "memory_retention"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_memory_retention"
+path = "examples/manual/memory_retention.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "memory_patterns"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_memory_patterns"
+path = "examples/manual/memory_patterns.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "seek"
@@ -590,10 +707,9 @@ name = "asyncapi_http"
 required-features = ["macros", "memory", "asyncapi"]
 
 [[example]]
-name = "metrics_http"
-# `json` is load-bearing: the reply publisher needs a codec, so the example does not build
-# without one. It compiled only because `json` is a default feature.
-required-features = ["macros", "memory", "metrics", "json"]
+name = "metrics"
+required-features = ["testing", "macros", "memory", "json", "metrics"]
+test = true
 
 [[example]]
 name = "http_outbox"
@@ -601,11 +717,13 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "logging"
-required-features = ["macros", "memory", "json", "logging"]
+required-features = ["testing", "macros", "memory", "json", "logging"]
+test = true
 
 [[example]]
-name = "logging_middleware"
-required-features = ["macros", "memory", "json", "logging"]
+name = "tracing_layer"
+required-features = ["testing", "macros", "memory", "json", "logging"]
+test = true
 
 [[example]]
 name = "testing"

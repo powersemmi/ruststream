@@ -34,6 +34,15 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, per-message settings and another broker's publisher
 - [Publishers](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/publishers/): the publisher capabilities, one page each: `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`
 - [Transforms](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/transforms/): `PublishTransform` on a reply or a slot, naming transforms that set the destination, and batch reply transforms
+- [Observability](https://powersemmi.github.io/ruststream/latest/components/observability/): console logging, `TracingLayer`, Prometheus metrics, W3C trace propagation and OpenTelemetry export
+- [AsyncAPI](https://powersemmi.github.io/ruststream/latest/components/asyncapi/): the generated AsyncAPI document, one page per function or capability
+- [AsyncAPI generation](https://powersemmi.github.io/ruststream/latest/components/asyncapi/generation/): `build_spec`, JSON and YAML, `asyncapi gen`, the viewer, payload schemas and `#[derive(MessageInfo)]`
+- [What the AsyncAPI document reports](https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/): replies, channel parameters, header schemas, content types and the retry extension
+- [AsyncAPI servers](https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/): servers from the brokers, declared servers, security schemes and protocol bindings
+- [AsyncAPI service info](https://powersemmi.github.io/ruststream/latest/components/asyncapi/service-info/): the `info` section: description, contact, license, tags, external docs and the service id
+- [Memory broker](https://powersemmi.github.io/ruststream/latest/components/memory/): `MemoryBroker`, the broker inside one process, its prelude and capabilities
+- [Retention](https://powersemmi.github.io/ruststream/latest/components/memory/retention/): a retaining in-memory broker that keeps the newest messages of every name for replay
+- [Patterns](https://powersemmi.github.io/ruststream/latest/components/memory/patterns/): `MemoryPattern` in the NATS subject syntax, and the `Routing` rule that picks every match or the most specific one
 
 ## Module overviews on docs.rs
 
@@ -59,7 +68,6 @@ This site holds the entry pages. How each topic is done lives in the module over
 
 - [Brokers](https://powersemmi.github.io/ruststream/latest/brokers/): the broker crates, and moving a service to another broker
 - [In-memory broker](https://powersemmi.github.io/ruststream/latest/brokers/memory/): the broker inside one process, and the reference implementation of the contract
-- [In-memory pattern subscriptions](https://docs.rs/ruststream/latest/ruststream/memory/index.html#pattern-subscriptions): `MemoryPattern` in the NATS subject syntax, and the `Routing` rule that picks every match or the most specific one
 - [NATS](https://docs.rs/ruststream-nats): `ruststream-nats`, Core NATS and JetStream
 - [Redis / Valkey](https://docs.rs/ruststream-fred): `ruststream-fred`, streams, lists and Pub/Sub
 - [RabbitMQ](https://docs.rs/ruststream-lapin): `ruststream-lapin`, AMQP 0.9.1

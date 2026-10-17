@@ -337,7 +337,7 @@ async fn passes_request_reply() {
 同样的解法。
 
 内存 Broker 原生实现了请求-响应、批、事务和重新定位这几项能力，它们的七个套件都在进程内通过（见
-[内存 Broker](../brokers/memory.md#capabilities)）。它就是可执行的参考，说明这些套件究竟期望什么。
+[内存 Broker](../components/memory/index.md#capabilities)）。它就是可执行的参考，说明这些套件究竟期望什么。
 `Carries` 和 `CarriesBatch` 的套件面向投递本身已经持有解码值的 Broker，比如数据库里的队列。
 
 ## 作者检查清单
