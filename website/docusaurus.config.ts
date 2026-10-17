@@ -5,6 +5,7 @@ import type {Config, Plugin} from '@docusaurus/types';
 import {getVcsPreset} from '@docusaurus/utils';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
+import {searchLanguages} from './search';
 import {verificationTags} from './siteVerification';
 import remarkApiLinks from './plugins/remarkApiLinks';
 import remarkSnippets from './plugins/remarkSnippets';
@@ -28,6 +29,8 @@ import {readBuildVersion, siteRoot} from './versioning';
 const repoRoot = path.resolve(__dirname, '..');
 const version = readBuildVersion(process.env, repoRoot);
 const {baseUrl, contentRoot, archive} = version;
+// The language a build renders: Docusaurus loads this file once per language and names it here.
+const buildLocale = process.env.DOCUSAURUS_CURRENT_LOCALE ?? 'en';
 const docsRoot = path.join(contentRoot, 'docs');
 
 // Excerpts on the pages are read from the repository's compiled sources and link back to them.
@@ -161,10 +164,13 @@ const config: Config = {
   i18n: {
     defaultLocale: 'en',
     locales,
+    // Each language is built in a process of its own (`build.mjs`), and Docusaurus leaves the
+    // language segment out of the base URL of a build that names a single language; the segment
+    // is therefore written here.
     localeConfigs: {
-      en: {label: 'English', htmlLang: 'en'},
-      ru: {label: 'Русский', htmlLang: 'ru', path: 'ru'},
-      zh: {label: '中文', htmlLang: 'zh-CN', path: 'zh'},
+      en: {label: 'English', htmlLang: 'en', baseUrl},
+      ru: {label: 'Русский', htmlLang: 'ru', path: 'ru', baseUrl: `${baseUrl}ru/`},
+      zh: {label: '中文', htmlLang: 'zh-CN', path: 'zh', baseUrl: `${baseUrl}zh/`},
     },
   },
 
@@ -181,11 +187,14 @@ const config: Config = {
       '@easyops-cn/docusaurus-search-local',
       {
         hashed: true,
-        language: locales,
+        language: searchLanguages(buildLocale),
         indexBlog: false,
         docsDir: docsRoot,
         docsRouteBasePath: '/',
         highlightSearchTermsOnTargetPage: true,
+        // `next` and the archives ask search engines to leave their pages out; the site's own
+        // search still indexes them, or a reader of those versions would find nothing.
+        forceIgnoreNoIndex: true,
         askAi: {},
       },
     ],
