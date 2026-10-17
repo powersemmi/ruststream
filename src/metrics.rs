@@ -1,55 +1,10 @@
-//! Prometheus metrics for consume and publish paths.
+//! Prometheus metrics for the consume and publish paths (`metrics` feature).
 //!
-//! A single [`Metrics`] object owns the counters and the [`Registry`] they are
-//! registered in, and hands out two middleware: a static consume-side [`Layer`] and a publish-side
-//! [`PublishLayer`]. Both share the same registry, so one [`Metrics::export`] renders the whole
-//! picture. The registry is the global default unless you pass your own.
+//! - [Prometheus][prometheus]: one [`Metrics`] collector hands out a consume [`Layer`] and a
+//!   [`PublishLayer`] over one [`Registry`], and [`Metrics::export`] renders it for a
+//!   `/metrics` route; [`Metrics`] lists the series.
 //!
-//! HTTP exposition is the user's concern: call [`export`](Metrics::export) and serve the string from
-//! your own axum / actix / hyper handler, or push it to a gateway.
-//!
-//! # Examples
-//!
-//! ```
-//! use ruststream::metrics::Metrics;
-//! use ruststream::runtime::{App, AppInfo, RustStream};
-//!
-//! fn app(metrics: &Metrics) -> impl App {
-//!     RustStream::new(AppInfo::new("svc", "0.1.0"))
-//!         .layer(metrics.consume_layer())
-//!         .publish_layer(metrics.publish_layer())
-//! }
-//!
-//! # async fn serve() -> Result<(), Box<dyn std::error::Error>> {
-//! // One collector per process: its registry is what the `/metrics` route renders.
-//! let metrics = Metrics::new()?;
-//! app(&metrics).run().await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! The consume layer records every handled message, and the publish layer every publish
-//! attempt, the failed ones included. [`Metrics::with_registry`] collects into a registry of
-//! your own, and [`Metrics::registry`] hands the registry out for your own collectors or an
-//! existing exporter.
-//!
-//! | Metric | Type | Labels |
-//! |---|---|---|
-//! | `ruststream_messages_consumed_total` | counter | `name`, `status` |
-//! | `ruststream_consume_duration_seconds` | histogram | `name` |
-//! | `ruststream_messages_published_total` | counter | `name`, `status` |
-//! | `ruststream_handler_poll_duration_seconds` | histogram | `name` |
-//! | `ruststream_handler_poll_average_seconds` | gauge | `name` |
-//!
-//! The last two exist with the `poll-diagnostics` feature, once
-//! [`Metrics::observe_poll_diagnostics`] hands the collector the app's
-//! [`PollDiagnostics`]: the time a handler spent in one sampled poll, and its moving average.
-//!
-//! `name` is the subscription or destination, and `status` the outcome: `ack` or `nack` on the
-//! consume side, `ok` or `error` on the publish side. `examples/metrics.rs` in the
-//! repository serves `/metrics` with axum. A service exporting through the `otel` feature
-//! instead has a Grafana dashboard in
-//! [`ruststream-grafana`](https://github.com/powersemmi/ruststream-grafana).
+//! [prometheus]: https://powersemmi.github.io/ruststream/latest/components/observability/metrics/
 
 use std::future::Future;
 use std::sync::Arc;
@@ -86,6 +41,45 @@ struct Inner {
 /// to [`RustStream::layer`](crate::runtime::RustStream::layer) and
 /// [`publish_layer`](Self::publish_layer) to
 /// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer).
+///
+/// The consume layer records every handled message, and the publish layer every publish
+/// attempt, the failed ones included. The registry is the global default unless
+/// [`with_registry`](Self::with_registry) passes your own.
+///
+/// | Metric | Type | Labels |
+/// |---|---|---|
+/// | `ruststream_messages_consumed_total` | counter | `name`, `status` |
+/// | `ruststream_consume_duration_seconds` | histogram | `name` |
+/// | `ruststream_messages_published_total` | counter | `name`, `status` |
+/// | `ruststream_handler_poll_duration_seconds` | histogram | `name` |
+/// | `ruststream_handler_poll_average_seconds` | gauge | `name` |
+///
+/// The last two exist with the `poll-diagnostics` feature, once
+/// [`Metrics::observe_poll_diagnostics`] hands the collector the app's
+/// [`PollDiagnostics`]: the time a handler spent in one sampled poll, and its moving average.
+///
+/// `name` is the subscription or destination, and `status` the outcome: `ack` or `nack` on the
+/// consume side, `ok` or `error` on the publish side.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::metrics::Metrics;
+/// use ruststream::runtime::{App, AppInfo, RustStream};
+///
+/// fn app(metrics: &Metrics) -> impl App {
+///     RustStream::new(AppInfo::new("svc", "0.1.0"))
+///         .layer(metrics.consume_layer())
+///         .publish_layer(metrics.publish_layer())
+/// }
+///
+/// # async fn serve() -> Result<(), Box<dyn std::error::Error>> {
+/// // One collector per process: its registry is what the `/metrics` route renders.
+/// let metrics = Metrics::new()?;
+/// app(&metrics).run().await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Metrics {
     inner: Arc<Inner>,
