@@ -664,6 +664,19 @@ pub trait SubscriberSettings: Declared {
     /// `map_source` call. The bound means those methods simply do not exist on a builder for
     /// another broker.
     ///
+    /// One core setting changes the source type instead of a state slot: `start_at(..)` wraps
+    /// the descriptor in [`StartAt`](crate::StartAt), so the broker covers that case with a
+    /// second impl over the wrapped source, each method one
+    /// [`StartAt::map_inner`](crate::StartAt::map_inner) call. A step that depends on a core
+    /// setting (a resource per dedicated thread, a window sized to the batch) reads it off the
+    /// builder with [`dispatch`](SubscriberBuilder::dispatch),
+    /// [`batch_size`](SubscriberBuilder::batch_size) and
+    /// [`subscription_name`](SubscriberBuilder::subscription_name) instead of asking the user to
+    /// name it twice. A step sees each value as it stands when it is called: the attribute's
+    /// settings are fixed before any mount-site step, and a step chained before `.threads(n)`
+    /// sees the default sequential dispatch. The
+    /// publish-side twin over a policy is [`MapPublisher`](crate::runtime::MapPublisher).
+    ///
     /// # Examples
     ///
     /// ```
