@@ -18,13 +18,13 @@ function fakeDocument() {
 describe('loadOfficialWidget', () => {
   it('adds the widget for the library in the site accent, once', () => {
     const {appended, host} = fakeDocument();
-    loadOfficialWidget('#ff5722', host);
-    loadOfficialWidget('#ff5722', host);
+    loadOfficialWidget('#6200ee', host);
+    loadOfficialWidget('#6200ee', host);
     expect(appended).toEqual([
       {
         src: WIDGET_URL,
         async: true,
-        dataset: {library: '/powersemmi/ruststream', color: '#ff5722'},
+        dataset: {library: '/powersemmi/ruststream', color: '#6200ee'},
       },
     ]);
   });

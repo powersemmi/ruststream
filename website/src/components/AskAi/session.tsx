@@ -8,7 +8,6 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import {AskAiUnavailable, streamAnswer, type ChatTurn} from './client';
 import {CLOSE_EVENT, OPEN_EVENT, type OpenRequest} from './events';
 import {loadOfficialWidget} from './fallback';
@@ -39,8 +38,6 @@ export function useAskAiSession(): AskAiSession {
 // panel itself is rendered inside the theme, where the code blocks of an answer get their
 // colors.
 export function AskAiProvider({children}: {children: ReactNode}): ReactNode {
-  const {siteConfig} = useDocusaurusContext();
-  const accent = String(siteConfig.customFields?.accent ?? '');
   const [started, setStarted] = useState(false);
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -72,7 +69,10 @@ export function AskAiProvider({children}: {children: ReactNode}): ReactNode {
         if (error instanceof AskAiUnavailable) {
           show(asked);
           setUnavailable(true);
-          loadOfficialWidget(accent);
+          // The widget takes a literal color; the site's palette names it once, in CSS.
+          loadOfficialWidget(
+            getComputedStyle(document.documentElement).getPropertyValue('--rs-brand').trim(),
+          );
         }
       } finally {
         if (abort.current === controller) {
@@ -80,7 +80,7 @@ export function AskAiProvider({children}: {children: ReactNode}): ReactNode {
         }
       }
     },
-    [accent, show],
+    [show],
   );
 
   const restart = useCallback(() => {

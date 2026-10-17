@@ -155,7 +155,7 @@
 .row:focus,
 .codeRow:hover,
 .codeRow:focus {
-  background: var(--rs-code-bg);
+  background: var(--rs-raised);
 }
 
 .row:focus:not(:focus-visible),

@@ -8,48 +8,64 @@
 @import '@fontsource/roboto-mono/400.css';
 @import '@fontsource/roboto-mono/700.css';
 
-/* The palette every custom component reads. Nothing outside these blocks names a color. */
+/* The palette every custom component reads. Nothing outside these blocks names a color. Text
+   pairs keep at least 4.5:1 against the backgrounds they sit on; control borders and chart marks
+   keep 3:1. */
 :root,
 [data-theme='light'] {
   --rs-bg: #ffffff;
-  --rs-fg: #1b1f24;
-  --rs-muted: #5c6370;
-  --rs-accent: #e64a19;
+  --rs-fg: #121212;
+  --rs-muted: #5c5766;
+  /* Links, highlighted words, focus rings and the data marks that stand for RustStream. */
+  --rs-accent: #6200ee;
+  /* The fill of a primary button, under `--rs-accent-contrast` text. */
+  --rs-accent-fill: #6200ee;
   --rs-accent-contrast: #ffffff;
-  --rs-border: #d9dde3;
-  --rs-code-bg: #f5f6f8;
-  --rs-surface: #fafbfc;
-  --rs-shadow: 0 8px 32px rgb(15 20 25 / 18%);
+  /* Context7's widget takes one literal color for its launcher, the same in both themes. */
+  --rs-brand: #6200ee;
+  /* Dividers and frames; a control's outline uses the stronger `--rs-control-border`. */
+  --rs-border: #e3dcef;
+  --rs-control-border: #857d92;
+  /* Elevation: the page, then cards, code blocks and the navigation panels, then what is hovered
+     or sits on a card. */
+  --rs-code-bg: #f3eefc;
+  --rs-surface: #f3eefc;
+  --rs-raised: #e9e1f8;
+  --rs-shadow: 0 8px 32px rgb(18 18 18 / 18%);
 
-  --ifm-color-primary: #e64a19;
-  --ifm-color-primary-dark: #cf4317;
-  --ifm-color-primary-darker: #c33f15;
-  --ifm-color-primary-darkest: #a13412;
-  --ifm-color-primary-light: #e95c30;
-  --ifm-color-primary-lighter: #ea653c;
-  --ifm-color-primary-lightest: #ee815f;
-  --docusaurus-highlighted-code-line-bg: rgb(0 0 0 / 10%);
+  --ifm-color-primary: #6200ee;
+  --ifm-color-primary-dark: #5800d6;
+  --ifm-color-primary-darker: #5300ca;
+  --ifm-color-primary-darkest: #4500a7;
+  --ifm-color-primary-light: #6d07ff;
+  --ifm-color-primary-lighter: #7413ff;
+  --ifm-color-primary-lightest: #8936ff;
+  --docusaurus-highlighted-code-line-bg: rgb(98 0 238 / 10%);
 }
 
 [data-theme='dark'] {
-  --rs-bg: #121418;
-  --rs-fg: #e6e8eb;
-  --rs-muted: #9aa1ab;
-  --rs-accent: #ff7043;
-  --rs-accent-contrast: #121418;
-  --rs-border: #2c3038;
-  --rs-code-bg: #1b1e24;
-  --rs-surface: #181b20;
+  --rs-bg: #0a0a0a;
+  --rs-fg: #e1e1e1;
+  --rs-muted: #a7a7a7;
+  --rs-accent: #bb86fc;
+  --rs-accent-fill: #bb86fc;
+  --rs-accent-contrast: #0a0a0a;
+  --rs-brand: #6200ee;
+  --rs-border: #2e2e2e;
+  --rs-control-border: #757575;
+  --rs-code-bg: #171717;
+  --rs-surface: #171717;
+  --rs-raised: #1e1e1e;
   --rs-shadow: 0 8px 32px rgb(0 0 0 / 55%);
 
-  --ifm-color-primary: #ff7043;
-  --ifm-color-primary-dark: #ff5b28;
-  --ifm-color-primary-darker: #ff501a;
-  --ifm-color-primary-darkest: #f03a00;
-  --ifm-color-primary-light: #ff855e;
-  --ifm-color-primary-lighter: #ff906c;
-  --ifm-color-primary-lightest: #ffb095;
-  --docusaurus-highlighted-code-line-bg: rgb(0 0 0 / 30%);
+  --ifm-color-primary: #bb86fc;
+  --ifm-color-primary-dark: #a660fb;
+  --ifm-color-primary-darker: #9b4efb;
+  --ifm-color-primary-darkest: #7b15f9;
+  --ifm-color-primary-light: #d0acfd;
+  --ifm-color-primary-lighter: #dbbefd;
+  --ifm-color-primary-lightest: #e6d4fe;
+  --docusaurus-highlighted-code-line-bg: rgb(187 134 252 / 12%);
 }
 
 :root {
@@ -61,11 +77,15 @@
   --ifm-background-color: var(--rs-bg);
   --ifm-background-surface-color: var(--rs-surface);
   --ifm-font-color-base: var(--rs-fg);
+  --ifm-heading-color: var(--rs-fg);
   --ifm-toc-border-color: var(--rs-border);
   --ifm-code-background: var(--rs-code-bg);
-  --ifm-navbar-background-color: var(--rs-bg);
+  --ifm-navbar-background-color: var(--rs-surface);
   --ifm-footer-background-color: var(--rs-surface);
   --ifm-footer-color: var(--rs-muted);
+  --ifm-menu-color-background-hover: var(--rs-raised);
+  --ifm-menu-color-background-active: var(--rs-raised);
+  --ifm-dropdown-hover-background-color: var(--rs-raised);
 }
 
 .navbar {
@@ -73,6 +93,17 @@
   box-shadow: none;
 }
 
+.theme-doc-sidebar-container {
+  background: var(--rs-surface);
+}
+
 .footer {
   border-top: 1px solid var(--rs-border);
+}
+
+/* Code blocks sit on the palette's code surface in both themes; the Prism themes keep only their
+   token colors, each checked for contrast on that surface. The theme writes its own background
+   inline, so the override needs the priority. */
+.theme-code-block {
+  --prism-background-color: var(--rs-code-bg) !important;
 }

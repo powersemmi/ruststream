@@ -52,7 +52,7 @@
 
 .cell:hover,
 .cell:focus-visible {
-  background: var(--rs-surface);
+  background: var(--rs-raised);
   color: var(--rs-fg);
   text-decoration: none;
 }
