@@ -14,7 +14,7 @@ A message type names its header contract, so publishing it does not compile with
 `#[outgoing(headers = Meta)]` makes the contract part of the message type, the type's [`MessageHeaders`](api:ruststream::MessageHeaders) contract.
 Its publish does not compile without [`.with_headers(&meta)`](api:ruststream::runtime::PublishBuilder::with_headers).
 The manual form implements `MessageHeaders` by hand and names the contract as its `Contract`; a type with none names `NoHeaders`.
-An `Out` slot lists the types it may publish in `#[publishes(..)]`, and each keeps its own contract, as on the [publishing](../publishing/index.md) pages.
+An `Out` slot lists the types it may publish in `#[publishes(..)]`, and each keeps its own contract, as on the [Slots](../publishing/out-slots.md) page.
 The handler on the [Headers](./index.md) page publishes a `ChunkDone` through such a slot.
 
 ## Example

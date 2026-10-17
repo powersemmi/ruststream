@@ -17,8 +17,8 @@ export const PART_PAGES: Record<NodeId, string> = {
   codec: '/components/subscribers/codecs/',
   middleware: '/components/subscribers/middleware/',
   handler: '/components/subscribers/',
-  reply: '/components/subscribers/publishing/',
-  publisher: '/components/subscribers/publishing/publishers/',
+  reply: '/components/subscribers/publishing/replies/',
+  publisher: '/components/subscribers/publishing/publishers/publisher/',
   asyncapi: '/components/asyncapi/',
   testapp: '/components/application/testing/',
 };

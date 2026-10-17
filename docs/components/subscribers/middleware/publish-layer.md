@@ -17,7 +17,7 @@ Before that call the layer may change the message, its headers for one; after it
 An error returned without the call refuses the publish.
 [`RustStream::publish_layer`](api:ruststream::runtime::RustStream::publish_layer) adds a layer to the app, before the first `with_broker`; the layer is `Clone`.
 It wraps a reply and every message sent through an `Out` slot.
-A message passes its position's [transforms](../publishing/transforms/index.md) first, then the app's publish layers, then the send.
+A message passes its position's [transforms](../publishing/transforms/publish-transform.md) first, then the app's publish layers, then the send.
 The last publish layer added runs outermost, the reverse of the order of handler [layers](./layer.md).
 A handler mounted through a router is the exception on the slot side: its slots take their own transforms, not the app's publish layers; its replies pass through them.
 The chain is one type, with no dynamic call.

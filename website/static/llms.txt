@@ -31,6 +31,9 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Codecs](https://powersemmi.github.io/ruststream/latest/components/subscribers/codecs/): where a mounting's codec comes from, JSON, CBOR, MessagePack, a codec of your own, Protobuf and the byte lanes
 - [Dispatch](https://powersemmi.github.io/ruststream/latest/components/subscribers/dispatch/): `workers(n)` for handlers that wait on I/O, `threads(n)` for handlers that compute, and the `poll-diagnostics` feature that finds them
 - [Middleware](https://powersemmi.github.io/ruststream/latest/components/subscribers/middleware/): `Layer` around handlers, `PublishLayer` around publishes, and the chains assembled at run time, `DynStack` and `PublishDynStack`
+- [Publishing](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/): replies, `Out` slots, where a message type goes, the publish builder, per-message settings and another broker's publisher
+- [Publishers](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/publishers/): the publisher capabilities, one page each: `Publisher`, `TransactionalPublisher`, `OwnedTransactions`, `RequestReply`
+- [Transforms](https://powersemmi.github.io/ruststream/latest/components/subscribers/publishing/transforms/): `PublishTransform` on a reply or a slot, naming transforms that set the destination, and batch reply transforms
 
 ## Module overviews on docs.rs
 

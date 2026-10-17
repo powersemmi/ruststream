@@ -13,7 +13,7 @@ The [`Retry`](api:ruststream::runtime::Retry) slot is the publisher a copy of a 
 
 The runtime publishes a copy of a delivery in two cases: a delayed [`retry_after`](./messages/retry-after.md) on a broker without native delayed redelivery, and a delivery sent to its [`dead_letter`](./retry-cap.md) destination.
 Every registration has a publisher for those copies, paired from the broker's default publish policy.
-`.out_retry(policy)` replaces it; it is the `Out` slot `Retry`, so `.codec(..)` and `.transform(..)` follow it as on any slot of [publishing](./publishing/index.md).
+`.out_retry(policy)` replaces it; it is the `Out` slot `Retry`, so `.codec(..)` and `.transform(..)` follow it as on any [slot](./publishing/out-slots.md).
 A copy carries the delivery's own bytes, so no codec encodes it, and its [`PublishTransform`](api:ruststream::runtime::PublishTransform)s read the delivery being retried.
 A copy sent back to the subscription carries the `RETRY_COUNT_HEADER`, incremented.
 On the in-memory broker the delay is native, so only the dead-letter copy leaves through this slot.

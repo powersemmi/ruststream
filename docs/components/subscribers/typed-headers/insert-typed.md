@@ -14,7 +14,7 @@ import TabItem from '@theme/TabItem';
 A field becomes one header named after it, its value written as a string.
 A `None` field writes nothing, and a header of the same name is overwritten.
 A field that holds a nested struct, a sequence or a map is an error.
-The example's transform is a [publish transform](../publishing/transforms/index.md) on an `Out` slot, so every message the slot sends carries the contract.
+The example's transform is a [publish transform](../publishing/transforms/publish-transform.md) on an `Out` slot, so every message the slot sends carries the contract.
 
 ## Example
 

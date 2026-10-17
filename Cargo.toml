@@ -457,6 +457,149 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
+name = "replies"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_replies"
+path = "examples/manual/replies.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "out_slots"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_out_slots"
+path = "examples/manual/out_slots.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "destinations"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_destinations"
+path = "examples/manual/destinations.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_builder"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_builder"
+path = "examples/manual/publish_builder.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "per_message_options"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_per_message_options"
+path = "examples/manual/per_message_options.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "cross_broker"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_cross_broker"
+path = "examples/manual/cross_broker.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publisher"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publisher"
+path = "examples/manual/publisher.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "transactional_publisher"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_transactional_publisher"
+path = "examples/manual/transactional_publisher.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "owned_transactions"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_owned_transactions"
+path = "examples/manual/owned_transactions.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "requester"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_requester"
+path = "examples/manual/requester.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "publish_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_publish_transform"
+path = "examples/manual/publish_transform.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "naming_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_naming_transform"
+path = "examples/manual/naming_transform.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "batch_transform"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_batch_transform"
+path = "examples/manual/batch_transform.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
 name = "context"
 required-features = ["testing", "macros", "memory", "json"]
 test = true
