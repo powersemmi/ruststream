@@ -7,6 +7,7 @@ mod include;
 mod run;
 mod scope;
 mod service;
+mod teardown;
 
 pub use app_trait::App;
 pub use health::{HealthProbe, HealthState};
@@ -18,6 +19,8 @@ pub use scope::BrokerScope;
 #[cfg(feature = "testing")]
 pub(crate) use service::{RegisteredBroker, TestParts};
 pub use service::{RustStream, Setup, Wired};
+#[cfg(feature = "testing")]
+pub(crate) use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
 
 use std::sync::Arc;
 

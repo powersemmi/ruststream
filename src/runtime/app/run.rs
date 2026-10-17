@@ -11,38 +11,16 @@ use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
 use crate::runtime::publish_source::Bound;
 use crate::runtime::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{self, HealthProbe, HealthState};
 use super::service::RegisteredBroker;
-use super::{LifecycleHook, RustStream, RustStreamError};
-
-/// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
-/// consuming teardown, paired with its optional label.
-pub(crate) struct ConnectedEntry {
-    pub(crate) lifecycle: Box<dyn ConnectedLifecycle>,
-    pub(crate) label: Option<String>,
-}
-
-/// A lifecycle hook with the state already bound, so [`RunningApp`] stays non-generic.
-type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
-
-/// Binds the shared state into each hook, erasing the state type from the hook list.
-fn bind_hooks<State: Send + Sync + 'static>(
-    hooks: Vec<LifecycleHook<State>>,
-    state: &Arc<State>,
-) -> Vec<BoundHook> {
-    hooks
-        .into_iter()
-        .map(|hook| {
-            let state = Arc::clone(state);
-            Box::new(move || hook(state)) as BoundHook
-        })
-        .collect()
-}
+use super::teardown::{
+    ConnectedEntry, ShutdownHooks, Teardown, drain_continuations, drain_handles,
+};
+use super::{RustStream, RustStreamError};
 
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
 // `block_on`), so their futures must be `Send`: the shared state is held as `Arc<State>` across the
@@ -216,13 +194,14 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
         watch_for_failure(shutdown.clone(), health.clone());
 
         Ok(RunningApp {
-            shutdown,
-            handles,
-            on_shutdown: bind_hooks(on_shutdown, &state),
-            after_shutdown: bind_hooks(after_shutdown, &state),
-            brokers: connected,
-            shutdown_timeout,
-            continuations,
+            teardown: Teardown {
+                shutdown,
+                handles,
+                hooks: ShutdownHooks::bind(on_shutdown, after_shutdown, &state),
+                brokers: connected,
+                shutdown_timeout,
+                continuations,
+            },
             health,
         })
     }
@@ -251,22 +230,16 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 /// ```
 #[must_use = "dropping the handle detaches the service without graceful shutdown"]
 pub struct RunningApp {
-    shutdown: Shutdown,
-    handles: Vec<JoinHandle<()>>,
-    on_shutdown: Vec<BoundHook>,
-    after_shutdown: Vec<BoundHook>,
-    brokers: Vec<ConnectedEntry>,
-    shutdown_timeout: Option<Duration>,
-    continuations: TaskTracker,
+    teardown: Teardown,
     health: watch::Sender<HealthState>,
 }
 
 impl fmt::Debug for RunningApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RunningApp")
-            .field("subscribers", &self.handles.len())
-            .field("brokers", &self.brokers.len())
-            .field("shutdown_timeout", &self.shutdown_timeout)
+            .field("subscribers", &self.teardown.handles.len())
+            .field("brokers", &self.teardown.brokers.len())
+            .field("shutdown_timeout", &self.teardown.shutdown_timeout)
             .finish_non_exhaustive()
     }
 }
@@ -284,7 +257,7 @@ impl RunningApp {
     ///
     /// Cancel-safe: dropping the future loses nothing; a fresh call observes the same state.
     pub fn stopping(&self) -> impl Future<Output = ()> + Send + 'static {
-        self.shutdown.token().clone().cancelled_owned()
+        self.teardown.shutdown.token().clone().cancelled_owned()
     }
 
     /// Hands out a [`HealthProbe`]: a cheap, cloneable view of the service's lifecycle state for
@@ -397,48 +370,21 @@ impl RunningApp {
     /// the service had already torn itself down on a fail-fast failure (surfaced as
     /// [`RustStreamError::Dispatch`] so the operator sees a non-zero exit, not a silent stop).
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let Self {
-            shutdown,
-            handles,
-            on_shutdown,
-            after_shutdown,
-            brokers,
-            shutdown_timeout,
-            continuations,
-            health,
-        } = self;
-
+        let Self { teardown, health } = self;
         health.send_replace(HealthState::ShuttingDown);
-        let outcome = teardown(
-            shutdown.clone(),
-            handles,
-            on_shutdown,
-            after_shutdown,
-            brokers,
-            shutdown_timeout,
-            continuations,
-        )
-        .await;
-        match outcome {
-            Ok(()) => {
-                // A fail-fast failure tore the service down: surface it so an orchestrator
-                // restarts the service and the operator sees a non-zero exit, not a silent stop.
-                if let Some(reason) = shutdown.taken_failure() {
-                    health.send_replace(HealthState::Failed {
-                        reason: reason.clone(),
-                    });
-                    return Err(RustStreamError::Dispatch(reason));
-                }
-                health.send_replace(HealthState::Stopped);
-                Ok(())
-            }
-            Err(err) => {
-                health.send_replace(HealthState::Failed {
-                    reason: err.to_string(),
-                });
-                Err(err)
-            }
-        }
+        let outcome = teardown.run().await;
+        let terminal = match &outcome {
+            Ok(()) => HealthState::Stopped,
+            // The fail-fast diagnostic is the probe's reason as it is, without the error's prefix.
+            Err(RustStreamError::Dispatch(reason)) => HealthState::Failed {
+                reason: reason.clone(),
+            },
+            Err(err) => HealthState::Failed {
+                reason: err.to_string(),
+            },
+        };
+        health.send_replace(terminal);
+        outcome
     }
 }
 
@@ -500,109 +446,6 @@ async fn unwind_connected(brokers: Vec<ConnectedEntry>) {
                 "broker shutdown failed during the startup unwind",
             ),
         }
-    }
-}
-
-/// The fallible half of the graceful teardown, factored out so [`RunningApp::shutdown`] can map
-/// its outcome onto the health probe's terminal state in one place.
-async fn teardown(
-    shutdown: Shutdown,
-    handles: Vec<JoinHandle<()>>,
-    on_shutdown: Vec<BoundHook>,
-    after_shutdown: Vec<BoundHook>,
-    brokers: Vec<ConnectedEntry>,
-    shutdown_timeout: Option<Duration>,
-    continuations: TaskTracker,
-) -> Result<(), RustStreamError> {
-    for hook in on_shutdown {
-        if let Err(err) = hook().await {
-            warn!(target: "ruststream::lifecycle", error = %err, "on_shutdown hook failed");
-        }
-    }
-
-    shutdown.cancel();
-    debug!(target: "ruststream::lifecycle", "draining in-flight handlers");
-    drain_handles(handles, shutdown_timeout).await?;
-
-    // Handlers have stopped, so no new post-settle continuations can be spawned: close the
-    // tracker and drain the in-flight ones, bounded by the same shutdown timeout. They are
-    // at-most-once, so timing one out only abandons follow-up work, never a settlement.
-    drain_continuations(continuations, shutdown_timeout).await;
-
-    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
-        let name = lifecycle.name();
-        lifecycle
-            .shutdown()
-            .await
-            .map_err(RustStreamError::Shutdown)?;
-        debug!(
-            target: "ruststream::lifecycle",
-            broker = label.as_deref().unwrap_or(name),
-            "broker shut down",
-        );
-    }
-
-    for hook in after_shutdown {
-        if let Err(err) = hook().await {
-            warn!(target: "ruststream::lifecycle", error = %err, "after_shutdown hook failed");
-        }
-    }
-    info!(target: "ruststream::lifecycle", "service stopped");
-    Ok(())
-}
-
-/// Awaits all handler tasks, bounded by `timeout` if set. On timeout the remaining tasks are
-/// aborted; without a timeout, a panicking task surfaces as [`RustStreamError::Join`].
-async fn drain_handles(
-    handles: Vec<JoinHandle<()>>,
-    timeout: Option<Duration>,
-) -> Result<(), RustStreamError> {
-    let Some(timeout) = timeout else {
-        for handle in handles {
-            handle.await.map_err(RustStreamError::Join)?;
-        }
-        return Ok(());
-    };
-
-    let aborts: Vec<_> = handles.iter().map(JoinHandle::abort_handle).collect();
-    if tokio::time::timeout(timeout, futures::future::join_all(handles))
-        .await
-        .is_err()
-    {
-        warn!(
-            target: "ruststream::lifecycle",
-            "graceful shutdown timed out; aborting in-flight handlers",
-        );
-        for abort in aborts {
-            abort.abort();
-        }
-    }
-    Ok(())
-}
-
-/// Closes the post-settle continuation tracker and waits for the in-flight continuations to finish,
-/// bounded by `timeout` when set. On timeout the remaining continuations keep running detached (the
-/// tracker does not own abort handles); they are at-most-once side effects, so abandoning them is
-/// safe.
-async fn drain_continuations(continuations: TaskTracker, timeout: Option<Duration>) {
-    continuations.close();
-    if continuations.is_empty() {
-        return;
-    }
-    debug!(target: "ruststream::lifecycle", "draining post-settle continuations");
-    match timeout {
-        Some(timeout) => {
-            if tokio::time::timeout(timeout, continuations.wait())
-                .await
-                .is_err()
-            {
-                warn!(
-                    target: "ruststream::lifecycle",
-                    "graceful shutdown timed out; abandoning in-flight continuations",
-                );
-            }
-        }
-        None => continuations.wait().await,
     }
 }
 

@@ -23,7 +23,7 @@ Every hook after `on_startup` receives the state as `Arc<State>`.
 [`shutdown_timeout`](api:ruststream::runtime::RustStream::shutdown_timeout) bounds how long shutdown waits for handlers still running; past it, they are aborted.
 Without it, shutdown waits for them indefinitely.
 A broker scope's [`after_startup`](api:ruststream::runtime::BrokerScope::after_startup) receives a live publisher of that broker, paired from the policy it names.
-`TestApp` runs `on_startup` and `after_startup`; the shutdown hooks run on `RunningApp::shutdown`, so the first example drives `start` and `shutdown`.
+[`TestApp`](./testing/starting-and-stopping/start.md) runs every hook in the service's order: the startup hooks on `start`, the shutdown hooks on [`shutdown`](./testing/starting-and-stopping/shutdown.md).
 
 ## Example
 
