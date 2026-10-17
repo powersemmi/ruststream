@@ -1,90 +1,246 @@
-//! Post-settle continuations written without the `macros` feature: `HandlerOutcome::ack()
-//! .and_after(..)` attaches a side effect that runs after the message is settled, without gating
-//! the ack decision or affecting redelivery. The batch form attaches one continuation per element.
+//! Work that runs once a delivery is settled, written without the `macros` feature: a
+//! continuation on the outcome with `and_after`, one per element on a batch, and hooks on the
+//! context gated by the settlement. The tests are the ones of `examples/post_settle.rs`.
 //!
 //! ```text
-//! cargo run --example manual_post_settle --no-default-features --features memory,json
+//! cargo test --example manual_post_settle --no-default-features --features testing,memory,json
 //! ```
 
-use std::error::Error;
-use std::future::{Future, ready};
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
+
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
 
 use ruststream::memory::prelude::*;
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-// --8<-- [start:single]
-/// Ack the order, then fire a non-critical follow-up once it is acknowledged. The continuation is
-/// at-most-once: if it is lost or panics, the already-acked order is not redelivered.
-///
-/// `and_after` produces a `HandlerOutcome`, the verdict's `Err` side, so the outcome travels as
-/// it is (a plain `Ok(())` would ack with no continuation).
-struct Notify;
+// `#[outgoing(name = "orders")]` by hand: the type fixes its destination.
+impl OutgoingDestination for Order {
+    type Form = FixedName;
 
-impl Handle<Order> for Notify {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        let id = order.id;
-        ready(Err(HandlerOutcome::ack().and_after(async move {
-            println!("order {id} acked; notifying downstream");
-        })))
+    const DESTINATION: &'static str = "orders";
+}
+
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
+
+/// Stands in for a notification service: it records what it was told.
+#[derive(Default)]
+struct Notifier {
+    sent: Mutex<Vec<String>>,
+}
+
+impl Notifier {
+    async fn send(&self, note: String) {
+        tokio::task::yield_now().await;
+        if let Ok(mut sent) = self.sent.lock() {
+            sent.push(note);
+        }
+    }
+
+    fn sent(&self) -> Vec<String> {
+        let mut sent = self
+            .sent
+            .lock()
+            .map(|sent| sent.clone())
+            .unwrap_or_default();
+        // Continuations run on tasks of their own, so their order is not the delivery order.
+        sent.sort();
+        sent
     }
 }
-// --8<-- [end:single]
 
-// --8<-- [start:batch]
-/// Per-element settlement: id 0 retries with no continuation, every other order acks and schedules
-/// its own follow-up. The continuation rides with the element, so a batch settles each message and
-/// its side effect independently.
-struct NotifyBatch;
+mod single {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::future::{Future, ready};
+    use std::sync::Arc;
 
-impl Handle<[Order]> for NotifyBatch {
-    fn handle(
-        &self,
-        orders: &[Order],
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
-        ready(Err(orders
-            .iter()
-            .map(|order| {
-                if order.id == 0 {
-                    HandlerOutcome::retry()
-                } else {
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Notifier, Order};
+
+    // --8<-- [start:single]
+    /// The outcome with its continuation travels as `Err(outcome)`: a plain `Ok(())` acks with
+    /// none.
+    struct Accept;
+
+    impl Handle<Order, (), (), (), Arc<Notifier>> for Accept {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            ctx: &mut Context<'_, (), Arc<Notifier>>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            let notifier = Arc::clone(ctx.state());
+            let id = order.id;
+            // Runs once the ack is through; losing it never brings the order back.
+            ready(Err(HandlerOutcome::ack().and_after(async move {
+                notifier.send(format!("accepted {id}")).await;
+            })))
+        }
+    }
+    // --8<-- [end:single]
+
+    fn app() -> impl App<State = Arc<Notifier>> {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(subscriber("orders", Accept).build());
+            })
+    }
+
+    #[tokio::test]
+    async fn the_notice_follows_the_ack() -> Result<(), Box<dyn Error>> {
+        let notifier = Arc::new(Notifier::default());
+        let tb = TestApp::with_state(app(), |_| Arc::clone(&notifier)).await?;
+        tb.message(&Order { id: 7 }).publish().await?;
+        tb.drain().await;
+
+        assert_eq!(notifier.sent(), ["accepted 7"]);
+        Ok(())
+    }
+}
+
+mod batch {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::future::{Future, ready};
+    use std::sync::Arc;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Notifier, Order};
+
+    // --8<-- [start:batch]
+    /// Each element carries its own continuation: the dropped order gets none.
+    struct Accept;
+
+    impl Handle<[Order], (), (), (), Arc<Notifier>> for Accept {
+        fn handle(
+            &self,
+            orders: &[Order],
+            _outs: &(),
+            ctx: &mut Context<'_, (), Arc<Notifier>>,
+        ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
+            ready(Err(orders
+                .iter()
+                .map(|order| {
+                    if order.id == 0 {
+                        return HandlerOutcome::drop();
+                    }
+                    let notifier = Arc::clone(ctx.state());
                     let id = order.id;
                     HandlerOutcome::ack().and_after(async move {
-                        println!("order {id} acked in batch; following up");
+                        notifier.send(format!("accepted {id}")).await;
                     })
-                }
+                })
+                .collect()))
+        }
+    }
+
+    fn app(broker: MemoryBroker<Retaining>) -> impl App<State = Arc<Notifier>> {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
+            .with_broker(broker, |b| {
+                b.include(
+                    subscriber("orders", Accept)
+                        .batch(nonzero!(3))
+                        .start_at(MemoryPosition::start())
+                        .build(),
+                );
             })
-            .collect()))
+    }
+    // --8<-- [end:batch]
+
+    #[tokio::test]
+    async fn only_the_acked_orders_are_announced() -> Result<(), Box<dyn Error>> {
+        // The log already holds three orders, so the subscription reads them as one batch.
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
+        let publisher = broker.publisher();
+        for id in [1, 0, 2] {
+            publisher.message(&Order { id }).publish().await?;
+        }
+        let notifier = Arc::new(Notifier::default());
+        let tb = TestApp::with_state(app(broker), |_| Arc::clone(&notifier)).await?;
+        tb.settle().await?;
+        tb.drain().await;
+
+        assert_eq!(notifier.sent(), ["accepted 1", "accepted 2"]);
+        Ok(())
     }
 }
-// --8<-- [end:batch]
 
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("post_settle", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Notify).build());
-        // Batches dispatch per batch rather than per delivery, and the batch input is what says
-        // so; the batch size is the one parameter the mount owes the broker.
-        b.include(
-            subscriber("orders", NotifyBatch)
-                .batch(nonzero!(64))
-                .build(),
+mod hooks {
+    use std::convert::Infallible;
+    use std::error::Error;
+    use std::future::{Future, ready};
+    use std::sync::Arc;
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+
+    use super::{Notifier, Order};
+
+    // --8<-- [start:hooks]
+    struct Accept;
+
+    impl Handle<Order, (), (), (), Arc<Notifier>> for Accept {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            ctx: &mut Context<'_, (), Arc<Notifier>>,
+        ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+            let id = order.id;
+            let notifier = Arc::clone(ctx.state());
+            ctx.after_ack(async move { notifier.send(format!("shipping {id}")).await });
+            let notifier = Arc::clone(ctx.state());
+            ctx.after(HandlerOutcome::drop())
+                .then(async move { notifier.send(format!("rejected {id}")).await });
+            let notifier = Arc::clone(ctx.state());
+            ctx.after_settle(async move { notifier.send(format!("settled {id}")).await });
+
+            if id == 0 {
+                return ready(Err(HandlerOutcome::drop()));
+            }
+            ready(Ok(()))
+        }
+    }
+    // --8<-- [end:hooks]
+
+    fn app() -> impl App<State = Arc<Notifier>> {
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(subscriber("orders", Accept).build());
+            })
+    }
+
+    #[tokio::test]
+    async fn each_hook_runs_on_its_own_settlement() -> Result<(), Box<dyn Error>> {
+        let notifier = Arc::new(Notifier::default());
+        let tb = TestApp::with_state(app(), |_| Arc::clone(&notifier)).await?;
+        tb.message(&Order { id: 7 }).publish().await?;
+        tb.message(&Order { id: 0 }).publish().await?;
+        tb.drain().await;
+
+        assert_eq!(
+            notifier.sent(),
+            ["rejected 0", "settled 0", "settled 7", "shipping 7"],
         );
-    })
+        Ok(())
+    }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
-}
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

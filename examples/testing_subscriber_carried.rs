@@ -28,7 +28,6 @@ mod with_value {
     use super::Wire;
     use super::carried_rows::{Row, Rows};
 
-    // --8<-- [start:with_value]
     #[subscriber(Rows::new("users"))]
     async fn greet(user: &Row) -> HandlerOutcome {
         tracing::info!(user.id, "greeted {}", user.name);
@@ -41,6 +40,7 @@ mod with_value {
         })
     }
 
+    // --8<-- [start:with_value]
     #[tokio::test]
     async fn the_handler_got_the_row() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -70,7 +70,6 @@ mod received_values {
     use super::Wire;
     use super::carried_rows::{Row, Rows};
 
-    // --8<-- [start:received_values]
     #[subscriber(Rows::new("users"))]
     async fn greet(user: &Row) -> HandlerOutcome {
         tracing::info!(user.id, "greeted {}", user.name);
@@ -83,6 +82,7 @@ mod received_values {
         })
     }
 
+    // --8<-- [start:received_values]
     #[tokio::test]
     async fn the_handler_got_every_row() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

@@ -1,147 +1,197 @@
-//! The Context guide's example written without the `macros` feature: the handler is a named type
-//! whose `impl Handle` reads all three things the per-delivery `Context` carries (the channel
-//! name, the headers working copy, shared state), plus a middleware that enriches the headers
-//! before it runs.
+//! The services of `examples/context.rs` written without the `macros` feature: the context is a
+//! parameter of `Handle::handle`, and a broker field is read off it by its key.
 //!
 //! ```text
-//! cargo run --example manual_context --no-default-features --features memory,json
+//! cargo test --example manual_context --no-default-features --features testing,memory,json
 //! ```
 
-use std::convert::Infallible;
-use std::error::Error;
-use std::future::{Future, ready};
-use std::sync::atomic::{AtomicU64, Ordering};
+// A plain build compiles the services; the tests that use them exist only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-// --8<-- [start:state]
-/// Shared configuration: produced once at startup, read by every handler as the typed app state.
-/// Unchanged without the attribute - this handler reads the state through `ctx.state()`, which
-/// needs nothing of the state but its type.
-#[derive(Debug)]
-struct AppConfig {
-    reject_zero_ids: bool,
+// `#[derive(Outgoing)]` with no `name`, by hand: the call site names the destination.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
 }
-// --8<-- [end:state]
 
-// --8<-- [start:handler]
-/// The handler body: `#[subscriber("orders")]` generates this struct and this impl. The axes the
-/// attribute would infer are spelled out - no reply, no injections, `()` for the broker's
-/// per-delivery context, `AppConfig` for the application state.
-struct Receive;
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
 
-impl Handle<Order, (), (), (), AppConfig> for Receive {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        ctx: &mut Context<'_, (), AppConfig>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        // 1. The channel the message arrived on.
-        println!("received on {}", ctx.name());
+mod reading {
+    use std::error::Error;
+    use std::future::{Future, ready};
 
-        // 2. The headers working copy - including what middleware added on the way in.
-        if let Some(id) = ctx.headers().get("x-request-id") {
-            println!("request {}", String::from_utf8_lossy(id));
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+    use serde::{Deserialize, Serialize};
+
+    use super::Order;
+
+    // --8<-- [start:handler]
+    /// What the service read off one delivery, published on `receipts`.
+    #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+    struct Receipt {
+        order: u64,
+        channel: String,
+        request: Option<String>,
+    }
+
+    // What `#[derive(Outgoing)]` with `#[outgoing(name = "receipts")]` writes.
+    impl OutgoingDestination for Receipt {
+        type Form = FixedName;
+
+        const DESTINATION: &'static str = "receipts";
+    }
+
+    impl MessageHeaders for Receipt {
+        type Contract = NoHeaders;
+    }
+
+    /// The context is the last parameter of `handle`, always in reach.
+    struct Receive;
+
+    impl Handle<Order, Receipt> for Receive {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Result<Receipt, HandlerOutcome>> {
+            let request = ctx
+                .headers()
+                .get("x-request-id")
+                .map(|id| String::from_utf8_lossy(id).into_owned());
+            ready(Ok(Receipt {
+                order: order.id,
+                channel: ctx.name().to_owned(),
+                request,
+            }))
         }
-
-        // 3. The typed app-level shared state, borrowed through state().
-        let config = ctx.state();
-        if config.reject_zero_ids && order.id == 0 {
-            return ready(Err(HandlerOutcome::drop()));
-        }
-
-        // 4. A post-settle hook: fires after the broker has acked this message, off the delivery
-        //    path, so slow follow-up work never gates the ack or the next delivery. At-most-once:
-        //    a lost hook does not redeliver.
-        let id = order.id;
-        ctx.after_ack(async move {
-            println!("order {id} acked; sending the confirmation");
-        });
-
-        ready(Ok(()))
     }
-}
 
-// The state a body reads is the last axis of its own `impl Handle`, so `subscriber(source, body)`
-// mounts it unchanged: the mount checks the impl's state type against the app's.
-// --8<-- [end:handler]
-
-// --8<-- [start:enrich]
-/// A layer that stamps a request id onto the context headers before the handler runs.
-#[derive(Clone)]
-struct RequestId;
-
-struct WithRequestId<H>(H);
-
-impl<H> Layer<H> for RequestId {
-    type Handler = WithRequestId<H>;
-    fn layer(&self, inner: H) -> WithRequestId<H> {
-        WithRequestId(inner)
-    }
-}
-
-static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
-
-// The layer is state-agnostic: it threads the context `C` and state `S` through unchanged, so it
-// wraps a handler whatever typed state the app declares. Nothing here changes without the macros:
-// a layer is already the named-type shape a hand-written handler uses, one level up.
-impl<M: Send + Sync, C: Send, S: Send + Sync, H: Handler<M, C, S>> Handler<M, C, S>
-    for WithRequestId<H>
-{
-    async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
-        if ctx.headers().get("x-request-id").is_none() {
-            let id = format!("req-{}", NEXT_REQUEST.fetch_add(1, Ordering::Relaxed));
-            ctx.headers_mut().insert("x-request-id", id.into_bytes());
-        }
-        self.0.handle(msg, ctx).await
-    }
-}
-
-// The app-global stack wraps every handler through `BlanketLayer`: the mount site hides the
-// handler's concrete type, so the wrap happens through this generic method instead.
-impl BlanketLayer for RequestId {
-    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
-    where
-        M: Send + Sync + 'static,
-        C: Send + 'static,
-        S: Send + Sync + 'static,
-        H: Handler<M, C, S> + 'static,
-    {
-        WithRequestId(handler)
-    }
-}
-// --8<-- [end:enrich]
-
-// --8<-- [start:app]
-// `on_startup` fixes the app's state type to `AppConfig`; `.layer` then grows the global stack.
-// `include` mounts the constructed definition: the source resolves at startup, and the scope codec
-// (here the default) decodes.
-fn app() -> RustStream<Stack<RequestId, Identity>, AppConfig> {
-    RustStream::new(AppInfo::new("context", "0.1.0"))
-        .on_startup(async move |()| {
-            Ok::<_, Infallible>(AppConfig {
-                reject_zero_ids: true,
-            })
+    fn app() -> impl App {
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber("orders", Receive).reply().build());
         })
-        .layer(RequestId)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Receive).build());
-        })
+    }
+    // --8<-- [end:handler]
+
+    #[tokio::test]
+    async fn the_handler_reads_the_channel_and_a_header() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", "req-7");
+        tb.broker::<MemoryBroker>()
+            .message(&Order { id: 7 })
+            .to("orders")
+            .with_headers(headers)
+            .publish()
+            .await?;
+
+        tb.broker::<MemoryBroker>()
+            .published::<Receipt>("receipts")
+            .assert_called_once()
+            .with(&Receipt {
+                order: 7,
+                channel: "orders".to_owned(),
+                request: Some("req-7".to_owned()),
+            });
+        Ok(())
+    }
 }
 
-// `#[ruststream::app]` is what would have written this main (and given it a CLI); `run` itself is
-// an ordinary method, so the macro-free service calls it.
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+mod field {
+    use std::error::Error;
+    use std::future::{Future, ready};
+
+    use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
+    use serde::{Deserialize, Serialize};
+
+    use super::Order;
+
+    // --8<-- [start:ctx]
+    /// Where an order sits in the broker's log, published on `located`.
+    #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+    struct Located {
+        order: u64,
+        sequence: usize,
+    }
+
+    // What `#[derive(Outgoing)]` with `#[outgoing(name = "located")]` writes.
+    impl OutgoingDestination for Located {
+        type Form = FixedName;
+
+        const DESTINATION: &'static str = "located";
+    }
+
+    impl MessageHeaders for Located {
+        type Contract = NoHeaders;
+    }
+
+    /// The broker's per-delivery context is the fourth parameter of `Handle`; the body reads
+    /// one field of it by its key.
+    struct Locate;
+
+    impl Handle<Order, Located, (), MemoryContext> for Locate {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            ctx: &mut Context<'_, MemoryContext>,
+        ) -> impl Future<Output = Result<Located, HandlerOutcome>> {
+            let MemoryPosition::Sequence(sequence) = ctx.context(Position) else {
+                return ready(Err(HandlerOutcome::drop()));
+            };
+            ready(Ok(Located {
+                order: order.id,
+                sequence,
+            }))
+        }
+    }
+
+    fn app() -> impl App {
+        // A retaining broker numbers its messages; its deliveries carry the position.
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(16)));
+        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
+            b.include(subscriber("orders", Locate).reply().build());
+        })
+    }
+    // --8<-- [end:ctx]
+
+    #[tokio::test]
+    async fn the_handler_takes_the_position_as_a_parameter() -> Result<(), Box<dyn Error>> {
+        let tb = TestApp::start(app()).await?;
+        let broker = tb.broker::<MemoryBroker<Retaining>>();
+        broker
+            .message(&Order { id: 7 })
+            .to("orders")
+            .publish()
+            .await?;
+        broker
+            .message(&Order { id: 8 })
+            .to("orders")
+            .publish()
+            .await?;
+
+        broker
+            .published::<Located>("located")
+            .assert_called(2)
+            .with(&Located {
+                order: 8,
+                sequence: 1,
+            });
+        Ok(())
+    }
 }
-// --8<-- [end:app]
+
+// The scenarios are the tests above; the command in the header runs them.
+fn main() {}

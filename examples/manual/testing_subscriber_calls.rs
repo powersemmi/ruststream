@@ -68,7 +68,6 @@ mod assert_called_once {
 
     use super::Order;
 
-    // --8<-- [start:assert_called_once]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -89,6 +88,7 @@ mod assert_called_once {
         })
     }
 
+    // --8<-- [start:assert_called_once]
     #[tokio::test]
     async fn the_handler_ran_once() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -115,7 +115,6 @@ mod assert_called {
 
     use super::Order;
 
-    // --8<-- [start:assert_called]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -136,6 +135,7 @@ mod assert_called {
         })
     }
 
+    // --8<-- [start:assert_called]
     #[tokio::test]
     async fn the_handler_ran_once_per_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -159,7 +159,6 @@ mod assert_not_called {
 
     use super::Order;
 
-    // --8<-- [start:assert_not_called]
     struct Rejected;
 
     impl OutSlot for Rejected {
@@ -223,6 +222,7 @@ mod assert_not_called {
         })
     }
 
+    // --8<-- [start:assert_not_called]
     #[tokio::test]
     async fn a_valid_order_is_not_reviewed() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -249,7 +249,6 @@ mod settled {
 
     use super::Order;
 
-    // --8<-- [start:settled]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -272,6 +271,7 @@ mod settled {
         })
     }
 
+    // --8<-- [start:settled]
     #[tokio::test]
     async fn an_order_without_an_id_is_dropped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -300,7 +300,6 @@ mod outcomes {
 
     use super::Order;
 
-    // --8<-- [start:outcomes]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -323,6 +322,7 @@ mod outcomes {
         })
     }
 
+    // --8<-- [start:outcomes]
     #[tokio::test]
     async fn every_order_settled_in_turn() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -350,7 +350,6 @@ mod assert_outcome {
 
     use super::Order;
 
-    // --8<-- [start:assert_outcome]
     struct Reserve;
 
     impl Handle<Order> for Reserve {
@@ -371,6 +370,7 @@ mod assert_outcome {
         })
     }
 
+    // --8<-- [start:assert_outcome]
     #[tokio::test(start_paused = true)]
     async fn a_delayed_retry_reads_as_a_nack() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -399,7 +399,6 @@ mod panicked {
 
     use super::Order;
 
-    // --8<-- [start:panicked]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -420,6 +419,7 @@ mod panicked {
         })
     }
 
+    // --8<-- [start:panicked]
     #[tokio::test]
     async fn a_panic_stops_the_service() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -446,7 +446,6 @@ mod assert_last_failed_to_decode {
 
     use super::{Order, Wire};
 
-    // --8<-- [start:assert_last_failed_to_decode]
     struct Accept;
 
     impl Handle<Order> for Accept {
@@ -467,6 +466,7 @@ mod assert_last_failed_to_decode {
         })
     }
 
+    // --8<-- [start:assert_last_failed_to_decode]
     #[tokio::test]
     async fn bytes_that_are_no_order_are_dropped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

@@ -1,102 +1,127 @@
-//! Extractor parameters without the `macros` feature: `State<T>` is a plain public type, so a
-//! hand-written definition binds it exactly as the attribute does - one `FromContext` resolution
-//! per extractor, before the body runs. What the feature takes away is only the two derives: the
-//! definition is a named type with an `impl Handle`, and the state writes the per-field
-//! `FromRef` impl `#[derive(FromRef)]` would have generated. Driven through the real dispatch
-//! path with the in-process `TestApp` harness.
+//! The service of `examples/from_context.rs` written without the `macros` feature: the extractor
+//! is the same `FromContext` impl, and the handler resolves it at the top of its body, as the
+//! attribute would.
 //!
 //! ```text
-//! cargo run --example manual_from_context --no-default-features --features testing,memory,json
+//! cargo test --example manual_from_context --no-default-features --features testing,memory,json
 //! ```
 
-use std::convert::Infallible;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+// A plain build compiles the service; the test that uses it exists only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
+
+use std::error::Error;
+use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
     id: u64,
 }
 
-// A small use-case object (an "interactor"): it holds its dependencies and runs one operation.
-#[derive(Clone)]
-struct CreateOrder {
-    processed: Arc<AtomicU64>,
+// `#[derive(Outgoing)]` with no `name`, by hand: the call site names the destination.
+impl OutgoingDestination for Order {
+    type Form = CallerName;
 }
 
-impl CreateOrder {
-    fn execute(&self, order: &Order) {
-        self.processed.fetch_add(order.id, Ordering::Relaxed);
+impl MessageHeaders for Order {
+    type Contract = NoHeaders;
+}
+
+// --8<-- [start:extractor]
+/// The tenant an order belongs to, read off its `x-tenant` header.
+struct Tenant(String);
+
+impl<C: Send, S: Sync> FromContext<C, S> for Tenant {
+    type Rejection = HandlerOutcome;
+
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> + Send {
+        let tenant = ctx.headers().get("x-tenant");
+        let tenant = tenant.map(|tenant| Self(String::from_utf8_lossy(tenant).into_owned()));
+        // No tenant, no work: the delivery is dropped and the body does not run.
+        ready(tenant.ok_or_else(HandlerOutcome::drop))
     }
 }
 
-// The application state wires the interactors once at startup. `#[derive(FromRef)]` would write
-// one impl per field; without the derive the state writes them, and each is what makes
-// `State<FieldType>` resolve against this state.
-// --8<-- [start:state]
-struct AppState {
-    create_order: CreateOrder,
+/// An accepted order and its tenant, published on `accepted`.
+#[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+struct Accepted {
+    order: u64,
+    tenant: String,
 }
 
-impl FromRef<AppState> for CreateOrder {
-    fn from_ref(state: &AppState) -> Self {
-        state.create_order.clone()
-    }
+// What `#[derive(Outgoing)]` with `#[outgoing(name = "accepted")]` writes.
+impl OutgoingDestination for Accepted {
+    type Form = FixedName;
+
+    const DESTINATION: &'static str = "accepted";
 }
-// --8<-- [end:state]
 
-// The interactor still arrives as a bound value rather than a `ctx.state().create_order`
-// reach-through: the extractor is public API, so the definition resolves it itself.
-// --8<-- [start:handler]
-/// The handler body: `#[subscriber("orders")]` generates this struct and this impl.
-struct Receive;
+impl MessageHeaders for Accepted {
+    type Contract = NoHeaders;
+}
 
-impl Handle<Order, (), (), (), AppState> for Receive {
+/// The body resolves the tenant first; a rejection settles the delivery in its place.
+struct Accept;
+
+impl Handle<Order, Accepted> for Accept {
     async fn handle(
         &self,
         order: &Order,
         _outs: &(),
-        ctx: &mut Context<'_, (), AppState>,
-    ) -> Result<(), HandlerOutcome> {
-        // One binding per extractor parameter, in declaration order, before the body: this is
-        // what the attribute emits for `State(create_order): State<CreateOrder>`. A rejection
-        // settles the delivery by its `HandlerOutcome` and the body never runs.
-        let State(create_order) =
-            match <State<CreateOrder> as FromContext<(), AppState>>::from_context(ctx).await {
-                Ok(value) => value,
-                Err(rejection) => return Err(HandlerOutcome::from(rejection)),
-            };
-
-        create_order.execute(order);
-        Ok(())
+        ctx: &mut Context<'_>,
+    ) -> Result<Accepted, HandlerOutcome> {
+        let Tenant(tenant) = Tenant::from_context(ctx).await?;
+        Ok(Accepted {
+            order: order.id,
+            tenant,
+        })
     }
 }
+// --8<-- [end:extractor]
 
-// The state a body extracts from is the last axis of its own `impl Handle`, so
-// `subscriber(source, body)` mounts it unchanged: the mount reads `AppState` off the impl and
-// checks it against the app's.
-// --8<-- [end:handler]
+fn app() -> impl App {
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(subscriber("orders", Accept).reply().build());
+    })
+}
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let processed = Arc::new(AtomicU64::new(0));
-    let create_order = CreateOrder {
-        processed: processed.clone(),
-    };
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, Infallible>(AppState { create_order }))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Receive).build());
+#[tokio::test]
+async fn an_order_without_a_tenant_is_dropped() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+    let broker = tb.broker::<MemoryBroker>();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-tenant", "acme");
+    broker
+        .message(&Order { id: 7 })
+        .to("orders")
+        .with_headers(headers)
+        .publish()
+        .await?;
+    broker
+        .message(&Order { id: 8 })
+        .to("orders")
+        .publish()
+        .await?;
+
+    // The second order never reached the body: the extractor settled it.
+    broker
+        .subscriber("orders")
+        .assert_called(2)
+        .settled(HandlerOutcome::drop());
+    broker
+        .published::<Accepted>("accepted")
+        .assert_called_once()
+        .with(&Accepted {
+            order: 7,
+            tenant: "acme".to_owned(),
         });
-
-    let tb = TestApp::start(app).await?;
-    tb.publish("orders", &Order { id: 40 }).await?;
-    tb.publish("orders", &Order { id: 2 }).await?;
-
-    println!("processed total = {}", processed.load(Ordering::Relaxed));
     Ok(())
 }
+
+// The scenario is the test above; the command in the header runs it.
+fn main() {}

@@ -63,7 +63,6 @@ mod decoded {
 
     use super::{Invoice, Order, Receipt, Versioned};
 
-    // --8<-- [start:decoded]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Receipt {
         Receipt { order_id: order.id }
@@ -81,6 +80,7 @@ mod decoded {
         })
     }
 
+    // --8<-- [start:decoded]
     #[tokio::test]
     async fn every_order_got_its_receipt_in_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -117,7 +117,6 @@ mod decoded_as {
 
     use super::{Order, Ticket};
 
-    // --8<-- [start:decoded-as]
     #[derive(OutSlot)]
     #[publishes(Ticket)]
     struct Tickets;
@@ -145,6 +144,7 @@ mod decoded_as {
         })
     }
 
+    // --8<-- [start:decoded-as]
     #[tokio::test]
     async fn the_slot_sent_the_last_seat_last() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -174,7 +174,6 @@ mod with {
 
     use super::{Invoice, Order, Receipt, Versioned};
 
-    // --8<-- [start:with]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Receipt {
         Receipt { order_id: order.id }
@@ -192,6 +191,7 @@ mod with {
         })
     }
 
+    // --8<-- [start:with]
     #[tokio::test]
     async fn the_receipt_names_the_order() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -223,7 +223,6 @@ mod with_raw {
 
     use super::{Order, Receipt};
 
-    // --8<-- [start:with-raw]
     #[subscriber("orders", reply)]
     async fn issue_receipt(order: &Order) -> Receipt {
         Receipt { order_id: order.id }
@@ -235,6 +234,7 @@ mod with_raw {
         })
     }
 
+    // --8<-- [start:with-raw]
     #[tokio::test]
     async fn the_receipt_keeps_its_wire_form() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

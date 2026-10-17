@@ -42,7 +42,7 @@ struct OrderPlaced {
 /// the broker would see the event too.
 #[subscriber("orders.placed")]
 async fn fulfil(order: &OrderPlaced) -> HandlerOutcome {
-    println!("fulfilling order {} ({})", order.id, order.item);
+    tracing::info!(order.id, order.item, "fulfilling");
     HandlerOutcome::ack()
 }
 // --8<-- [end:handler]
@@ -100,22 +100,22 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
 }
 // --8<-- [end:relay]
 
+// --8<-- [start:healthz]
+/// The liveness endpoint: the probe outlives `shutdown`, so this route reports the terminal
+/// state for as long as requests still reach it. Here that window is the graceful drain: a
+/// fail-fast also resolves the `stopping()` future below and stops the HTTP server. A host
+/// that should keep serving after the messaging side dies would omit that select arm.
+async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
+    match health.state() {
+        HealthState::Running => (StatusCode::OK, "running".to_owned()),
+        state => (StatusCode::SERVICE_UNAVAILABLE, format!("{state:?}")),
+    }
+}
+// --8<-- [end:healthz]
+
+// --8<-- [start:wiring]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --8<-- [start:healthz]
-    /// The liveness endpoint: the probe outlives `shutdown`, so this route reports the terminal
-    /// state for as long as requests still reach it. Here that window is the graceful drain: a
-    /// fail-fast also resolves the `stopping()` future below and stops the HTTP server. A host
-    /// that should keep serving after the messaging side dies would omit that select arm.
-    async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
-        match health.state() {
-            HealthState::Running => (StatusCode::OK, "running".to_owned()),
-            state => (StatusCode::SERVICE_UNAVAILABLE, format!("{state:?}")),
-        }
-    }
-    // --8<-- [end:healthz]
-
-    // --8<-- [start:wiring]
     let broker = MemoryBroker::new().bindable();
     // A token, not a publisher: minted before registration, paired after start.
     let egress = broker.bind(Publish);
@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/healthz", get(healthz).with_state(running.health()));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
-    println!("orders API on http://127.0.0.1:8080/orders");
+    tracing::info!("orders API on http://127.0.0.1:8080/orders");
     // The host owns the signals. HTTP stops on Ctrl+C, or when the messaging side tears itself
     // down (fail-fast) so the process does not keep serving with a dead consumer; either way the
     // messaging side then drains gracefully.
@@ -155,6 +155,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .await?;
     running.shutdown().await?;
-    // --8<-- [end:wiring]
     Ok(())
 }
+// --8<-- [end:wiring]

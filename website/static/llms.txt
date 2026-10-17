@@ -25,6 +25,9 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Records](https://powersemmi.github.io/ruststream/latest/components/application/testing/records/): `subscriber(name)`, `published::<T>(name)`, `out::<M>()`
 - [Subscriber assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/subscriber-assertions/): what a handler received and how it settled
 - [Published assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/published-assertions/): what was published, with its headers and per-message settings
+- [Subscribers](https://powersemmi.github.io/ruststream/latest/components/subscribers/): `#[subscriber]`, subscription sources, mount-site settings, batches, start positions, routers, the retry cap and destination, failure policy, typed headers
+- [Messages](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/): what a handler returns: ack, retry, drop, `retry_after`, `and_after` and post-settle hooks
+- [Context and extractors](https://powersemmi.github.io/ruststream/latest/components/subscribers/context/): the per-delivery `Context`, `Ctx<K>` and custom extractors
 
 ## Module overviews on docs.rs
 

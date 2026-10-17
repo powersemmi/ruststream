@@ -1,80 +1,99 @@
-//! Extractor parameters: a handler declares a dependency as an argument and the runtime resolves it
-//! from the per-delivery context, instead of reaching for it through `ctx.state()`. The state
-//! derives `FromRef`, so any field is injectable with `State<FieldType>` and no hand-written
-//! extractor. Driven through the real dispatch path with the in-process `TestApp` harness.
+//! A custom extractor: a type of the service's own that `FromContext` resolves from the
+//! per-delivery context before the handler body runs, rejecting the delivery when it cannot.
+//! The scenario is a test.
 //!
 //! ```text
-//! cargo run --example from_context --features testing,macros,memory,json
+//! cargo test --example from_context --features testing,macros,memory,json
 //! ```
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+// A plain build compiles the service; the test that uses it exists only in the test build.
+#![cfg_attr(not(test), allow(dead_code, unused_imports))]
+
+use std::error::Error;
+use std::future::{Future, ready};
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
-#[derive(Outgoing, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
 struct Order {
     id: u64,
 }
 
-// A small use-case object (an "interactor"): it holds its dependencies and runs one operation.
-#[derive(Clone)]
-struct CreateOrder {
-    processed: Arc<AtomicU64>,
-}
+// --8<-- [start:extractor]
+/// The tenant an order belongs to, read off its `x-tenant` header.
+struct Tenant(String);
 
-impl CreateOrder {
-    fn execute(&self, order: &Order) {
-        self.processed.fetch_add(order.id, Ordering::Relaxed);
+impl<C: Send, S: Sync> FromContext<C, S> for Tenant {
+    type Rejection = HandlerOutcome;
+
+    fn from_context(
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = Result<Self, HandlerOutcome>> + Send {
+        let tenant = ctx.headers().get("x-tenant");
+        let tenant = tenant.map(|tenant| Self(String::from_utf8_lossy(tenant).into_owned()));
+        // No tenant, no work: the delivery is dropped and the body does not run.
+        ready(tenant.ok_or_else(HandlerOutcome::drop))
     }
 }
 
-// The application state wires the interactors once at startup. `#[derive(FromRef)]` makes each
-// field injectable with `State<FieldType>`, so no extractor impl is written by hand.
-// --8<-- [start:state]
-#[derive(FromRef)]
-struct AppState {
-    create_order: CreateOrder,
+/// An accepted order and its tenant, published on `accepted`.
+#[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
+#[outgoing(name = "accepted")]
+struct Accepted {
+    order: u64,
+    tenant: String,
 }
-// --8<-- [end:state]
 
-// The interactor arrives as a handler argument; no `ctx.state().create_order` reach-through.
-// --8<-- [start:handler]
-#[subscriber("orders")]
-async fn handle(order: &Order, State(create_order): State<CreateOrder>) -> HandlerOutcome {
-    create_order.execute(order);
-    HandlerOutcome::ack()
+/// The tenant arrives as a parameter, resolved before the body runs.
+#[subscriber("orders", reply)]
+async fn accept(order: &Order, Tenant(tenant): Tenant) -> Accepted {
+    Accepted {
+        order: order.id,
+        tenant,
+    }
 }
-// --8<-- [end:handler]
+// --8<-- [end:extractor]
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let processed = Arc::new(AtomicU64::new(0));
-    let create_order = CreateOrder {
-        processed: processed.clone(),
-    };
-    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move {
-            Ok::<_, std::convert::Infallible>(AppState { create_order })
-        })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(handle);
+fn app() -> impl App {
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(accept);
+    })
+}
+
+#[tokio::test]
+async fn an_order_without_a_tenant_is_dropped() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+    let broker = tb.broker::<MemoryBroker>();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-tenant", "acme");
+    broker
+        .message(&Order { id: 7 })
+        .to("orders")
+        .with_headers(headers)
+        .publish()
+        .await?;
+    broker
+        .message(&Order { id: 8 })
+        .to("orders")
+        .publish()
+        .await?;
+
+    // The second order never reached the body: the extractor settled it.
+    broker
+        .subscriber("orders")
+        .assert_called(2)
+        .settled(HandlerOutcome::drop());
+    broker
+        .published::<Accepted>("accepted")
+        .assert_called_once()
+        .with(&Accepted {
+            order: 7,
+            tenant: "acme".to_owned(),
         });
-
-    let tb = TestApp::start(app).await?;
-    tb.broker::<MemoryBroker>()
-        .message(&Order { id: 40 })
-        .to("orders")
-        .publish()
-        .await?;
-    tb.broker::<MemoryBroker>()
-        .message(&Order { id: 2 })
-        .to("orders")
-        .publish()
-        .await?;
-
-    println!("processed total = {}", processed.load(Ordering::Relaxed));
     Ok(())
 }
+
+// The scenario is the test above; the command in the header runs it.
+fn main() {}

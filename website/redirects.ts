@@ -31,6 +31,8 @@ const pages: Record<string, string> = {
   'getting-started/quickstart': '/guides/getting-started/quickstart/',
   'getting-started/tutorial': '/guides/getting-started/tutorial/',
   benchmarks: '/architecture/benchmarks/',
+  // A category whose subject is one component holds that component's page itself.
+  'components/application/app': '/components/application/',
 };
 
 /**

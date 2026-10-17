@@ -27,6 +27,7 @@ have yet to do, whatever the message count.
 
 A service that replays needs history, and says how much of it to keep:
 
+{/* single-form: a broker constructor, the same call with and without the macros */}
 ```rust reference="examples/seek.rs#retaining"
 ```
 

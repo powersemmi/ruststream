@@ -85,7 +85,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_seek"
 path = "examples/manual/seek.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_publishing"
@@ -95,22 +96,38 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_retry"
 path = "examples/manual/retry.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_settle_retry_destination"
+path = "examples/manual/settle_retry_destination.rs"
+required-features = ["testing", "memory", "json", "asyncapi"]
+test = true
+
+[[example]]
+name = "manual_handler_outcome"
+path = "examples/manual/handler_outcome.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_failure_policy"
 path = "examples/manual/failure_policy.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_post_settle"
 path = "examples/manual/post_settle.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_routing"
 path = "examples/manual/routing.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_codecs"
@@ -140,7 +157,8 @@ required-features = ["memory", "json"]
 [[example]]
 name = "manual_context"
 path = "examples/manual/context.rs"
-required-features = ["memory", "json"]
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_context_field"
@@ -150,16 +168,13 @@ path = "examples/manual/context_field.rs"
 name = "manual_from_context"
 path = "examples/manual/from_context.rs"
 required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_typed_headers"
 path = "examples/manual/typed_headers.rs"
-required-features = ["testing", "memory", "json", "asyncapi"]
-
-[[example]]
-name = "manual_ctx_extractor"
-path = "examples/manual/ctx_extractor.rs"
 required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "manual_lifespan"
@@ -217,7 +232,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "seek"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "publishing"
@@ -225,19 +241,77 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "retry"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "settle_retry_destination"
+required-features = ["testing", "macros", "memory", "json", "asyncapi"]
+test = true
+
+[[example]]
+name = "handler_outcome"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "failure_policy"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "post_settle"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "routing"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_handler"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_handler"
+path = "examples/manual/subscriber_handler.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_source"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_source"
+path = "examples/manual/subscriber_source.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_settings"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_settings"
+path = "examples/manual/subscriber_settings.rs"
+required-features = ["testing", "memory", "json"]
+test = true
+
+[[example]]
+name = "subscriber_batch"
+required-features = ["testing", "macros", "memory", "json"]
+test = true
+
+[[example]]
+name = "manual_subscriber_batch"
+path = "examples/manual/subscriber_batch.rs"
+required-features = ["testing", "memory", "json"]
+test = true
 
 [[example]]
 name = "codecs"
@@ -261,7 +335,8 @@ required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "context"
-required-features = ["macros", "memory", "json"]
+required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "context_field"
@@ -269,14 +344,12 @@ name = "context_field"
 [[example]]
 name = "from_context"
 required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "typed_headers"
-required-features = ["testing", "macros", "memory", "json", "asyncapi"]
-
-[[example]]
-name = "ctx_extractor"
 required-features = ["testing", "macros", "memory", "json"]
+test = true
 
 [[example]]
 name = "lifespan"

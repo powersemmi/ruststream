@@ -65,6 +65,7 @@ mod any_struct {
                 b.include(price).out_reply(Publish);
             })
     }
+    // --8<-- [end:state]
 
     #[tokio::test]
     async fn the_handler_reads_the_price_list() -> Result<(), Box<dyn Error>> {
@@ -85,7 +86,6 @@ mod any_struct {
             });
         Ok(())
     }
-    // --8<-- [end:state]
 }
 
 // The scenarios are the tests above; the command in the header runs them.

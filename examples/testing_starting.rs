@@ -27,7 +27,6 @@ mod start {
 
     use super::Order;
 
-    // --8<-- [start:start]
     /// What the service loads before it subscribes: the orders it refuses.
     struct Blocklist {
         refused: Vec<u64>,
@@ -49,6 +48,7 @@ mod start {
             })
     }
 
+    // --8<-- [start:start]
     #[tokio::test]
     async fn a_refused_order_is_dropped() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -75,7 +75,6 @@ mod start_live {
 
     use super::Order;
 
-    // --8<-- [start:start-live]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         if order.id == 0 {
@@ -110,6 +109,7 @@ mod start_live {
         accepts_an_order(TestApp::start(app()).await?).await
     }
 
+    // --8<-- [start:start-live]
     #[tokio::test]
     async fn against_the_stand() -> Result<(), Box<dyn Error>> {
         accepts_an_order(TestApp::start_live(app()).await?).await
@@ -134,7 +134,6 @@ mod with_state {
 
     use super::Order;
 
-    // --8<-- [start:with-state]
     #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
     #[outgoing(name = "quotes")]
     struct Quote {
@@ -195,6 +194,7 @@ mod with_state {
             })
     }
 
+    // --8<-- [start:with-state]
     #[tokio::test]
     async fn an_order_is_quoted_from_the_catalog() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::with_state(app(), |brokers| Pricing {
@@ -230,7 +230,6 @@ mod shutdown {
 
     use super::Order;
 
-    // --8<-- [start:shutdown]
     #[subscriber("orders")]
     async fn fulfil(order: &Order) -> HandlerOutcome {
         assert_ne!(order.id, 0, "an order without an id reached fulfilment");
@@ -243,6 +242,7 @@ mod shutdown {
         })
     }
 
+    // --8<-- [start:shutdown]
     #[tokio::test]
     async fn a_healthy_run_shuts_down_cleanly() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;

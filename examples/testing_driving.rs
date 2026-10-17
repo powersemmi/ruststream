@@ -26,7 +26,6 @@ mod broker {
 
     use super::Order;
 
-    // --8<-- [start:broker]
     #[subscriber("orders")]
     async fn accept(order: &Order) -> HandlerOutcome {
         let _ = order.id;
@@ -53,6 +52,7 @@ mod broker {
             )
     }
 
+    // --8<-- [start:broker]
     #[tokio::test]
     async fn each_broker_is_addressed_by_its_type() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -80,7 +80,6 @@ mod broker_named {
 
     use super::Order;
 
-    // --8<-- [start:broker-named]
     #[subscriber("orders")]
     async fn accept_eu(order: &Order) -> HandlerOutcome {
         let _ = order.id;
@@ -104,6 +103,7 @@ mod broker_named {
             })
     }
 
+    // --8<-- [start:broker-named]
     #[tokio::test]
     async fn an_order_stays_in_its_region() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -133,7 +133,6 @@ mod message {
 
     use super::Order;
 
-    // --8<-- [start:message]
     /// Names no destination: whoever publishes it says where.
     #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
     struct Refund {
@@ -159,6 +158,7 @@ mod message {
         })
     }
 
+    // --8<-- [start:message]
     #[tokio::test]
     async fn inputs_are_built_like_the_service_builds_its_own() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -192,7 +192,6 @@ mod publish {
 
     use super::Order;
 
-    // --8<-- [start:publish]
     #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
     #[outgoing(name = "receipts")]
     struct Receipt {
@@ -217,6 +216,7 @@ mod publish {
         })
     }
 
+    // --8<-- [start:publish]
     #[tokio::test]
     async fn the_whole_reaction_is_over_when_publish_returns() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -242,7 +242,6 @@ mod publish_shortcuts {
 
     use super::Order;
 
-    // --8<-- [start:publish-shortcuts]
     /// The header contract of a tenant's order.
     #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
     struct Tenant {
@@ -270,6 +269,7 @@ mod publish_shortcuts {
         })
     }
 
+    // --8<-- [start:publish-shortcuts]
     #[tokio::test]
     async fn any_serde_value_can_be_published() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -306,7 +306,6 @@ mod settle {
 
     use super::Order;
 
-    // --8<-- [start:settle]
     #[subscriber("orders")]
     async fn accept_all(orders: &[Order]) -> HandlerOutcome {
         let _ = orders.len();
@@ -319,6 +318,7 @@ mod settle {
         })
     }
 
+    // --8<-- [start:settle]
     #[tokio::test]
     async fn two_orders_arrive_in_one_batch() -> Result<(), Box<dyn Error>> {
         let broker = MemoryBroker::new();
@@ -346,7 +346,6 @@ mod advance {
     use ruststream::testing::TestApp;
     use serde::{Deserialize, Serialize};
 
-    // --8<-- [start:advance]
     const RECHECK: Duration = Duration::from_secs(5);
 
     #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -370,6 +369,7 @@ mod advance {
         })
     }
 
+    // --8<-- [start:advance]
     #[tokio::test(start_paused = true)]
     async fn an_uncleared_payment_is_checked_again_later() -> Result<(), Box<dyn Error>> {
         let tb = TestApp::start(app()).await?;
@@ -403,7 +403,6 @@ mod drain {
 
     use super::Order;
 
-    // --8<-- [start:drain]
     /// Stands in for a mail client: each send is a network round trip.
     #[derive(Default)]
     struct Mailer {
@@ -435,6 +434,7 @@ mod drain {
             })
     }
 
+    // --8<-- [start:drain]
     #[tokio::test]
     async fn the_confirmation_follows_the_ack() -> Result<(), Box<dyn Error>> {
         let mailer = Arc::new(Mailer::default());

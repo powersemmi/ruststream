@@ -46,5 +46,5 @@ A test runs the same builder function on [`TestApp`](api:ruststream::testing::Te
 
 - [The `ruststream` command](./cli.md): the same commands driven through `cargo run`.
 - [Running the service](./running.md): `run`, `run_until` and `start` called by hand.
-- [Application](./app.md): the builder the attribute wraps.
+- [Application](./index.md): the builder the attribute wraps.
 - [`app`](api:ruststream::app), [`run_main`](api:ruststream::runtime::cli::run_main), [`run_main_on`](api:ruststream::runtime::cli::run_main_on), [`AppRuntime`](api:ruststream::runtime::cli::AppRuntime)
