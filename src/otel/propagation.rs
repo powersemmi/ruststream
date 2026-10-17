@@ -1,51 +1,11 @@
 //! W3C Trace Context propagation and consumer spans (part of the `otel` feature).
 //!
-//! Distributed tracing for a RustStream service, built on the publish-path context from the typed
-//! [`Context`] machinery: a trace / correlation id flows from an incoming
-//! message onto the replies it produces, so a trace spans the whole consume-transform-produce chain.
+//! [Propagation][propagation] shows it wired into a service: [`OpenTelemetry::consume_layer`]
+//! opens a span per delivery, and [`OpenTelemetry::propagation`] copies the trace context onto
+//! every reply. Header parsing is the OpenTelemetry SDK's [`TraceContextPropagator`], so it
+//! follows the specification strictly.
 //!
-//! Two pieces, wired like [`metrics`](crate::metrics):
-//!
-//! - [`OpenTelemetry::consume_layer`] - a consume-side [`Layer`] that, per delivery, reads the
-//!   incoming [W3C trace context](https://www.w3.org/TR/trace-context/) headers, opens a `tracing`
-//!   span for the handler, and stamps the *consumer's* span onto the working headers so a reply
-//!   published from that handler becomes its child.
-//! - [`OpenTelemetry::propagation`] - a static [`PublishTransform`] that copies the working
-//!   `traceparent` onto every reply. Reuse it on a batch publisher with
-//!   [`for_batch`](crate::runtime::for_batch).
-//!
-//! The header parsing and formatting is the OpenTelemetry SDK's
-//! [`TraceContextPropagator`], so it follows the spec strictly (for example, uppercase hex ids are
-//! rejected). This module is the propagation half of the story: it carries the W3C context and
-//! emits `tracing` spans. Export is the other half -
-//! [`OtelBuilder::init`](crate::otel::OtelBuilder::init) wires these spans into OTLP, or install
-//! your own subscriber, exactly as [`logging`](crate::logging) leaves the subscriber to the user.
-//! Propagation itself is broker-agnostic and works with no subscriber at all.
-//!
-//! # Examples
-//!
-//! ```
-//! # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
-//! # mod demo {
-//! use ruststream::memory::prelude::*;
-//! use ruststream::otel::OpenTelemetry;
-//! # use ruststream::subscriber;
-//! # #[derive(serde::Deserialize, schemars::JsonSchema)]
-//! # struct Order { id: u64 }
-//! # #[derive(serde::Serialize, schemars::JsonSchema, ruststream::Outgoing)]
-//! # struct Confirmation { id: u64 }
-//! # #[subscriber("orders", reply("confirmations"))]
-//! # async fn confirm(order: &Order) -> Confirmation { Confirmation { id: order.id } }
-//!
-//! fn app() -> RustStream {
-//!     let otel = OpenTelemetry::new();
-//!     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-//!         // Replies carry the delivery's trace context.
-//!         b.include(confirm).out(Reply, Publish).transform(otel.propagation());
-//!     })
-//! }
-//! # }
-//! ```
+//! [propagation]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-propagation/
 
 use opentelemetry::Context as OtelContext;
 use opentelemetry::propagation::{Extractor, Injector, TextMapPropagator};

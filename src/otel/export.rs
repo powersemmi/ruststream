@@ -1,56 +1,9 @@
-//! OpenTelemetry SDK integration (`otel` feature): OTLP export for traces and metrics, messaging
-//! semantic conventions, and per-handler dispatch metrics.
+//! OpenTelemetry SDK integration (`otel` feature): OTLP export for traces and metrics, and
+//! per-handler dispatch metrics after the messaging semantic conventions.
 //!
-//! The [`propagation`](crate::otel::propagation) submodule is the propagation half: it carries the
-//! W3C trace context and emits plain `tracing` spans. This module is the export half:
-//! [`OtelBuilder::init`] installs the OpenTelemetry tracer and meter providers as the process **globals**
-//! and bridges `tracing` spans into them, so the spans the propagation module already opens are
-//! exported without further wiring - and user-defined business metrics need no plumbing at all:
-//! `opentelemetry::global::meter("my-svc").u64_counter("orders_accepted").build()` rides the same
-//! pipeline.
+//! [Export][export] shows it wired into a service; [`Otel`] lists the instruments it records.
 //!
-//! Two middleware carry the dispatch metrics, following the OpenTelemetry messaging semantic
-//! conventions plus a `ruststream.*` namespace for what the conventions do not cover:
-//!
-//! - [`Otel::consume_layer`] - per delivery: `messaging.client.consumed.messages`,
-//!   `messaging.process.duration`, `ruststream.messages.processed` (by settlement outcome),
-//!   `ruststream.messages.in_flight`, `ruststream.message.queue_time` when the delivery
-//!   carries a publish timestamp, `ruststream.messages.decode_failures` when the decode
-//!   adapter rejected the payload, and `ruststream.messages.panics` when the handler unwound.
-//! - [`Otel::publish_layer`] - per publish: `messaging.client.sent.messages`,
-//!   `messaging.client.operation.duration`, `ruststream.message.payload.size`, and the
-//!   [`PUBLISH_TIME_HEADER`] stamp the consume side turns into queue time.
-//!
-//! Batch handlers bypass the per-message layer (the documented middleware exception), so the
-//! batch dispatch itself records `ruststream.batch.size` (a histogram of decoded batch sizes,
-//! per destination) through the global meter; it goes live once [`OtelBuilder::init`] installs
-//! the global providers.
-//!
-//! # Examples
-//!
-//! ```no_run
-//! # #[cfg(all(feature = "memory", feature = "json"))]
-//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! use ruststream::memory::MemoryBroker;
-//! use ruststream::otel::Otel;
-//! use ruststream::runtime::{AppInfo, RustStream};
-//!
-//! let otel = Otel::builder()
-//!     .service_name("orders-svc")
-//!     .otlp_endpoint("http://collector:4317")
-//!     .messaging_system("memory")
-//!     .init()?;
-//!
-//! let app = RustStream::new(AppInfo::new("orders-svc", "0.1.0"))
-//!     .layer(otel.consume_layer())
-//!     .publish_layer(otel.publish_layer())
-//!     .with_broker(MemoryBroker::new(), |b| { /* handlers */ });
-//! let running = app.start().await?;
-//! otel.observe_health(running.health());
-//! # let _ = running;
-//! # Ok(())
-//! # }
-//! ```
+//! [export]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-export/
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -330,6 +283,58 @@ impl OtelBuilder {
 ///
 /// Built with [`Otel::builder`]. Dropping it does not flush; call [`shutdown`](Self::shutdown)
 /// at the end of `main`.
+///
+/// [`Otel::consume_layer`] and [`Otel::publish_layer`] record the dispatch metrics, labelled per
+/// handler (`messaging.destination.name`) and named by the messaging semantic conventions or in
+/// the `ruststream.*` namespace. Batch handlers bypass the per-message layer, so the batch
+/// dispatch records `ruststream.batch.size` through the global meter once
+/// [`OtelBuilder::init`] has installed the providers.
+///
+/// | Instrument | Kind | What it measures |
+/// |---|---|---|
+/// | `messaging.client.consumed.messages` | counter | deliveries received |
+/// | `messaging.process.duration` | histogram | handler processing time |
+/// | `ruststream.messages.processed` | counter, `outcome` attribute | settlements: `ack`, `nack_requeue`, `nack_drop`, `retry_after` |
+/// | `ruststream.messages.in_flight` | up-down counter | deliveries inside handlers |
+/// | `ruststream.message.queue_time` | histogram | publish-to-handler lag, from the stamped publish-time header |
+/// | `ruststream.messages.decode_failures` | counter | payloads the codec rejected |
+/// | `ruststream.messages.panics` | counter | handler invocations that panicked |
+/// | `messaging.client.sent.messages` | counter, `error.type` on failure | publishes |
+/// | `messaging.client.operation.duration` | histogram | the publish operation |
+/// | `ruststream.message.payload.size` | histogram | published payload sizes |
+/// | `ruststream.batch.size` | histogram | decoded batch sizes handed to batch handlers |
+/// | `ruststream.app.state` | observable gauge | the lifecycle state, from [`Otel::observe_health`] |
+/// | `ruststream.handler.poll.average` | observable gauge | moving average of a handler's time in one poll, from [`Otel::observe_poll_diagnostics`] |
+/// | `ruststream.handler.poll.p99` | observable gauge | its 99th percentile |
+/// | `ruststream.handler.poll.samples` | observable counter | polls timed |
+///
+/// The three `ruststream.handler.poll.*` instruments exist with the `poll-diagnostics` feature.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use ruststream::memory::MemoryBroker;
+/// use ruststream::otel::Otel;
+/// use ruststream::runtime::{AppInfo, RustStream};
+///
+/// let otel = Otel::builder()
+///     .service_name("orders-svc")
+///     .otlp_endpoint("http://collector:4317")
+///     .messaging_system("memory")
+///     .init()?;
+///
+/// let app = RustStream::new(AppInfo::new("orders-svc", "0.1.0"))
+///     .layer(otel.consume_layer())
+///     .publish_layer(otel.publish_layer())
+///     .with_broker(MemoryBroker::new(), |b| { /* handlers */ });
+/// let running = app.start().await?;
+/// otel.observe_health(running.health());
+/// # let _ = running;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct Otel {
     instruments: Arc<Instruments>,
