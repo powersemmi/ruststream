@@ -201,7 +201,7 @@
     "message": "任意 Broker"
   },
   "landing.meta.description": {
-    "message": "RustStream 是 Rust 的异步消息框架：在与 Broker 无关的核心之上编写 #[subscriber] 处理器，配有十三个 Broker crate、AsyncAPI 生成和进程内测试。"
+    "message": "RustStream 是 Rust 的异步消息框架：在与 Broker 无关的核心之上编写 #[subscriber] 处理器，支持十四种传输、AsyncAPI 生成和进程内测试。"
   },
   "landing.meta.title": {
     "message": "Rust 的异步消息框架"

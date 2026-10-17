@@ -241,6 +241,13 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // The card link previews show: on every page, as `og:image` and `twitter:image`.
+    image: 'img/social-card.png',
+    metadata: [
+      {property: 'og:image:width', content: '1200'},
+      {property: 'og:image:height', content: '630'},
+      {property: 'og:image:alt', content: 'RustStream: async messaging for Rust, on any broker'},
+    ],
     colorMode: {
       defaultMode: 'dark',
       respectPrefersColorScheme: false,
