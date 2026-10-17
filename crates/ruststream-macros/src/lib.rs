@@ -383,7 +383,7 @@ fn expand_app(runtime: &AppRuntimeArgs, func: &ItemFn) -> syn::Result<TokenStrea
     .into())
 }
 
-/// Derives [`Message`](../ruststream/trait.Message.html) metadata: the type name, its doc
+/// Derives [`MessageInfo`](../ruststream/trait.MessageInfo.html) metadata: the type name, its doc
 /// comment, and its header contract.
 ///
 /// The optional `#[message(headers(Meta))]` attribute declares the type's typed header
@@ -435,8 +435,8 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 /// Derives everything a message type declares about being sent, from one `key = value`
 /// attribute: its destination
 /// ([`OutgoingDestination`](../ruststream/trait.OutgoingDestination.html)), its optional typed
-/// header contract, and the [`Message`](../ruststream/trait.Message.html) metadata the generated
-/// document reads (the type's name and doc comment).
+/// header contract, and the [`MessageInfo`](../ruststream/trait.MessageInfo.html) metadata the
+/// generated document reads (the type's name and doc comment).
 ///
 /// The destination decides which positions the publish builder demands at the call site:
 ///
