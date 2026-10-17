@@ -26,7 +26,12 @@ export function redirectPages(
     const url = to.startsWith('/') ? `${baseUrl}${to.slice(1)}` : to;
     const attribute = escapeHtml(url);
     // JSON quoting plus `<` escaped keeps the target a string inside the script element.
-    const script = JSON.stringify(url).replace(/</g, '\\u003c');
+    const quoted = JSON.stringify(url).replace(/</g, '\\u003c');
+    // A link to a section of the old page keeps its anchor, so a section that moved on with
+    // its page (or to a page of its own) is still found; a target that names an anchor keeps it.
+    const script = url.includes('#')
+      ? `location.replace(${quoted})`
+      : `location.replace(${quoted} + location.hash)`;
     const html = [
       '<!DOCTYPE html>',
       '<html>',
@@ -35,7 +40,7 @@ export function redirectPages(
       `<meta http-equiv="refresh" content="0; url=${attribute}">`,
       `<link rel="canonical" href="${attribute}">`,
       '<meta name="robots" content="noindex">',
-      `<script>location.replace(${script})</script>`,
+      `<script>${script}</script>`,
       '</head>',
       `<body><a href="${attribute}">${attribute}</a></body>`,
       '</html>',
