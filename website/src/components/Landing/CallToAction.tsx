@@ -18,6 +18,7 @@ import {
 import shared from './landing.module.css';
 import grid from './grid.module.css';
 import styles from './cta.module.css';
+import CodeLink from './CodeLink';
 
 interface Next {
   to: string;
@@ -38,7 +39,10 @@ const NEXT: Next[] = [
     icon: <RocketIcon />,
     title: <Translate id="landing.next.quickstart">Quick start</Translate>,
     body: (
-      <Translate id="landing.next.quickstart.body" values={{command: <code>cargo generate</code>}}>
+      <Translate
+        id="landing.next.quickstart.body"
+        // The whole card is a link to the quick start, so the term stays plain code inside it.
+        values={{command: <code>cargo generate</code>}}>
         {'Scaffold a service with {command}.'}
       </Translate>
     ),
@@ -136,7 +140,11 @@ export default function CallToAction(): ReactNode {
           </Translate>
         </h2>
         <p className={shared.lede}>
-          <Translate id="landing.cta.lede" values={{command: <code>cargo generate</code>}}>
+          <Translate
+            id="landing.cta.lede"
+            values={{
+              command: <CodeLink to="/components/application/cli/">cargo generate</CodeLink>,
+            }}>
             {'Scaffold a service with {command} in a minute, or ask the documentation a question.'}
           </Translate>
         </p>

@@ -1,19 +1,11 @@
 import React, {type ReactNode, useState} from 'react';
+import Link from '@docusaurus/Link';
 import Translate, {translate} from '@docusaurus/Translate';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import SectionHead from './SectionHead';
+import {type NodeId, PART_PAGES} from './partPages';
 import shared from './landing.module.css';
 import styles from './architecture.module.css';
-
-type NodeId =
-  | 'broker'
-  | 'subscription'
-  | 'codec'
-  | 'middleware'
-  | 'handler'
-  | 'reply'
-  | 'publisher'
-  | 'asyncapi'
-  | 'testapp';
 
 interface Part {
   id: NodeId;
@@ -149,16 +141,16 @@ function Node({
 }): ReactNode {
   const {x, y, w, h} = GEOMETRY[part.id];
   const frame = part.id === 'middleware';
+  const href = useBaseUrl(PART_PAGES[part.id]);
+  // An SVG link: Enter and a click open the part's page, and hover or focus shows its role.
   return (
-    <g
+    <a
+      href={href}
       className={`${styles.node} ${frame ? styles.frame : ''} ${active ? styles.active : ''}`}
-      tabIndex={0}
-      role="button"
       aria-label={part.name}
       aria-describedby="landing-arch-role"
       onMouseEnter={() => onActivate(part.id)}
-      onFocus={() => onActivate(part.id)}
-      onClick={() => onActivate(part.id)}>
+      onFocus={() => onActivate(part.id)}>
       <rect x={x} y={y} width={w} height={h} rx={frame ? 10 : 6} />
       <text
         x={frame ? x + 14 : x + w / 2}
@@ -167,13 +159,13 @@ function Node({
         dominantBaseline="central">
         {part.name}
       </text>
-    </g>
+    </a>
   );
 }
 
 /**
  * The path of a message through a service, as an SVG on wide screens and as a list on narrow
- * ones. Hovering, focusing or tapping a part shows its role.
+ * ones. Hovering or focusing a part shows its role, and each part links to its page.
  */
 export default function Architecture(): ReactNode {
   const all = parts();
@@ -231,7 +223,9 @@ export default function Architecture(): ReactNode {
       <ol className={styles.narrow}>
         {all.map((part) => (
           <li key={part.id}>
-            <span className={styles.roleName}>{part.name}</span>
+            <Link className={styles.roleName} to={PART_PAGES[part.id]}>
+              {part.name}
+            </Link>
             <span>{part.role}</span>
           </li>
         ))}

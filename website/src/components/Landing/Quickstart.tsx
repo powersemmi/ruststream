@@ -8,6 +8,7 @@ import manual from '../../../../examples/manual/quickstart.rs';
 import {exampleSource} from './source';
 import shared from './landing.module.css';
 import styles from './cta.module.css';
+import CodeLink from './CodeLink';
 
 /** The core's quick start service, with the macros and written by hand, read from `examples/`. */
 export default function Quickstart(): ReactNode {
@@ -35,10 +36,10 @@ export default function Quickstart(): ReactNode {
         <Translate
           id="landing.quickstart.note"
           values={{
-            app: <code>#[ruststream::app]</code>,
-            main: <code>main</code>,
-            run: <code>cargo run -- run</code>,
-            gen: <code>cargo run -- asyncapi gen</code>,
+            app: <CodeLink to="/components/application/app-macro/">#[ruststream::app]</CodeLink>,
+            main: <CodeLink to="/components/application/app-macro/">main</CodeLink>,
+            run: <CodeLink to="/components/application/running/run/">cargo run -- run</CodeLink>,
+            gen: <CodeLink to="/components/application/cli/">cargo run -- asyncapi gen</CodeLink>,
           }}>
           {
             '{app} generates {main} with all the runtime boilerplate: {run} starts the service, and {gen} prints its AsyncAPI document.'

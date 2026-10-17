@@ -6,6 +6,7 @@ import Terminal, {type TerminalLine} from './Terminal';
 import {RAW_LOOP, RUSTSTREAM_SERVICE} from './snippets';
 import shared from './landing.module.css';
 import styles from './compare.module.css';
+import CodeLink from './CodeLink';
 
 // A run of the `kafka_quickstart` example against a local Kafka, with the `logging` feature on;
 // timestamps cut to the time of day. The order was published from a second terminal.
@@ -206,7 +207,14 @@ export default function OldWayNewWay(): ReactNode {
           <p className={styles.caption}>
             <Translate
               id="landing.compare.caption"
-              values={{example: <code>kafka_quickstart</code>, feature: <code>logging</code>}}>
+              values={{
+                example: (
+                  <CodeLink href="https://github.com/powersemmi/ruststream-rdkafka/blob/main/crates/ruststream-rdkafka/examples/kafka_quickstart.rs">
+                    kafka_quickstart
+                  </CodeLink>
+                ),
+                feature: <CodeLink to="/components/observability/">logging</CodeLink>,
+              }}>
               {
                 'A real run of the {example} example against a local Kafka, with the {feature} feature on.'
               }
@@ -227,7 +235,14 @@ export default function OldWayNewWay(): ReactNode {
               <Translate
                 key="docs"
                 id="landing.compare.new.docs"
-                values={{command: <code>asyncapi gen</code>, harness: <code>TestApp</code>}}>
+                values={{
+                  command: <CodeLink to="/components/application/cli/">asyncapi gen</CodeLink>,
+                  harness: (
+                    <CodeLink to="/components/application/testing/starting-and-stopping/start/">
+                      TestApp
+                    </CodeLink>
+                  ),
+                }}>
                 {
                   'Prints its AsyncAPI document with {command} and runs under {harness} with no Kafka'
                 }

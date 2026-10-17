@@ -7,6 +7,7 @@ import SectionHead from './SectionHead';
 import {selectNumbers, type HeadlineScenario, type Results} from './numbers';
 import shared from './landing.module.css';
 import styles from './grid.module.css';
+import CodeLink from './CodeLink';
 
 function scenarioLabel(scenario: HeadlineScenario): string {
   switch (scenario) {
@@ -82,7 +83,11 @@ export default function Numbers(): ReactNode {
         <Translate
           id="landing.numbers.note"
           values={{
-            version: <code>ruststream {numbers.version}</code>,
+            version: (
+              <CodeLink href={`https://docs.rs/ruststream/${numbers.version}/ruststream/`}>
+                ruststream {numbers.version}
+              </CodeLink>
+            ),
             date: numbers.measuredAt,
             cpu: numbers.cpu,
             link: (

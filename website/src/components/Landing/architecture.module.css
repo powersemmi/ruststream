@@ -123,6 +123,13 @@
   background: var(--rs-accent);
 }
 
+.narrow a.roleName {
+  text-decoration: underline;
+  text-decoration-color: var(--rs-land-accent-soft);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
 @media (max-width: 760px) {
   .wide {
     display: none;

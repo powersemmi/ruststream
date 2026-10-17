@@ -3,6 +3,7 @@ import Translate from '@docusaurus/Translate';
 import SectionHead from './SectionHead';
 import shared from './landing.module.css';
 import styles from './grid.module.css';
+import CodeLink from './CodeLink';
 
 interface Principle {
   title: ReactNode;
@@ -15,7 +16,9 @@ const PRINCIPLES: Principle[] = [
       <Translate id="landing.principles.agnostic.title">A core with no broker in it</Translate>
     ),
     body: (
-      <Translate id="landing.principles.agnostic.body" values={{suite: <code>conformance</code>}}>
+      <Translate
+        id="landing.principles.agnostic.body"
+        values={{suite: <CodeLink to="/broker-authors/conformance/">conformance</CodeLink>}}>
         {
           'The core is traits and types. Each broker is its own crate, held to the contract by the {suite} suite.'
         }
@@ -29,7 +32,9 @@ const PRINCIPLES: Principle[] = [
       </Translate>
     ),
     body: (
-      <Translate id="landing.principles.config.body" values={{config: <code>Config</code>}}>
+      <Translate
+        id="landing.principles.config.body"
+        values={{config: <CodeLink to="/brokers/">Config</CodeLink>}}>
         {
           'Each broker crate owns its {config}. A client upgrade changes that crate, not the framework.'
         }
@@ -39,7 +44,13 @@ const PRINCIPLES: Principle[] = [
   {
     title: <Translate id="landing.principles.compile.title">Misuse does not compile</Translate>,
     body: (
-      <Translate id="landing.principles.compile.body" values={{ack: <code>ack(self)</code>}}>
+      <Translate
+        id="landing.principles.compile.body"
+        values={{
+          ack: (
+            <CodeLink api="ruststream/trait.IncomingMessage.html#tymethod.ack">ack(self)</CodeLink>
+          ),
+        }}>
         {
           '{ack} consumes the delivery, so a second ack is a compile error. Out-of-order lifecycle calls fail the same way.'
         }
@@ -49,7 +60,9 @@ const PRINCIPLES: Principle[] = [
   {
     title: <Translate id="landing.principles.stream.title">Subscribers are streams</Translate>,
     body: (
-      <Translate id="landing.principles.stream.body" values={{stream: <code>Stream</code>}}>
+      <Translate
+        id="landing.principles.stream.body"
+        values={{stream: <CodeLink api="ruststream/trait.Subscriber.html">Stream</CodeLink>}}>
         {
           'A subscriber is a {stream}, so back-pressure comes with it. The runtime builds handlers on top of it.'
         }
@@ -65,7 +78,9 @@ const PRINCIPLES: Principle[] = [
     body: (
       <Translate
         id="landing.principles.generic.body"
-        values={{rpitit: <code>async fn in trait</code>}}>
+        values={{
+          rpitit: <CodeLink api="ruststream/trait.Broker.html">async fn in trait</CodeLink>,
+        }}>
         {
           'The contract uses associated types and native {rpitit}. The runtime erases types only where a service needs it.'
         }

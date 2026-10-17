@@ -4,6 +4,7 @@ import Translate, {translate} from '@docusaurus/Translate';
 import FlowCanvas from './FlowCanvas';
 import shared from './landing.module.css';
 import styles from './hero.module.css';
+import CodeLink from './CodeLink';
 
 export default function Hero(): ReactNode {
   return (
@@ -27,7 +28,9 @@ export default function Hero(): ReactNode {
           </Translate>
         </h1>
         <p className={styles.subtitle}>
-          <Translate id="landing.hero.subtitle" values={{subscriber: <code>#[subscriber]</code>}}>
+          <Translate
+            id="landing.hero.subtitle"
+            values={{subscriber: <CodeLink to="/components/subscribers/">#[subscriber]</CodeLink>}}>
             {
               'Write {subscriber} handlers once, run them on Kafka, NATS, RabbitMQ and ten more brokers, and let the compiler catch misuse before it ships.'
             }
