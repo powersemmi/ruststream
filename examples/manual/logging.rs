@@ -34,6 +34,7 @@ impl MessageHeaders for Order {
     type Contract = NoHeaders;
 }
 
+// --8<-- [start:app]
 struct Accept;
 
 impl Handle<Order> for Accept {
@@ -54,7 +55,6 @@ fn app() -> impl App {
     })
 }
 
-// --8<-- [start:app]
 fn main() -> Result<ExitCode, LoggingInitError> {
     // `RUST_LOG` still wins; this filter applies when it is unset.
     Logging::new()
