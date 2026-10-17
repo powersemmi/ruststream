@@ -1769,10 +1769,12 @@ where
 ///
 /// # Cancel safety
 ///
-/// A deferred copy runs on a detached task that sleeps for `delay`. It is at-most-once over
-/// that window: if the process exits (or the runtime is dropped) before the timer fires, the
-/// deferred message is lost, since the original has already been dropped. Brokers that need
-/// at-least-once delayed redelivery across a crash must provide native support.
+/// A deferred copy runs on a task that sleeps for `delay`, spawned where the delivery runs and
+/// tracked, so a graceful shutdown waits for the timer and the copy leaves before the broker
+/// closes. It is at-most-once across a crash: if the process dies (or the runtime is dropped
+/// without a graceful shutdown) before the timer fires, the copy is lost, since the original has
+/// already been dropped. Brokers that need at-least-once delayed redelivery across a crash must
+/// provide native support.
 async fn settle_nack_after<M, C>(
     slot: &mut Slot<M>,
     name: &str,
