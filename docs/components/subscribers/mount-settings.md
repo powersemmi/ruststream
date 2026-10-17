@@ -16,8 +16,8 @@ Each setting has two spellings: a clause in the attribute, or a method of [`Subs
 | At the mount site | In the attribute | What it sets |
 |---|---|---|
 | `.name(name)` | `#[subscriber("name")]` | the subscription a [source](./subscription-source.md) left open |
-| `.workers(n)`, `.workers_by_key(n)` | `workers(n)`, `workers(n, by_key)` | how many deliveries run at once ([dispatch](./dispatch/index.md)) |
-| `.threads(n)`, `.threads_by_key(n)` | `threads(n)`, `threads(n, by_key)` | dedicated threads for a handler that computes |
+| `.workers(n)`, `.workers_by_key(n)` | `workers(n)`, `workers(n, by_key)` | how many deliveries run at once ([workers](./dispatch/workers.md)) |
+| `.threads(n)`, `.threads_by_key(n)` | `threads(n)`, `threads(n, by_key)` | dedicated threads for a handler that computes ([threads](./dispatch/threads.md)) |
 | `.on_failure(policies)` | `on_failure(panic = .., decode = ..)` | what a panic or an undecodable payload does ([failures](./failure-policy.md)) |
 | `.batch(n)` | none | the batch size of a `&[T]` handler ([batches](./batches.md)) |
 | `.start_at(position)` | `start_at(position)` | where a replayable subscription opens ([`start_at`](./replay/start-at.md)) |
