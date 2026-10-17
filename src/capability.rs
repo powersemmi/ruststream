@@ -30,7 +30,7 @@ use crate::{
     label = "this subscription has no batching of its own",
     note = "a handler taking `&[T]` is handed whole batches: mount it on a subscription kind \
             that batches. A broker whose transport has no native batches gives its subscriber \
-            this capability through the `Buffered` adapter (see the broker-authors guide)"
+            this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)"
 )]
 pub trait BatchSubscriber: Subscriber {
     /// Container yielded by [`batches`]. Implementations choose between [`Vec`], custom
