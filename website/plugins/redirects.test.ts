@@ -30,4 +30,22 @@ describe('redirectPages', () => {
     const [page] = redirectPages({'guides/x': 'https://example.com/?a="b"&c=<d>'}, '/');
     expect(page!.html).not.toContain('"b"&c=<d>');
   });
+
+  it('carries the anchor of the old address to a target that names none', () => {
+    const [page] = redirectPages({benchmarks: '/architecture/benchmarks/'}, '/ruststream/latest/');
+    const script = /<script>([^<]*)<\/script>/.exec(page!.html)![1]!;
+    const opened: string[] = [];
+    const replace = (url: string) => opened.push(url);
+    new Function('location', script)({hash: '#methodology', replace});
+    expect(opened).toEqual(['/ruststream/latest/architecture/benchmarks/#methodology']);
+  });
+
+  it('keeps the anchor a target names itself', () => {
+    const [page] = redirectPages({'guides/routing': 'https://docs.rs/r/index.html#routing'}, '/');
+    const script = /<script>([^<]*)<\/script>/.exec(page!.html)![1]!;
+    const opened: string[] = [];
+    const replace = (url: string) => opened.push(url);
+    new Function('location', script)({hash: '#old', replace});
+    expect(opened).toEqual(['https://docs.rs/r/index.html#routing']);
+  });
 });

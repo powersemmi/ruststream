@@ -4,6 +4,7 @@ import {describe, expect, it} from 'vitest';
 import {
   CORE,
   BROKERS,
+  CRATE_TABS,
   adapterCell,
   adapterVerdict,
   codePanels,
@@ -15,6 +16,7 @@ import {
   pendingLine,
   provenanceLine,
   sideCell,
+  tabContent,
   type Labels,
   type Loaded,
   type Results,
@@ -23,7 +25,6 @@ import {
 
 const labels: Labels = {
   loading: 'Loading published results...',
-  broker: 'Broker',
   scenario: 'Scenario',
   raw: 'Raw client',
   adapter: 'Broker crate',
@@ -35,7 +36,6 @@ const labels: Labels = {
   measured: 'measured',
   details: 'Full results and methodology',
   pending: 'No results published yet: {brokers}.',
-  crate: 'Crate',
   instructions: 'Instructions',
   allocations: 'Allocations',
   cold: 'Cold start',
@@ -45,6 +45,8 @@ const labels: Labels = {
   best: 'best round',
   median: 'median round',
   noise: 'spread of the rounds',
+  comparison: 'Against a raw client',
+  code: 'Cost of the code',
 };
 
 const core = JSON.parse(
@@ -310,5 +312,48 @@ describe('the cost chart', () => {
   it('drops a crate with no code section', () => {
     const empty: Loaded = {broker: BROKERS[1]!, results: null};
     expect(codePanels([empty], 'en', labels)).toEqual([]);
+  });
+});
+
+describe('the tabs of the results', () => {
+  it('open with the core, then every broker in catalog order', () => {
+    expect(CRATE_TABS.map((tab) => tab.broker)).toEqual([CORE, ...BROKERS]);
+  });
+
+  it('name each crate in the address by its repository, without the family prefix', () => {
+    expect(CRATE_TABS.slice(0, 3).map((tab) => tab.value)).toEqual(['core', 'nats', 'fred']);
+    expect(new Set(CRATE_TABS.map((tab) => tab.value)).size).toBe(CRATE_TABS.length);
+  });
+
+  it('give the core its cost chart and no comparison', () => {
+    const content = tabContent({broker: CORE, results: core}, 'en', labels);
+    expect(content.comparison).toBeNull();
+    expect(content.code!.panel.broker).toBe(CORE);
+    expect(content.code!.rows[0]!.crate).toBe('RustStream');
+    expect(content.pending).toBeNull();
+  });
+
+  it('give a broker its comparison and its cost chart', () => {
+    const nats: Loaded = {
+      broker: BROKERS[0]!,
+      results: {
+        ...core,
+        crate: 'ruststream-nats',
+        scenarios: [scenario({name: 'core NATS'})],
+        code: [{name: 'pull', framework: {instructions: 9897.4, allocations: 7.1}}],
+      },
+    };
+    const content = tabContent(nats, 'en', labels);
+    expect(content.comparison!.panel.rows.map((row) => row.scenario)).toEqual(['core NATS']);
+    expect(content.comparison!.rows[0]!.overhead).toBe('+5%');
+    expect(content.code!.rows.map((row) => row.scenario)).toEqual(['pull']);
+    expect(content.pending).toBeNull();
+  });
+
+  it('list a crate with no readable document as pending in its own tab', () => {
+    const content = tabContent({broker: BROKERS[3]!, results: null}, 'en', labels);
+    expect(content.comparison).toBeNull();
+    expect(content.code).toBeNull();
+    expect(content.pending).toBe('No results published yet: Kafka.');
   });
 });

@@ -13,7 +13,6 @@ export interface Broker {
 /** The words of the page, keyed by role. */
 export type Labels = Record<
   | 'loading'
-  | 'broker'
   | 'scenario'
   | 'raw'
   | 'adapter'
@@ -25,7 +24,6 @@ export type Labels = Record<
   | 'measured'
   | 'details'
   | 'pending'
-  | 'crate'
   | 'instructions'
   | 'allocations'
   | 'cold'
@@ -34,7 +32,9 @@ export type Labels = Record<
   | 'rounds'
   | 'best'
   | 'median'
-  | 'noise',
+  | 'noise'
+  | 'comparison'
+  | 'code',
   string
 >;
 
@@ -106,6 +106,19 @@ export const BROKERS: Broker[] = [
 
 // The core measures no broker of its own, so it appears in the code table only.
 export const CORE: Broker = {name: 'RustStream', repo: 'ruststream'};
+
+/** One tab of the results: a crate, named in the address by its repository. */
+export interface CrateTab {
+  value: string;
+  broker: Broker;
+}
+
+// The tabs come from the catalog, not from the documents, so the server renders every tab and
+// a link to one works before, and whether or not, its document loads.
+export const CRATE_TABS: CrateTab[] = [CORE, ...BROKERS].map((broker) => ({
+  value: broker === CORE ? 'core' : broker.repo.replace(/^ruststream-/, ''),
+  broker,
+}));
 
 const REPO = 'https://github.com/powersemmi/';
 const PAGE = '/blob/main/docs/benchmarks.md';
@@ -541,4 +554,23 @@ export function codePanels(published: Loaded[], lang: string, labels: Labels): C
         })),
       };
     });
+}
+
+/** What one crate's tab shows: each chart with the rows of its table, or the pending line. */
+export interface TabContent {
+  comparison: {panel: ComparisonPanel; rows: ComparisonRow[]} | null;
+  code: {panel: CodePanel; rows: CodeRow[]} | null;
+  pending: string | null;
+}
+
+export function tabContent(entry: Loaded, lang: string, labels: Labels): TabContent {
+  const [comparison] = comparisonPanels([entry], lang, labels);
+  const [code] = codePanels([entry], lang, labels);
+  return {
+    comparison: comparison
+      ? {panel: comparison, rows: comparisonRows([entry], lang, labels)}
+      : null,
+    code: code ? {panel: code, rows: codeRows([entry], lang)} : null,
+    pending: comparison || code ? null : pendingLine([entry], labels),
+  };
 }

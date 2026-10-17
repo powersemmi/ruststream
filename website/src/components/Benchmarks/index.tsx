@@ -1,21 +1,23 @@
 import {useEffect, useState, type CSSProperties, type ReactNode} from 'react';
+import {useHistory, useLocation} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import TabItem from '@theme/TabItem';
+import Tabs from '@theme/Tabs';
+import {movedSection} from './anchors';
 import {
   BROKERS,
   CORE,
+  CRATE_TABS,
   SCHEMAS,
-  codePanels,
-  codeRows,
-  comparisonPanels,
-  comparisonRows,
-  coreFirst,
   detailsUrl,
-  pendingLine,
   resultsUrl,
+  tabContent,
   type Broker,
   type CodeBar,
   type CodePanel,
+  type CodeRow,
   type ComparisonPanel,
+  type ComparisonRow,
   type Labels,
   type Lane,
   type Loaded,
@@ -26,10 +28,10 @@ import {
 import styles from './styles.module.css';
 
 /*
- * The two summary charts of the Benchmarks page, each with the table it is drawn from. The
- * numbers are fetched in the reader's browser, not copied into this repository: a crate
- * remeasures on its own schedule, and its document on `main` shows as soon as it is merged.
- * GitHub serves those files to any origin.
+ * The results of the Benchmarks page: a tab per crate, each with its two charts and the tables
+ * they are drawn from. The numbers are fetched in the reader's browser, not copied into this
+ * repository: a crate remeasures on its own schedule, and its document on `main` shows as soon
+ * as it is merged. GitHub serves those files to any origin.
  */
 
 const TIMEOUT_MS = 8000;
@@ -168,8 +170,7 @@ function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Label
   return (
     <section className={styles.panel}>
       <p className={styles.panelHead}>
-        <strong>{panel.broker.name}</strong> - {panel.provenance}.{' '}
-        <a href={detailsUrl(panel.broker)}>{labels.details}</a>
+        {panel.provenance}. <a href={detailsUrl(panel.broker)}>{labels.details}</a>
       </p>
       <div className={`${styles.row} ${styles.axisRow}`}>
         <TickLabels ticks={panel.ticks} />
@@ -221,60 +222,50 @@ function ComparisonChart({panel, labels}: {panel: ComparisonPanel; labels: Label
   );
 }
 
-/** Throughput against each broker's raw client, as every broker crate measures it. */
-export function BenchmarkResults({labels}: {labels: Labels}): ReactNode {
-  const loaded = useDocuments();
-  const lang = useLang();
-  if (!loaded) {
-    return <p>{labels.loading}</p>;
-  }
-  // The core publishes no comparison, so this chart waits for the broker crates only.
-  const brokers = loaded.filter((entry) => entry.broker !== CORE);
-  const published = brokers.filter((entry) => entry.results?.scenarios?.length);
-  const pending = pendingLine(
-    brokers.filter((entry) => !published.includes(entry)),
-    labels,
-  );
+/** Throughput against the broker's raw client, as the broker crate measures it. */
+function Comparison({
+  panel,
+  rows,
+  labels,
+}: {
+  panel: ComparisonPanel;
+  rows: ComparisonRow[];
+  labels: Labels;
+}): ReactNode {
   return (
-    <>
-      {published.length > 0 && (
-        <figure className={styles.chart}>
-          <figcaption className={styles.caption}>{labels.axis}</figcaption>
-          <ComparisonLegend labels={labels} />
-          {comparisonPanels(published, lang, labels).map((panel) => (
-            <ComparisonChart key={panel.broker.repo} panel={panel} labels={labels} />
-          ))}
-          <details className={styles.table}>
-            <summary>{labels.table}</summary>
-            <table>
-              <thead>
-                <tr>
-                  <th>{labels.broker}</th>
-                  <th>{labels.scenario}</th>
-                  <th>{labels.raw}</th>
-                  <th>{labels.adapter}</th>
-                  <th>{labels.framework}</th>
-                  <th>{labels.overhead}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {comparisonRows(published, lang, labels).map((row, index) => (
-                  <tr key={index}>
-                    <td>{row.broker}</td>
-                    <td>{row.scenario}</td>
-                    <td>{row.raw}</td>
-                    <td>{row.adapter}</td>
-                    <td>{row.framework}</td>
-                    <td>{row.overhead}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        </figure>
-      )}
-      {pending && <p>{pending}</p>}
-    </>
+    <figure className={styles.chart}>
+      <figcaption className={styles.caption}>
+        <strong>{labels.comparison}</strong>
+        <span>{labels.axis}</span>
+      </figcaption>
+      <ComparisonLegend labels={labels} />
+      <ComparisonChart panel={panel} labels={labels} />
+      <details className={styles.table}>
+        <summary>{labels.table}</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>{labels.scenario}</th>
+              <th>{labels.raw}</th>
+              <th>{labels.adapter}</th>
+              <th>{labels.framework}</th>
+              <th>{labels.overhead}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.scenario}>
+                <td>{row.scenario}</td>
+                <td>{row.raw}</td>
+                <td>{row.adapter}</td>
+                <td>{row.framework}</td>
+                <td>{row.overhead}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </figure>
   );
 }
 
@@ -292,9 +283,7 @@ function Bar({bar}: {bar: CodeBar}): ReactNode {
 function CodeChart({panel, labels}: {panel: CodePanel; labels: Labels}): ReactNode {
   return (
     <section className={styles.codePanel}>
-      <p className={styles.panelHead}>
-        <strong>{panel.broker.name}</strong> - {panel.machine}
-      </p>
+      <p className={styles.panelHead}>{panel.machine}</p>
       <div className={`${styles.codeRow} ${styles.axisRow}`}>
         {[
           [labels.instructions, panel.instructions] as const,
@@ -333,28 +322,27 @@ function CodeChart({panel, labels}: {panel: CodePanel; labels: Labels}): ReactNo
   );
 }
 
-/** Instructions and allocations per message, as the core and every broker crate measure them. */
-export function BenchmarkCode({labels}: {labels: Labels}): ReactNode {
-  const loaded = useDocuments();
-  const lang = useLang();
-  if (!loaded) {
-    return <p>{labels.loading}</p>;
-  }
-  const published = coreFirst(loaded).filter((entry) => entry.results?.code?.length);
-  if (!published.length) {
-    return <p>{pendingLine([{broker: CORE, results: null}], labels)}</p>;
-  }
+/** Instructions and allocations per message, as the crate measures them. */
+function Code({
+  panel,
+  rows,
+  labels,
+}: {
+  panel: CodePanel;
+  rows: CodeRow[];
+  labels: Labels;
+}): ReactNode {
   return (
     <figure className={styles.chart}>
-      {codePanels(published, lang, labels).map((panel) => (
-        <CodeChart key={panel.broker.repo} panel={panel} labels={labels} />
-      ))}
+      <figcaption className={styles.caption}>
+        <strong>{labels.code}</strong>
+      </figcaption>
+      <CodeChart panel={panel} labels={labels} />
       <details className={styles.table}>
         <summary>{labels.table}</summary>
         <table>
           <thead>
             <tr>
-              <th>{labels.crate}</th>
               <th>{labels.scenario}</th>
               <th>{labels.instructions}</th>
               <th>{labels.allocations}</th>
@@ -362,9 +350,8 @@ export function BenchmarkCode({labels}: {labels: Labels}): ReactNode {
             </tr>
           </thead>
           <tbody>
-            {codeRows(published, lang).map((row, index) => (
-              <tr key={index}>
-                <td>{row.crate}</td>
+            {rows.map((row) => (
+              <tr key={row.scenario}>
                 <td>{row.scenario}</td>
                 <td>{row.instructions}</td>
                 <td>{row.allocations}</td>
@@ -376,4 +363,63 @@ export function BenchmarkCode({labels}: {labels: Labels}): ReactNode {
       </details>
     </figure>
   );
+}
+
+function CrateResults({
+  entry,
+  labels,
+  lang,
+}: {
+  entry: Loaded | undefined;
+  labels: Labels;
+  lang: string;
+}): ReactNode {
+  if (!entry) {
+    return <p>{labels.loading}</p>;
+  }
+  const {comparison, code, pending} = tabContent(entry, lang, labels);
+  return (
+    <>
+      {comparison && <Comparison {...comparison} labels={labels} />}
+      {code && <Code {...code} labels={labels} />}
+      {pending && <p>{pending}</p>}
+    </>
+  );
+}
+
+/**
+ * The results, a tab per crate with the core first. The selected tab is in the address
+ * (`?crate=nats`) and is remembered for the next visit; every tab is in the served page.
+ */
+export function BenchmarkTabs({labels}: {labels: Labels}): ReactNode {
+  const loaded = useDocuments();
+  const lang = useLang();
+  return (
+    <div className={styles.results}>
+      <Tabs queryString="crate" groupId="benchmark-crate" className={styles.tabs}>
+        {CRATE_TABS.map(({value, broker}) => (
+          <TabItem key={value} value={value} label={broker.name}>
+            <CrateResults
+              entry={loaded?.find((candidate) => candidate.broker === broker)}
+              labels={labels}
+              lang={lang}
+            />
+          </TabItem>
+        ))}
+      </Tabs>
+    </div>
+  );
+}
+
+/** Sends a link to a section that left the Benchmarks page on to the page that took it over. */
+export function MovedSections(): null {
+  const history = useHistory();
+  const {pathname, hash} = useLocation();
+  useEffect(() => {
+    const target = movedSection(hash);
+    if (target) {
+      history.replace(`${pathname.replace(/\/?$/, '/')}${target}`);
+    }
+  }, [history, pathname, hash]);
+  return null;
 }
