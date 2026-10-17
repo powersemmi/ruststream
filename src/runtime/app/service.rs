@@ -599,7 +599,43 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// [`DefaultCodec`](crate::codec::DefaultCodec) a codec-less scope decodes with.
     ///
     /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
-    /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`.
+    /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`. A
+    /// [`Router`](crate::runtime::Router) mounted in the scope can name a codec of its own with
+    /// [`with_codec`](crate::runtime::Router::with_codec), which wins for its handlers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json", feature = "cbor"))]
+    /// # mod demo {
+    /// use ruststream::codec::{CborCodec, JsonCodec};
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// # #[derive(Deserialize)]
+    /// # struct Order {
+    /// #     id: u64,
+    /// # }
+    /// # #[subscriber("orders")]
+    /// # async fn handle(order: &Order) -> HandlerOutcome {
+    /// #     HandlerOutcome::ack()
+    /// # }
+    /// # #[subscriber("audit")]
+    /// # async fn audit(order: &Order) -> HandlerOutcome {
+    /// #     HandlerOutcome::ack()
+    /// # }
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("codecs", "0.1.0"))
+    ///         // per scope: every handler mounted here decodes with CBOR
+    ///         .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
+    ///             b.include(handle);
+    ///             // per handler: this mounting decodes with JSON
+    ///             b.include_router(Router::new().with_codec(JsonCodec).include(audit));
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     #[must_use]
     pub fn with_broker_codec<R, C, F>(
         self,
