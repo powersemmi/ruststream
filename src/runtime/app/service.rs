@@ -240,6 +240,57 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// [`on_shutdown`](Self::on_shutdown), [`after_shutdown`](Self::after_shutdown)) was
     /// registered first: hooks close over the state type and cannot be carried across the state
     /// change. Register hooks after `on_startup`.
+    ///
+    /// # Examples
+    ///
+    /// A pool built at startup is the state the handlers read, and is closed at the end:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use std::sync::Arc;
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// # #[derive(Deserialize)]
+    /// # struct Order {
+    /// #     id: u64,
+    /// # }
+    /// /// A stand-in for a connection pool.
+    /// struct Database;
+    ///
+    /// impl Database {
+    ///     async fn connect(url: &str) -> Result<Self, std::io::Error> {
+    ///         let _ = url;
+    ///         Ok(Self)
+    ///     }
+    ///
+    ///     async fn close(&self) {}
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order, ctx: &mut Context<'_, (), Database>) -> HandlerOutcome {
+    ///     let _db: &Database = ctx.state();
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .on_startup(async move |()| Database::connect("postgres://localhost/orders").await)
+    ///         .after_shutdown(async move |db: Arc<Database>| {
+    ///             db.close().await;
+    ///             Ok::<_, std::io::Error>(())
+    ///         })
+    ///         .shutdown_timeout(Duration::from_secs(10))
+    ///         .with_broker(MemoryBroker::new(), |b| {
+    ///             b.include(handle);
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     #[must_use]
     pub fn on_startup<F, Fut, State2, E>(
         self,

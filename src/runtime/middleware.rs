@@ -75,6 +75,77 @@ pub trait Layer<H> {
 /// Implemented for [`Identity`], a [`Stack`] of blanket layers, and the bundled
 /// [`TracingLayer`](layers::TracingLayer). Implement it for a custom layer to let the app's global
 /// stack reach router handlers; a layer that only wraps specific handler types cannot be blanket.
+///
+/// # Examples
+///
+/// A logging layer that wraps every handler of the application:
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
+/// use serde::Deserialize;
+///
+/// #[derive(Clone)]
+/// struct LogLayer;
+///
+/// struct Logged<H>(H);
+///
+/// impl<H> Layer<H> for LogLayer {
+///     type Handler = Logged<H>;
+///
+///     fn layer(&self, inner: H) -> Logged<H> {
+///         Logged(inner)
+///     }
+/// }
+///
+/// impl<M, C, S, H> Handler<M, C, S> for Logged<H>
+/// where
+///     M: Send + Sync,
+///     C: Send,
+///     S: Send + Sync,
+///     H: Handler<M, C, S>,
+/// {
+///     async fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+///         println!("-> {}", ctx.name());
+///         let outcome = self.0.handle(msg, ctx).await;
+///         println!("<- {}", ctx.name());
+///         outcome
+///     }
+/// }
+///
+/// // The application stack wraps handlers whose concrete type the mount site hides.
+/// impl BlanketLayer for LogLayer {
+///     fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
+///     where
+///         M: Send + Sync + 'static,
+///         C: Send + 'static,
+///         S: Send + Sync + 'static,
+///         H: Handler<M, C, S> + 'static,
+///     {
+///         Logged(handler)
+///     }
+/// }
+///
+/// # #[derive(Deserialize)]
+/// # struct Order {
+/// #     id: u64,
+/// # }
+/// # #[subscriber("orders")]
+/// # async fn handle(order: &Order) -> HandlerOutcome {
+/// #     HandlerOutcome::ack()
+/// # }
+/// fn app() -> RustStream<Stack<LogLayer, Identity>> {
+///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+///         .layer(LogLayer)
+///         .with_broker(MemoryBroker::new(), |b| {
+///             b.include(handle);
+///         })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 pub trait BlanketLayer: Send + Sync {
     /// Wraps `handler`, returning the layered handler. `S` is the app's shared-state type, threaded
     /// so a blanket layer wraps a router handler without fixing its state type.

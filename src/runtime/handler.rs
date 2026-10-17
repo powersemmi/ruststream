@@ -101,6 +101,43 @@ impl HandlerResult {
 /// # }
 /// # fn main() {}
 /// ```
+///
+/// A batch handler settles each element with its own outcome:
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// /// One database round-trip per batch; entries that are not ready come back alone.
+/// #[subscriber("orders")]
+/// async fn reconcile(orders: &[Order]) -> Vec<HandlerOutcome> {
+///     orders
+///         .iter()
+///         .map(|order| {
+///             if order.id == 0 {
+///                 HandlerOutcome::retry()
+///             } else {
+///                 HandlerOutcome::ack()
+///             }
+///         })
+///         .collect()
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(reconcile.batch(nonzero!(64)));
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[must_use]
 pub struct HandlerOutcome {
     outcome: HandlerResult,
@@ -168,6 +205,42 @@ impl HandlerOutcome {
     /// How many times a message comes back, and where it goes when the attempts run out, is the
     /// registration's own declaration: see
     /// [`max_attempts`](super::RouterWith::max_attempts).
+    ///
+    /// # Examples
+    ///
+    /// A payment not settled yet comes back after five seconds, at most five times, then goes to a dead-letter destination:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use std::time::Duration;
+    ///
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Payment {
+    ///     settled: bool,
+    /// }
+    ///
+    /// #[subscriber("payments")]
+    /// async fn reconcile(payment: &Payment) -> HandlerOutcome {
+    ///     if !payment.settled {
+    ///         return HandlerOutcome::retry_after(Duration::from_secs(5));
+    ///     }
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(reconcile)
+    ///             .max_attempts(nonzero!(5u32))
+    ///             .dead_letter("payments.dead");
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub const fn retry_after(delay: Duration) -> Self {
         Self {
             outcome: HandlerResult::retry_after(delay),

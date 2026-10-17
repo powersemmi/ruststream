@@ -131,6 +131,45 @@ struct AfterHook {
 /// the first read of it, and the working copy is made on the first
 /// [`headers_mut`](Self::headers_mut) call. Outgoing messages do not inherit it: replies and manual
 /// publishes start from fresh headers, shaped by the publish pipeline.
+///
+/// # Examples
+///
+/// A handler reads its delivery through the context and takes extractors after it:
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Order {
+///     id: u64,
+/// }
+///
+/// #[derive(Clone)]
+/// struct Region(String);
+///
+/// #[derive(Clone, FromRef)]
+/// struct AppState {
+///     region: Region,
+/// }
+///
+/// #[subscriber("orders", workers(4))]
+/// async fn handle(
+///     order: &Order,
+///     ctx: &mut Context<'_, (), AppState>,
+///     State(region): State<Region>,
+/// ) -> HandlerOutcome {
+///     if ctx.headers().get("x-dry-run").is_some() {
+///         return HandlerOutcome::ack();
+///     }
+///     println!("order {} for {} on {}", order.id, region.0, ctx.name());
+///     HandlerOutcome::ack()
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 pub struct Context<'a, C = (), S = ()> {
     name: &'a str,
     source: &'a (dyn HeaderSource + Sync),
