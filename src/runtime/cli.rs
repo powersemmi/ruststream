@@ -6,12 +6,13 @@
 //!
 //! - `run` (the default) builds the Tokio runtime the attribute names (a multi-threaded one
 //!   unless `flavor = "current_thread"` or `worker_threads = n` says otherwise, see
-//!   [`AppRuntime`]) and runs the service until an interrupt, mirroring [`RustStream::run`](crate::runtime::RustStream::run). With the `logging`
-//!   feature enabled it first installs
-//!   the colored console logger ([`crate::logging`]), so a scaffolded service prints logs without
-//!   any setup; an app that installs its own subscriber keeps it.
-//! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for the
-//!   service and writes it to stdout or a file. Requires the crate to enable the `asyncapi` feature.
+//!   [`AppRuntime`]) and runs the service until an interrupt, mirroring
+//!   [`RustStream::run`](crate::runtime::RustStream::run). With the `logging` feature enabled it
+//!   first installs the colored console logger ([`crate::logging`]), so a scaffolded service
+//!   prints logs without any setup; an app that installs its own subscriber keeps it.
+//! - `asyncapi gen [-o <file>] [--yaml]` builds the [`AsyncAPI`](crate::asyncapi) document for
+//!   the service and writes it to stdout or a file. Requires the crate to enable the `asyncapi`
+//!   feature.
 //!
 //! The standalone `ruststream` CLI drives these by shelling out to `cargo run -- <command>`, so the
 //! same dispatch serves both `cargo run` and `ruststream run`.
