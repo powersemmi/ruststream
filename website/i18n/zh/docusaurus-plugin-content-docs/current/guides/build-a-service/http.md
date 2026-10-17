@@ -89,6 +89,7 @@ HTTP 部分和 outbox 都是普通函数，所以两个标签页中的代码相�
 服务器在 <kbd>Ctrl</kbd>+<kbd>C</kbd> 时停止，或者在 [`stopping`](api:ruststream::runtime::RunningApp::stopping) 报告商店自行停止时停止。
 HTTP 处理完所有请求之后，进程停止中继，中继的最后一轮在商店仍在运行时交出剩余的行。
 然后商店用 [`shutdown`](../../components/application/running/shutdown.md) 处理完剩余的工作。
+`MemoryBroker` 也把队列存放在进程内存中：最后一轮交出、但商店在排空前还没取走的订单会随进程一起丢失，而会保存消息的 Broker 会把它留到下一次启动。
 手写的 `main` 自己用 `ruststream::logging::init()` 安装日志记录器。
 
 <Tabs groupId="api">

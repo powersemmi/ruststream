@@ -89,6 +89,7 @@ The publisher is any [`Publisher`](../../components/subscribers/publishing/publi
 The server stops on <kbd>Ctrl</kbd>+<kbd>C</kbd>, or when [`stopping`](api:ruststream::runtime::RunningApp::stopping) reports that the shop stopped on its own.
 Once HTTP has drained, the process stops the relay, and its last round hands over the rows still pending while the shop runs.
 The shop then drains with [`shutdown`](../../components/application/running/shutdown.md).
+`MemoryBroker` keeps its queues in the process's memory as well: an order the last round hands over that the shop has not taken by the time it drains is lost with the process, and a broker that stores its messages keeps it for the next start.
 A hand-written `main` installs the logger itself with `ruststream::logging::init()`.
 
 <Tabs groupId="api">
