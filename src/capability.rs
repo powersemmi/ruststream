@@ -479,8 +479,10 @@ pub trait RequestReply: Publisher {
 /// Messages or publishers that carry a routing key for broker-side partitioning.
 ///
 /// Implemented by message types whose broker assigns partitions / shards based on a key
-/// (`Kafka`, `NATS` partitioned streams). The router uses this to preserve per-key ordering when
-/// dispatching to handlers.
+/// (`Kafka`, `NATS` partitioned streams), so code that holds the concrete type can read the key
+/// through a named capability. The runtime places no bound on this trait: keyed dispatch
+/// (`workers(n, by_key)`) reads [`IncomingMessage::partition_key`], which a delivery that
+/// implements this trait overrides to return the same key.
 ///
 /// A broker's prelude leaves this trait out of its manifest: its method shares a name with the
 /// defaulted [`IncomingMessage::partition_key`], which is the one the runtime reads, and a service
