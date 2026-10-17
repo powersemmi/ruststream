@@ -33,6 +33,8 @@ enum Settlement {
     Unsupported,
     /// The transport does settle, but the broker rejected this one.
     Rejected,
+    /// The broker's settlement panics: a fault of the transport, past the handler's guard.
+    Panics,
 }
 
 impl Settlement {
@@ -41,6 +43,7 @@ impl Settlement {
             Self::Accepted => Ok(()),
             Self::Unsupported => Err(AckError::Unsupported),
             Self::Rejected => Err(AckError::Timeout),
+            Self::Panics => panic!("the broker's settlement panicked"),
         }
     }
 }
@@ -679,27 +682,6 @@ async fn an_aborted_loop_takes_its_running_workers_down() {
     }
 }
 
-/// A handler whose `handle` panics before it returns a future for the delivery `boom`: the one
-/// panic the dispatch cannot catch, since it guards the future, not the call that makes it.
-struct PanickingHandler {
-    seen: mpsc::UnboundedSender<Bytes>,
-}
-
-impl Handler<PlainMessage, (), ()> for PanickingHandler {
-    fn handle(
-        &self,
-        msg: &PlainMessage,
-        _ctx: &mut Context<'_, (), ()>,
-    ) -> impl Future<Output = HandlerOutcome> + Send {
-        assert!(msg.payload != "boom", "the handler could not start");
-        let sent = self.seen.send(msg.payload.clone());
-        async move {
-            sent.expect("the test holds the receiver");
-            HandlerOutcome::ack()
-        }
-    }
-}
-
 /// Replays a script and then waits for more that never comes, as a live subscription does.
 struct HangingSubscriber {
     items: Vec<PlainMessage>,
@@ -722,13 +704,17 @@ async fn a_pool_whose_worker_died_stops_rather_than_shrinks() {
             payload: Bytes::from_static(payload.as_bytes()),
             headers: HeaderMap::new(),
             settled: Arc::new(AtomicU8::new(0)),
-            settlement: Settlement::Accepted,
+            settlement: if *payload == "boom" {
+                Settlement::Panics
+            } else {
+                Settlement::Accepted
+            },
         })
         .collect();
     let (seen, _arrived) = mpsc::unbounded_channel();
     let joined = spawn_dispatch_workers(
         HangingSubscriber { items },
-        Arc::new(PanickingHandler { seen }),
+        Arc::new(ReportingHandler { seen }),
         Shutdown::new(),
         Arc::from("orders"),
         Arc::new(()),

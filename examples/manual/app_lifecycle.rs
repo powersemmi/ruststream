@@ -33,6 +33,7 @@ mod hooks {
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;
+    use ruststream::testing::TestApp;
 
     use super::Order;
 
@@ -101,10 +102,10 @@ mod hooks {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_hooks_bracket_the_run() -> Result<(), Box<dyn Error>> {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let running = app(Arc::clone(&log)).start().await?;
+        let tb = TestApp::start(app(Arc::clone(&log))).await?;
         assert_eq!(*log.lock().map_err(|e| e.to_string())?, ["open", "ready"]);
 
-        running.shutdown().await?;
+        tb.shutdown().await?;
         assert_eq!(
             *log.lock().map_err(|e| e.to_string())?,
             ["open", "ready", "stopping", "closed"]

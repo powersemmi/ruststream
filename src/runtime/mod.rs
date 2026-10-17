@@ -47,10 +47,12 @@ pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
     RustStream, RustStreamError, Setup, Wired,
 };
+#[cfg(feature = "testing")]
+pub(crate) use app::{
+    ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown, TestParts,
+};
 #[doc(hidden)]
 pub use app::{IncludeMount, ScopeCommit};
-#[cfg(feature = "testing")]
-pub(crate) use app::{LifecycleHook, RegisteredBroker, Starter, TestParts};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
 // crates is internal machinery now: the modules stay, but only what the crate's own mounts
 // reach through this path is re-exported.

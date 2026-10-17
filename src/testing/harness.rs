@@ -6,7 +6,7 @@
 use std::any::{TypeId, type_name};
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant as WallClock};
 
 use thiserror::Error;
@@ -15,8 +15,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingDestination;
 use crate::runtime::{
-    App, ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    RegisteredBroker, RustStreamError, Shutdown, Starter, TestParts,
+    App, ConnectedEntry, ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
+    RegisteredBroker, RustStreamError, Shutdown, ShutdownHooks, Starter, Teardown, TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Broker, DefaultPublish, PublishPolicy, Publisher};
@@ -279,6 +279,9 @@ pub struct TestApp<State> {
     _state: PhantomData<Arc<State>>,
     shutdown: Shutdown,
     handles: Vec<JoinHandle<()>>,
+    // Why a lock nothing ever takes: the bound hooks are `Send` but not `Sync`, and the mutex
+    // keeps the harness `Sync` (tests share `&TestApp` across awaits); `shutdown` moves them out.
+    hooks: Mutex<ShutdownHooks>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
 }
@@ -456,6 +459,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             starters,
             state_init,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             shutdown_timeout,
             continuations,
             ..
@@ -471,6 +476,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             mode: Mode::InProcess,
             starters,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             continuations,
             shutdown_timeout,
             state: Arc::new(state),
@@ -617,6 +624,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             starters,
             state_init,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             shutdown_timeout,
             continuations,
             test_hooks,
@@ -635,6 +644,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             mode,
             starters,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             continuations,
             shutdown_timeout,
             state: Arc::new(state),
@@ -663,6 +674,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             brokers,
             starters,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             shutdown_timeout,
             continuations,
             ..
@@ -676,6 +689,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             mode: Mode::InProcess,
             starters,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             continuations,
             shutdown_timeout,
             state: Arc::new(state),
@@ -704,6 +719,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             mode,
             starters,
             after_startup,
+            on_shutdown,
+            after_shutdown,
             continuations,
             shutdown_timeout,
             state,
@@ -735,6 +752,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             shut_down(entries).await;
             return Err(err);
         }
+        let hooks = ShutdownHooks::bind(on_shutdown, after_shutdown, &state);
         Ok(Self {
             entries,
             mode,
@@ -742,6 +760,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             _state: PhantomData,
             shutdown,
             handles,
+            hooks: Mutex::new(hooks),
             continuations,
             shutdown_timeout,
         })
@@ -1073,21 +1092,37 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         );
     }
 
-    /// Shuts the harness down: stops the dispatch loops, drains in-flight handlers and post-settle
-    /// continuations (bounded by the app's shutdown timeout), shuts each broker down, and returns
-    /// [`run_result`](Self::run_result).
+    /// Shuts the harness down the way [`RunningApp::shutdown`](crate::runtime::RunningApp::shutdown)
+    /// shuts the service down: the `on_shutdown` hooks, then the dispatch loops, the in-flight
+    /// handlers and post-settle continuations (bounded by the app's shutdown timeout), the brokers
+    /// in reverse registration order, and the `after_shutdown` hooks last. A failing shutdown hook
+    /// is logged and the shutdown goes on.
     ///
     /// # Errors
     ///
-    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down.
+    /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down,
+    /// [`RustStreamError::Shutdown`] when a broker fails to shut down, and
+    /// [`RustStreamError::Join`] when a dispatch task panicked.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        stop_dispatch(&self.shutdown, self.handles, self.shutdown_timeout).await;
-        self.continuations.close();
-        self.continuations.wait().await;
-        shut_down(self.entries).await;
-        self.shutdown
-            .taken_failure()
-            .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
+        let teardown = Teardown {
+            shutdown: self.shutdown,
+            handles: self.handles,
+            hooks: self
+                .hooks
+                .into_inner()
+                .unwrap_or_else(PoisonError::into_inner),
+            brokers: self
+                .entries
+                .into_iter()
+                .map(|entry| ConnectedEntry {
+                    lifecycle: entry.lifecycle,
+                    label: entry.label,
+                })
+                .collect(),
+            shutdown_timeout: self.shutdown_timeout,
+            continuations: self.continuations,
+        };
+        teardown.run().await
     }
 }
 
@@ -1229,6 +1264,8 @@ struct SpawnArgs<State> {
     mode: Mode,
     starters: Vec<Starter<State>>,
     after_startup: Vec<LifecycleHook<State>>,
+    on_shutdown: Vec<LifecycleHook<State>>,
+    after_shutdown: Vec<LifecycleHook<State>>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
     state: Arc<State>,

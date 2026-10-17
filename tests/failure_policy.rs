@@ -12,7 +12,11 @@ mod common;
 use common::{Order, Wire};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::RustStreamError;
+use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use ruststream::runtime::{BlanketLayer, Handler, RustStreamError};
 use ruststream::testing::{Outcome, TestApp};
 use serde::{Deserialize, Serialize};
 
@@ -154,6 +158,82 @@ async fn panic_drop_keeps_the_subscriber_consuming() {
         result.is_ok(),
         "a dropped panic must not error the run: {result:?}"
     );
+}
+
+/// `panic = drop` with no panic in the body: the second delivery panics in the middleware below.
+#[subscriber("guarded", on_failure(panic = drop))]
+async fn guarded(_order: &Order) -> HandlerOutcome {
+    HandlerOutcome::ack()
+}
+
+/// A middleware that panics on its second call while building the future, before any of it is
+/// polled: a panic the policy has to catch as surely as one inside the handler's body.
+#[derive(Clone)]
+struct EagerGuard(Arc<AtomicU32>);
+
+struct EagerGuardHandler<H> {
+    inner: H,
+    calls: Arc<AtomicU32>,
+}
+
+impl<M, C, S, H> Handler<M, C, S> for EagerGuardHandler<H>
+where
+    M: Sync,
+    C: Send,
+    S: Send + Sync,
+    H: Handler<M, C, S>,
+{
+    fn handle(
+        &self,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> + Send {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(call != 1, "the guard refused the second delivery");
+        self.inner.handle(msg, ctx)
+    }
+}
+
+impl BlanketLayer for EagerGuard {
+    fn apply<M, C, S, H>(&self, handler: H) -> impl Handler<M, C, S> + 'static
+    where
+        M: Send + Sync + 'static,
+        C: Send + 'static,
+        S: Send + Sync + 'static,
+        H: Handler<M, C, S> + 'static,
+    {
+        EagerGuardHandler {
+            inner: handler,
+            calls: Arc::clone(&self.0),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_before_the_handler_future_exists_is_settled_by_the_policy() {
+    let app = RustStream::new(AppInfo::new("guarded", "0.1.0"))
+        .layer(EagerGuard(Arc::new(AtomicU32::new(0))))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(guarded);
+        });
+    let tb = TestApp::start(app).await.expect("startup failed");
+
+    for id in [7u32, 8, 9] {
+        tb.message(&Order { id })
+            .to("guarded")
+            .publish()
+            .await
+            .expect("publish");
+    }
+
+    assert_eq!(
+        tb.broker::<MemoryBroker>().subscriber("guarded").outcomes(),
+        [Outcome::Ack, Outcome::Panicked, Outcome::Ack],
+    );
+    tb.assert_running();
+    tb.shutdown()
+        .await
+        .expect("a dropped panic must not error the run");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
