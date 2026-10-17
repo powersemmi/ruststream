@@ -61,6 +61,7 @@ Broker 在进程内连接，每个订阅都运行在测试的运行时上。
 
 每秒只接受一笔收款的服务商会以 `Busy` 拒绝第二个请求。
 [`with_state`](api:ruststream::testing::TestApp::with_state) 用这个服务商启动应用，代替 `on_startup` 打开的那个。
+`service.rs` 中的 `test_broker` 返回测试构建商店所用的 Broker，所以测试只在一处写明 Broker。
 时钟从暂停状态开始，`advance(BACKOFF)` 让被拒绝的请求回来。
 
 <Tabs groupId="api">

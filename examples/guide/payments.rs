@@ -155,7 +155,7 @@ mod tests {
 
     use super::{BACKOFF, Gateway, Paid, PaymentRequest};
     use crate::orders::Line;
-    use crate::service::shop;
+    use crate::service::{shop, test_broker};
     use crate::state::Shop;
 
     fn request(order: u64, amount_cents: u64) -> PaymentRequest {
@@ -180,7 +180,7 @@ mod tests {
             gateway: Arc::new(Gateway::new(100_000, 1)),
             ..Shop::open().await?
         };
-        let tb = TestApp::with_state(shop(MemoryBroker::new()), |_| state).await?;
+        let tb = TestApp::with_state(shop(test_broker()), |_| state).await?;
         let broker = tb.broker::<MemoryBroker>();
         for order in [1, 2] {
             broker
@@ -212,7 +212,7 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let state = Shop::open().await?;
         state.gateway.go_offline();
-        let tb = TestApp::with_state(shop(MemoryBroker::new()), |_| state).await?;
+        let tb = TestApp::with_state(shop(test_broker()), |_| state).await?;
         let broker = tb.broker::<MemoryBroker>();
         broker
             .message(&request(3, 500))
@@ -231,7 +231,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_declined_card_is_dropped() -> Result<(), Box<dyn Error>> {
-        let tb = TestApp::start(shop(MemoryBroker::new())).await?;
+        let tb = TestApp::start(shop(test_broker())).await?;
         let broker = tb.broker::<MemoryBroker>();
         broker
             .message(&request(4, 1_000_000))

@@ -1,6 +1,6 @@
 ---
 title: Switching to a networked broker
-description: "The shop moves to NATS by changing the broker it is built on; the subscribers, the routers' settings and the tests stay as they are."
+description: "The shop moves to NATS by changing the broker it is built on; the subscribers and the routers' settings stay as they are."
 ---
 
 import Tabs from '@theme/Tabs';
@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # Switching to a networked broker
 
-The shop moves to NATS by changing the broker it is built on; the subscribers, the routers' settings and the tests stay as they are.
+The shop moves to NATS by changing the broker it is built on; the subscribers and the routers' settings stay as they are.
 
 The broker is chosen in one place: the value passed to `shop`.
 A broker crate brings the broker type and a prelude with the same names the in-memory prelude has, `Publish` among them.
@@ -79,8 +79,19 @@ The codecs, the slots, the attempt cap and the dead-letter topic stay as they ar
 ## The tests
 
 `NatsBroker` has an in-process mode, so `TestApp` runs the shop without a server, as it did on the in-memory broker.
-The tests change only the broker they ask for: `tb.broker::<NatsBroker>()`.
-All of them pass unchanged otherwise, the delay of chapter 8 and the AsyncAPI document included.
+The tests take their broker from `test_broker` in `service.rs`, which now builds a `NatsBroker`:
+
+{/* inline-rust: the tests' broker helper on NATS needs the ruststream-nats crate, which this repository does not depend on; this code was built and its tests run in process for this page */}
+```rust title="service.rs"
+#[cfg(test)]
+pub(crate) fn test_broker() -> NatsBroker {
+    NatsBroker::new("nats://localhost:4222")
+}
+```
+
+In process, the address is only parsed, never dialled.
+The tests ask for the broker by its type, `tb.broker::<NatsBroker>()`.
+Nothing else in them changes, the delay of chapter 8 and the AsyncAPI document included.
 
 ## What NATS changes
 

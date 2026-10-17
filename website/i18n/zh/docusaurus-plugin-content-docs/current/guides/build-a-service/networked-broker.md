@@ -1,6 +1,6 @@
 ---
 title: 切换到联网的 Broker
-description: "更换构建商店所用的 Broker，商店就迁移到 NATS；订阅者、路由器的设置和测试都保持不变。"
+description: "更换构建商店所用的 Broker，商店就迁移到 NATS；订阅者和路由器的设置都保持不变。"
 ---
 
 import Tabs from '@theme/Tabs';
@@ -8,7 +8,7 @@ import TabItem from '@theme/TabItem';
 
 # 切换到联网的 Broker
 
-更换构建商店所用的 Broker，商店就迁移到 NATS；订阅者、路由器的设置和测试都保持不变。
+更换构建商店所用的 Broker，商店就迁移到 NATS；订阅者和路由器的设置都保持不变。
 
 Broker 只在一个地方选定：传给 `shop` 的值。
 Broker crate 提供 Broker 类型和一个 prelude，其中的名字与内存 Broker 的 prelude 相同，`Publish` 也在其中。
@@ -79,8 +79,19 @@ fn main() -> ExitCode {
 ## 测试
 
 `NatsBroker` 有进程内模式，所以 `TestApp` 不需要服务器就能运行商店，与在内存 Broker 上一样。
-测试只改动它们请求的 Broker：`tb.broker::<NatsBroker>()`。
-除此之外，所有测试不加改动就能通过，包括第 8 章的延迟和 AsyncAPI 文档。
+测试从 `service.rs` 的 `test_broker` 取得 Broker，现在它构建的是 `NatsBroker`：
+
+{/* inline-rust: the tests' broker helper on NATS needs the ruststream-nats crate, which this repository does not depend on; this code was built and its tests run in process for this page */}
+```rust title="service.rs"
+#[cfg(test)]
+pub(crate) fn test_broker() -> NatsBroker {
+    NatsBroker::new("nats://localhost:4222")
+}
+```
+
+在进程内模式下，这个地址只会被解析，不会真正连接。
+测试按类型请求 Broker：`tb.broker::<NatsBroker>()`。
+除此之外测试没有任何改动，包括第 8 章的延迟和 AsyncAPI 文档。
 
 ## NATS 带来的变化
 

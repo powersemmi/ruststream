@@ -61,6 +61,7 @@ An order with no lines stops at `accept`: nothing is charged and no customer is 
 
 A provider that takes one charge a second refuses the second request with `Busy`.
 [`with_state`](api:ruststream::testing::TestApp::with_state) starts the app with that provider instead of the one `on_startup` opens.
+`test_broker` in `service.rs` returns the broker the tests build the shop on, so they name it in one place.
 The clock starts paused, and `advance(BACKOFF)` brings the refused request back.
 
 <Tabs groupId="api">

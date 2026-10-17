@@ -152,7 +152,7 @@ mod tests {
 
     use super::{Store, place_order, relay_pending};
     use crate::orders::{Line, Order};
-    use crate::service::shop;
+    use crate::service::{shop, test_broker};
 
     fn order(id: u64) -> Order {
         Order {
@@ -175,9 +175,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_order_taken_over_http_reaches_the_shop() -> Result<(), Box<dyn Error>> {
-        let broker = MemoryBroker::new();
-        let egress = broker.publisher();
+        let broker = test_broker().bindable();
+        let egress = broker.bind(Publish);
         let tb = TestApp::start(shop(broker)).await?;
+        let egress = egress.live().await?;
         let store = Arc::new(Mutex::new(Store::default()));
 
         assert_eq!(take(&store, 1).await, StatusCode::ACCEPTED);
@@ -199,9 +200,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_event_the_broker_refused_stays_in_the_outbox() -> Result<(), Box<dyn Error>> {
-        let broker = MemoryBroker::new();
-        let egress = broker.publisher();
+        let broker = test_broker().bindable();
+        let egress = broker.bind(Publish);
         let tb = TestApp::start(shop(broker)).await?;
+        let egress = egress.live().await?;
         tb.shutdown().await?;
         let store = Arc::new(Mutex::new(Store::default()));
 

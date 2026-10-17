@@ -139,11 +139,11 @@ mod tests {
     use ruststream::testing::TestApp;
 
     use super::Notice;
-    use crate::service::shop;
+    use crate::service::{shop, test_broker};
 
     #[tokio::test]
     async fn a_notice_to_a_mailbox_that_does_not_exist_is_dropped() -> Result<(), Box<dyn Error>> {
-        let tb = TestApp::start(shop(MemoryBroker::new())).await?;
+        let tb = TestApp::start(shop(test_broker())).await?;
         let notice = Notice {
             customer: "nobody".to_owned(),
             text: "We have your order 9.".to_owned(),

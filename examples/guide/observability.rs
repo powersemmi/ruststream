@@ -80,6 +80,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::SlowHandlers;
+    use crate::service::test_broker;
 
     #[derive(Debug, Deserialize, Serialize, Outgoing)]
     #[outgoing(name = "reports")]
@@ -131,7 +132,7 @@ mod tests {
 
         let app = RustStream::new(AppInfo::new("reports", "0.1.0"))
             .layer(SlowHandlers::over(Duration::from_millis(250)))
-            .with_broker(MemoryBroker::new(), |b| {
+            .with_broker(test_broker(), |b| {
                 b.include(render);
             });
         let tb = TestApp::start(app).await?;

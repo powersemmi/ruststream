@@ -29,6 +29,13 @@ pub(crate) fn shop(
 }
 // --8<-- [end:shop]
 
+/// The broker the tests build the shop on. It is the one place a test names the broker, so
+/// moving the shop to another broker changes this function and the tests follow.
+#[cfg(test)]
+pub(crate) fn test_broker() -> MemoryBroker {
+    MemoryBroker::new()
+}
+
 // --8<-- [start:info]
 /// What the AsyncAPI document says about the shop.
 fn info() -> AppInfo {
