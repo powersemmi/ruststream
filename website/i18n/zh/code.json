@@ -350,6 +350,14 @@
   "landing.quickstart.note": {
     "message": "{app} 会生成 {main}，其中包含运行时的全部样板代码：{run} 启动服务，{gen} 打印该服务的 AsyncAPI 文档。"
   },
+  "notFound.moved": {
+    "message": "文档调整结构时，这个页面可能已经移动。可以从{home}继续，或者用搜索查找。",
+    "description": "The 404 page's way back into the documentation"
+  },
+  "notFound.moved.home": {
+    "message": "文档首页",
+    "description": "The 404 page's way back into the documentation"
+  },
   "theme.IconExternalLink.ariaLabel": {
     "message": "（在新标签页中打开）",
     "description": "The ARIA label for the external link icon"

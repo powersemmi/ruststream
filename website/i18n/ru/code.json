@@ -350,6 +350,14 @@
   "landing.quickstart.note": {
     "message": "{app} генерирует {main} со всем шаблонным кодом рантайма: {run} запускает сервис, а {gen} печатает его AsyncAPI-документ."
   },
+  "notFound.moved": {
+    "message": "Страница могла переехать, когда документацию перестроили. Продолжите с {home} или найдите её поиском.",
+    "description": "The 404 page's way back into the documentation"
+  },
+  "notFound.moved.home": {
+    "message": "главной страницы документации",
+    "description": "The 404 page's way back into the documentation"
+  },
   "theme.DocSidebarItem.collapseCategoryAriaLabel": {
     "message": "Свернуть раздел «{label}»",
     "description": "The ARIA label to collapse the sidebar category"

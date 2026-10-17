@@ -17,7 +17,8 @@
 #
 # The script keeps versions.json in mike's format (a development version such as next above the
 # releases, releases newest first, an alias on one version only), the root redirect to latest/,
-# and the root copy of llms.txt. Committing and pushing the checkout is the caller's job.
+# the root sitemap index, the root 404 page and the root copy of llms.txt. Committing and pushing
+# the checkout is the caller's job.
 set -euo pipefail
 
 usage() {
@@ -76,6 +77,14 @@ if [ -z "$content" ] && [ -n "$source_ref" ]; then
   exit 2
 fi
 
+# The site verification tokens go into an HTML attribute of the root page.
+for token in "${DOCS_GOOGLE_SITE_VERIFICATION:-}" "${DOCS_BING_SITE_VERIFICATION:-}"; do
+  if ! [[ "$token" =~ ^[A-Za-z0-9_-]*$ ]]; then
+    echo "a site verification token holds letters, digits, '-' and '_' only, got '$token'" >&2
+    exit 2
+  fi
+done
+
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 site="$(cd "${GH_PAGES_DIR:-$repo/gh-pages}" && pwd)"
 website="$repo/website"
@@ -125,29 +134,58 @@ const updated = [...others, {version, title, aliases: [...aliases]}].sort((a, b)
 fs.writeFileSync(file, `${JSON.stringify(updated, null, 2)}\n`);
 NODE
 
-if [ "$alias_name" = "latest" ]; then
-  cat >"$site/index.html" <<'HTML'
+# The root files lead to latest/ and are rewritten by every deploy, so a change to them (a
+# verification tag) reaches the site with the next push to main rather than the next release.
+if [ -d "$site/latest" ]; then
+  # The site's address is a page of its own: search consoles verify ownership on it, so the
+  # verification tags (DOCS_GOOGLE_SITE_VERIFICATION, DOCS_BING_SITE_VERIFICATION, empty by
+  # default) go here. An instant refresh is a permanent redirect to search engines; the script
+  # keeps the query and the anchor of the address a reader followed.
+  verification=""
+  if [ -n "${DOCS_GOOGLE_SITE_VERIFICATION:-}" ]; then
+    verification+="  <meta name=\"google-site-verification\" content=\"${DOCS_GOOGLE_SITE_VERIFICATION}\">"$'\n'
+  fi
+  if [ -n "${DOCS_BING_SITE_VERIFICATION:-}" ]; then
+    verification+="  <meta name=\"msvalidate.01\" content=\"${DOCS_BING_SITE_VERIFICATION}\">"$'\n'
+  fi
+  cat >"$site/index.html" <<HTML
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Redirecting</title>
-  <noscript>
-    <meta http-equiv="refresh" content="1; url=latest/" />
-  </noscript>
-  <script>
+  <title>RustStream documentation</title>
+  <meta http-equiv="refresh" content="0; url=latest/">
+  <link rel="canonical" href="https://powersemmi.github.io/ruststream/latest/">
+${verification}  <script>
     window.location.replace(
       "latest/" + window.location.search + window.location.hash
     );
   </script>
 </head>
 <body>
-  Redirecting to <a href="latest/">latest/</a>...
+  <a href="latest/">RustStream documentation</a>
 </body>
 </html>
 HTML
+  # The sitemaps of the indexed copy, one per language, behind one address that robots.txt names.
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    for sitemap in "$site"/latest/sitemap.xml "$site"/latest/*/sitemap.xml; do
+      [ -f "$sitemap" ] || continue
+      echo "  <sitemap><loc>https://powersemmi.github.io/ruststream/${sitemap#"$site"/}</loc></sitemap>"
+    done
+    echo '</sitemapindex>'
+  } >"$site/sitemap.xml"
+  # GitHub Pages serves the 404 page from the root of the site for any missing address; the
+  # latest build's own page brings the reader back into the documentation.
+  if [ -f "$site/latest/404.html" ]; then
+    cp "$site/latest/404.html" "$site/404.html"
+  fi
   # The llms.txt convention looks for the file at the site root.
-  cp "$site/latest/llms.txt" "$site/llms.txt"
+  if [ -f "$site/latest/llms.txt" ]; then
+    cp "$site/latest/llms.txt" "$site/llms.txt"
+  fi
 fi
 touch "$site/.nojekyll"
 echo "Deployed $version${alias_name:+ as $alias_name} into $site"
