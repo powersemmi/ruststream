@@ -106,10 +106,12 @@ jobs:
           ARCHIVE_VERSION: ${{ inputs.version }}
           ARCHIVE_REF: ${{ inputs.archive_ref }}
           # Ownership tokens of Google Search Console and Bing Webmaster Tools, written into the
-          # site's root page and every page of each build; repository variables, empty until the
+          # site's root page and every page of each build, and the name of the verification file
+          # Google fetches from the root; repository variables, empty until the
           # maintainer sets them.
           DOCS_GOOGLE_SITE_VERIFICATION: ${{ vars.DOCS_GOOGLE_SITE_VERIFICATION }}
           DOCS_BING_SITE_VERIFICATION: ${{ vars.DOCS_BING_SITE_VERIFICATION }}
+          DOCS_GOOGLE_SITE_VERIFICATION_FILE: ${{ vars.DOCS_GOOGLE_SITE_VERIFICATION_FILE }}
         run: |
           git fetch origin gh-pages
           git worktree add -B gh-pages gh-pages origin/gh-pages

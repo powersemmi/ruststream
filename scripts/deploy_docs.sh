@@ -84,8 +84,9 @@ if [ -z "$content" ] && [ -n "$source_ref" ]; then
   exit 2
 fi
 
-# The site verification tokens go into an HTML attribute of the root page.
-for token in "${DOCS_GOOGLE_SITE_VERIFICATION:-}" "${DOCS_BING_SITE_VERIFICATION:-}"; do
+# The site verification tokens go into an HTML attribute of the root page and a file name.
+for token in "${DOCS_GOOGLE_SITE_VERIFICATION:-}" "${DOCS_BING_SITE_VERIFICATION:-}" \
+  "${DOCS_GOOGLE_SITE_VERIFICATION_FILE:-}"; do
   if ! [[ "$token" =~ ^[A-Za-z0-9_-]*$ ]]; then
     echo "a site verification token holds letters, digits, '-' and '_' only, got '$token'" >&2
     exit 2
@@ -222,6 +223,12 @@ ${verification}  <script>
 </body>
 </html>
 HTML
+  # Google's file method: the console names a file it fetches from the site's address, which no
+  # redirect stands in front of (DOCS_GOOGLE_SITE_VERIFICATION_FILE, the name without `.html`).
+  if [ -n "${DOCS_GOOGLE_SITE_VERIFICATION_FILE:-}" ]; then
+    name="${DOCS_GOOGLE_SITE_VERIFICATION_FILE}.html"
+    echo "google-site-verification: $name" >"$site/$name"
+  fi
   # The sitemaps of the indexed copy, one per language, behind one address that robots.txt names.
   {
     echo '<?xml version="1.0" encoding="UTF-8"?>'
