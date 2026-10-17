@@ -1,14 +1,16 @@
 //! The landing-page example written without the `macros` feature: the handler is a named type
-//! with an `impl Handle`, mounted with the `subscriber` constructor, and `main` is hand-written.
+//! with an `impl Handle`, mounted with the `subscriber` constructor, and `main` is the one
+//! `#[ruststream::app]` would generate.
 //!
 //! ```text
-//! cargo run --example manual_quickstart --no-default-features --features memory,json
+//! cargo run --example manual_quickstart --no-default-features --features memory,json,logging -- run
 //! ```
 
-use std::error::Error;
 use std::future::{Future, ready};
+use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
+use ruststream::runtime::cli::run_main;
 use serde::Deserialize;
 
 // --8<-- [start:handler]
@@ -29,7 +31,7 @@ impl Handle<Order> for Receive {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("got order {}", order.id);
+        tracing::info!(order.id, "got order");
         ready(Ok(()))
     }
 }
@@ -42,9 +44,7 @@ fn app() -> RustStream {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+fn main() -> ExitCode {
+    run_main(app)
 }
 // --8<-- [end:app]

@@ -21,8 +21,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi", "logging"] }
 serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
 ```
 
 ## 2. Опишите сообщение и обработчик
@@ -82,6 +83,9 @@ serde = { version = "1", features = ["derive"] }
 ```bash
 cargo run -- run
 ```
+
+Фича `logging` выводит журнал сервиса в терминал: сначала строки запуска, затем по строке на
+каждый заказ, который обработчик записывает через `tracing::info!`.
 
 :::tip[Кодек по умолчанию]
 
@@ -222,7 +226,7 @@ cargo run -- asyncapi gen
 [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial),
 который CI собирает при каждом изменении. `first_app.rs` и `reply_app.rs` - это сервис после
 шагов 3 и 4, а `main.rs` - готовый. Запустить его можно командой
-`cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+`cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run`.
 
 :::
 

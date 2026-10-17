@@ -37,7 +37,8 @@ cargo run -- run                # or: ruststream run, with the CLI installed
 ```
 
 `cargo run -- run` starts a tokio runtime. The service runs until you press <kbd>Ctrl</kbd>+<kbd>C</kbd>. It needs
-no external broker.
+no external broker. The template turns on the `logging` feature, so the service prints its log
+to the terminal, and the handlers log through `tracing`.
 
 ## Generate the AsyncAPI document
 

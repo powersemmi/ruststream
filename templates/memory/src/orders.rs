@@ -44,6 +44,6 @@ pub async fn confirm(order: &Order) -> Confirmation {
 /// Logs cancellations, bound by plain name. No reply, so it returns a plain `HandlerOutcome`.
 #[subscriber("cancellations")]
 pub async fn on_cancel(order: &Order) -> HandlerOutcome {
-    println!("order {} ({}) cancelled", order.id, order.item);
+    tracing::info!(order.id, order.item, "order cancelled");
     HandlerOutcome::ack()
 }

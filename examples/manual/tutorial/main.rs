@@ -2,16 +2,17 @@
 //! [`orders`], the same router in [`routes`], and a hand-written entry point here.
 //!
 //! ```text
-//! cargo run --example manual_tutorial --no-default-features --features memory,json,asyncapi
+//! cargo run --example manual_tutorial --no-default-features --features memory,json,asyncapi,logging -- run
 //! ```
 
 // --8<-- [start:main]
 mod orders;
 mod routes;
 
-use std::error::Error;
+use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
+use ruststream::runtime::cli::run_main;
 
 fn app() -> RustStream {
     RustStream::new(AppInfo::new("orders-service", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
@@ -20,11 +21,8 @@ fn app() -> RustStream {
     })
 }
 
-// What `#[ruststream::app]` wraps around the builder: the runtime entry point. Its CLI
-// (`run`, `asyncapi gen`) is what a hand-written `main` gives up.
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+// What `#[ruststream::app]` writes around the builder: the `run` and `asyncapi gen` commands.
+fn main() -> ExitCode {
+    run_main(app)
 }
 // --8<-- [end:main]

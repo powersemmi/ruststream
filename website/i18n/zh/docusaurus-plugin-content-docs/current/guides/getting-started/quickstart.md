@@ -36,7 +36,8 @@ cargo run -- run                # 或者：装了 CLI 之后用 ruststream run
 ```
 
 `cargo run -- run` 会启动 tokio 运行时。服务会一直运行，直到你按下
-<kbd>Ctrl</kbd>+<kbd>C</kbd>。运行服务不需要外部 Broker。
+<kbd>Ctrl</kbd>+<kbd>C</kbd>。运行服务不需要外部 Broker。模板打开了 `logging` feature，
+所以服务会把日志打印到终端，处理器则通过 `tracing` 写日志。
 
 ## 生成 AsyncAPI 文档
 

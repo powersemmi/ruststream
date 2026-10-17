@@ -27,7 +27,7 @@ impl Handle<Order> for Receive {
         _outs: &(),
         _ctx: &mut Context<'_>,
     ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        println!("order {} x{}", order.id, order.quantity);
+        tracing::info!(order.id, order.quantity, "order received");
         ready(Ok(()))
     }
 }

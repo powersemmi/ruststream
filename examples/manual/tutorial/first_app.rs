@@ -2,7 +2,7 @@
 //! on the broker scope, before the reply of step 4 and the router of step 5 arrive.
 //!
 //! ```text
-//! cargo run --example manual_tutorial_first_app --no-default-features --features memory,json,asyncapi
+//! cargo run --example manual_tutorial_first_app --no-default-features --features memory,json,asyncapi,logging -- run
 //! ```
 
 // Step 3 mounts `Receive` alone; the module's reply types stay unused until step 4.
@@ -10,9 +10,10 @@
 // --8<-- [start:app]
 mod orders;
 
-use std::error::Error;
+use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
+use ruststream::runtime::cli::run_main;
 
 use crate::orders::Receive;
 
@@ -22,9 +23,7 @@ fn app() -> RustStream {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+fn main() -> ExitCode {
+    run_main(app)
 }
 // --8<-- [end:app]
