@@ -189,21 +189,6 @@ required-features = ["testing", "memory", "msgpack"]
 test = true
 
 [[example]]
-name = "manual_middleware"
-path = "examples/manual/middleware.rs"
-required-features = ["memory", "json"]
-
-[[example]]
-name = "manual_middleware_app_scope"
-path = "examples/manual/middleware_app_scope.rs"
-required-features = ["memory", "json"]
-
-[[example]]
-name = "manual_middleware_router_scope"
-path = "examples/manual/middleware_router_scope.rs"
-required-features = ["memory", "json"]
-
-[[example]]
 name = "manual_context"
 path = "examples/manual/context.rs"
 required-features = ["testing", "memory", "json"]
@@ -371,18 +356,6 @@ test = true
 name = "custom_codec"
 required-features = ["testing", "macros", "memory", "msgpack"]
 test = true
-
-[[example]]
-name = "middleware"
-required-features = ["macros", "memory", "json"]
-
-[[example]]
-name = "middleware_app_scope"
-required-features = ["macros", "memory", "json"]
-
-[[example]]
-name = "middleware_router_scope"
-required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "workers"
