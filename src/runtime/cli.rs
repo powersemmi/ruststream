@@ -162,6 +162,50 @@ enum Command {
 /// }
 /// # }
 /// ```
+///
+/// The attribute form, with a subscription that computes on eight threads of its own and reaches
+/// the current-thread runtime only through [`MainRuntime`](crate::runtime::MainRuntime):
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use serde::Deserialize;
+///
+/// #[derive(Deserialize)]
+/// struct Resize {
+///     id: u64,
+/// }
+///
+/// fn render(_job: &Resize) {}
+///
+/// async fn notify(_id: u64) {}
+///
+/// async fn lookup(id: u64) -> u64 {
+///     id
+/// }
+///
+/// #[subscriber("images.resize", threads(8))]
+/// async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> HandlerOutcome {
+///     // Runs on one of the subscription's eight threads, from the first poll to the end.
+///     render(job);
+///     // The explicit ways to the app's runtime; what they send must be `Send`.
+///     main.spawn(notify(job.id));
+///     match main.run(lookup(job.id)).await {
+///         Ok(_) => HandlerOutcome::ack(),
+///         Err(_) => HandlerOutcome::retry(),
+///     }
+/// }
+///
+/// #[ruststream::app(flavor = "current_thread")]
+/// fn app() -> impl App {
+///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(resize);
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum AppRuntime {
