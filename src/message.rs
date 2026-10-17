@@ -827,7 +827,6 @@ mod tests {
         // (the in-memory and broker impls override them). It is the one place the defaults are
         // visible, because every broker in the workspace overrides them; the "Implementing it"
         // section of the `IncomingMessage` docs states what each default answers.
-        // --8<-- [start:incoming_defaults]
         struct Stub {
             payload: Vec<u8>,
             headers: HeaderMap,
@@ -867,6 +866,5 @@ mod tests {
             stub.nack_after(Duration::from_secs(1)).await,
             Err(AckError::Unsupported)
         ));
-        // --8<-- [end:incoming_defaults]
     }
 }

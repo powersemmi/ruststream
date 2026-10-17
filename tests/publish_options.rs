@@ -28,7 +28,6 @@ use ruststream::runtime::{
 use ruststream::testing::TestApp;
 use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
 
-// --8<-- [start:broker_side]
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
 /// the policy fixed. `Debug` and `PartialEq` are not part of the contract, they are what a test
 /// naming this type needs to assert on it.
@@ -150,7 +149,6 @@ where
         self
     }
 }
-// --8<-- [end:broker_side]
 
 #[derive(OutSlot)]
 #[publishes(Order)]

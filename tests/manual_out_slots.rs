@@ -182,7 +182,6 @@ async fn slots_bind_by_marker_and_capture_per_slot() {
         .assert_called_once();
 }
 
-// --8<-- [start:extension]
 // A paired value that is NOT a publisher: a lane router in the shape of a broker's
 // per-partition producer cache. The capability is broker-defined; the core knows nothing
 // about it.
@@ -266,7 +265,6 @@ where
         }
     }
 }
-// --8<-- [end:extension]
 
 /// A broker-defined capability rides the slot machinery end to end; its publishes bypass the
 /// slot attribution (they leave through the unwrapped live value) and land in the broker's

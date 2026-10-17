@@ -778,7 +778,6 @@ impl<Log> fmt::Debug for MemoryBroker<Log> {
     }
 }
 
-// --8<-- [start:ladder]
 impl<Log: LogMode> Broker for MemoryBroker<Log> {
     type Error = MemoryError;
     type Connected = ConnectedMemoryBroker<Log>;
@@ -897,8 +896,6 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
     }
 }
 
-// --8<-- [end:ladder]
-
 /// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
 ///
 /// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`], filling the same
@@ -947,7 +944,6 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 #[must_use]
 pub struct MemoryPublish;
 
-// --8<-- [start:publish_policy]
 impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
     type Live = MemoryPublisher;
 
@@ -962,8 +958,6 @@ impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
 impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
     type Policy = MemoryPublish;
 }
-
-// --8<-- [end:publish_policy]
 
 /// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
 ///
@@ -1065,7 +1059,6 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
     }
 }
 
-// --8<-- [start:testable]
 // The bus is in-process by nature, so the transition the harness connects through is the ordinary
 // `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
@@ -1137,9 +1130,7 @@ impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log>
 crate::register_testable_broker!(MemoryBroker<Discarding>);
 #[cfg(feature = "testing")]
 crate::register_testable_broker!(MemoryBroker<Retaining>);
-// --8<-- [end:testable]
 
-// --8<-- [start:subscribe]
 impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     type Subscriber = MemorySubscriber<Log>;
     // One subject is both ends of the bus here, so a publish under the name a subscription reads
@@ -1169,8 +1160,6 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     }
 }
 
-// --8<-- [end:subscribe]
-
 /// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
 ///
 /// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
@@ -1195,16 +1184,12 @@ impl MemorySource {
 
 // The in-memory subscription needs nothing beyond a name, so it offers the name-only
 // constructor the `#[subscriber(MemorySource)]` form builds through.
-// --8<-- [start:from_name]
 impl FromName for MemorySource {
     fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
         Self::new(name.into().into_owned())
     }
 }
 
-// --8<-- [end:from_name]
-
-// --8<-- [start:source]
 impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
     type Subscriber = MemorySubscriber<Log>;
     // The bus moves nothing on its own, and one subject is both ends of it, so a copy goes back
@@ -1232,7 +1217,6 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
     }
 }
-// --8<-- [end:source]
 
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.

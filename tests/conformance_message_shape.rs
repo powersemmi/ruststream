@@ -11,7 +11,6 @@ use ruststream::conformance::message_shape::{self, OptionCases};
 use ruststream::memory::ConnectedMemoryBroker;
 use ruststream::memory::{MemoryBroker, MemoryPublish, MemorySource, PARTITION_KEY_HEADER};
 
-// --8<-- [start:keyed_order]
 // `make_source` / `make_publisher` must stay closures: their bounds are higher-ranked, so a bare
 // method path, which binds one concrete lifetime, would not type-check.
 #[allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
@@ -30,7 +29,6 @@ async fn memory_broker_keeps_keys_and_their_order() {
     )
     .await;
 }
-// --8<-- [end:keyed_order]
 
 // --8<-- [start:publish_options]
 /// The in-memory broker has no per-message settings, so its cases are a single unit override. A

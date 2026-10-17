@@ -348,7 +348,6 @@ async fn the_raw_owned_transaction_settles_outside_the_slot() {
 // every slot is bound, and the error names the missing slot (`MissingSlot<Audit>`). Covered by
 // the trybuild case `tests/ui/subscriber_out_unbound_slot.rs`.
 
-// --8<-- [start:extension]
 // A paired value that is NOT a publisher: a lane router in the shape of a broker's
 // per-partition producer cache. The capability is broker-defined; the core knows nothing
 // about it.
@@ -413,7 +412,6 @@ async fn route_shard(event: &Event, Out(lanes): Out<impl ShardLanes>) -> Handler
         HandlerOutcome::retry()
     }
 }
-// --8<-- [end:extension]
 
 /// A broker-defined capability rides the slot machinery end to end; its publishes bypass the
 /// slot attribution (they leave through the unwrapped inner value) and land in the broker's

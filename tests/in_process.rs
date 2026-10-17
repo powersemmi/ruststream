@@ -52,7 +52,6 @@ impl Broker for Dialling {
     }
 }
 
-// --8<-- [start:in_process]
 impl InProcess for Dialling {
     async fn connect_in_process(self) -> Result<Self::Connected, Self::Error> {
         Ok(self
@@ -64,7 +63,6 @@ impl InProcess for Dialling {
 }
 
 register_testable_broker!(Dialling);
-// --8<-- [end:in_process]
 
 #[derive(Debug, Outgoing, Serialize, Deserialize, PartialEq)]
 #[outgoing(name = "orders")]
@@ -106,7 +104,6 @@ async fn the_harness_runs_the_production_app_through_the_in_process_transition()
     tb.shutdown().await.expect("shutdown");
 }
 
-// --8<-- [start:suites]
 // The routing suite connects the production broker in process.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_routing_suite_connects_the_broker_in_process() {
@@ -125,7 +122,6 @@ async fn the_ladder_suite_runs_in_process_through_the_adapter() {
     )
     .await;
 }
-// --8<-- [end:suites]
 
 /// A broker whose in-process transition refuses its configuration.
 #[derive(Debug, Default)]

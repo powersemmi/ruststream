@@ -30,7 +30,6 @@ use crate::{
 // The factories stay closures throughout: their bounds are higher-ranked, which a method path
 // does not satisfy.
 
-// --8<-- [start:redelivery_address]
 #[allow(clippy::redundant_closure_for_method_calls)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_memory_descriptor_passes() {
@@ -52,7 +51,6 @@ async fn the_memory_bare_name_passes() {
     )
     .await;
 }
-// --8<-- [end:redelivery_address]
 
 /// Two subscriptions sharing their deliveries are a group, and a copy reaching one of them is
 /// what the check expects of one.
