@@ -16,7 +16,8 @@ import {readBuildVersion, siteRoot} from './versioning';
 // The `build` script sets `WEBPACK_URL_LOADER_LIMIT=0`. Docusaurus otherwise inlines every asset
 // under 10 kB into the file that imports it, and the fonts' `woff` fallbacks, which no current
 // browser downloads, would then fill the render-blocking stylesheet with base64. The variable is
-// read when Docusaurus loads, before this file, so it cannot be set here.
+// read when the Docusaurus command starts, before this file, so it cannot be set here; `cross-env`
+// sets it in a way that works in every shell, `cmd.exe` included.
 
 // Every minor line is built on its own and served from `/ruststream/<version>/`, with a second
 // build of the newest line under `/ruststream/latest/` and a build of `main` under

@@ -5,7 +5,7 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "WEBPACK_URL_LOADER_LIMIT=0 docusaurus build",
+    "build": "cross-env WEBPACK_URL_LOADER_LIMIT=0 docusaurus build",
     "swizzle": "docusaurus swizzle",
     "clear": "docusaurus clear",
     "serve": "docusaurus serve",
@@ -38,6 +38,7 @@
     "@docusaurus/utils": "3.10.2",
     "@types/mdast": "4.0.4",
     "@types/react": "19.3.0",
+    "cross-env": "10.1.0",
     "remark-parse": "11.0.0",
     "typescript": "6.0.3",
     "unified": "11.0.5",
