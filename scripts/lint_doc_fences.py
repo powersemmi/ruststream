@@ -22,7 +22,8 @@ why on the line above the fence:
     ```rust reference="examples/seek.rs#retaining"
 
 An example region shown outside the Testing pages is what a service writes, so it holds no test (the
-tests that prove it sit in the same file, after the region's end marker) and opens with an item
+tests that prove it sit in the same file, after the region's end marker), no `timeout` or `sleep`
+and no stream polled by hand, and opens with an item
 or an attribute, so the reader sees the signature of the code it shows, never a statement taken
 out of the middle of a function. An inline fence outside the Testing pages holds no test either. A region on a Testing page is
 the test that calls the documented function, without the handler and `fn app` above it.
@@ -45,6 +46,8 @@ SNIPPET = re.compile(r'(?:^|\s)reference="([^"#]+)')
 REGION = re.compile(r'(?:^|\s)reference="[^"#]+#([^"]+)"')
 MARKER = re.compile(r"^\s*// --8<-- \[(start|end):([^\]]+)\]\s*$")
 TEST_ATTR = re.compile(r"^\s*#\[(?:tokio::)?test\b")
+# Waiting and polling a stream by hand are test machinery; a service shows neither.
+TEST_MACHINERY = re.compile(r"\b(?:timeout|sleep)\s*\(|\.next\(\)\s*\.await")
 SERVICE = re.compile(r"^\s*(?:#\[subscriber\b|(?:pub(?:\([^)]*\))?\s+)?fn app\b)")
 COMMENT = re.compile(r"^\s*//")
 ITEM = re.compile(
@@ -120,6 +123,11 @@ def service_region_errors(path: Path, n: int, target: str, region: str) -> list[
         errors.append(
             f"{where} holds a test - a page outside Testing shows the service only; move the"
             " test after the region's end marker"
+        )
+    if any(TEST_MACHINERY.search(line) for line in lines if not COMMENT.match(line)):
+        errors.append(
+            f"{where} waits or polls a stream by hand (`timeout`, `sleep`, `.next().await`) -"
+            " that is test machinery; keep it after the region's end marker"
         )
     first = next((line for line in lines if line.strip() and not COMMENT.match(line)), None)
     if first is not None and not ITEM.match(first):
