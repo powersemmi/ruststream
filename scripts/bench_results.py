@@ -152,7 +152,7 @@ SCENARIOS = [
         "request_reply/service",
     ),
     Scenario(
-        "a delivery that asks to be redelivered, and the copy",
+        "a delivery that asks to be redelivered, natively by the broker",
         "retry_copy/service",
         gated=False,
         note="cold path: measured and reported, never gated",

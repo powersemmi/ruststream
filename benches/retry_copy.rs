@@ -8,9 +8,10 @@
     clippy::must_use_candidate,
     clippy::needless_pass_by_value
 )]
-//! The cold path: a delivery that answers `retry_after` and the copy that comes back. Measured
-//! and reported, never gated - a retry is not on the steady-state path, and its cost is dominated
-//! by the republish the fallback makes.
+//! The cold path: a delivery that answers `retry_after(Duration::ZERO)` and comes back. The
+//! in-memory broker redelivers natively (`nack_after`), so this measures the native redelivery,
+//! not the runtime's copy published through the retry slot. Measured and reported, never gated: a
+//! retry is not on the steady-state path.
 
 mod common;
 
@@ -47,7 +48,7 @@ impl Retrying {
 ///
 /// Reading the retry count off the delivery would be the natural way to write this, and it does
 /// not work here: the in-memory broker redelivers natively (`nack_after`) and counts nothing, so
-/// neither the framework's retry header nor a `max_attempts` cap ever sees the copy.
+/// neither the framework's retry header nor a `max_attempts` cap ever sees the redelivery.
 #[subscriber("orders")]
 async fn consume(order: &Order, ctx: &mut Context<'_, (), Retrying>) -> HandlerOutcome {
     black_box((order.id, order.quantity));
@@ -59,8 +60,8 @@ async fn consume(order: &Order, ctx: &mut Context<'_, (), Retrying>) -> HandlerO
     HandlerOutcome::ack()
 }
 
-/// Every published message is handled twice: once as it arrives, once as the copy its retry
-/// brought back, so the latch waits for twice the published count.
+/// Every published message is handled twice: once as it arrives, once as the redelivery its
+/// retry asked for, so the latch waits for twice the published count.
 fn app(messages: usize) -> Pending {
     let runtime = common::runtime();
     let latch = Latch::default();
@@ -75,8 +76,8 @@ fn app(messages: usize) -> Pending {
             b.include(consume);
         });
     let mut pending = common::built(runtime, latch, broker, app, messages, 0);
-    // Every published message is handled twice: once as it arrives, once as the copy its retry
-    // brought back.
+    // Every published message is handled twice: once as it arrives, once as the redelivery its
+    // retry asked for.
     pending.expected = messages * 2;
     pending
 }
