@@ -18,12 +18,13 @@ export const words = {
   "drop": ["drop()", "rejected"],
   "retry": ["retry()", "now"],
   "retryAfter": ["retry_after", "later"],
-  "redeliver": ["Below the cap: the broker", "redelivers, or a copy goes", "to the retry address"],
-  "deadLetter": ["At the cap: a copy to the", "dead letter, or rejected"],
+  "capCheck": "The attempt cap is checked first",
+  "belowCap": ["Below the cap:", "requeued, or a", "copy to the", "retry address"],
+  "deadLetter": ["At the cap:", "a copy to the", "dead letter"],
+  "reject": ["At the cap,", "no dead letter:", "rejected"],
   "after": ["After settling:", "and_after and hooks run"],
   "decoded": "decoded",
-  "returns": "returns",
-  "atCap": "at the cap"
+  "returns": "returns"
 };
 
 # Settlement

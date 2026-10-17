@@ -18,12 +18,13 @@ export const words = {
   "drop": ["drop()", "已拒绝"],
   "retry": ["retry()", "立即"],
   "retryAfter": ["retry_after", "稍后"],
-  "redeliver": ["未到上限：由 Broker", "重新投递，或把副本", "发往重试地址"],
-  "deadLetter": ["到达上限：副本发往", "死信，或直接拒绝"],
+  "capCheck": "先检查尝试上限",
+  "belowCap": ["未到上限：", "由 Broker 重投，", "或把副本发往", "重试地址"],
+  "deadLetter": ["到达上限：", "副本发往死信"],
+  "reject": ["到达上限，", "未声明死信：", "直接拒绝"],
   "after": ["确认之后：", "运行 and_after 和钩子"],
   "decoded": "已解码",
-  "returns": "返回",
-  "atCap": "到达上限"
+  "returns": "返回"
 };
 
 # 确认

@@ -3,8 +3,9 @@ import {lines, word, type Words} from './words';
 
 /*
  * Settlement: what decides how a delivery is settled, from its decode to the dead letter. The
- * main column is the delivery's way; the right column holds the failure policies and the retry
- * path, so every branch leaves the main way sideways.
+ * main column is the delivery's way and the right column holds the failure policies, so every
+ * policy leaves the main way sideways. Under the outcomes the two retries meet the attempt cap,
+ * whose three answers are alternatives side by side.
  */
 export function settlement(words: Words): {boxes: Box[]; links: Link[]} {
   const main = (id: string, y: number, fields: Partial<Box> = {}): Box => ({
@@ -36,6 +37,16 @@ export function settlement(words: Words): {boxes: Box[]; links: Link[]} {
     lines: lines(words, id),
     ...fields,
   });
+  const branch = (id: string, index: number, fields: Partial<Box> = {}): Box => ({
+    id,
+    x: index * 124,
+    y: 396,
+    w: 112,
+    h: 72,
+    kind: 'step',
+    lines: lines(words, id),
+    ...fields,
+  });
   const failures = '/components/subscribers/failure-policy/';
   const boxes: Box[] = [
     main('delivery', 0, {kind: 'broker'}),
@@ -49,38 +60,33 @@ export function settlement(words: Words): {boxes: Box[]; links: Link[]} {
     outcome('drop', 1, {kind: 'bad'}),
     outcome('retry', 2),
     outcome('retryAfter', 3, {href: '/components/subscribers/messages/retry-after/'}),
+    // The cap is read before a retry, and each of its answers is a branch of its own.
     {
-      id: 'redeliver',
-      x: 184,
-      y: 336,
-      w: 176,
-      h: 48,
-      kind: 'step',
-      lines: lines(words, 'redeliver'),
-      href: '/components/subscribers/retry-destination/',
-    },
-    {
-      id: 'deadLetter',
-      x: 184,
-      y: 414,
-      w: 176,
-      h: 48,
-      kind: 'bad',
-      lines: lines(words, 'deadLetter'),
+      id: 'capCheck',
+      x: 92,
+      y: 330,
+      w: 268,
+      h: 36,
+      kind: 'core',
+      lines: lines(words, 'capCheck'),
       href: '/components/subscribers/retry-cap/',
     },
+    branch('belowCap', 0, {href: '/components/subscribers/retry-destination/'}),
+    branch('deadLetter', 1, {kind: 'bad', href: '/components/subscribers/retry-cap/'}),
+    branch('reject', 2, {kind: 'bad'}),
     {
       id: 'after',
       x: 0,
-      y: 336,
-      w: 168,
-      h: 48,
+      y: 492,
+      w: 360,
+      h: 44,
       kind: 'note',
       lines: lines(words, 'after'),
       href: '/components/subscribers/messages/and-after/',
     },
   ];
-  const below = (x: number): number => (x - 184) / 176;
+  // Where a column's centre meets the cap check, so the links into and out of it run straight.
+  const along = (x: number): number => (x - 92) / 268;
   const links: Link[] = [
     {from: 'delivery', to: 'decode'},
     {from: 'decode', to: 'handler', label: word(words, 'decoded')},
@@ -93,9 +99,11 @@ export function settlement(words: Words): {boxes: Box[]; links: Link[]} {
     {from: 'outcome', to: 'drop'},
     {from: 'outcome', to: 'retry'},
     {from: 'outcome', to: 'retryAfter'},
-    {from: 'retry', to: 'redeliver', enterAt: below(226)},
-    {from: 'retryAfter', to: 'redeliver', enterAt: below(318)},
-    {from: 'redeliver', to: 'deadLetter', label: word(words, 'atCap')},
+    {from: 'retry', to: 'capCheck', enterAt: along(226)},
+    {from: 'retryAfter', to: 'capCheck', enterAt: along(318)},
+    {from: 'capCheck', to: 'belowCap', exit: 'left', enter: 'top'},
+    {from: 'capCheck', to: 'deadLetter', exitAt: along(180)},
+    {from: 'capCheck', to: 'reject', exitAt: along(304)},
   ];
   return {boxes, links};
 }
