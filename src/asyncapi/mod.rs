@@ -526,7 +526,7 @@ impl Reference {
     }
 }
 
-/// Builds an [`AsyncAPI`](Spec) 3.0 document from a service's handlers and metadata.
+/// Builds an [`AsyncAPI`](Spec) 3.1.0 document from a service's handlers and metadata.
 ///
 /// Each registered subscriber becomes a channel (addressed by its name), a `receive` operation,
 /// and a message component named after the handler's input type.
