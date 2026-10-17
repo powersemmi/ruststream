@@ -68,7 +68,8 @@ MANUAL = "examples/manual/"
 ROOT = Path(__file__).resolve().parent.parent
 # Paths within a documentation tree: the English one under `docs/` and each translation under
 # `website/i18n/<locale>/docusaurus-plugin-content-docs/current/` hold the same pages.
-TESTING_PAGES = ("components/application/testing/",)
+# The guide's testing chapter walks through the tests of its service, so it shows tests too.
+TESTING_PAGES = ("components/application/testing/", "guides/build-a-service/testing")
 COMPONENT_PAGES = ("components/",)
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 BANNED_HEADINGS = ("how it works", "see also", "pages in this category")

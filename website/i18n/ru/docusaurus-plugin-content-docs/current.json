@@ -3,6 +3,10 @@
     "message": "Начало работы",
     "description": "The label for category 'Getting started' in sidebar 'guides'"
   },
+  "sidebar.guides.category.Build a service, step by step": {
+    "message": "Строим сервис шаг за шагом",
+    "description": "The label for category 'Build a service, step by step' in sidebar 'guides'"
+  },
   "sidebar.guides.category.Brokers": {
     "message": "Брокеры",
     "description": "The label for category 'Brokers' in sidebar 'guides'"

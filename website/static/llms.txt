@@ -13,6 +13,18 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Installation](https://powersemmi.github.io/ruststream/latest/guides/getting-started/installation/): the crate, its cargo features and a broker crate
 - [Quick start](https://powersemmi.github.io/ruststream/latest/guides/getting-started/quickstart/): a running service scaffolded with `cargo generate`
 - [Tutorial](https://powersemmi.github.io/ruststream/latest/guides/getting-started/tutorial/): an orders service with a message type, a handler, a reply and a router, on the in-memory broker
+- [Build a service, step by step](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/): eleven chapters that grow one shop service on the in-memory broker, from its first subscriber to NATS
+- [The service and its first subscriber](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/service/): `#[subscriber]`, `include` and `#[ruststream::app]`
+- [Messages: payloads, headers, codecs](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/messages/): a payload type, a header contract read with `Headers<T>`, and a codec per topic
+- [Replies and publishing to other topics](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/replies/): a reply, an `Out` slot, and a router that binds both
+- [Settlement: retry, retry_after, dead letters](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/settlement/): an outcome per failure, the attempt cap and the dead-letter topic
+- [Middleware and observability](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/middleware/): `TracingLayer`, a `Layer` of your own, and the app that mounts them
+- [Concurrency: workers and threads](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/concurrency/): `threads(n)` for a handler that computes, `workers(n)` for one that waits on I/O
+- [Shared state and context](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/state/): state opened in `on_startup`, read as `State<T>`, and the per-delivery `Context`
+- [Testing the service with TestApp](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/testing/): the production app in process, a paused clock, and assertions on subscribers and topics
+- [The AsyncAPI document](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/asyncapi/): `asyncapi gen`, `AppInfo`, and a document test shared by both forms
+- [Running beside an HTTP server, outbox](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/http/): `start` beside axum, and a transactional outbox relayed to the broker
+- [Switching to a networked broker](https://powersemmi.github.io/ruststream/latest/guides/build-a-service/networked-broker/): the same shop on NATS: the broker type changes, the subscribers and tests do not
 
 ## Components
 

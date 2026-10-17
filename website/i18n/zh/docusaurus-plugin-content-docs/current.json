@@ -214,5 +214,9 @@
   "sidebar.components.category.Context and extractors": {
     "message": "上下文与提取器",
     "description": "The label for category 'Context and extractors' in sidebar 'components'"
+  },
+  "sidebar.guides.category.Build a service, step by step": {
+    "message": "逐步构建一个服务",
+    "description": "The label for category 'Build a service, step by step' in sidebar 'guides'"
   }
 }

@@ -10,4 +10,6 @@ Guides take you from an empty crate to a running RustStream service.
 - [Quick start](getting-started/quickstart.md): a running service scaffolded with `cargo generate`.
 - [Tutorial](getting-started/tutorial.md): an orders service with a message type, a handler, a
   reply and a router, on the in-memory broker.
+- [Build a service, step by step](build-a-service/index.md): one shop service grown chapter by
+  chapter, from its first subscriber to a networked broker.
 - [Brokers](../brokers/index.md): the broker crates, and moving a service to another broker.
