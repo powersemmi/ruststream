@@ -52,7 +52,10 @@ TAB_CLOSE = re.compile(r"</TabItem>")
 EXAMPLES = "examples/"
 MANUAL = "examples/manual/"
 ROOT = Path(__file__).resolve().parent.parent
-TESTING_PAGES = ("docs/components/application/testing/",)
+# Paths within a documentation tree: the English one under `docs/` and each translation under
+# `website/i18n/<locale>/docusaurus-plugin-content-docs/current/` hold the same pages.
+TESTING_PAGES = ("components/application/testing/",)
+TEST_SUITE_PAGES = ("broker-authors/",)
 
 
 def region_lines(source: Path, name: str) -> list[str] | None:
@@ -114,6 +117,19 @@ def service_region_errors(path: Path, n: int, target: str, region: str) -> list[
     return errors
 PAGES = [ROOT / "docs", *sorted((ROOT / "website" / "i18n").glob("*/docusaurus-plugin-content-docs"))]
 
+
+def page_path(path: Path) -> str:
+    """The page's path within its documentation tree, the same for a page and its translations."""
+    resolved = path.resolve()
+    for tree in PAGES:
+        if resolved.is_relative_to(tree.resolve()):
+            inner = resolved.relative_to(tree.resolve()).parts
+            # A translation sits one level deeper, under the docs version (`current/`).
+            if tree.name == "docusaurus-plugin-content-docs" and inner:
+                inner = inner[1:]
+            return Path(*inner).as_posix()
+    return resolved.relative_to(ROOT).as_posix()
+
 def lint(path: Path) -> list[str]:
     errors = []
     lines = path.read_text().splitlines()
@@ -124,10 +140,10 @@ def lint(path: Path) -> list[str]:
     # Per open `<Tabs>` block: whether it has a manual tab, and the macro fences it holds.
     block_has_manual = False
     block_macro_fences: list[int] = []
-    relative = path.resolve().relative_to(ROOT).as_posix()
+    relative = page_path(path)
     # The Testing pages and the broker contract's pages document test suites: tests are their
     # subject.
-    testing_page = relative.startswith(TESTING_PAGES) or "/broker-authors/" in f"/{relative}"
+    testing_page = relative.startswith(TESTING_PAGES + TEST_SUITE_PAGES)
     snippet_fence = False
     for n, line in enumerate(lines, 1):
         stripped = line.strip()
