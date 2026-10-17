@@ -1,0 +1,54 @@
+schema_version: "1.1"
+name: service-orders
+description: An orders service on NATS with a reply, an Out slot, state, a delayed retry and a dead letter.
+tags: [ruststream]
+runs: 3
+execution:
+  max_turns: 20
+  allowed_tools: [Read, Write, Edit, Glob, Grep, Skill]
+  prompt: |
+    In this empty directory, write `src/main.rs` for an orders service on NATS with ruststream 0.7 and ruststream-nats 0.7. It subscribes to `orders.created` (payload `Order { id: u64, amount_cents: u64 }`, JSON). For each order it stores it through a `Db` handle opened once when the service starts (assume `Db::connect(url).await -> Result<Db, DbError>` and `db.store(&order).await -> Result<(), DbError>`), replies with `Receipt { order_id: u64 }` on `receipts`, and publishes an `AuditEntry { order_id: u64, action: String }` to `audit`. When the database call fails the message comes back after 30 seconds, at most 5 attempts in total, then goes to `orders.dead`. NATS runs at nats://localhost:4222.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?ruststream"'
+  - name: sync-app-builder
+    type: regex
+    target: files
+    pattern: '#\[ruststream::app\]\s*fn app\(\)'
+    match: contains
+  - name: no-hand-written-main
+    type: regex
+    target: files
+    pattern: '#\[tokio::main\]'
+    match: not_contains
+  - name: capped-retries
+    type: regex
+    target: files
+    pattern: 'max_attempts\(nonzero!\(5'
+    match: contains
+  - name: dead-letter-by-name
+    type: regex
+    target: files
+    pattern: 'dead_letter\("orders\.dead"\)'
+    match: contains
+  - name: delayed-retry-outcome
+    type: regex
+    target: files
+    pattern: 'HandlerOutcome::retry_after\('
+    match: contains
+  - name: out-slot
+    type: regex
+    target: files
+    pattern: 'Out<impl Publisher, \w+>'
+    match: contains
+  - name: rubric
+    type: llm
+    focus: files
+    criteria: |
+      PASS if the service builds the app synchronously with `RustStream::new(AppInfo::new(..)).with_broker(NatsBroker::new(..), |b| { .. })`,
+      opens the database in `on_startup` and injects it with `State<Db>` from a `#[derive(FromRef)]` state,
+      takes the message as `&Order`, derives `Outgoing` on the reply with `#[outgoing(name = "receipts")]`,
+      and binds the audit slot at the mount site with `.out(Marker, Publish).build()`.
+      FAIL if it connects inside the builder, calls `ack()` on a message, or invents types such as `Inject`, `Retry` or `Batch`.

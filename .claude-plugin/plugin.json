@@ -1,0 +1,23 @@
+{
+  "name": "ruststream",
+  "description": "Skills for writing RustStream services, testing them with TestApp, building them without macros, writing broker crates, and contributing to the core",
+  "author": {
+    "name": "powersemmi",
+    "url": "https://github.com/powersemmi"
+  },
+  "homepage": "https://powersemmi.github.io/ruststream/latest/guides/agent-skills/",
+  "repository": "https://github.com/powersemmi/ruststream",
+  "license": "Apache-2.0",
+  "keywords": [
+    "rust",
+    "messaging",
+    "ruststream",
+    "kafka",
+    "nats",
+    "rabbitmq"
+  ],
+  "skills": "./.agents/skills",
+  "experimental": {
+    "evals": ".agents/evals"
+  }
+}

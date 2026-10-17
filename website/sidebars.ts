@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         'guides/getting-started/installation',
         'guides/getting-started/quickstart',
         'guides/getting-started/tutorial',
+        'guides/getting-started/agent-skills',
       ],
     },
     {

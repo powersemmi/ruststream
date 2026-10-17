@@ -56,6 +56,20 @@ The CLI ships with the crate behind the `cli` feature:
 cargo install ruststream --features cli
 ```
 
+## Agent skills
+
+The repository ships skills that teach a coding agent to write RustStream services, their tests
+and broker crates the recommended way. In Claude Code:
+
+```text
+/plugin marketplace add powersemmi/ruststream
+/plugin install ruststream@ruststream
+```
+
+Cursor and Codex read them from [`.agents/skills/`](.agents/skills); the
+[Agent skills](https://powersemmi.github.io/ruststream/latest/guides/getting-started/agent-skills/)
+page lists them.
+
 ## Write a service
 
 ```rust

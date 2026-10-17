@@ -1,0 +1,54 @@
+schema_version: "1.1"
+name: testing-retry
+description: A test of a delayed retry and a dead letter on a paused clock.
+tags: [ruststream-testing]
+runs: 3
+execution:
+  max_turns: 20
+  allowed_tools: [Read, Write, Edit, Glob, Grep, Skill]
+  prompt: |
+    The ruststream 0.7 service in this crate (in-memory broker, `fn app() -> impl App<State = Shop>`, where `Shop` derives `FromRef` and holds a `gateway: Gateway`) mounts this handler with `b.include(charge).max_attempts(nonzero!(3u32)).dead_letter("payments.dead");`:
+
+    ```rust
+    #[subscriber("payments")]
+    async fn charge(p: &Payment, State(gw): State<Gateway>) -> HandlerOutcome {
+        match gw.charge(p).await {
+            Ok(()) => HandlerOutcome::ack(),
+            Err(_) => HandlerOutcome::retry_after(Duration::from_secs(60)),
+        }
+    }
+    ```
+
+    `Gateway::failing()` always fails. Write the test module (into `charge_tests.rs`) that checks a failing payment comes back after 60 seconds and after the third attempt lands on `payments.dead`. The test must not take real minutes.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?ruststream-testing"'
+  - name: paused-clock
+    type: regex
+    target: files
+    pattern: 'start_paused\s*=\s*true'
+    match: contains
+  - name: state-swapped
+    type: regex
+    target: files
+    pattern: 'TestApp::with_state\('
+    match: contains
+  - name: advance
+    type: regex
+    target: files
+    pattern: '\.advance\(Duration::from_secs\(60\)\)\.await\?'
+    match: contains
+  - name: no-sleep
+    type: regex
+    target: files
+    pattern: 'sleep\('
+    match: not_contains
+  - name: rubric
+    type: llm
+    focus: files
+    criteria: |
+      PASS if the test reads records through the harness (`broker.subscriber("payments").assert_called(3)` and
+      `broker.published::<Payment>("payments.dead").assert_called_once()`), and every harness call is awaited with `?`.
+      FAIL if it asserts on the handler function itself, builds a second app, or mocks the broker.

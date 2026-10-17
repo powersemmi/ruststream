@@ -1,0 +1,4 @@
+interface:
+  display_name: "RustStream core contributions"
+  short_description: "Contribute to the RustStream core crate: public items, errors, features, doctests, gates and pull requests"
+  default_prompt: "Use $ruststream-core when changing the RustStream core repository, so the change follows its conventions and passes its gates"

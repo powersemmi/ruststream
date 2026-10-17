@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ruststream",
+  "owner": {
+    "name": "powersemmi",
+    "url": "https://github.com/powersemmi"
+  },
+  "metadata": {
+    "description": "Agent skills shipped with RustStream"
+  },
+  "plugins": [
+    {
+      "name": "ruststream",
+      "source": ".",
+      "description": "Write RustStream services and their tests, build them without macros, and write broker crates"
+    }
+  ]
+}

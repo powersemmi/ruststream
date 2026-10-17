@@ -1,0 +1,4 @@
+interface:
+  display_name: "RustStream service tests"
+  short_description: "Test a RustStream service with TestApp: the production app in process, assertions on handlers and publishes"
+  default_prompt: "Use $ruststream-testing when writing tests for a RustStream service, so they run the production app with TestApp instead of mocks or sleeps"

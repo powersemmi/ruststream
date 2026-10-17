@@ -1,0 +1,4 @@
+interface:
+  display_name: "RustStream services"
+  short_description: "Write RustStream services: handlers, the app, replies, publishing, retries, state and codecs"
+  default_prompt: "Use $ruststream when writing or changing a RustStream service, so the handlers, the app and the mount chain follow the framework's recommended path"

@@ -1,145 +1,16 @@
----
-description: Building a RustStream service without the `macros` feature (hand-written handlers, registration and main)
-globs:
-alwaysApply: false
----
+# The manual path in depth
 
-- Everything the attribute macros produce can be written by hand. `macros` is a convenience
-  feature, not a layer: `#[subscriber]` expands into calls on the same public runtime API, so a
-  service without it loses no capability that does not come *from* a declaration.
-- What the attribute emits for `async fn handle(order: &Order) -> HandlerOutcome` is a unit struct
-  named after the function, an `impl Handle` carrying the body, and a `Declared` impl that builds
-  the same sealed definition the `subscriber(..) .. .build()` chain produces. So the attribute is
-  sugar over the manual path's own vocabulary, and what it writes you can write.
-- A handler is a named type implementing `Handle<In, R, O, C, S>`, whose `fn handle(&self, input:
-  &In, outs: &O, ctx: &mut Context<'_, C, S>) -> impl Future<Output = Verdict<In, R>> + Send` is an
-  ordinary method. What a closure would capture becomes a field on that type - a closure is not a
-  `Handle`, the body is always a named type. A body with nothing to await returns `ready(..)`
-  rather than being `async fn`; clippy's `unused_async_trait_impl` reports the other spelling.
-- There is one body trait and one constructor. Every axis of the form matrix is a defaulted
-  parameter the impl pins, so the signature decides the form and nothing else names it. `In` is the
-  input spelling (`T` decoded, `F<'_>` a type that deserializes itself from the bytes,
-  `Message<H, P>` a decoded payload next to its typed header contract, `T` on the carried lane a
-  value the delivery already holds, and `[T]` / `[F<'_>]` / `[Message<H, P>]` for a batch of
-  each), `R` the reply type (`()` declares none), `O` the injections arena (`()` declares none),
-  `C` the broker's typed context - per delivery on the single forms, the broker's
-  subscription-scoped batch context (`BuildBatchContext`, built once per batch) on the batch ones -
-  and `S` the application state the body reads with `ctx.state()`. What the signature does not
-  carry rides the chain: the declarative settings (`.name`, `.workers`, `.workers_by_key`,
-  `.threads`, `.threads_by_key`, `.on_failure`, `.batch`, `.start_at`, `.codec`), the reply
-  declaration (`.reply()`, `.to(dest)` - never a publisher, which is the mount site's
-  `.out_reply(policy)`) and the document controls (`.describe(..)`, `.undocumented()`);
-  `.build()` seals the chain and `include` mounts it. The registration metadata comes off the
-  source and the body's input type.
-- That constructor is the only way in. The definition traits behind it (`SubscriberDef`, the batch
-  and publishing defs) are crate-internal machinery, not an extension point: a service cannot write
-  a definition type of its own, and a custom source, custom metadata or computed settings go on the
-  chain instead. `IncludeDef` and `Declared` stay public because `include` dispatches on them.
-- The return shape is computed from the same two axes, so an illegal combination has no type to be
-  written in and each shape has exactly one accepted spelling: `Result<(), HandlerOutcome>` for a
-  single message with no reply (`Ok(())` acks), `Result<Reply, HandlerOutcome>` for a single one
-  with a reply, `Result<(), Vec<HandlerOutcome>>` for a batch, and
-  `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a batch with replies, whose impl header names the
-  vector (`impl Handle<[Order], Vec<Confirmation>>`). There is no bare-outcome return and no
-  whole-batch uniform outcome; a continuation is not a shape of its own either - return
-  `Err(HandlerOutcome::ack().and_after(..))`. The batch vector settles element-wise and is
-  batch-length by contract; a mismatch panics under the `on_failure(panic = ..)` policy.
-- The derives are equally reproducible, and reading their expansion is the fastest way to get one
-  right: `#[derive(Outgoing)]` writes `OutgoingDestination` (the `Form` plus the `DESTINATION`
-  constant a declared name fills) with a `MessageHeaders` contract (`NoHeaders` or
-  `WithHeaders<H>`) and the type's `OutMessages` entry, `#[derive(OutSlot)]` writes `OutSlot` (its
-  `NAME`, its `Destination` offer and its dictionary) plus a `PublishedThrough` membership per
-  listed type, `#[derive(OutMessages)]` writes `OutMessages` over an enum's variants,
-  `#[derive(Deserialized)]` writes `from_payload` plus the `Input` spelling that puts a type on the
-  codec-free lane, `#[derive(Serialized)]` writes `wire_bytes` plus the wire spellings that send
-  the value byte-for-byte (`MessageWire` for a typed publish, `ReplyShape` for the reply position),
-  and `#[derive(FromRef)]` writes one `FromRef` impl per field.
-- The one thing genuinely lost with the feature off is the attribute surface itself: nothing reads
-  a clause for you, so what the attribute would have declared you write as a trait impl.
-- `use ruststream::prelude::*;` still works: the glob's macro re-exports are themselves
-  feature-gated, so the rest of it comes in unchanged - the builder, `Context`, `HandlerOutcome`,
-  `Name`, `Publisher`, `PublishExt`, and the whole manual path (the `subscriber`
-  constructor, the body trait `Handle` with its input spellings `Message` and `Deserialized`, the
-  reply traits `Serialized` / `ReplyShape`, the injections arena `Outs` / `Slot` and the publisher
-  capability traits a slot bound names (`Publisher`, `TransactionalPublisher`, `OwnedTransactions`,
-  `RequestReply`), plus `FailurePolicies` / `FailurePolicy`, `Workers`, `Unnamed`, `Out`,
-  `DefaultSlot`, `Reply`, `Router` / `RouterDef` and `nonzero!`), and so do the spellings the
-  hand-written impls name: `Input` / `SoloDeserialized`, `MessageWire` / `SerializedWire`,
-  `ReplyShape` / `SerializedReply`, `BytesMut` (a `Serialized` impl names it), `OutEntry` (the
-  bound a body declares its arena with), `OutgoingDestination` with `CallerName` / `FixedName` /
-  `NameTemplate`, `MessageHeaders` with `NoHeaders` / `WithHeaders`, `PublishedThrough`,
-  `OutMessages` / `OutgoingMessageMetadata`, the transform vocabulary (`PublishTransform`,
-  `ContextKind`, `ForReply` / `ForSlot`, `Reads` / `Names`) and `FromContext`. A service without
-  the feature imports nothing beyond the glob.
-- Mount with `b.include(subscriber(source, body).build())`; the source resolves at startup.
-  Routers have the same `include` method, so grouping still works. `Router::handle` and
-  `BrokerScope::handle` take an already-open subscriber and a fully wired handler: they are the
-  runtime's own machinery, they read no scope codec and no settings, and a service does not write
-  them.
-- Write `main` yourself: `#[tokio::main]` plus `app.run().await`. The attribute's CLI (`run`,
-  `asyncapi gen`) is what you give up; `run_until(..)` and `start()` are plain methods.
-- State is reached through `ctx.state()`, headers through `ctx.headers()`, and publishing through a
-  publisher the handler holds or reads from the state - the same objects the extractors would have
-  handed over.
+Each section is the hand-written form of what an attribute or a derive declares. The component pages on <https://powersemmi.github.io/ruststream/latest/components/> show every topic in a Manual tab.
 
-## A whole service, macro-free
+## Contents
 
-```rust
-use std::error::Error;
-use std::future::{Future, ready};
-
-use ruststream::memory::prelude::*;
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-struct Order {
-    id: u64,
-}
-
-/// The handler body. The attribute would have generated exactly this struct, named after
-/// the function it decorates.
-struct Receive;
-
-impl Handle<Order> for Receive {
-    fn handle(
-        &self,
-        order: &Order,
-        _outs: &(),
-        _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
-        tracing::info!(order.id, "processing order");
-        ready(Ok(()))
-    }
-}
-
-fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Receive).build());
-    })
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
-}
-```
-
-`Ok(())` acks and `Err(HandlerOutcome::retry())` nacks: the verdict is a `Result`, so the happy path
-carries the reply (nothing here) and the error side carries the settlement. Post-settle work rides
-that same settlement, and the return type does not change for it - return
-`Err(HandlerOutcome::ack().and_after(fut))`.
-
-The body's two unused parameters are not ceremony: `_outs` is the injections arena of a body that
-declared none, and `_ctx` is the per-delivery context that is always in reach. **Keep anything that
-can panic inside the future**: the dispatcher calls `handler.handle(..)` and only then wraps the
-result in `catch_unwind`, so a panic raised before the first `await` escapes the guard and kills
-the task instead of settling by `on_failure(panic = ..)`. Writing the body as `async fn handle`
-is equally legal, and the right shape as soon as it awaits anything.
-
-`run()` runs until `SIGINT` / `SIGTERM`; `run_until(future)` drives shutdown from a future you own
-(a test signal, a timeout), and `start()` hands back a `RunningApp` for hosting the service beside
-another foreground server.
+- Decoding
+- Raw bytes
+- Dependencies and state
+- Headers
+- Publishing
+- Middleware
+- What the chain reaches, and what it does not
 
 ## Decoding
 
@@ -243,8 +114,8 @@ impl ReplyShape for Order {
 ## Dependencies and state
 
 A closure captures; a named handler holds. Anything the body needs that is fixed at registration
-becomes a field, and everything the runtime owns per delivery comes off the context - there is no
-`State<T>` parameter and no `FromRef` derive to make one resolve.
+becomes a field, and everything the runtime owns per delivery comes off the context: the state is
+the body's last axis, read with `ctx.state()`.
 
 ```rust
 use std::sync::Arc;
@@ -451,8 +322,8 @@ settings the attribute path shares, the mandatory batch size `.batch(n)` among t
 are documented by default under `asyncapi`, which is why message types need `schemars::JsonSchema`
 and `.undocumented()` is the per-registration exit.
 
-What used to be a second route is closed. The definition traits the retired expansion targeted are
-crate-internal now, so a definition type of your own is not something a service writes: a computed
+The definition traits behind `subscriber(..)` are crate-internal, so a service writes no definition
+type of its own: a computed
 source is a value handed to `subscriber(..)`, computed settings are calls on the chain, and a
 description is `.describe(..)`. The settings state rides in the builder's type (`Open` per setting
 still free, `Fixed` per setting already named), which is what makes naming one twice a compile

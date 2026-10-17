@@ -1,0 +1,43 @@
+schema_version: "1.1"
+name: broker-crate
+description: A new broker crate over a queue client, with its conformance tests.
+tags: [ruststream-broker]
+runs: 3
+execution:
+  max_turns: 30
+  allowed_tools: [Read, Write, Edit, Glob, Grep, Skill]
+  prompt: |
+    Start a new ruststream 0.7 broker crate, `ruststream-fooq`, for a queue whose async client crate `fooq` offers: `fooq::Client::connect(url: &str).await -> Result<Client, fooq::Error>` (Client: Clone), `client.send(queue: &str, payload: &[u8], headers: &[(String, Vec<u8>)], priority: u8).await -> Result<(), fooq::Error>`, `client.consume(queue: &str).await -> Result<fooq::Consumer, fooq::Error>` where `Consumer` is a `Stream<Item = fooq::Delivery>`, and `delivery.ack().await` / `delivery.nack(requeue: bool).await`, `delivery.attempt() -> u32`. Write `src/lib.rs` (the broker, its connected form, publishing with a per-message priority, subscribing, the prelude) and `tests/conformance.rs`.
+graders:
+  - name: skill-fired
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:[\w-]+:)?ruststream-broker"'
+  - name: async-fallible-pair
+    type: regex
+    target: files
+    pattern: 'fn pair\(self,[^)]*\)\s*->\s*Result<\w+, PairError>'
+    match: contains
+  - name: copies-declared
+    type: regex
+    target: files
+    pattern: 'type Copies = (AddressedCopies|NamedCopies|BrokerMoves);'
+    match: contains
+  - name: redelivery-count
+    type: regex
+    target: files
+    pattern: 'fn redelivery_count\(&self\)\s*->\s*Option<u64>'
+    match: contains
+  - name: lifecycle-three-closures
+    type: regex
+    target: files
+    pattern: 'harness::lifecycle\(\s*[^,]+,\s*\|[^|]*\|[^,]+,\s*\|[^|]*\|'
+    match: contains
+  - name: rubric
+    type: llm
+    focus: files
+    criteria: |
+      PASS if `new` is synchronous, `connect(self)` keeps `Handle::current()` for the crate's own tasks, the priority is a
+      field of `Publisher::Options` with a step trait over `PublishBuilder` bounded on `PublishSink<Options = ..>`,
+      `DefaultPublish` names the policy, and the prelude re-exports `ruststream::prelude::*` and aliases the policy as `Publish`.
+      FAIL if the priority rides a header, the publisher is wrapped, or connect happens in `new`.

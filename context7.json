@@ -6,6 +6,7 @@
     "docs",
     "src",
     "crates/ruststream-macros",
+    ".agents/skills",
     "website/static"
   ],
   "excludeFolders": [
