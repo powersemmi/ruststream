@@ -5,6 +5,7 @@ import type {Config, Plugin} from '@docusaurus/types';
 import {getVcsPreset} from '@docusaurus/utils';
 import type * as Preset from '@docusaurus/preset-classic';
 import {resolveMarkdownLinks} from './markdownLinks';
+import {verificationTags} from './siteVerification';
 import remarkApiLinks from './plugins/remarkApiLinks';
 import remarkSnippets from './plugins/remarkSnippets';
 import redirectsPlugin from './plugins/redirects';
@@ -150,9 +151,12 @@ const config: Config = {
   // `next` documents unreleased code and an archive an old release; search engines should send
   // readers to `latest`. The tag goes on every page, the landing page included, and still lets a
   // crawler follow the pages' links to `latest`, which the site option `noIndex` would forbid.
-  headTags: version.noIndex
-    ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex'}}]
-    : [],
+  headTags: [
+    ...(version.noIndex
+      ? [{tagName: 'meta', attributes: {name: 'robots', content: 'noindex'}}]
+      : []),
+    ...verificationTags(process.env),
+  ],
 
   i18n: {
     defaultLocale: 'en',
