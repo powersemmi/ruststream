@@ -31,7 +31,9 @@ A component page reads in one order: the title, a one-sentence summary, the desc
 `## Example` with the code. So under `components/` no code (a rust fence or a `<Tabs>` block)
 comes before `## Example`, the summary is followed by at least one paragraph of description, and
 the page has no "How it works" or "See also" heading: links to API items and related pages sit
-in the text at their first mention.
+in the text at their first mention. A category page lists none of the pages below it, under a
+"Pages in this category" heading or as a list of links: the sidebar lists them, and it is rendered
+into every page's HTML.
 """
 
 import re
@@ -63,7 +65,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TESTING_PAGES = ("components/application/testing/",)
 COMPONENT_PAGES = ("components/",)
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
-BANNED_HEADINGS = ("how it works", "see also")
+BANNED_HEADINGS = ("how it works", "see also", "pages in this category")
+# A list item that opens with a link to a page beside or below this one.
+PAGE_LIST_ITEM = re.compile(r"^\s*[-*+]\s+\[[^\]]+\]\(\./")
 TEST_SUITE_PAGES = ("broker-authors/",)
 
 
@@ -174,6 +178,11 @@ def component_order_errors(path: Path, lines: list[str]) -> list[str]:
                     )
             in_paragraph = False
             continue
+        if PAGE_LIST_ITEM.match(line):
+            errors.append(
+                f"{path}:{n}: a list of the pages below - the sidebar lists them; a link to a"
+                " page sits in the text at its first mention"
+            )
         if TABS_OPEN.search(line) and example is None:
             errors.append(f"{path}:{n}: tabs before `## Example` - the description comes first")
         if title is not None and example is None:

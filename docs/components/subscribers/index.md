@@ -36,18 +36,3 @@ There `Ok(())` acks and `Err(outcome)` settles by that outcome.
 
 </TabItem>
 </Tabs>
-
-## Pages in this category
-
-- [Source](./subscription-source.md): by name or by the broker's descriptor.
-- [Settings](./mount-settings.md): the settings the attribute left open.
-- [Batches](./batches.md): one call per batch of messages.
-- [Replay](./replay/index.md): where a replayable subscription opens, and how the body repositions it.
-- [Routers](./router.md): one module's handlers, mounted together.
-- [Attempts](./retry-cap.md): the end of a message that keeps coming back.
-- [Retry](./retry-destination.md): the slot a retry copy leaves through.
-- [Failures](./failure-policy.md): what a panic or an undecodable payload does.
-- [Headers](./typed-headers/index.md): a serde struct as the header contract.
-- [Messages](./messages/index.md): what a handler returns.
-- [Context and extractors](./context/index.md): the handler's parameters after the message.
-- [Codecs](./codecs/index.md), [Dispatch](./dispatch/index.md), [Middleware](./middleware/index.md), [Publishing](./publishing/index.md).

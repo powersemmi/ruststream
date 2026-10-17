@@ -41,12 +41,3 @@ A builder function returns [`impl App`](api:ruststream::runtime::App), so its si
 
 </TabItem>
 </Tabs>
-
-## Pages in this category
-
-- [App](./app-macro.md): the generated `main`.
-- [Lifecycle](./lifecycle.md): code around the brokers' connection.
-- [Running](./running/index.md): `run`, `run_until`, `start`, `shutdown` and health.
-- [CLI](./cli.md): `run`, `asyncapi gen` and scaffolding.
-- [State](./state/index.md): the value every handler reads.
-- [Testing](./testing/index.md): the service in process, under `TestApp`.
