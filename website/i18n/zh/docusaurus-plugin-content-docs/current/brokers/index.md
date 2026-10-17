@@ -28,7 +28,7 @@ import TabItem from '@theme/TabItem';
 | AWS Kinesis | [`ruststream-kinesis`](https://github.com/powersemmi/ruststream-kinesis) | Kinesis 数据流（分片租约、检查点、重新定位） | [powersemmi.github.io/ruststream-kinesis](https://powersemmi.github.io/ruststream-kinesis/) |
 | SQL 数据库 | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) | 服务自有的 Postgres、MySQL/MariaDB 和 SQLite 表中的任务队列，以及基于任意 Broker 的事务性 outbox；SQL 语句在启动时或编译时检查 | [powersemmi.github.io/ruststream-sqlx](https://powersemmi.github.io/ruststream-sqlx/) |
 
-要为别的传输实现 Broker，参见[编写一个 Broker](../broker-authors/index.md)。
+要为别的传输实现 Broker，从 [`Broker`](api:ruststream::Broker) trait 的文档读起：其中写明了 Broker crate 要实现的契约，以及检查该契约的一致性测试套件。
 
 ## 切换 Broker {/* #switching-brokers */}
 

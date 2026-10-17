@@ -138,8 +138,8 @@ Full compiling example: `examples/testing.rs`.
 | SQL databases (Postgres, MySQL / MariaDB, SQLite) | [`ruststream-sqlx`](https://github.com/powersemmi/ruststream-sqlx) |
 
 What each broker supports is on the
-[broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, see
-the [broker-authors guide](https://powersemmi.github.io/ruststream/latest/broker-authors/).
+[broker index](https://powersemmi.github.io/ruststream/latest/brokers/). To write a broker, start at
+the [`Broker` trait](https://docs.rs/ruststream/latest/ruststream/trait.Broker.html).
 
 ## Documentation
 

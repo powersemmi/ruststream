@@ -18,7 +18,7 @@ const PRINCIPLES: Principle[] = [
     body: (
       <Translate
         id="landing.principles.agnostic.body"
-        values={{suite: <CodeLink to="/broker-authors/conformance/">conformance</CodeLink>}}>
+        values={{suite: <CodeLink api="ruststream/conformance/index.html">conformance</CodeLink>}}>
         {
           'The core is traits and types. Each broker is its own crate, held to the contract by the {suite} suite.'
         }

@@ -71,7 +71,6 @@ HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 BANNED_HEADINGS = ("how it works", "see also", "pages in this category")
 # A list item that opens with a link to a page beside or below this one.
 PAGE_LIST_ITEM = re.compile(r"^\s*[-*+]\s+\[[^\]]+\]\(\./")
-TEST_SUITE_PAGES = ("broker-authors/",)
 
 
 def region_lines(source: Path, name: str) -> list[str] | None:
@@ -216,7 +215,7 @@ def lint(path: Path) -> list[str]:
     relative = page_path(path)
     # The Testing pages and the broker contract's pages document test suites: tests are their
     # subject.
-    testing_page = relative.startswith(TESTING_PAGES + TEST_SUITE_PAGES)
+    testing_page = relative.startswith(TESTING_PAGES)
     if relative.startswith(COMPONENT_PAGES):
         errors.extend(component_order_errors(path, lines))
     snippet_fence = False

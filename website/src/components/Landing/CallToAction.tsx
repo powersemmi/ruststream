@@ -64,7 +64,7 @@ const NEXT: Next[] = [
     ),
   },
   {
-    to: '/broker-authors/',
+    to: 'https://docs.rs/ruststream/latest/ruststream/trait.Broker.html',
     icon: <ServerIcon />,
     title: <Translate id="landing.next.brokerAuthors">Broker authors</Translate>,
     body: (

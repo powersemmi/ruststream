@@ -37,7 +37,21 @@ describe('redirects', () => {
     expect(moved['guides/routing']).toBe(
       'https://docs.rs/ruststream/latest/ruststream/runtime/index.html#routing',
     );
-    expect(moved['guides/templates']).toBe('/broker-authors/templates/');
+    expect(moved['guides/templates']).toBe(
+      'https://docs.rs/ruststream/latest/ruststream/runtime/cli/index.html#templates-a-broker-crate-ships',
+    );
+  });
+
+  it('sends the broker-author pages to their rustdoc homes on docs.rs', () => {
+    const rustdoc = 'https://docs.rs/ruststream/latest/ruststream';
+    expect(moved['broker-authors']).toBe(`${rustdoc}/trait.Broker.html`);
+    expect(moved['broker-authors/conformance']).toBe(`${rustdoc}/conformance/index.html`);
+    expect(moved['broker-authors/templates']).toBe(
+      `${rustdoc}/runtime/cli/index.html#templates-a-broker-crate-ships`,
+    );
+    expect(moved['broker-authors/example-nats']).toBe(
+      'https://docs.rs/ruststream-nats/latest/ruststream_nats/',
+    );
   });
 
   it('points every address on the site at a page the build has', () => {

@@ -68,4 +68,4 @@ The same documentation describes the broker's connection options and its capabil
 
 The available brokers are listed under [Brokers](../../brokers/index.md); the link there leads to each
 broker's documentation and its installation instructions. To write your own broker, see
-[Broker authors](../../broker-authors/index.md).
+the [`Broker`](api:ruststream::Broker) trait.
