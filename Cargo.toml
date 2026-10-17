@@ -103,11 +103,6 @@ required-features = ["testing", "memory", "json"]
 test = true
 
 [[example]]
-name = "manual_publishing"
-path = "examples/manual/publishing.rs"
-required-features = ["memory", "json"]
-
-[[example]]
 name = "manual_retry"
 path = "examples/manual/retry.rs"
 required-features = ["testing", "memory", "json"]
@@ -268,10 +263,6 @@ required-features = ["macros", "memory", "json"]
 name = "seek"
 required-features = ["testing", "macros", "memory", "json"]
 test = true
-
-[[example]]
-name = "publishing"
-required-features = ["macros", "memory", "json"]
 
 [[example]]
 name = "retry"
