@@ -213,7 +213,7 @@ export default function OldWayNewWay(): ReactNode {
                     kafka_quickstart
                   </CodeLink>
                 ),
-                feature: <CodeLink to="/components/observability/">logging</CodeLink>,
+                feature: <CodeLink to="/components/observability/logging/">logging</CodeLink>,
               }}>
               {
                 'A real run of the {example} example against a local Kafka, with the {feature} feature on.'
@@ -236,7 +236,7 @@ export default function OldWayNewWay(): ReactNode {
                 key="docs"
                 id="landing.compare.new.docs"
                 values={{
-                  command: <CodeLink to="/components/application/cli/">asyncapi gen</CodeLink>,
+                  command: <CodeLink to="/components/asyncapi/generation/cli-gen/">asyncapi gen</CodeLink>,
                   harness: (
                     <CodeLink to="/components/application/testing/starting-and-stopping/start/">
                       TestApp
