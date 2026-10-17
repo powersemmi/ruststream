@@ -194,7 +194,7 @@ pub enum CodecError {
 /// # #[cfg(not(feature = "json"))]
 /// # fn main() {}
 /// # #[cfg(feature = "json")]
-/// # fn main() {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::fmt;
 ///
 /// use ruststream::BytesMut;
@@ -243,10 +243,11 @@ pub enum CodecError {
 /// }
 ///
 /// let codec = Versioned(JsonCodec);
-/// let bytes = codec.encode(&7u32).unwrap();
+/// let bytes = codec.encode(&7u32)?;
 /// assert_eq!(bytes[0], VERSION);
-/// let back: u32 = codec.decode(&bytes).unwrap();
+/// let back: u32 = codec.decode(&bytes)?;
 /// assert_eq!(back, 7);
+/// # Ok(())
 /// # }
 /// ```
 pub trait Codec: Send + Sync {

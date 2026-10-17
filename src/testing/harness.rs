@@ -435,13 +435,11 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// }
     /// # }
     /// # #[cfg(all(feature = "testing", feature = "macros", feature = "memory", feature = "json"))]
-    /// # fn main() {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// #     tokio::runtime::Builder::new_multi_thread()
     /// #         .enable_all()
-    /// #         .build()
-    /// #         .unwrap()
+    /// #         .build()?
     /// #         .block_on(demo::confirms_valid_orders())
-    /// #         .unwrap();
     /// # }
     /// # #[cfg(not(all(
     /// #     feature = "testing", feature = "macros", feature = "memory", feature = "json"
