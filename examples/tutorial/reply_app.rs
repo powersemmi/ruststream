@@ -2,7 +2,7 @@
 //! without the router of step 5.
 //!
 //! ```text
-//! cargo run --example tutorial_reply_app --features macros,memory,json,asyncapi -- run
+//! cargo run --example tutorial_reply_app --features macros,memory,json,asyncapi,logging -- run
 //! ```
 
 mod orders;

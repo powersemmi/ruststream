@@ -21,8 +21,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi", "logging"] }
 serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
 ```
 
 ## 2. Define a message and a handler
@@ -84,6 +85,9 @@ Run it:
 ```bash
 cargo run -- run
 ```
+
+The `logging` feature prints the service's log to the terminal: the startup lines, then a line
+for each order the handler logs with `tracing::info!`.
 
 ## 4. Reply to messages
 
@@ -194,7 +198,7 @@ Every snippet on this page comes from
 [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)
 in the repository, which CI builds on every change. `first_app.rs` and `reply_app.rs` are the
 service as steps 3 and 4 leave it, and `main.rs` is the finished one. Run it yourself with
-`cargo run --example tutorial --features macros,memory,json,asyncapi -- run`.
+`cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run`.
 
 :::
 

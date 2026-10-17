@@ -2,7 +2,7 @@
 //! the reply of step 4 and the router of step 5 arrive.
 //!
 //! ```text
-//! cargo run --example tutorial_first_app --features macros,memory,json,asyncapi -- run
+//! cargo run --example tutorial_first_app --features macros,memory,json,asyncapi,logging -- run
 //! ```
 
 // Step 3 mounts `handle` alone; the module's reply types stay unused until step 4.

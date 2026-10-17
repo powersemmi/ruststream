@@ -28,7 +28,7 @@ With no codec feature, a mounting that needs the default does not compile, and t
 
 The publish side names its codec at its own position.
 A reply takes the default codec unless `.out_reply(policy).codec(codec)` names another, so a request and its reply may use different formats.
-An `Out` slot takes `.out(marker, policy).codec(codec)`, and a single publish takes `.with_codec(codec)` on the builder.
+An `Out` slot takes `.out(marker, policy).codec(codec)`; without it a slot encodes with the codec of the router or scope it is mounted in, not the default codec a reply falls back to. A single publish takes `.with_codec(codec)` on the builder.
 
 A payload that does not decode never reaches the body.
 The subscriber's `on_failure(decode = ..)` [policy](../failure-policy.md) settles it, a drop by default.

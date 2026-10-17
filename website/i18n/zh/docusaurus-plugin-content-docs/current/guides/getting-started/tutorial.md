@@ -20,8 +20,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi"] }
+ruststream = { version = "0.7", features = ["macros", "memory", "json", "asyncapi", "logging"] }
 serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
 ```
 
 ## 2. 定义消息和处理器
@@ -82,6 +83,9 @@ ack，`Err` 表示丢弃。
 ```bash
 cargo run -- run
 ```
+
+`logging` feature 会把服务的日志打印到终端：先是启动时的几行，然后处理器每用 `tracing::info!`
+记录一个订单，就多一行。
 
 ## 4. 回复消息
 
@@ -186,7 +190,7 @@ Broker crate 加进依赖，在那里构造它，例如用 `NatsBroker::new("nat
 [`examples/tutorial`](https://github.com/powersemmi/ruststream/tree/main/examples/tutorial)，
 CI 每次改动都会构建它。`first_app.rs` 和 `reply_app.rs` 是第 3 步和第 4 步结束时的服务，
 `main.rs` 是最终版本。你也可以用
-`cargo run --example tutorial --features macros,memory,json,asyncapi -- run` 自己运行一遍。
+`cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run` 自己运行一遍。
 
 :::
 

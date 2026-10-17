@@ -2,7 +2,7 @@
 //! handlers in [`orders`], a router in [`routes`], and the `#[ruststream::app]` entry point here.
 //!
 //! ```text
-//! cargo run --example tutorial --features macros,memory,json -- run
+//! cargo run --example tutorial --features macros,memory,json,asyncapi,logging -- run
 //! ```
 
 // --8<-- [start:main]

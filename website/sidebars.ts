@@ -35,6 +35,25 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Build a service, step by step',
+      link: {type: 'doc', id: 'guides/build-a-service/index'},
+      collapsible: false,
+      items: [
+        'guides/build-a-service/service',
+        'guides/build-a-service/messages',
+        'guides/build-a-service/replies',
+        'guides/build-a-service/settlement',
+        'guides/build-a-service/middleware',
+        'guides/build-a-service/concurrency',
+        'guides/build-a-service/state',
+        'guides/build-a-service/testing',
+        'guides/build-a-service/asyncapi',
+        'guides/build-a-service/http',
+        'guides/build-a-service/networked-broker',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Brokers',
       collapsible: false,
       items: [

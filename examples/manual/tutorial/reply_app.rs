@@ -2,14 +2,15 @@
 //! to the plain one, still without the router of step 5.
 //!
 //! ```text
-//! cargo run --example manual_tutorial_reply_app --no-default-features --features memory,json,asyncapi
+//! cargo run --example manual_tutorial_reply_app --no-default-features --features memory,json,asyncapi,logging -- run
 //! ```
 
 mod orders;
 
-use std::error::Error;
+use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
+use ruststream::runtime::cli::run_main;
 
 // --8<-- [start:reply]
 use crate::orders::{Confirm, Receive};
@@ -28,9 +29,7 @@ fn app() -> RustStream {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    app().run().await?;
-    Ok(())
+fn main() -> ExitCode {
+    run_main(app)
 }
 // --8<-- [end:reply]

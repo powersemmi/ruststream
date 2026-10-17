@@ -1,7 +1,7 @@
 //! The landing-page example: a one-handler service with no runtime boilerplate.
 //!
 //! ```text
-//! cargo run --example quickstart --features macros,memory,json -- run
+//! cargo run --example quickstart --features macros,memory,json,logging -- run
 //! ```
 
 use ruststream::memory::prelude::*;
@@ -15,7 +15,7 @@ struct Order {
 
 #[subscriber("orders")]
 async fn handle(order: &Order) -> HandlerOutcome {
-    println!("got order {}", order.id);
+    tracing::info!(order.id, "got order");
     HandlerOutcome::ack()
 }
 // --8<-- [end:handler]

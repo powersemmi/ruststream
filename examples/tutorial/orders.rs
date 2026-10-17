@@ -15,7 +15,7 @@ pub(crate) struct Order {
 
 #[subscriber("orders")]
 pub(crate) async fn handle(order: &Order) -> HandlerOutcome {
-    println!("order {} x{}", order.id, order.quantity);
+    tracing::info!(order.id, order.quantity, "order received");
     HandlerOutcome::ack()
 }
 // --8<-- [end:order]
