@@ -230,16 +230,14 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
     let mut placeholders: Vec<Ident> = Vec::new();
     let mut current = String::new();
     let mut rest = declared.as_str();
-    while let Some(open) = rest.find('{') {
-        current.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('}') else {
+    while let Some((before, after)) = rest.split_once('{') {
+        current.push_str(before);
+        let Some((placeholder, tail)) = after.split_once('}') else {
             return Err(syn::Error::new(
                 span,
                 "unclosed `{` in the declared name: every placeholder reads `{segment}`",
             ));
         };
-        let placeholder = &after[..close];
         if placeholder.is_empty() {
             return Err(syn::Error::new(
                 span,
@@ -266,7 +264,7 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
         }
         placeholders.push(ident);
         literals.push(mem::take(&mut current));
-        rest = &after[close + 1..];
+        rest = tail;
     }
     if rest.contains('}') {
         return Err(syn::Error::new(

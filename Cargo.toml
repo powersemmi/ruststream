@@ -1324,6 +1324,7 @@ unnecessary_self_imports = "warn"
 unwrap_used = "warn"
 unwrap_in_result = "warn"
 missing_assert_message = "warn"
+string_slice = "warn"
 
 [lints]
 workspace = true
