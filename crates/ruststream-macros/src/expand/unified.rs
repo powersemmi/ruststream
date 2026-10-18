@@ -122,14 +122,16 @@ pub(super) fn expand(
     // The handler's named or `Ctx`-projected context type, on the solo and batch forms alike: a
     // batch context is subscription-scoped data (see `BuildBatchContext` in the core crate).
     let ctx_ty = parts.ctx_ty.clone();
-    let (state_param, state_in_ctx, state_bound) = match state_ty {
-        Some(state_ty) => (quote!(), quote!(#state_ty), None),
-        None => (
-            quote!(__RsState,),
-            quote!(__RsState),
-            Some(quote!(__RsState: ::core::marker::Send + ::core::marker::Sync)),
-        ),
-    };
+    let (state_param, state_in_ctx, state_bound) = state_ty.as_ref().map_or_else(
+        || {
+            (
+                quote!(__RsState,),
+                quote!(__RsState),
+                Some(quote!(__RsState: ::core::marker::Send + ::core::marker::Sync)),
+            )
+        },
+        |state_ty| (quote!(), quote!(#state_ty), None),
+    );
 
     let arena = ArenaPieces::of(outs, name);
     let o_ty = &arena.o_ty;
@@ -714,7 +716,7 @@ fn probed_docs_expr(parts: &HandlerParts<'_>, reply: &ReplyPlan<'_>) -> TokenStr
     // contract half feeds the headers schema below. Probes take the lifetime-free
     // representative of a borrowing input.
     let payload_ty = pair.map_or(*input_ty, |(_, payload)| payload);
-    let (payload_static, _) = super::subst_elided_lifetime(payload_ty, "'static");
+    let (payload_static, _) = subst_elided_lifetime(payload_ty, "'static");
     let payload_static = quote!(#payload_static);
     let (input_schema, message_name, message_description) = (
         quote! {{

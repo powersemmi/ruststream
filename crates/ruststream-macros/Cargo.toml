@@ -21,14 +21,5 @@ quote = "1"
 # `visit-mut` rewrites elided lifetimes in input types (the `Deserialized` view spellings).
 syn = { version = "3", features = ["full", "visit-mut"] }
 
-[lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
-unreachable_pub = "deny"
-missing_docs = "deny"
-
-[lints.clippy]
-correctness = { level = "deny", priority = -1 }
-suspicious = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-cognitive_complexity = "warn"
+[lints]
+workspace = true

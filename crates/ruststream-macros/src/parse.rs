@@ -337,8 +337,7 @@ fn source_arg(expr: Expr) -> SourceArg {
 /// by `by_key`.
 fn parse_workers(keyword: Ident, content: ParseStream) -> syn::Result<WorkersArg> {
     let count: Expr = content.parse()?;
-    let mut by_key = None;
-    if content.peek(Token![,]) {
+    let by_key = if content.peek(Token![,]) {
         content.parse::<Token![,]>()?;
         let marker: Ident = content.parse()?;
         if marker != "by_key" {
@@ -347,8 +346,10 @@ fn parse_workers(keyword: Ident, content: ParseStream) -> syn::Result<WorkersArg
                 format!("expected `by_key`: {keyword}(n) or {keyword}(n, by_key)"),
             ));
         }
-        by_key = Some(marker);
-    }
+        Some(marker)
+    } else {
+        None
+    };
     Ok(WorkersArg {
         keyword,
         count,

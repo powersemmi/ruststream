@@ -1278,14 +1278,16 @@ lto = "fat"
 inherits = "release"
 debug = "line-tables-only"
 
-[lints.rust]
+# One lint table for both crates of the workspace, so the macros crate is held to what the
+# runtime crate is held to.
+[workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 missing_docs = "deny"
 missing_debug_implementations = "warn"
 unused_qualifications = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
@@ -1297,3 +1299,6 @@ missing_const_for_fn = "allow"
 multiple_crate_versions = "allow"
 redundant_pub_crate = "allow"
 cognitive_complexity = "warn"
+
+[lints]
+workspace = true

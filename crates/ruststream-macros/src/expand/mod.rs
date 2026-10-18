@@ -790,7 +790,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
             )
         }
         None => (
-            source_ty.clone(),
+            source_ty,
             quote!(),
             quote!(::ruststream::runtime::Open),
         ),
@@ -921,11 +921,13 @@ fn publishing_reply<'a>(
             ));
         }
     };
-    Ok(match crate::parse::publish_result_reply(declared_ty) {
-        Some(reply_ty) => (reply_ty, quote!((async move #block).await)),
-        None => (
-            declared_ty,
-            quote!(::core::result::Result::Ok((async move #block).await)),
-        ),
-    })
+    Ok(crate::parse::publish_result_reply(declared_ty).map_or_else(
+        || {
+            (
+                declared_ty,
+                quote!(::core::result::Result::Ok((async move #block).await)),
+            )
+        },
+        |reply_ty| (reply_ty, quote!((async move #block).await)),
+    ))
 }
