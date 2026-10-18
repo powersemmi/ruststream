@@ -387,7 +387,7 @@ impl<'a> WireBytes<'a> {
     #[must_use]
     pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {
         match self {
-            Self::InBuffer => &buf[..],
+            Self::InBuffer => buf,
             Self::Own(bytes) => bytes,
         }
     }

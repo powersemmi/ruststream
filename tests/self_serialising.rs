@@ -118,7 +118,7 @@ fn a_value_that_holds_fields_writes_them_into_the_buffer() {
 
     let answer = tick.wire_bytes(&mut buf).expect("in range");
     assert!(matches!(answer, WireBytes::InBuffer));
-    assert_eq!(&buf[..], &[0, 0, 0, 9]);
+    assert_eq!(&*buf, &[0, 0, 0, 9]);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn an_infallible_writer_needs_no_result() {
         beat.wire_bytes(&mut buf).expect("cannot fail"),
         WireBytes::InBuffer
     ));
-    assert_eq!(&buf[..], &[4]);
+    assert_eq!(&*buf, &[4]);
 }
 
 // --8<-- [start:assertions]

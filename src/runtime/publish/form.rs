@@ -63,7 +63,7 @@ impl PayloadForm for Lend {
     {
         buf.clear();
         codec.encode_into(value, buf)?;
-        Ok(&buf[..])
+        Ok(&**buf)
     }
 
     #[inline]
@@ -101,7 +101,7 @@ impl PayloadForm for Lend {
             Payload::Lent(bytes) => bytes,
             // A stage above wrote a buffer of its own; the transport only reads it, so it stays
             // with the caller until the publish is over.
-            Payload::Owned(buf) => &kept_buffer.insert(buf)[..],
+            Payload::Owned(buf) => &**kept_buffer.insert(buf),
         };
         OutgoingMessage::assembled(kept(name, kept_name), bytes, headers)
     }

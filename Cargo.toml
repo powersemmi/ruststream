@@ -1331,6 +1331,7 @@ non_zero_suggestions = "warn"
 # Idiomatic std: the shortest form that says what the code does.
 map_with_unused_argument_over_ranges = "warn"
 return_and_then = "warn"
+deref_by_slicing = "warn"
 
 [lints]
 workspace = true
