@@ -1320,6 +1320,8 @@ cognitive_complexity = "warn"
 absolute_paths = "warn"
 alloc_instead_of_core = "warn"
 unnecessary_self_imports = "warn"
+# Panics: library code returns its errors; tests may unwrap.
+unwrap_used = "warn"
 
 [lints]
 workspace = true

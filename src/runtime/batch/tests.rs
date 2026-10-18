@@ -525,7 +525,7 @@ impl<'p> SliceHandler<Frame<'p>> for Frames {
     ) -> impl Future<Output = BatchResult> {
         self.0
             .lock()
-            .unwrap()
+            .expect("frames mutex poisoned")
             .extend(batch.iter().map(|frame| frame.0.to_vec()));
         ready(BatchResult::Uniform(HandlerOutcome::ack()))
     }

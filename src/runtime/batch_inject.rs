@@ -229,7 +229,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.seen
                 .lock()
-                .unwrap()
+                .expect("seen mutex poisoned")
                 .extend(batch.iter().map(|n| n * factor));
             ready(BatchResult::Uniform(HandlerOutcome::ack()))
         }

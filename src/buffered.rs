@@ -376,7 +376,7 @@ mod tests {
             .max_wait(max_wait)
             .subscribe(&connected)
             .await
-            .unwrap()
+            .expect("a memory subscription opens")
     }
 
     #[derive(Debug, thiserror::Error)]

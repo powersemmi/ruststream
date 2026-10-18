@@ -9,3 +9,6 @@ doc-valid-idents = ["RustStream", "AsyncAPI", ".."]
 cognitive-complexity-threshold = 25
 too-many-lines-threshold = 100
 excessive-nesting-threshold = 6
+
+# Tests may unwrap: a failed test is the report.
+allow-unwrap-in-tests = true
