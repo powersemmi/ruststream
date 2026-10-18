@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::future::ready;
+use std::iter::repeat_with;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
@@ -292,7 +293,7 @@ impl BatchLog {
         if len == self.expected {
             Ok(())
         } else {
-            Err((0..len).map(|_| HandlerOutcome::drop()).collect())
+            Err(repeat_with(HandlerOutcome::drop).take(len).collect())
         }
     }
 }

@@ -25,6 +25,7 @@ use std::fmt::Display;
 use std::future::{Pending, poll_fn};
 use std::hint::spin_loop;
 use std::io;
+use std::iter::repeat_with;
 use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
@@ -114,8 +115,12 @@ enum Stuck {
 impl Signals {
     fn new(count: usize) -> Self {
         Self {
-            parked: (0..count).map(|_| Padded(AtomicBool::new(false))).collect(),
-            wakers: (0..count).map(|_| Padded(AtomicWaker::new())).collect(),
+            parked: repeat_with(|| Padded(AtomicBool::new(false)))
+                .take(count)
+                .collect(),
+            wakers: repeat_with(|| Padded(AtomicWaker::new()))
+                .take(count)
+                .collect(),
             loop_waiting: Padded(AtomicUsize::new(0)),
             loop_waker: AtomicWaker::new(),
         }

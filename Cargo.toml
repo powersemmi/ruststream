@@ -1328,6 +1328,8 @@ string_slice = "warn"
 # Numbers: big endian, the network order, on the wire.
 little_endian_bytes = "warn"
 non_zero_suggestions = "warn"
+# Idiomatic std: the shortest form that says what the code does.
+map_with_unused_argument_over_ranges = "warn"
 
 [lints]
 workspace = true

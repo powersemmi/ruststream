@@ -135,6 +135,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::iter::repeat_with;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -146,8 +147,8 @@ mod tests {
     /// stays inside the grammar every broker's subjects, topics, queues and keys admit.
     #[test]
     fn unique_subjects_differ_and_stay_addressable() {
-        let subjects: Vec<String> = (0..64)
-            .map(|_| unique_subject("conformance.check"))
+        let subjects: Vec<String> = repeat_with(|| unique_subject("conformance.check"))
+            .take(64)
             .collect();
         let distinct: HashSet<&String> = subjects.iter().collect();
         assert_eq!(
