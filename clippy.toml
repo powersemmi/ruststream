@@ -1,3 +1,11 @@
 # Proper nouns that should not require backticks in doc comments. The trailing ".." keeps clippy's
 # built-in defaults. RustStream/AsyncAPI also appear in clap help text, where literal backticks leak.
 doc-valid-idents = ["RustStream", "AsyncAPI", ".."]
+
+# Code complexity. Complexity and length keep clippy's defaults, written out so a reader sees
+# what the gate holds a function to. `excessive_nesting` reports nothing until a threshold is
+# set: 6 leaves a dispatch loop (an async task, a loop, a match on the next item) its natural
+# shape and reports a branch buried inside it.
+cognitive-complexity-threshold = 25
+too-many-lines-threshold = 100
+excessive-nesting-threshold = 6
