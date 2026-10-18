@@ -628,11 +628,7 @@ impl<F: Future> Future for Sampled<'_, F> {
         // One call site for the inner poll, and the timed path out of line: a second call site
         // or the timing code inline makes this poll too big for the compiler to inline the
         // handler's body into it, which costs every poll a call.
-        let start = if this.sampler.tick() {
-            Some(stats.start())
-        } else {
-            None
-        };
+        let start = this.sampler.tick().then(|| stats.start());
         let polled = this.future.poll(cx);
         if let Some(start) = start {
             stats.finish(start);

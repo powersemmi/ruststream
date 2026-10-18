@@ -1332,6 +1332,7 @@ non_zero_suggestions = "warn"
 map_with_unused_argument_over_ranges = "warn"
 return_and_then = "warn"
 deref_by_slicing = "warn"
+if_then_some_else_none = "warn"
 
 [lints]
 workspace = true
