@@ -9,7 +9,7 @@
 
 mod common;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::convert::Infallible;
 use std::future::ready;
 use std::pin::pin;
@@ -218,7 +218,7 @@ fn a_key_stays_on_one_thread_and_in_order() {
         running.shutdown().await.expect("shutdown");
         seen
     });
-    let mut bands: HashMap<u32, Vec<&Placed>> = HashMap::new();
+    let mut bands: BTreeMap<u32, Vec<&Placed>> = BTreeMap::new();
     for reply in &seen {
         assert!(
             !reply.thread.starts_with(APP_THREADS),
