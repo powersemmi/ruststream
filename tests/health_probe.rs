@@ -15,16 +15,18 @@ mod common;
 
 use std::convert::Infallible;
 use std::future::{pending, ready};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use common::Order;
-use futures::{Stream, stream};
+use futures::{Stream, StreamExt, stream};
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage};
 use ruststream::runtime::{
-    AppInfo, HandlerOutcome, HealthProbe, HealthState, PublishExt, RustStream, RustStreamError,
-    SubscriptionCount, SubscriptionEnd,
+    AppInfo, Context, Handle, HandlerOutcome, HealthProbe, HealthState, IntoSource, PublishExt,
+    RustStream, RustStreamError, SubscriptionCount, SubscriptionEnd, subscriber as mount,
 };
 use ruststream::{BrokerMoves, Subscriber, SubscriptionSource, subscriber};
+use tokio::sync::Notify;
 
 #[subscriber("health.ok")]
 async fn fine(_order: &Order) -> HandlerOutcome {
@@ -328,4 +330,88 @@ async fn a_stream_end_under_fail_fast_flips_the_probe() {
         .shutdown()
         .await
         .expect_err("the teardown surfaces the failure");
+}
+
+/// A queue an `on_shutdown` hook deletes: its consumer is cancelled once the hook says so.
+#[derive(Debug, Clone)]
+struct DeletedOnShutdown(Arc<Notify>);
+
+impl IntoSource for DeletedOnShutdown {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+impl SubscriptionSource<ConnectedMemoryBroker> for DeletedOnShutdown {
+    type Subscriber = CancelledOnNotice;
+    type Copies = BrokerMoves;
+
+    fn name(&self) -> &'static str {
+        "health.deleted_on_shutdown"
+    }
+
+    fn subscribe(
+        self,
+        _connected: &ConnectedMemoryBroker,
+    ) -> impl Future<Output = Result<CancelledOnNotice, MemoryError>> + Send {
+        ready(Ok(CancelledOnNotice(self.0)))
+    }
+}
+
+/// The consumer the server cancels when the queue goes: its stream ends on the notice.
+struct CancelledOnNotice(Arc<Notify>);
+
+impl Subscriber for CancelledOnNotice {
+    type Message = MemoryMessage;
+    type Error = Infallible;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<MemoryMessage, Infallible>> + Send + '_ {
+        let notice = Arc::clone(&self.0);
+        stream::once(async move { notice.notified().await }).filter_map(|()| ready(None))
+    }
+}
+
+struct Ignore;
+
+impl Handle<Order> for Ignore {
+    fn handle(
+        &self,
+        _order: &Order,
+        _outs: &(),
+        _ctx: &mut Context<'_>,
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
+        ready(Ok(()))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_end_during_an_on_shutdown_hook_is_part_of_the_shutdown() {
+    let notice = Arc::new(Notify::new());
+    let probe: Arc<OnceLock<HealthProbe>> = Arc::new(OnceLock::new());
+    let (hook_notice, hook_probe) = (Arc::clone(&notice), Arc::clone(&probe));
+    let source = DeletedOnShutdown(notice);
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .on_subscription_end(SubscriptionEnd::FailFast)
+        .on_shutdown(async move |_state| {
+            // The hook deletes the queue and returns only once the loop has read the end.
+            hook_notice.notify_one();
+            let mut health = hook_probe
+                .get()
+                .expect("the probe is set after start")
+                .clone();
+            until_active(&mut health, 0).await;
+            Ok::<(), Infallible>(())
+        })
+        .with_broker(MemoryBroker::new(), move |b| {
+            b.include(mount(source, Ignore).build());
+        });
+
+    let running = app.start().await.expect("startup failed");
+    probe.set(running.health()).expect("set once");
+    running
+        .shutdown()
+        .await
+        .expect("a stream ending inside an on_shutdown hook is not a failure");
 }

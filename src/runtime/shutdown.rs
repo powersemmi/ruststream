@@ -41,6 +41,7 @@ pub(crate) struct Shutdown {
 #[derive(Debug)]
 struct State {
     cancelled: AtomicBool,
+    stopping: AtomicBool,
     failure: Mutex<Option<String>>,
     health: HealthReport,
     on_end: SubscriptionEnd,
@@ -50,6 +51,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             cancelled: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
             failure: Mutex::new(None),
             health: HealthReport::new(),
             on_end: SubscriptionEnd::default(),
@@ -95,7 +97,7 @@ impl Shutdown {
     /// What a dispatch loop does when its stream ended: nothing more where shutdown is under way,
     /// since the end is part of it; otherwise what the app's [`SubscriptionEnd`] says.
     pub(crate) fn stream_ended(&self, subscription: &str) {
-        if self.is_cancelled() {
+        if self.is_cancelled() || self.state.stopping.load(Ordering::Relaxed) {
             return;
         }
         match self.state.on_end {
@@ -108,6 +110,12 @@ impl Shutdown {
                 self.signal(subscription, "the subscription's stream ended");
             }
         }
+    }
+
+    /// Marks the orderly teardown as begun while the loops still run: the `on_shutdown` hooks run
+    /// before [`cancel`](Self::cancel), and a stream they end is part of the shutdown.
+    pub(crate) fn begin(&self) {
+        self.state.stopping.store(true, Ordering::Relaxed);
     }
 
     /// Raises the signal for every holder of this handle, with no failure behind it: the orderly
