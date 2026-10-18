@@ -7,13 +7,12 @@
 //! copy - and count this thread's allocations around a publish.
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::convert::Infallible;
 use std::future::{Future, ready};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use allocation_counter::measure;
 use ruststream::codec::{Codec, JsonCodec};
 #[cfg(feature = "memory")]
 use ruststream::memory::MemoryBroker;
@@ -22,35 +21,26 @@ use ruststream::{
     BytesMut, HeaderMap, Lend, Outgoing, OutgoingMessage, Publisher, Serialized, Take,
 };
 use serde::Serialize;
+use tokio::runtime::{Builder, Runtime};
 
-/// Counts this thread's allocations, so the cost of one publish can be read off directly. A
-/// thread-local count rather than a global one: the test harness runs other tests beside this
-/// one, and their allocations are none of this measurement's business.
-struct Counting;
-
-thread_local! {
-    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+/// A runtime on this thread alone, so a count taken while it runs holds every task it polls.
+fn runtime() -> Runtime {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime builds")
 }
 
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.with(|count| count.set(count.get() + 1));
-        // SAFETY: the layout is the caller's, forwarded unchanged to the system allocator.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: the pointer and layout are the caller's, forwarded unchanged.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: Counting = Counting;
-
-/// What this thread has allocated so far.
-fn allocations() -> usize {
-    ALLOCATIONS.with(Cell::get)
+/// Runs `work` to completion on `runtime` and answers its output with the number of allocations
+/// this thread made meanwhile: the work's own and those of every task the runtime polled. The
+/// count is this thread's alone, so the tests the harness runs beside this one do not enter it.
+fn allocations_of<Work: Future>(runtime: &Runtime, work: Work) -> (Work::Output, u64) {
+    let mut output = None;
+    let counted = measure(|| output = Some(runtime.block_on(work)));
+    (
+        output.expect("the measured closure ran the work"),
+        counted.count_total,
+    )
 }
 
 /// A message under a destination of its own, so a publish names nothing.
@@ -368,20 +358,17 @@ async fn a_transport_takes_the_destination_the_payload_and_the_headers_in_one_mo
 /// The framework makes no copy of the map on its way out: the terminal of the publish pipeline
 /// moves what the transforms filled into the message that leaves, and the transport takes it from
 /// there.
-#[tokio::test]
-async fn handing_the_header_map_to_the_broker_allocates_nothing() {
+#[test]
+fn handing_the_header_map_to_the_broker_allocates_nothing() {
+    let runtime = runtime();
     let pipeline = PublishIdentity;
     let taker = Taker::default();
     let mut out = OutgoingView::new("events", b"{}".as_slice());
     out.headers_mut().insert(STAMP, b"1".to_vec());
     let stamped_at = out.headers().get(STAMP).expect("just stamped").as_ptr() as usize;
 
-    let before = allocations();
-    pipeline
-        .run(&mut out, &taker, None)
-        .await
-        .expect("the taker never refuses");
-    let spent = allocations() - before;
+    let (outcome, spent) = allocations_of(&runtime, pipeline.run(&mut out, &taker, None));
+    outcome.expect("the taker never refuses");
 
     let seen = taker.seen();
     assert_eq!(
@@ -400,32 +387,26 @@ async fn handing_the_header_map_to_the_broker_allocates_nothing() {
 /// transport that asks for one pays. A publish that hands the buffer over is the floor; a vector
 /// costs nothing over it, because the buffer the codec wrote is the vector; a `Bytes` costs the
 /// one block that makes ownership shareable.
-#[tokio::test]
-async fn only_a_transport_that_takes_the_buffer_pays_for_it() {
+#[test]
+fn only_a_transport_that_takes_the_buffer_pays_for_it() {
+    let runtime = runtime();
     // One publish before the count: a run's first encode grows buffers that later ones do not.
-    let counted = async |claim| {
+    let counted = |claim| {
         let publisher = Probe::taking(claim);
         let value = OrderCreated { id: 7 };
-        publisher
-            .message(&value)
-            .publish()
-            .await
+        runtime
+            .block_on(publisher.message(&value).publish())
             .expect("the probe never refuses");
         publisher.seen();
 
-        let before = allocations();
-        publisher
-            .message(&value)
-            .publish()
-            .await
-            .expect("the probe never refuses");
-        let spent = allocations() - before;
+        let (outcome, spent) = allocations_of(&runtime, publisher.message(&value).publish());
+        outcome.expect("the probe never refuses");
         (spent, publisher.seen())
     };
 
-    let (handed_over, read) = counted(Claim::Read).await;
-    let (as_vec, took_vec) = counted(Claim::Vec).await;
-    let (as_bytes, took_bytes) = counted(Claim::Bytes).await;
+    let (handed_over, read) = counted(Claim::Read);
+    let (as_vec, took_vec) = counted(Claim::Vec);
+    let (as_bytes, took_bytes) = counted(Claim::Bytes);
 
     assert_eq!(
         as_vec, handed_over,
@@ -470,37 +451,38 @@ async fn a_computed_value_hands_over_the_buffer_it_wrote() {
 /// the publish what writing that header costs, and nothing on top: the map reaches the bus as
 /// the publish filled it.
 #[cfg(feature = "memory")]
-#[tokio::test]
-async fn a_header_costs_the_in_memory_broker_only_what_writing_it_costs() {
+#[test]
+fn a_header_costs_the_in_memory_broker_only_what_writing_it_costs() {
+    let runtime = runtime();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
 
-    let counted = async move |carried: usize| {
-        let before = allocations();
-        let mut headers = HeaderMap::new();
-        for _ in 0..carried {
-            headers.insert(STAMP, b"1".to_vec());
-        }
-        let msg = OutgoingMessage::new("orders.created", b"{}").with_headers(headers);
-        publisher
-            .publish(msg, None)
-            .await
-            .expect("the bus is up for the length of this test");
-        allocations() - before
+    let counted = |carried: usize| {
+        let publish = async {
+            let mut headers = HeaderMap::new();
+            for _ in 0..carried {
+                headers.insert(STAMP, b"1".to_vec());
+            }
+            let msg = OutgoingMessage::new("orders.created", b"{}").with_headers(headers);
+            publisher
+                .publish(msg, None)
+                .await
+                .expect("the bus is up for the length of this test");
+        };
+        allocations_of(&runtime, publish).1
     };
 
     // One publish before the counts: the bus grows its own tables on the first message.
-    counted(0).await;
-    let bare = counted(0).await;
-    let stamped = counted(1).await;
+    counted(0);
+    let bare = counted(0);
+    let stamped = counted(1);
 
     // What the entry costs on its own, so the assertion names no magic number.
-    let writing = {
-        let before = allocations();
+    let writing = measure(|| {
         let mut headers = HeaderMap::new();
         headers.insert(STAMP, b"1".to_vec());
-        allocations() - before
-    };
+    })
+    .count_total;
 
     assert_eq!(
         stamped - bare,
@@ -575,16 +557,17 @@ mod pool {
 
     /// Publishes `count` orders to `name`, each settled before the next, and answers what this
     /// thread allocated while they were handled.
-    async fn cost_of(tb: &TestApp<()>, name: &str, count: u64) -> usize {
-        let before = allocations();
-        for id in 0..count {
-            tb.message(&Order { id })
-                .to(name)
-                .publish()
-                .await
-                .expect("publish");
-        }
-        allocations() - before
+    fn cost_of(runtime: &Runtime, tb: &TestApp<()>, name: &str, count: u64) -> u64 {
+        let publish = async {
+            for id in 0..count {
+                tb.message(&Order { id })
+                    .to(name)
+                    .publish()
+                    .await
+                    .expect("publish");
+            }
+        };
+        allocations_of(runtime, publish).1
     }
 
     /// The four paths compared, in the order the costs are read.
@@ -595,8 +578,12 @@ mod pool {
         "plain.sequential",
     ];
 
-    #[tokio::test]
-    async fn a_pool_reuses_its_encode_buffers_across_deliveries() {
+    #[test]
+    fn a_pool_reuses_its_encode_buffers_across_deliveries() {
+        let runtime = runtime();
+        // The harness's tasks live on this runtime between the measured runs, and its teardown
+        // runs here too.
+        let _context = runtime.enter();
         let app =
             RustStream::new(AppInfo::new("pool", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
                 b.include(confirm_pooled).out_reply(SinkPublish);
@@ -604,16 +591,18 @@ mod pool {
                 b.include(acknowledge_pooled);
                 b.include(acknowledge_sequential);
             });
-        let tb = TestApp::start(app).await.expect("startup failed");
+        let tb = runtime
+            .block_on(TestApp::start(app))
+            .expect("startup failed");
 
         // Warm every path: the first deliveries grow the buffers a loop keeps, and a run's
         // one-time costs are none of the comparison's business.
         for name in NAMES {
-            cost_of(&tb, name, 4).await;
+            cost_of(&runtime, &tb, name, 4);
         }
         let mut cost = [0; 4];
         for (slot, name) in cost.iter_mut().zip(NAMES) {
-            *slot = cost_of(&tb, name, 8).await;
+            *slot = cost_of(&runtime, &tb, name, 8);
         }
         let [reply_pooled, reply_sequential, ack_pooled, ack_sequential] = cost;
         let pool_over_replies = reply_pooled.saturating_sub(reply_sequential);
