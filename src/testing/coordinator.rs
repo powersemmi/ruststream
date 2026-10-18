@@ -1042,10 +1042,8 @@ mod tests {
         /// A coordinator that knows `east` as the registration at 0 and `west` as the one at 1.
         fn coordinator(&self) -> Coordinator {
             let coordinator = Coordinator::new(16);
-            coordinator.locate([
-                &*self.east as &(dyn Any + Send + Sync),
-                &*self.west as &(dyn Any + Send + Sync),
-            ]);
+            let registrations: [&(dyn Any + Send + Sync); 2] = [&*self.east, &*self.west];
+            coordinator.locate(registrations);
             coordinator
         }
     }

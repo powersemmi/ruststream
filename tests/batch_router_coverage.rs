@@ -94,7 +94,7 @@ fn every_route_kind_reports_its_metadata_in_registration_order() {
     let router = Router::<MemoryBroker>::new()
         .handle(
             broker.subscribe("brc-meta-handle"),
-            |_msg: &MemoryMessage, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &MemoryMessage, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::raw("brc-meta-handle"),
         )
         .include(

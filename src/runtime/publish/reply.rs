@@ -117,7 +117,7 @@ where
         publisher
             .begin_transaction()
             .await
-            .map_err(|e| Box::new(e) as BoxError)?;
+            .map_err(BoxError::from)?;
         for reply in replies {
             let slot = <P::Payload as PayloadForm>::encode_again(&mut encode);
             if let Err(err) = self
@@ -131,10 +131,7 @@ where
         }
         // Per the TransactionalPublisher contract a failed commit closes the transaction, so
         // there is nothing left to abort here; the error alone settles the batch as failed.
-        publisher
-            .commit()
-            .await
-            .map_err(|err| Box::new(err) as BoxError)
+        publisher.commit().await.map_err(BoxError::from)
     }
 }
 

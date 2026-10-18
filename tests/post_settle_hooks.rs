@@ -83,7 +83,7 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_order);
         });
@@ -139,7 +139,7 @@ async fn hooks_drain_on_graceful_shutdown() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_slow);
         });
@@ -183,7 +183,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_batch.batch(nonzero!(64)));
         });

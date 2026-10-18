@@ -20,7 +20,7 @@ use syn::{
     Attribute, DeriveInput, Ident, ItemFn, LitInt, LitStr, Meta, Token, Type, parse_macro_input,
 };
 
-use parse::{SubscriberArgs, doc_description};
+use parse::{SubscriberArgs, derive_generics, doc_description};
 
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
@@ -417,7 +417,8 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
         Ok(None) => quote!(::ruststream::NoHeaders),
         Err(err) => return err.into_compile_error().into(),
     };
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let generics = derive_generics(&input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
         impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {

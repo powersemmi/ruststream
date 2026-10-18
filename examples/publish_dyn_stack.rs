@@ -67,13 +67,14 @@ mod service {
 
     /// The chain comes from configuration: one `Stamp` per header the operator listed.
     fn app(headers: &[(&str, &str)]) -> impl App {
-        let chain = headers.iter().map(|(name, value)| {
-            let stamp = Stamp {
-                name: Str::from((*name).to_owned()),
-                value: Bytes::from((*value).to_owned()),
-            };
-            Arc::new(stamp) as Arc<dyn PublishDynLayer>
-        });
+        let chain = headers
+            .iter()
+            .map(|(name, value)| -> Arc<dyn PublishDynLayer> {
+                Arc::new(Stamp {
+                    name: Str::from((*name).to_owned()),
+                    value: Bytes::from((*value).to_owned()),
+                })
+            });
         RustStream::new(AppInfo::new("billing", "0.1.0"))
             .publish_layer(PublishDynStack::new(chain))
             .with_broker(MemoryBroker::new(), |b| {

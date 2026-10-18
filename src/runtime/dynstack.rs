@@ -188,10 +188,11 @@ mod tests {
     #[tokio::test]
     async fn runs_middleware_in_order_then_inner() {
         let log = Arc::new(Mutex::new(Vec::new()));
-        let stack = DynStack::new([
-            Arc::new(Recorder(Arc::clone(&log), "a")) as Arc<dyn DynMiddleware<Input>>,
-            Arc::new(Recorder(Arc::clone(&log), "b")) as Arc<dyn DynMiddleware<Input>>,
-        ]);
+        let layers: [Arc<dyn DynMiddleware<Input>>; 2] = [
+            Arc::new(Recorder(Arc::clone(&log), "a")),
+            Arc::new(Recorder(Arc::clone(&log), "b")),
+        ];
+        let stack = DynStack::new(layers);
         let inner_log = Arc::clone(&log);
         let inner = move |_: &Input, _ctx: &mut Context| {
             let inner_log = Arc::clone(&inner_log);

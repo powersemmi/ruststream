@@ -416,7 +416,7 @@ impl<Item: Send + 'static> Threads<Item> {
                 subscription,
                 index,
                 runtime,
-                move || async move {
+                async move || {
                     work(signals, index, consumer, handle).await;
                     // The ring is drained; what its deliveries left behind (a continuation, a
                     // hook, a retry timer) finishes here before the thread and its runtime go.

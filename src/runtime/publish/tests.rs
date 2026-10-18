@@ -254,10 +254,11 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     }
 
     let hits = Arc::new(AtomicUsize::new(0));
-    let stack = PublishDynStack::new([
-        Arc::new(Mark(Arc::clone(&hits), 1)) as Arc<dyn PublishDynLayer>,
+    let layers: [Arc<dyn PublishDynLayer>; 2] = [
+        Arc::new(Mark(Arc::clone(&hits), 1)),
         Arc::new(Mark(Arc::clone(&hits), 10)),
-    ]);
+    ];
+    let stack = PublishDynStack::new(layers);
     assert!(format!("{stack:?}").contains("middleware"));
     let pipeline = PublishStack::new(stack.clone(), PublishIdentity);
 
@@ -446,10 +447,11 @@ async fn the_pipeline_cursors_render_their_position() {
     }
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let dynamic = PublishDynStack::new([
-        Arc::new(Record(Arc::clone(&seen))) as Arc<dyn PublishDynLayer>,
+    let layers: [Arc<dyn PublishDynLayer>; 2] = [
         Arc::new(Record(Arc::clone(&seen))),
-    ]);
+        Arc::new(Record(Arc::clone(&seen))),
+    ];
+    let dynamic = PublishDynStack::new(layers);
     let pipeline = PublishStack::new(
         Record(Arc::clone(&seen)),
         PublishStack::new(dynamic, PublishIdentity),

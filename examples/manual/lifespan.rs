@@ -86,7 +86,7 @@ fn app() -> RustStream<Identity, Database> {
         // before brokers connect: open the resource; the produced value becomes the typed app state
         .on_startup(async move |()| Database::connect("postgres://localhost/orders").await)
         // after brokers shut down: close it cleanly (the state is shared as `Arc<Database>`)
-        .after_shutdown(|db: Arc<Database>| async move {
+        .after_shutdown(async move |db: Arc<Database>| {
             db.close().await;
             Ok::<_, DbError>(())
         })

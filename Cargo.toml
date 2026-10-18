@@ -1289,6 +1289,20 @@ unused_qualifications = "warn"
 # Imports: a name is imported once, at the top of the file.
 redundant_imports = "warn"
 unused_import_braces = "warn"
+# Dead and redundant code: casts, lifetimes and macro arms that change nothing.
+closure_returning_async_block = "warn"
+explicit_outlives_requirements = "warn"
+impl_trait_redundant_captures = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unused_extern_crates = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
 
 [workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }

@@ -70,12 +70,13 @@ mod service {
 
     /// The chain comes from configuration: one `Block` per tenant the operator listed.
     fn app(blocked: &[&str]) -> impl App {
-        let chain = blocked.iter().map(|tenant| {
-            let block = Block {
-                tenant: (*tenant).to_owned(),
-            };
-            Arc::new(block) as Arc<dyn DynMiddleware<MemoryMessage>>
-        });
+        let chain = blocked
+            .iter()
+            .map(|tenant| -> Arc<dyn DynMiddleware<MemoryMessage>> {
+                Arc::new(Block {
+                    tenant: (*tenant).to_owned(),
+                })
+            });
         let stack = DynStack::new(chain);
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // The stack wraps one registration, which sees the broker's own message.

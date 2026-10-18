@@ -274,6 +274,57 @@ enum Carry<E> {
     Ended,
 }
 
+/// One step of the batch stream: the next batch and the state the following step resumes from.
+async fn next_batch<Inner, Message, Error>(
+    (mut stream, carry): (Inner, Carry<Error>),
+    max_size: usize,
+    max_wait: Duration,
+) -> Option<(Result<Vec<Message>, Error>, (Inner, Carry<Error>))>
+where
+    Inner: Stream<Item = Result<Message, Error>> + Unpin,
+{
+    // An error or end-of-stream observed while filling the previous batch could not be yielded
+    // then (the batch itself had to go out first); deliver it now.
+    match carry {
+        Carry::Error(err) => return Some((Err(err), (stream, Carry::Nothing))),
+        Carry::Ended => return None,
+        Carry::Nothing => {}
+    }
+    let first = match stream.next().await? {
+        Ok(msg) => msg,
+        Err(err) => return Some((Err(err), (stream, Carry::Nothing))),
+    };
+    let mut batch = Vec::with_capacity(max_size.min(64));
+    batch.push(first);
+    let mut carry = Carry::Nothing;
+    if max_size > 1 {
+        let deadline = sleep(max_wait);
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                () = &mut deadline => break,
+                next = stream.next() => match next {
+                    Some(Ok(msg)) => {
+                        batch.push(msg);
+                        if batch.len() >= max_size {
+                            break;
+                        }
+                    }
+                    Some(Err(err)) => {
+                        carry = Carry::Error(err);
+                        break;
+                    }
+                    None => {
+                        carry = Carry::Ended;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    Some((Ok(batch), (stream, carry)))
+}
+
 impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
     type Batch = Vec<S::Message>;
 
@@ -290,51 +341,9 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
         let max_size = size.get();
         let max_wait = self.max_wait;
         let inner = Box::pin(self.inner.stream());
-        stream::unfold(
-            (inner, Carry::Nothing),
-            move |(mut stream, carry)| async move {
-                // An error or end-of-stream observed while filling the previous batch could not be
-                // yielded then (the batch itself had to go out first); deliver it now.
-                match carry {
-                    Carry::Error(err) => return Some((Err(err), (stream, Carry::Nothing))),
-                    Carry::Ended => return None,
-                    Carry::Nothing => {}
-                }
-                let first = match stream.next().await? {
-                    Ok(msg) => msg,
-                    Err(err) => return Some((Err(err), (stream, Carry::Nothing))),
-                };
-                let mut batch = Vec::with_capacity(max_size.min(64));
-                batch.push(first);
-                let mut carry = Carry::Nothing;
-                if max_size > 1 {
-                    let deadline = sleep(max_wait);
-                    tokio::pin!(deadline);
-                    loop {
-                        tokio::select! {
-                            () = &mut deadline => break,
-                            next = stream.next() => match next {
-                                Some(Ok(msg)) => {
-                                    batch.push(msg);
-                                    if batch.len() >= max_size {
-                                        break;
-                                    }
-                                }
-                                Some(Err(err)) => {
-                                    carry = Carry::Error(err);
-                                    break;
-                                }
-                                None => {
-                                    carry = Carry::Ended;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Some((Ok(batch), (stream, carry)))
-            },
-        )
+        stream::unfold((inner, Carry::Nothing), move |state| {
+            next_batch(state, max_size, max_wait)
+        })
     }
 }
 

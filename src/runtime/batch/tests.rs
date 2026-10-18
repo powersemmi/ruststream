@@ -114,8 +114,8 @@ async fn unmatched_remainder_is_retried() {
     publish_numbers(&broker, "short", &[0, 1, 2]).await;
 
     // A buggy handler returning one outcome for a batch of three: the unmatched two retry.
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        vec![HandlerOutcome::ack()]
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(vec![HandlerOutcome::ack()])
     });
 
     let state = ();
@@ -176,8 +176,8 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let mut sub = broker.subscribe("uniform");
     publish_numbers(&broker, "uniform", &[0, 1]).await;
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::retry()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::retry())
     });
 
     let state = ();
@@ -287,11 +287,11 @@ fn batch_def_defaults_register_without_documentation() {
 
 #[test]
 fn typed_batch_debug_reports_the_decode_policy() {
-    let handler = typed_batch::<MemoryMessage, u32, _, _>(
-        JsonCodec,
-        |_batch: &[u32], _ctx: &mut Context| async { HandlerOutcome::ack() },
-    )
-    .with_decode(FailurePolicy::Retry);
+    let handler =
+        typed_batch::<MemoryMessage, u32, _, _>(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+            ready(HandlerOutcome::ack())
+        })
+        .with_decode(FailurePolicy::Retry);
 
     let rendered = format!("{handler:?}");
     assert!(rendered.contains("TypedBatch"), "{rendered}");
@@ -427,8 +427,8 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     publish_payloads(&broker, "diag-batch", &[b"not json"]).await;
 
     let (events, guard) = log_capture::start();
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::ack()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::ack())
     });
     let state = ();
     let delivery = Delivery::empty();
@@ -684,8 +684,8 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::retry_after(DEFER)
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::retry_after(DEFER))
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
@@ -721,8 +721,11 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        vec![HandlerOutcome::retry_after(DEFER), HandlerOutcome::ack()]
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(vec![
+            HandlerOutcome::retry_after(DEFER),
+            HandlerOutcome::ack(),
+        ])
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
@@ -756,8 +759,8 @@ async fn a_deferred_decode_rejection_is_republished() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::ack()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::ack())
     })
     .with_decode(FailurePolicy::RetryAfter(DEFER));
     let dropped = Arc::new(AtomicUsize::new(0));

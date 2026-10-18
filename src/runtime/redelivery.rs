@@ -124,7 +124,7 @@ where
             let publish = self.pipeline.send(&self.live, sent, options.as_ref());
             #[cfg(feature = "testing")]
             let publish = publishing_to(self.origin, publish);
-            publish.await.map_err(|err| Box::new(err) as BoxError)
+            publish.await.map_err(BoxError::from)
         })
     }
 }
@@ -443,13 +443,14 @@ where
             let (live, origin) = paired(connected, pairing).await;
             #[cfg(not(feature = "testing"))]
             let live = pairing.await;
-            Ok(Arc::new(RetryLeaf {
+            let leaf: Arc<dyn ErasedRetryPublisher<Cx>> = Arc::new(RetryLeaf {
                 live: live?,
                 stack,
                 pipeline,
                 #[cfg(feature = "testing")]
                 origin,
-            }) as Arc<dyn ErasedRetryPublisher<Cx>>)
+            });
+            Ok(leaf)
         })
     }
 }
@@ -666,18 +667,18 @@ where
     source
         .declare_retry_on(connected, &declaration)
         .map_err(|err| {
-            Box::new(RetryDeclareError {
+            BoxError::from(RetryDeclareError {
                 subscription: subscription.to_owned(),
                 source: err,
-            }) as BoxError
+            })
         })?;
     let retry = match publisher {
         Some(pairing) => {
             let publisher = pairing.pair(connected).await.map_err(|err| {
-                Box::new(RetryPairError {
+                BoxError::from(RetryPairError {
                     subscription: subscription.to_owned(),
                     source: err,
-                }) as BoxError
+                })
             })?;
             let destination = match destination {
                 Some(named) => Some(Arc::from(named.as_ref())),
@@ -685,7 +686,7 @@ where
                     &source, connected,
                 )
                 .await
-                .map_err(|err| Box::new(err) as BoxError)?
+                .map_err(BoxError::from)?
                 .map(|address| Arc::from(address.as_str())),
             };
             // A descriptor that addresses its own copies answers here; one that does not leaves
@@ -711,7 +712,7 @@ where
         .declare_retry(&declaration)
         .subscribe(connected)
         .await
-        .map_err(|err| Box::new(err) as BoxError)?;
+        .map_err(BoxError::from)?;
     Ok((
         subscriber,
         Arc::new(Delivery::for_subscription(

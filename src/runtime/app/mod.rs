@@ -306,8 +306,8 @@ pub(super) mod lifecycle_hooks {
             Box::pin(async move {
                 let live = pair_bound::<B, Source>(&slot, source)
                     .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
-                hook(live).await.map_err(|e| Box::new(e) as BoxError)
+                    .map_err(BoxError::from)?;
+                hook(live).await.map_err(BoxError::from)
             })
         })
     }

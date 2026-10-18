@@ -47,10 +47,7 @@ impl PublishPipeline for PublishIdentity {
         let msg = <P::Payload as PayloadForm>::leaving(out);
         #[cfg(feature = "testing")]
         let recorded = PipelinePublish::capture(&msg, options);
-        let result = send
-            .publish(msg, options)
-            .await
-            .map_err(|e| Box::new(e) as BoxError);
+        let result = send.publish(msg, options).await.map_err(BoxError::from);
         #[cfg(feature = "testing")]
         if result.is_ok() {
             recorded.sent();
@@ -239,7 +236,7 @@ impl PublishLayer for PublishDynStack {
         // the dynamic list pays it.
         PublishDynNext {
             rest: &self.0,
-            tail: Box::new(move |out| Box::pin(next.run(out)) as PublishFut<'a>),
+            tail: Box::new(move |out| -> PublishFut<'a> { Box::pin(next.run(out)) }),
         }
         .run(out)
     }

@@ -202,7 +202,7 @@ mod tests {
             .await
         );
         assert!(
-            !wait_until_async(|| async { false }, Duration::from_millis(50)).await,
+            !wait_until_async(async move || false, Duration::from_millis(50)).await,
             "a never-true condition must time out"
         );
     }

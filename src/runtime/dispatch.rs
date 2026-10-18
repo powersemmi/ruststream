@@ -1433,7 +1433,7 @@ async fn dispatch<H, M, C, St>(
     if let Some(mut s) = settle {
         // Named for the same reason as the delivery's own future above: the settle path is
         // built where it is polled instead of being copied into this future's state.
-        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build as fn(&M) -> C);
+        let settling = settle_outcome(slot, s.outcome(), name, delivery, C::build);
         settling.await;
         // Spawn the `and_after` continuation (if any) onto the tracked set so a graceful shutdown
         // drains it. At-most-once: the message is already settled, so a lost or panicking

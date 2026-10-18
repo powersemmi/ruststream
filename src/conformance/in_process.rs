@@ -103,9 +103,10 @@ async fn connect_in_process<B: InProcess>(broker: B) -> B::Connected {
 fn registration_of<C: TestableBroker + 'static>(
     connected: &C,
 ) -> Option<&'static TestableRegistration> {
+    let connected: &dyn Any = connected;
     inventory::iter::<TestableRegistration>
         .into_iter()
-        .find(|registration| registration.resolve(connected as &dyn Any).is_some())
+        .find(|registration| registration.resolve(connected).is_some())
 }
 
 /// Publishes `msg` through the broker's own default publisher, the one the harness pairs for a

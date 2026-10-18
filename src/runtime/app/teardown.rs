@@ -50,9 +50,9 @@ fn bind_hooks<State: Send + Sync + 'static>(
 ) -> Vec<BoundHook> {
     hooks
         .into_iter()
-        .map(|hook| {
+        .map(|hook| -> BoundHook {
             let state = Arc::clone(state);
-            Box::new(move || hook(state)) as BoundHook
+            Box::new(move || hook(state))
         })
         .collect()
 }

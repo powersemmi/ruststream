@@ -1069,7 +1069,7 @@ impl Subscriber for QueueSubscriber {
     type Error = LinkClosed;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        stream::unfold(&*self, |this| async move {
+        stream::unfold(&*self, async move |this| {
             if this.fails {
                 return Some((Err(LinkClosed), this));
             }

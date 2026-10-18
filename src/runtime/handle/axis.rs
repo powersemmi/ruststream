@@ -181,7 +181,7 @@ pub trait DecodeOutcome<T> {
 
 impl<T, E: error::Error + Send + Sync + 'static> DecodeOutcome<T> for Result<T, E> {
     fn finish(self) -> Result<T, Box<dyn error::Error + Send + Sync>> {
-        self.map_err(|err| Box::new(err) as Box<dyn error::Error + Send + Sync>)
+        self.map_err(Into::into)
     }
 }
 

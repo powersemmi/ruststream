@@ -219,7 +219,7 @@ async fn global_layer_wraps_handlers() {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
             );
         });
@@ -274,7 +274,7 @@ async fn cross_broker_publish_via_captured_publisher() {
             let subscriber = b.broker().subscribe("responses");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("responses"),
             );
         });

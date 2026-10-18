@@ -452,7 +452,7 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
     let egress = redis.publisher();
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(Egress { egress }) })
+        .on_startup(async move |()| Ok::<_, Infallible>(Egress { egress }))
         .with_broker_labeled("ingress", nats, |b| {
             b.include(forward);
         })

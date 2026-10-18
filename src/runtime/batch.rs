@@ -649,7 +649,7 @@ async fn settle_split_batch<M, C>(
                 outcome,
                 subscription,
                 delivery,
-                C::build as fn(&M) -> C,
+                C::build,
             )
             .await;
             continue;
@@ -667,7 +667,7 @@ async fn settle_split_batch<M, C>(
             result.outcome(),
             subscription,
             delivery,
-            C::build as fn(&M) -> C,
+            C::build,
         )
         .await;
         if let Some(after) = after {
@@ -740,7 +740,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
                     status,
                     subscription,
                     delivery,
-                    C::build as fn(&M) -> C,
+                    C::build,
                 )
                 .await;
             }
@@ -774,7 +774,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
                     result.outcome(),
                     subscription,
                     delivery,
-                    C::build as fn(&M) -> C,
+                    C::build,
                 )
                 .await;
                 // The continuation runs after this element is settled, on the tracked set so a
@@ -946,7 +946,7 @@ where
                 outcome,
                 subscription,
                 delivery,
-                <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+                <C as BuildBatchContext<M>>::build,
             )
             .await;
             continue;

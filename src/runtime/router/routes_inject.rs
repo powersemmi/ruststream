@@ -201,7 +201,7 @@ where
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
-                            .map_err(|e| Box::new(e) as BoxError)?;
+                            .map_err(BoxError::from)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         InjectHandler {
                             def,
@@ -277,7 +277,7 @@ where
             async move |connected: Arc<Connected<B>>, subscriber| {
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
+                    .map_err(BoxError::from)?;
                 let handler = BatchInjectHandler {
                     def,
                     codec,

@@ -706,7 +706,7 @@ impl IncomingMessage for ProbeMessage {
         if !requeue {
             return self.inner.nack(false).await;
         }
-        let control = |times: usize| async move {
+        let control = async move |times: usize| {
             for _ in 0..times {
                 self.publisher
                     .publish(OutgoingMessage::new(&self.name, CONTROL), None)

@@ -16,13 +16,13 @@ fn build_spec_describes_handlers() {
         let orders = b.broker().subscribe("orders");
         b.handle(
             orders,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::raw("orders").with_description("Handles orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::typed::<u64>("alerts"),
         );
     });
@@ -71,7 +71,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c1", "bytes"));
         b.handle(
             first,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             first_meta,
         );
 
@@ -86,7 +86,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c2", "bytes"));
         b.handle(
             second,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             second_meta,
         );
     });
@@ -187,7 +187,7 @@ fn labeled_memory_broker_is_an_in_process_server() {
             let orders = b.broker().subscribe("orders");
             b.handle(
                 orders,
-                |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
             );
         },
@@ -854,6 +854,8 @@ mod dead_letter {
 /// registration declared about giving up.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod document_surface {
+    use std::future::ready;
+
     use ruststream::memory::prelude::*;
     use ruststream::runtime::HandlerMetadata;
     use ruststream::schemars::JsonSchema;
@@ -932,7 +934,7 @@ mod document_surface {
                 let audit = b.broker().subscribe("audit");
                 b.handle(
                     audit,
-                    |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                    |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                     HandlerMetadata::raw("audit"),
                 );
             });

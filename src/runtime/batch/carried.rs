@@ -97,7 +97,7 @@ where
     fn unsettled(&mut self) -> Vec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
-            .map(|value| Arc::new(value.clone()) as RecordedValue)
+            .map(|value| -> RecordedValue { Arc::new(value.clone()) })
             .collect();
         self.recorded
             .iter()
@@ -231,7 +231,7 @@ where
                 outcome,
                 subscription,
                 delivery,
-                <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+                <C as BuildBatchContext<M>>::build,
             )
             .await;
         }

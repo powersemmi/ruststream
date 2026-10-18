@@ -2,12 +2,12 @@
 //! recovering the source type from a constructor expression, seeing through `Result` / `Vec`
 //! return shapes, and collecting doc comments.
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Ident, Lit,
-    Meta, Path, Token, Type, TypePath, parenthesized, token,
+    Attribute, Error, Expr, ExprCall, ExprLit, ExprMethodCall, ExprPath, ExprStruct, Generics,
+    Ident, Lit, Meta, Path, Token, Type, TypePath, parenthesized, token,
 };
 
 /// Arguments to `#[subscriber(..)]`: the subscription source (a string literal name, or a
@@ -513,6 +513,20 @@ fn unsupported_source(expr: &Expr) -> Error {
         "expected a string literal name, `Type::new(..)`, `Type { .. }`, or a builder chain on \
          one of those - a free function does not expose its type to the macro",
     )
+}
+
+/// The generics a derive writes its impls with: the input's own, each lifetime parameter spanned
+/// at the derive.
+///
+/// An impl header names a lifetime once, `impl<'a> Trait for Type<'a>`, and `single_use_lifetimes`
+/// reports that against the user's type while the tokens carry the user's span. Spanned at the
+/// derive, the header is the macro's own code; the lifetime still resolves where the user wrote it.
+pub(crate) fn derive_generics(generics: &Generics) -> Generics {
+    let mut generics = generics.clone();
+    for param in generics.lifetimes_mut() {
+        param.lifetime.set_span(Span::call_site());
+    }
+    generics
 }
 
 /// Collects doc-comment lines from `attrs` into a single description literal, or `None`.

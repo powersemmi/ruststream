@@ -293,7 +293,7 @@ where
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                     #[cfg(not(feature = "testing"))]
                     let publisher = pairing.await;
-                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                    let publisher = publisher.map_err(BoxError::from)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -305,7 +305,7 @@ where
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
-                            .map_err(|e| Box::new(e) as BoxError)?;
+                            .map_err(BoxError::from)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
@@ -409,7 +409,7 @@ where
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                     #[cfg(not(feature = "testing"))]
                     let publisher = pairing.await;
-                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                    let publisher = publisher.map_err(BoxError::from)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -421,7 +421,7 @@ where
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
-                            .map_err(|e| Box::new(e) as BoxError)?;
+                            .map_err(BoxError::from)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
@@ -531,10 +531,10 @@ where
                 let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                 #[cfg(not(feature = "testing"))]
                 let publisher = pairing.await;
-                let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                let publisher = publisher.map_err(BoxError::from)?;
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
+                    .map_err(BoxError::from)?;
                 let handler = BatchPublishingHandler {
                     def,
                     codec,
