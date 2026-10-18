@@ -21,6 +21,7 @@ mod common;
 use std::cell::RefCell;
 use std::convert::Infallible;
 use std::io;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Once, PoisonError};
 use std::time::Duration;
@@ -82,7 +83,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MovedQueue {
             .declared
             .max_attempts()
             .zip(self.declared.dead_letter())
-            .map(|(cap, dead)| (u64::from(cap.get()), dead.to_owned()));
+            .map(|(cap, dead)| (NonZeroU64::from(cap).get(), dead.to_owned()));
         Ok(MovedSubscriber {
             inner: connected.subscribe(self.name).await?,
             publisher: connected.publisher(),

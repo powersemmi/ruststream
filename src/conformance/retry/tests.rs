@@ -4,6 +4,7 @@
 use std::{
     convert::Infallible,
     future::ready,
+    num::NonZeroU64,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -952,7 +953,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Moves {
         let inner = Subscribe::subscribe(connected, &self.name).await?;
         let rule = match (self.declared.max_attempts(), self.declared.dead_letter()) {
             (Some(cap), Some(dead)) if self.moving != Moving::Never => {
-                Some((u64::from(cap.get()), dead.to_owned()))
+                Some((NonZeroU64::from(cap).get(), dead.to_owned()))
             }
             _ => None,
         };

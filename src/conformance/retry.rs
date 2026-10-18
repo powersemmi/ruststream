@@ -43,7 +43,11 @@
 //! # }
 //! ```
 
-use std::{fmt, num::NonZeroU32, time::Duration};
+use std::{
+    fmt,
+    num::{NonZeroU32, NonZeroU64},
+    time::Duration,
+};
 
 use futures::{Stream, StreamExt, stream};
 use tokio::time::{Instant, timeout, timeout_at};
@@ -616,7 +620,7 @@ where
     M: IncomingMessage,
     E: fmt::Debug,
 {
-    for delivery in 1..=u64::from(attempts.get()) {
+    for delivery in 1..=NonZeroU64::from(attempts).get() {
         let (place, msg) = next_move(deliveries, "a delivery of the message").await;
         assert_eq!(
             place,

@@ -1327,6 +1327,7 @@ missing_assert_message = "warn"
 string_slice = "warn"
 # Numbers: big endian, the network order, on the wire.
 little_endian_bytes = "warn"
+non_zero_suggestions = "warn"
 
 [lints]
 workspace = true
