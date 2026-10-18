@@ -15,3 +15,6 @@ allow-unwrap-in-tests = true
 
 # A struct literal lists its fields in the order the struct defines them.
 check-inconsistent-struct-field-initializers = true
+
+# A comment does not stop collapsing an `if`; the fix keeps the comment.
+lint-commented-code = true

@@ -512,17 +512,16 @@ impl<Item: Send + 'static> Threads<Item> {
                     if keyed.is_none() {
                         turn = (index + 1) % count;
                     }
-                    if picked.is_none() {
-                        // A lane waits for its own ring, whatever else has room: a key stays in
-                        // order. Shutdown does not cut the wait short, so the delivery in hand is
-                        // handed over rather than dropped.
-                        if let Err(stuck) = self
+                    // A lane waits for its own ring, whatever else has room: a key stays in order.
+                    // Shutdown does not cut the wait short, so the delivery in hand is handed over
+                    // rather than dropped.
+                    if picked.is_none()
+                        && let Err(stuck) = self
                             .room(Which::One(index), None::<Pin<&mut Pending<()>>>)
                             .await
-                        {
-                            report(name, &stuck);
-                            break;
-                        }
+                    {
+                        report(name, &stuck);
+                        break;
                     }
                     if self.rings[index].push(item).is_err() {
                         // Only the loop fills a ring, and it pushes only after it saw room.
