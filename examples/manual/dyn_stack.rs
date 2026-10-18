@@ -10,7 +10,6 @@
 
 use std::pin::Pin;
 
-use ruststream::HeaderMap;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{DynMiddleware, Next};
 use serde::{Deserialize, Serialize};
@@ -62,7 +61,7 @@ impl<I: Send + Sync> DynMiddleware<I> for Block {
 
 mod service {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
 
     use ruststream::memory::MemoryMessage;

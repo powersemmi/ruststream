@@ -12,11 +12,13 @@
 //! straight out of the delivery on every broker.
 
 use std::any::type_name;
+use std::fmt;
 use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
 use crate::codec::{Codec, CodecError};
+use crate::runtime::Message;
 use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
@@ -133,8 +135,8 @@ pub trait DecodeSite<Codec, Src, Conn> {
 /// The typed input kind: the payload decodes into an owned `T`, the handler borrows `&T`.
 pub struct Decoded<T>(PhantomData<T>);
 
-impl<T> std::fmt::Debug for Decoded<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> fmt::Debug for Decoded<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Decoded").finish_non_exhaustive()
     }
 }
@@ -198,8 +200,8 @@ where
 /// them right before the body runs.
 pub struct Provided<F>(PhantomData<F>);
 
-impl<F> std::fmt::Debug for Provided<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<F> fmt::Debug for Provided<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Provided").finish_non_exhaustive()
     }
 }
@@ -256,8 +258,8 @@ where
 /// [`Message<H, P>`](crate::runtime::Message) pair.
 pub struct DecodedPair<H, P>(PhantomData<(H, P)>);
 
-impl<H, P> std::fmt::Debug for DecodedPair<H, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<H, P> fmt::Debug for DecodedPair<H, P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DecodedPair").finish_non_exhaustive()
     }
 }
@@ -267,8 +269,8 @@ where
     H: Send + Sync + 'static,
     P: Send + Sync + 'static,
 {
-    type Owned = crate::runtime::Message<H, P>;
-    type Target = crate::runtime::Message<H, P>;
+    type Owned = Message<H, P>;
+    type Target = Message<H, P>;
 
     fn input_label() -> &'static str {
         type_name::<P>()
@@ -279,7 +281,7 @@ where
 fn decode_pair<DecodeCodec, H, P, M>(
     codec: &DecodeCodec,
     msg: &M,
-) -> Result<crate::runtime::Message<H, P>, CodecError>
+) -> Result<Message<H, P>, CodecError>
 where
     DecodeCodec: Codec,
     H: DeserializeOwned,
@@ -291,7 +293,7 @@ where
         .to_typed()
         .map_err(|err| CodecError::Decode(Box::from(err.to_string())))?;
     let body: P = codec.decode(msg.payload())?;
-    Ok(crate::runtime::Message::new(contract, body))
+    Ok(Message::new(contract, body))
 }
 
 impl<DecodeCodec: Codec, H, P> DecodeWith<DecodeCodec> for DecodedPair<H, P>
@@ -316,21 +318,15 @@ where
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
 
     type Held<'m>
-        = crate::runtime::Message<H, P>
+        = Message<H, P>
     where
         M: 'm;
 
-    fn materialize(
-        codec: &DecodeCodec,
-        msg: &M,
-    ) -> Result<crate::runtime::Message<H, P>, CodecError> {
+    fn materialize(codec: &DecodeCodec, msg: &M) -> Result<Message<H, P>, CodecError> {
         decode_pair(codec, msg)
     }
 
-    fn view<'a>(
-        held: &'a crate::runtime::Message<H, P>,
-        _msg: &'a M,
-    ) -> &'a crate::runtime::Message<H, P> {
+    fn view<'a>(held: &'a Message<H, P>, _msg: &'a M) -> &'a Message<H, P> {
         held
     }
 }
@@ -354,8 +350,8 @@ where
 /// break a build that compiles without it. The clone itself runs only under the harness.
 pub struct Carried<T>(PhantomData<T>);
 
-impl<T> std::fmt::Debug for Carried<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> fmt::Debug for Carried<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Carried").finish_non_exhaustive()
     }
 }
@@ -387,8 +383,8 @@ impl<Src, Conn> Clone for Lend<Src, Conn> {
 
 impl<Src, Conn> Copy for Lend<Src, Conn> {}
 
-impl<Src, Conn> std::fmt::Debug for Lend<Src, Conn> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Src, Conn> fmt::Debug for Lend<Src, Conn> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Lend").finish_non_exhaustive()
     }
 }

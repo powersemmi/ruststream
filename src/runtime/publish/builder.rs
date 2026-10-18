@@ -10,7 +10,6 @@
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::Future;
 use std::marker::PhantomData;
 
 use bytes::BytesMut;

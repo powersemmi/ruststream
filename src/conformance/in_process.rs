@@ -54,7 +54,7 @@
 use std::{any::Any, fmt, panic::resume_unwind, pin::pin, thread, time::Duration};
 
 use futures::{FutureExt, Stream, StreamExt, stream};
-use tokio::{runtime, time::timeout};
+use tokio::{runtime, time, time::timeout};
 
 use super::harness::{expect_next, expect_no_more};
 use super::helpers::unique_subject;
@@ -552,13 +552,13 @@ where
          for its delay; TestApp returns from the publish there and delivers it on `advance`",
     );
     let half = REDELIVERY_DELAY / 2;
-    tokio::time::advance(half).await;
+    time::advance(half).await;
     coordinator.fire_due_timers().await;
     assert!(
         quiescent(coordinator) && stream.next().now_or_never().is_none(),
         "counts: a delayed nack of {REDELIVERY_DELAY:?} came back after {half:?}",
     );
-    tokio::time::advance(REDELIVERY_DELAY.saturating_sub(half)).await;
+    time::advance(REDELIVERY_DELAY.saturating_sub(half)).await;
     coordinator.fire_due_timers().await;
     assert!(
         !quiescent(coordinator),

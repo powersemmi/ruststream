@@ -78,6 +78,8 @@ mod tests {
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::{Deserialize, Serialize};
+    use tokio::time;
+    use tracing::subscriber;
 
     use super::SlowHandlers;
     use crate::service::test_broker;
@@ -91,7 +93,7 @@ mod tests {
     /// Takes a millisecond per page.
     #[subscriber("reports")]
     async fn render(report: &Report) -> HandlerOutcome {
-        tokio::time::sleep(Duration::from_millis(report.pages)).await;
+        time::sleep(Duration::from_millis(report.pages)).await;
         HandlerOutcome::ack()
     }
 
@@ -128,7 +130,7 @@ mod tests {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
-        let _guard = tracing::subscriber::set_default(logger);
+        let _guard = subscriber::set_default(logger);
 
         let app = RustStream::new(AppInfo::new("reports", "0.1.0"))
             .layer(SlowHandlers::over(Duration::from_millis(250)))

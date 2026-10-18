@@ -9,7 +9,7 @@
 //! each reply independently, while a `.transactional()` one makes the whole batch's replies
 //! visible atomically - the consume-transform-produce pattern.
 
-use std::future::Future;
+use std::{any, fmt};
 
 use bytes::BytesMut;
 use serde::Serialize;
@@ -148,7 +148,7 @@ pub(crate) fn batch_publishing_metadata<D: BatchPublishingDef>(
     def: &D,
 ) -> HandlerMetadata {
     let mut meta = HandlerMetadata::raw(name)
-        .with_output_type(std::any::type_name::<D::Reply>())
+        .with_output_type(any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
             def.input_schema(),
@@ -181,8 +181,8 @@ pub(crate) struct BatchPublishingHandler<D: BatchPublishingDef, C, R, PP = Publi
     pub(crate) origin: Origin,
 }
 
-impl<D: BatchPublishingDef, C, R, PP> std::fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<D: BatchPublishingDef, C, R, PP> fmt::Debug for BatchPublishingHandler<D, C, R, PP> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchPublishingHandler")
             .finish_non_exhaustive()
     }
@@ -251,7 +251,7 @@ where
                             target: "ruststream::dispatch",
                             subscription = %subscription,
                             reply = %name,
-                            reply_type = std::any::type_name::<D::Reply>(),
+                            reply_type = any::type_name::<D::Reply>(),
                             error = %err,
                             "batch reply publish failed",
                         );

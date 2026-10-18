@@ -1,5 +1,7 @@
 //! Message-type metadata for `AsyncAPI` generation.
 
+use core::marker::PhantomData;
+
 /// Metadata about a message type, used to name and describe it in an `AsyncAPI` document.
 ///
 /// Derive with `#[derive(MessageInfo)]` (requires the `macros` feature): the derive uses the type's
@@ -111,7 +113,7 @@ impl MessageHeaders for String {
 /// this contract. `H` is serialized into the header map on the typed publish path and lifted
 /// into the message's `AsyncAPI` headers schema when it implements [`schemars::JsonSchema`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct WithHeaders<H>(core::marker::PhantomData<fn() -> H>);
+pub struct WithHeaders<H>(PhantomData<fn() -> H>);
 
 /// The closed set of header contract shapes: [`NoHeaders`] and [`WithHeaders<H>`](WithHeaders).
 ///

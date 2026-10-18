@@ -10,7 +10,7 @@
 //! raw deliveries (`DynStack<M>`, middleware bound `M: IncomingMessage`) or decoded values
 //! (`DynStack<T>`).
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{fmt, pin::Pin, sync::Arc};
 
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
@@ -71,8 +71,8 @@ impl<'a, I> Next<'a, I> {
     }
 }
 
-impl<I> std::fmt::Debug for Next<'_, I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<I> fmt::Debug for Next<'_, I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Next")
             .field("remaining", &self.rest.len())
             .finish_non_exhaustive()
@@ -98,8 +98,8 @@ impl<I> DynStack<I> {
     }
 }
 
-impl<I> std::fmt::Debug for DynStack<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<I> fmt::Debug for DynStack<I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DynStack")
             .field("middleware", &self.0.len())
             .finish_non_exhaustive()
@@ -128,8 +128,8 @@ pub struct DynStackHandler<I, H> {
     inner: H,
 }
 
-impl<I, H> std::fmt::Debug for DynStackHandler<I, H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<I, H> fmt::Debug for DynStackHandler<I, H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DynStackHandler")
             .field("middleware", &self.chain.len())
             .finish_non_exhaustive()
@@ -163,6 +163,7 @@ mod tests {
     use super::super::handler::{Handler, HandlerOutcome};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
     use crate::HeaderMap;
+    use crate::runtime::dispatch::Delivery;
 
     struct Input;
 
@@ -203,7 +204,7 @@ mod tests {
         let handler = inner.with(stack);
         assert!(format!("{handler:?}").contains("DynStackHandler"));
         let state = ();
-        let delivery = crate::runtime::dispatch::Delivery::empty();
+        let delivery = Delivery::empty();
         let headers = HeaderMap::new();
         let mut ctx = Context::new("test", &headers, &state, (), &delivery);
         assert!(handler.handle(&Input, &mut ctx).await.is_ack());

@@ -50,7 +50,7 @@ impl MessageHeaders for Receipt {
 
 mod subscriber {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -102,7 +102,7 @@ mod subscriber {
 
 mod published {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

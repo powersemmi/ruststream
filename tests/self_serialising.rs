@@ -12,7 +12,7 @@
     feature = "testing"
 ))]
 
-use std::fmt;
+use std::{error, fmt, ptr};
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
@@ -32,7 +32,7 @@ impl fmt::Display for SequenceTooHigh {
     }
 }
 
-impl std::error::Error for SequenceTooHigh {}
+impl error::Error for SequenceTooHigh {}
 
 /// The failure of the frame reader.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl fmt::Display for BadFrame {
     }
 }
 
-impl std::error::Error for BadFrame {}
+impl error::Error for BadFrame {}
 
 /// The highest sequence the frame can carry, so the writer has something to reject.
 const MAX_SEQUENCE: u32 = 0x00ff_ffff;
@@ -107,7 +107,7 @@ fn a_value_that_holds_its_bytes_lends_them() {
     let WireBytes::Own(lent) = answer else {
         panic!("a value that holds its bytes lends them");
     };
-    assert!(std::ptr::eq(lent.as_ptr(), export.0.as_ptr()));
+    assert!(ptr::eq(lent.as_ptr(), export.0.as_ptr()));
     assert_eq!(buf, "");
 }
 

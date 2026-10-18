@@ -11,7 +11,7 @@
 use std::any::type_name;
 use std::borrow::Cow;
 use std::fmt;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -24,6 +24,8 @@ use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
 #[cfg(feature = "poll-diagnostics")]
 use crate::runtime::poll_diagnostics::PollDiagnostics;
+#[cfg(all(test, feature = "memory"))]
+use crate::runtime::publish::PublishIdentity;
 use crate::runtime::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
@@ -138,7 +140,7 @@ where
     Arc::new(RetryLeaf {
         live,
         stack: PublishTransformIdentity,
-        pipeline: crate::runtime::publish::PublishIdentity,
+        pipeline: PublishIdentity,
         #[cfg(feature = "testing")]
         origin: Origin::default(),
     })

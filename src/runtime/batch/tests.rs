@@ -5,15 +5,17 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
+use tokio::{task, time};
 use tokio_util::task::TaskTracker;
 
-use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
+use super::super::dispatch::RETRY_COUNT_HEADER;
 use super::super::input::Decoded;
 use super::super::shutdown::Shutdown;
 use super::*;
-use crate::codec::JsonCodec;
+use crate::codec::{CodecError, JsonCodec};
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 use crate::runtime::redelivery::bare_retry_publisher;
+use crate::runtime::{Input, SoloDeserialized};
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
@@ -160,8 +162,8 @@ async fn per_element_outcomes_carry_delays() {
 
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
-    tokio::time::advance(Duration::from_secs(5)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(5)).await;
+    task::yield_now().await;
 
     let redelivered = stream.next().await.unwrap().unwrap();
     assert_eq!(redelivered.payload(), b"1");
@@ -498,18 +500,18 @@ struct Frame<'a>(&'a [u8]);
 
 impl Deserialized for Frame<'_> {
     type Output<'a> = Frame<'a>;
-    type Error = crate::codec::CodecError;
+    type Error = CodecError;
 
     fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
         if payload.is_empty() {
-            return Err(crate::codec::CodecError::Decode(Box::from("empty frame")));
+            return Err(CodecError::Decode(Box::from("empty frame")));
         }
         Ok(Frame(payload))
     }
 }
 
-impl crate::runtime::Input for Frame<'_> {
-    type Axis = crate::runtime::SoloDeserialized<Frame<'static>>;
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
 }
 
 /// A batch handler over self-constructed payload views, for the adapter below.
@@ -652,7 +654,7 @@ async fn deferred_copies(
     let mut stream = std::pin::pin!(sub.stream());
     let mut copies = Vec::with_capacity(expected);
     for _ in 0..expected {
-        let msg = tokio::time::timeout(DEFER * 100, stream.next())
+        let msg = time::timeout(DEFER * 100, stream.next())
             .await
             .expect("the deferred re-publish is the only retry an unsettled delivery gets")
             .expect("the subscriber outlives the deferred publish")

@@ -23,11 +23,14 @@
 //! `dead_code` allowance.
 #![allow(dead_code)]
 
-use std::future::{Future, ready};
+use std::convert::Infallible;
+use std::future::ready;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::str;
 use std::sync::Arc;
 use std::time::Duration;
+use std::vec::IntoIter;
 
 use futures::{Stream, StreamExt, stream};
 use ruststream::codec::CodecError;
@@ -66,7 +69,7 @@ impl Row {
 
     /// Reads a payload the way the client reads a row; anything else is a row that is gone.
     fn read(payload: &[u8]) -> Option<Self> {
-        let text = std::str::from_utf8(payload).ok()?;
+        let text = str::from_utf8(payload).ok()?;
         let (id, name) = text.split_once(':')?;
         Some(Self::new(id.parse().ok()?, name))
     }
@@ -231,7 +234,7 @@ impl<Log: LogMode> RowSubscriber<Log> {
 
 impl<Log: LogMode> Subscriber for RowSubscriber<Log> {
     type Message = RowDelivery<Log>;
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
 
     fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery<Log>, Self::Error>> + Send + '_ {
         let fault = self.fault;
@@ -453,7 +456,7 @@ impl<Log> CarriesBatch<Row> for RowBatch<Log> {
 
 impl<Log> IntoIterator for RowBatch<Log> {
     type Item = RowDelivery<Log>;
-    type IntoIter = std::vec::IntoIter<RowDelivery<Log>>;
+    type IntoIter = IntoIter<RowDelivery<Log>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.deliveries.into_iter()

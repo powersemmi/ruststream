@@ -9,7 +9,6 @@
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use ruststream::BytesMut;
 use ruststream::codec::{Codec, CodecError, JsonCodec};
 use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;

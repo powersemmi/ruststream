@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use ruststream::OutgoingMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads};
+use ruststream::runtime::Outgoing;
 use ruststream::testing::expect_published;
 
 use common::{Order, Receipt, Wire, connected};

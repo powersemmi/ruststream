@@ -9,8 +9,12 @@
 //! cargo run --example testing --features testing,macros,memory,json
 //! ```
 
+use std::convert::Infallible;
+use std::error;
+
 use ruststream::memory::MemoryPublisher;
 use ruststream::memory::prelude::*;
+use ruststream::runtime::Identity;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -52,13 +56,11 @@ async fn handle_order(
 }
 
 /// Builds the service: one broker, the order handler, and a receipts publisher in state.
-fn service() -> RustStream<ruststream::runtime::Identity, AppState> {
+fn service() -> RustStream<Identity, AppState> {
     let broker = MemoryBroker::new();
     let receipts = broker.publisher();
     RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(
-            move |()| async move { Ok::<_, std::convert::Infallible>(AppState { receipts }) },
-        )
+        .on_startup(move |()| async move { Ok::<_, Infallible>(AppState { receipts }) })
         .with_broker(broker, |b| {
             b.include(handle_order);
         })
@@ -67,7 +69,7 @@ fn service() -> RustStream<ruststream::runtime::Identity, AppState> {
 
 // --8<-- [start:test]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(service()).await?;
 
     // Inject an order; the publish drives the handler to a standstill before returning.

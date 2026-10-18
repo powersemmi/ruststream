@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryMessage, MemoryPublisher};
 use ruststream::testing::TestApp;
-use ruststream::{BuildContext, BytesMut, ContextField, OutgoingMessage, PairError, Take};
+use ruststream::{BuildContext, ContextField, OutgoingMessage, PairError, Take};
 
 /// Deliberately not valid JSON (or UTF-8): a decode step anywhere on the path would fail it.
 const FRAME: &[u8] = b"\x00\x01raw \xffbytes";

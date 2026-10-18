@@ -6,7 +6,7 @@
 //! cargo run --example manual_quickstart --no-default-features --features memory,json,logging -- run
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;

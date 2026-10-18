@@ -20,13 +20,10 @@ use common::{Order, Receipt};
 
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
-use ruststream::runtime::{
-    ContextKind, ForSlot, Outgoing, PublishBuilder, PublishSink, PublishTransform, Reads,
-    SlotContext, for_batch,
-};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::{Outgoing, PublishBuilder, PublishSink, SlotContext, for_batch};
 use ruststream::testing::TestApp;
-use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
+use ruststream::{OutgoingMessage, PairError, Take};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what
 /// the policy fixed. `Debug` and `PartialEq` are not part of the contract, they are what a test

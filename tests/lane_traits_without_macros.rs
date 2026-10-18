@@ -6,7 +6,7 @@
 #![cfg(all(not(feature = "macros"), feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::{MemoryBroker, MemoryPublish};
 use ruststream::prelude::*;

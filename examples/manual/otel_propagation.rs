@@ -8,7 +8,7 @@
 //!     --features testing,memory,json,otel
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
@@ -86,7 +86,6 @@ fn main() -> ExitCode {
 mod tests {
     use std::error::Error;
 
-    use ruststream::HeaderMap;
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
 

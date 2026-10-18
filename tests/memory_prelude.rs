@@ -11,6 +11,7 @@
 ))]
 
 use ruststream::memory::prelude::*;
+use ruststream::memory::{MemoryPublisher, MemoryRequester};
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +103,6 @@ fn the_policy_names_are_types_and_the_capability_names_are_traits() {
     let _: Publish = Publish;
     let _: TransactionalPublish = TransactionalPublish;
     let _: Request = Request;
-    publisher_is_the_core_trait::<ruststream::memory::MemoryPublisher>();
-    publisher_is_the_core_trait::<ruststream::memory::MemoryRequester>();
+    publisher_is_the_core_trait::<MemoryPublisher>();
+    publisher_is_the_core_trait::<MemoryRequester>();
 }

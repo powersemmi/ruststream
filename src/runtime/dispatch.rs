@@ -3,20 +3,27 @@
 //! task spawning.
 
 use std::fmt;
-use std::future::{Future, poll_fn};
+use std::future::poll_fn;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::LazyLock;
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{FutureExt, Stream};
 #[cfg(test)]
+use tokio::runtime::Builder;
+#[cfg(test)]
 use tokio::runtime::Handle;
+#[cfg(test)]
+use tokio::runtime::Runtime;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
+use tokio::time;
 use tokio_util::task::TaskTracker;
 use tracing::{error, warn};
 
@@ -709,8 +716,8 @@ impl<C> Delivery<C> {
 /// own where it runs inside one, and a shared idle one where a synchronous test builds a context.
 #[cfg(test)]
 fn test_runtime() -> Handle {
-    static IDLE: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
-        tokio::runtime::Builder::new_current_thread()
+    static IDLE: LazyLock<Runtime> = LazyLock::new(|| {
+        Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("a current-thread runtime builds")
@@ -2012,7 +2019,7 @@ where
     // The timer is the delivery's own work, so it runs where the delivery ran; being tracked, a
     // graceful shutdown waits for it and the copy leaves before the broker closes.
     delivery.spawn_after(async move {
-        tokio::time::sleep(delay).await;
+        time::sleep(delay).await;
         republish.await;
     });
     Ok(())

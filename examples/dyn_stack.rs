@@ -10,7 +10,6 @@
 
 use std::pin::Pin;
 
-use ruststream::HeaderMap;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{DynMiddleware, Next};
 use serde::{Deserialize, Serialize};

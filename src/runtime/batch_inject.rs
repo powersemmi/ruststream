@@ -7,7 +7,7 @@
 //! its own definition pair because the handler consumes a slice and returns a
 //! [`BatchResult`], not a per-message [`HandlerOutcome`](super::HandlerOutcome).
 
-use std::future::Future;
+use std::fmt;
 
 use crate::{BuildBatchContext, IncomingMessage};
 
@@ -123,8 +123,8 @@ pub(crate) struct BatchInjectHandler<Def: BatchInjectDef, DecodeCodec> {
     pub(crate) decode: FailurePolicy,
 }
 
-impl<Def: BatchInjectDef, DecodeCodec> std::fmt::Debug for BatchInjectHandler<Def, DecodeCodec> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Def: BatchInjectDef, DecodeCodec> fmt::Debug for BatchInjectHandler<Def, DecodeCodec> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchInjectHandler").finish_non_exhaustive()
     }
 }

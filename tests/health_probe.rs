@@ -27,6 +27,7 @@ use ruststream::runtime::{
 };
 use ruststream::{BrokerMoves, Subscriber, SubscriptionSource, subscriber};
 use tokio::sync::Notify;
+use tokio::time;
 
 #[subscriber("health.ok")]
 async fn fine(_order: &Order) -> HandlerOutcome {
@@ -45,7 +46,7 @@ async fn explode(order: &Order) -> HandlerOutcome {
 /// Waits until the probe reports a failure, and hands back its reason. The probe wakes on every
 /// change, the subscription count included, so the first wake-up may still read `Running`.
 async fn until_failed(health: &mut HealthProbe) -> String {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         loop {
             if let HealthState::Failed { reason } = health.state() {
                 break reason;
@@ -139,7 +140,7 @@ async fn probe_taken_after_the_fail_fast_still_sees_failed() {
     // itself keep the transition alive, so the watcher is let run to quiescence first. The single
     // read below must then see the stored state; waiting on `changed()` instead would mask a
     // transition that was dropped for lack of subscribers.
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    time::sleep(Duration::from_secs(1)).await;
 
     let health = running.health();
     match health.state() {
@@ -171,7 +172,7 @@ async fn detached_probe_keeps_the_last_state_and_parks() {
         health.is_running(),
         "a detached service keeps its last state"
     );
-    let waited = tokio::time::timeout(Duration::from_millis(200), health.changed()).await;
+    let waited = time::timeout(Duration::from_millis(200), health.changed()).await;
     assert!(
         waited.is_err(),
         "changed() must park forever instead of spinning when no transition can arrive",
@@ -229,7 +230,7 @@ async fn pooled(_order: &Order) -> HandlerOutcome {
 
 /// Waits until the probe reports `active` consuming subscriptions.
 async fn until_active(health: &mut HealthProbe, active: usize) -> SubscriptionCount {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while health.subscriptions().active != active {
             health.changed().await;
         }
@@ -294,7 +295,7 @@ async fn a_stream_end_under_fail_fast_stops_the_service() {
         });
 
     // Nothing but the stream end can stop it: the caller's own shutdown never comes.
-    let err = tokio::time::timeout(Duration::from_secs(5), app.run_until(pending()))
+    let err = time::timeout(Duration::from_secs(5), app.run_until(pending()))
         .await
         .expect("the service never stopped on the stream end")
         .expect_err("a stream end under fail-fast must surface from run");
@@ -317,7 +318,7 @@ async fn a_stream_end_under_fail_fast_flips_the_probe() {
 
     let running = app.start().await.expect("startup failed");
     let mut health = running.health();
-    tokio::time::timeout(Duration::from_secs(5), running.stopping())
+    time::timeout(Duration::from_secs(5), running.stopping())
         .await
         .expect("the stream end never stopped the service");
     // The watcher flips the probe right after the signal; the wait covers the hop.

@@ -1,11 +1,14 @@
+use std::future;
+
 use futures::StreamExt;
+use tokio::sync::oneshot;
 
 use super::super::{MemoryBroker, MemorySource, Retention};
 use super::*;
 #[cfg(feature = "testing")]
 use crate::Subscribe;
 #[cfg(feature = "testing")]
-use crate::testing::{TestableBroker, coordinator::Coordinator};
+use crate::testing::TestableBroker;
 use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource, nonzero};
 
 /// A broker whose subscriptions can be repositioned. The window is wider than anything these
@@ -572,11 +575,11 @@ async fn seek_wakes_a_parked_stream() {
         stream.next().await.unwrap().unwrap().ack().await.unwrap();
     }
 
-    let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+    let (parked_tx, parked_rx) = oneshot::channel();
     let handle = tokio::spawn(async move {
         let mut stream = std::pin::pin!(sub.stream());
         let mut parked_tx = Some(parked_tx);
-        std::future::poll_fn(move |cx| {
+        future::poll_fn(move |cx| {
             let polled = stream.as_mut().poll_next(cx);
             if polled.is_pending()
                 && let Some(tx) = parked_tx.take()

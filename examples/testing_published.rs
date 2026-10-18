@@ -226,9 +226,7 @@ mod with_header {
     use std::error::Error;
 
     use ruststream::memory::prelude::*;
-    use ruststream::runtime::{
-        ContextKind, Outgoing, PublishLayer, PublishNext, PublishPipeline, PublishTransform, Reads,
-    };
+    use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
     use ruststream::testing::TestApp;
 
     use super::{Order, Receipt};

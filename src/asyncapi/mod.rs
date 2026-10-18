@@ -107,7 +107,7 @@ pub use bindings::{Binding, BindingError, Bindings, PublishBindings, Subscriptio
 pub use viewer::{ViewerOptions, render_viewer_html};
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
-use crate::runtime::{App, OutgoingKind};
+use crate::runtime::{App, HandlerMetadata, OutgoingKind, OutgoingMessageMetadata};
 
 /// The specification version every generated document declares.
 const ASYNCAPI_VERSION: &str = "3.1.0";
@@ -826,7 +826,7 @@ fn message_name(type_name: &str) -> String {
 /// Adds one registered subscriber to the document: its channel entry, its `receive` operation,
 /// and its message component (with the payload and headers schemas the handler declared).
 fn add_receive(
-    handler: &crate::runtime::HandlerMetadata,
+    handler: &HandlerMetadata,
     reply: Option<OperationReply>,
     on_servers: &[Reference],
     tags: &[Tag],
@@ -935,7 +935,7 @@ fn add_receive(
 /// Renders what a registration declared about retrying as the `x-ruststream-retry` extension, or
 /// nothing when it declared nothing: the cap, where a spent delivery is dead-lettered, and where
 /// the deferred copies go when the mount site named a destination for them.
-fn retry_extension(handler: &crate::runtime::HandlerMetadata) -> Option<RetryExtension> {
+fn retry_extension(handler: &HandlerMetadata) -> Option<RetryExtension> {
     let retry_destination = handler
         .outgoing
         .iter()
@@ -1056,7 +1056,7 @@ impl OutgoingRefs {
 /// destination each get a `send` operation, while a reply becomes the `reply` of the `receive`
 /// operation it answers.
 fn add_outgoing(
-    outgoing: &crate::runtime::OutgoingMessageMetadata,
+    outgoing: &OutgoingMessageMetadata,
     on_servers: &[Reference],
     channels: &mut BTreeMap<String, Channel>,
     messages: &mut BTreeMap<String, MessageObject>,

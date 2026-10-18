@@ -1,11 +1,12 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
+use std::convert::Infallible;
 use std::future::ready;
 
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{HandlerMetadata, OutgoingMessageMetadata};
+use ruststream::runtime::HandlerMetadata;
 use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
@@ -134,7 +135,7 @@ impl DescribingBroker {
 }
 
 impl Broker for DescribingBroker {
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
     type Connected = ConnectedDescribingBroker;
 
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
@@ -145,7 +146,7 @@ impl Broker for DescribingBroker {
 struct ConnectedDescribingBroker;
 
 impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
     type Closed = ();
 
     fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
@@ -859,7 +860,7 @@ mod document_surface {
     use ruststream::{AppId, Contact, ExternalDocs, License, ServerSpec, Tag, nonzero};
     use serde::{Deserialize, Serialize};
 
-    use super::{Context, HandlerOutcome, build_spec};
+    use super::build_spec;
 
     /// An order to confirm.
     #[derive(Deserialize, JsonSchema)]
@@ -1257,7 +1258,10 @@ mod document_surface {
 /// broker's own vocabulary, without the core naming a single field of it.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod protocol_bindings {
-    use std::future::Future;
+
+    use std::future;
+    #[cfg(feature = "conformance")]
+    use std::panic;
 
     use ruststream::asyncapi::{Binding, Bindings};
     use ruststream::memory::prelude::*;
@@ -1354,7 +1358,7 @@ mod protocol_bindings {
             &self,
             _connected: &C,
         ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
-            std::future::ready(Ok(RedeliveryAddress::new(self.name)))
+            future::ready(Ok(RedeliveryAddress::new(self.name)))
         }
     }
 
@@ -1495,11 +1499,11 @@ mod protocol_bindings {
                 &self,
                 _connected: &C,
             ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
-                std::future::ready(Ok(RedeliveryAddress::new("orders")))
+                future::ready(Ok(RedeliveryAddress::new("orders")))
             }
         }
 
-        let leak = std::panic::catch_unwind(|| {
+        let leak = panic::catch_unwind(|| {
             harness::describes_without_credentials(&MemoryBroker::new(), &LeakyQueue, "hunter2");
         });
 
@@ -1524,16 +1528,13 @@ mod protocol_bindings {
 /// it publishes to, where a reply actually goes, and what media type leaves.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod publish_bindings {
-    use std::future::Future;
 
+    use ruststream::PairError;
     use ruststream::asyncapi::{Binding, Bindings};
     use ruststream::memory::prelude::*;
     use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
-    use ruststream::runtime::{
-        ForReply, Names, Outgoing, OutgoingKind, PublishContext, PublishTransform,
-    };
+    use ruststream::runtime::{Outgoing, OutgoingKind, PublishContext};
     use ruststream::schemars::JsonSchema;
-    use ruststream::{Broker, PairError, PublishPolicy};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;

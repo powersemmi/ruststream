@@ -12,15 +12,15 @@
     feature = "testing"
 ))]
 
-use std::future::{Future, ready};
+use std::future::ready;
 
+use ruststream::OutgoingMessage;
 use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
-use ruststream::runtime::{PublishBuilder, PublishSink, PublishedThrough, Reads};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::{PublishBuilder, PublishSink};
 use ruststream::testing::TestApp;
-use ruststream::{BytesMut, PairError, Publisher, Take};
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination, OutgoingMessage};
+use ruststream::{PairError, Take};
 use serde::{Deserialize, Serialize};
 
 /// The broker's per-message settings. Every field optional: what a call leaves unset keeps what

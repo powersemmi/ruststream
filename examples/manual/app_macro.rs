@@ -6,7 +6,7 @@
 //! cargo test --example manual_app_macro --no-default-features --features testing,memory,json
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;

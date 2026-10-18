@@ -5,7 +5,7 @@
 //! cargo run --example subscribers --features macros,memory,json -- run
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 // The attribute and the value constructor share the name in different namespaces, so the one glob
 // brings both into scope.

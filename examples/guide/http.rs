@@ -33,9 +33,12 @@ use axum::extract::{Json, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use ruststream::codec::JsonCodec;
+use ruststream::logging;
 use ruststream::memory::prelude::*;
 use tokio::net::TcpListener;
+use tokio::signal;
 use tokio::sync::Mutex;
+use tokio::time;
 use tokio_util::sync::CancellationToken;
 
 use crate::orders::{Order, RequestMeta, total_cents};
@@ -107,7 +110,7 @@ async fn relay_outbox(
     egress: impl Publisher,
     stop: impl Future<Output = ()>,
 ) {
-    let mut rounds = tokio::time::interval(Duration::from_millis(200));
+    let mut rounds = time::interval(Duration::from_millis(200));
     tokio::pin!(stop);
     loop {
         tokio::select! {
@@ -124,7 +127,7 @@ async fn relay_outbox(
 // --8<-- [start:main]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    ruststream::logging::init()?;
+    logging::init()?;
     let broker = MemoryBroker::new().bindable();
     // A token now, a live publisher once the shop has connected the broker.
     let egress = broker.bind(Publish);
@@ -151,7 +154,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                _ = signal::ctrl_c() => {}
                 () = stopping => {}
             }
         })

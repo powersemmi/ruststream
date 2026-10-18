@@ -61,7 +61,7 @@ impl MessageHeaders for Wire {
 
 mod assert_called_once {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -108,7 +108,7 @@ mod assert_called_once {
 
 mod assert_called {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -152,7 +152,7 @@ mod assert_called {
 
 mod assert_not_called {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -242,7 +242,7 @@ mod assert_not_called {
 
 mod settled {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -293,7 +293,7 @@ mod settled {
 
 mod outcomes {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::{Outcome, TestApp};
@@ -342,7 +342,7 @@ mod outcomes {
 
 mod assert_outcome {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;
@@ -392,7 +392,7 @@ mod assert_outcome {
 
 mod panicked {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -439,7 +439,7 @@ mod panicked {
 
 mod assert_last_failed_to_decode {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

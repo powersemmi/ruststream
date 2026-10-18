@@ -1,6 +1,6 @@
 //! The runtime collector routers and scopes mount into: type-erased starters plus metadata.
 
-use std::{fmt, future::Future, num::NonZeroUsize, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::Arc};
 
 use tokio::task::JoinHandle;
 

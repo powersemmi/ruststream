@@ -6,12 +6,13 @@
 //! cargo test --example manual_threads --no-default-features --features testing,memory,json
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::cli::{AppRuntime, run_main_on};
 use serde::{Deserialize, Serialize};
+use tokio::task;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Resize {
@@ -52,7 +53,7 @@ fn render(job: &Resize) -> u64 {
 
 /// Stands in for a call to another service: I/O, which belongs on the app's runtime.
 async fn notify(id: u64) {
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     tracing::info!(id, "resized");
 }
 

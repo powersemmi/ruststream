@@ -9,9 +9,10 @@
 //! [logging]: https://powersemmi.github.io/ruststream/latest/components/observability/logging/
 //! [tracing-layer]: https://powersemmi.github.io/ruststream/latest/components/observability/tracing-layer/
 
-use std::fmt;
 use std::fmt::Write as _;
+use std::io;
 use std::io::IsTerminal as _;
+use std::{error, fmt};
 
 use thiserror::Error;
 use tracing::field::{Field, Visit};
@@ -33,7 +34,7 @@ pub enum LoggingInitError {
     Filter(#[from] ParseError),
     /// A global [`tracing`] subscriber was already installed by this or another crate.
     #[error("a tracing subscriber is already installed")]
-    AlreadyInitialized(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+    AlreadyInitialized(#[source] Box<dyn error::Error + Send + Sync + 'static>),
 }
 
 /// Builder for RustStream's colored console logger.
@@ -130,11 +131,11 @@ impl Logging {
             .with_default_directive(directive)
             .with_env_var("RUST_LOG")
             .from_env_lossy();
-        let ansi = self.ansi.unwrap_or_else(|| std::io::stderr().is_terminal());
+        let ansi = self.ansi.unwrap_or_else(|| io::stderr().is_terminal());
 
         tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_writer(std::io::stderr)
+            .with_writer(io::stderr)
             .event_format(ColorFormatter {
                 ansi,
                 target: self.target,
@@ -264,8 +265,10 @@ impl Visit for EventVisitor {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::sync::{Arc, Mutex};
 
+    use tracing::subscriber;
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt::MakeWriter;
 
@@ -276,13 +279,13 @@ mod tests {
     #[derive(Clone)]
     struct BufWriter(Arc<Mutex<Vec<u8>>>);
 
-    impl std::io::Write for BufWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    impl io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
@@ -306,7 +309,7 @@ mod tests {
             .with_writer(BufWriter(buf.clone()))
             .event_format(ColorFormatter { ansi, target })
             .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        subscriber::with_default(subscriber, || {
             tracing::error!(code = 500, "boom");
             tracing::warn!("careful");
             tracing::info!(answer = 42, "hello");

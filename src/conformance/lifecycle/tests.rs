@@ -7,7 +7,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    future::{Future, pending, ready},
+    future::{pending, ready},
     mem::take,
     pin::pin,
     sync::{

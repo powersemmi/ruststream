@@ -9,7 +9,7 @@
 //! reply codec). The destination name comes from the macro; the publisher and codec come from
 //! the chain.
 
-use std::future::Future;
+use std::{any, error, fmt};
 
 use bytes::BytesMut;
 use serde::Serialize;
@@ -44,7 +44,7 @@ pub(crate) trait ReplySink<Reply, DeliveryCx, Pipeline>: Send + Sync {
     type Payload: PayloadForm;
 
     /// The error surfaced when the reply cannot be published.
-    type Error: std::fmt::Display;
+    type Error: fmt::Display;
 
     /// Publishes `reply` to `name`.
     fn deliver<'e>(
@@ -78,7 +78,7 @@ pub(crate) trait EncodeReply: Send + Sync {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -97,7 +97,7 @@ impl<Reply: Serialize + Send + Sync> EncodeReply for Reply {
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -121,7 +121,7 @@ where
         pipeline: &PP,
         cx: &PublishContext<'_, Cx>,
         encode: <Leaf::Payload as PayloadForm>::Encode<'e>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send
     where
         Leaf: Publisher,
         ReplyCodec: Codec,
@@ -147,7 +147,7 @@ where
     Transforms: PublishTransform<ForReply<DeliveryCx>, Leaf::Options>,
 {
     type Payload = Leaf::Payload;
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = Box<dyn error::Error + Send + Sync>;
 
     // As in `EncodeReply`: the wiring's own step is the choice of lane, and the future it
     // hands back is the publish itself.
@@ -175,7 +175,7 @@ where
     type Payload = Bare::Payload;
     // Erased, because two unrelated failures reach this point: the reply's own encoder and the
     // publisher. The axis only ever reports its error, so nothing downstream matches on it.
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = Box<dyn error::Error + Send + Sync>;
 
     async fn deliver<'e>(
         &self,
@@ -347,7 +347,7 @@ pub(crate) fn warn_ignored_reply_name(
 /// Builds the registration metadata for a publishing definition mounted under `name`.
 pub(crate) fn publishing_metadata<D: PublishingDef>(name: String, def: &D) -> HandlerMetadata {
     let mut meta = HandlerMetadata::raw(name)
-        .with_output_type(std::any::type_name::<D::Reply>())
+        .with_output_type(any::type_name::<D::Reply>())
         .with_def_details(
             def.description(),
             def.input_schema(),
@@ -385,10 +385,10 @@ pub(crate) struct PublishingHandler<
     pub(crate) origin: Origin,
 }
 
-impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline> std::fmt::Debug
+impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline> fmt::Debug
     for PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PublishingHandler").finish_non_exhaustive()
     }
 }
@@ -461,7 +461,7 @@ where
                 target: "ruststream::dispatch",
                 subscription = %ctx.name(),
                 reply = %name,
-                reply_type = std::any::type_name::<Def::Reply>(),
+                reply_type = any::type_name::<Def::Reply>(),
                 error = %err,
                 "reply publish failed",
             );
@@ -482,13 +482,14 @@ mod tests {
     use crate::runtime::dispatch::{Delivery, Workers};
     use crate::runtime::failure::FailurePolicies;
     use crate::runtime::handler::HandlerOutcome;
+    use crate::runtime::input::Decoded;
 
     /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
     /// the macro always fills in.
     struct ManualPub;
 
     impl PublishingDef for ManualPub {
-        type Input = crate::runtime::input::Decoded<u32>;
+        type Input = Decoded<u32>;
         type Injections = ();
         type Reply = u32;
         type Context = ();

@@ -8,7 +8,7 @@
 //! ```
 
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use axum::Router;
 use axum::extract::State;
@@ -18,6 +18,7 @@ use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio::signal;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -118,7 +119,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                _ = signal::ctrl_c() => {}
                 () = stopping => {}
             }
         })

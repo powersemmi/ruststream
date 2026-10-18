@@ -5,7 +5,7 @@
 //! emulation cost.
 
 use std::any::type_name;
-use std::{error::Error as StdError, future::Future, num::NonZeroUsize, time::Duration};
+use std::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
 use futures::Stream;
 

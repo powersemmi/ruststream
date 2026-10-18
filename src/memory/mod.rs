@@ -38,8 +38,9 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     fmt,
-    future::{Future, ready},
+    future::ready,
     marker::PhantomData,
+    mem,
     num::NonZeroU64,
     sync::{
         Arc, Mutex, OnceLock,
@@ -52,6 +53,10 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::Backlog;
 #[cfg(feature = "testing")]
+use crate::testing::InProcess;
+#[cfg(feature = "testing")]
+use crate::testing::TestableBroker;
+#[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
@@ -60,8 +65,8 @@ use crate::{
     SubscriptionSource, Take,
 };
 use bytes::Bytes;
-use futures::Stream;
 use futures::future::lazy;
+use futures::{Stream, stream};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
@@ -885,7 +890,7 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
                 Bus::Live(registry) => registry.routing,
                 Bus::ShutDown(routing) => *routing,
             };
-            match std::mem::replace(&mut *bus, Bus::ShutDown(routing)) {
+            match mem::replace(&mut *bus, Bus::ShutDown(routing)) {
                 Bus::Live(registry) => registry.len(),
                 Bus::ShutDown(_) => 0,
             }
@@ -1062,7 +1067,7 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
 // The bus is in-process by nature, so the transition the harness connects through is the ordinary
 // `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
-impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
+impl<Log: LogMode> InProcess for MemoryBroker<Log> {
     fn connect_in_process(
         self,
     ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
@@ -1073,7 +1078,7 @@ impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
 // The harness drives the connected form that transition produces, and run_suite scenarios
 // receive it too.
 #[cfg(feature = "testing")]
-impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log> {
+impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.state.install_coordinator(coordinator);
     }
@@ -1325,7 +1330,7 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
         let coordinator = self.coordinator();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
-        futures::stream::poll_fn(move |cx| {
+        stream::poll_fn(move |cx| {
             // Register before reading the pending seek: a seek landing between the read and the
             // park then still finds a waker to rouse.
             // Only a seeker wakes this waker, and a discarding subscription mints none.

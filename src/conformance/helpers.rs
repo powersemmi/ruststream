@@ -4,8 +4,8 @@
 //! they can be reused by application tests against any broker.
 
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{future::Future, time::Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fmt, process};
 
 use crate::Subscriber;
 use futures::StreamExt;
@@ -55,7 +55,7 @@ pub fn unique_subject(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
     let seq = NEXT.fetch_add(1, AtomicOrdering::Relaxed);
-    let pid = std::process::id();
+    let pid = process::id();
     format!("{prefix}.{pid:x}-{nanos:x}-{seq:x}")
 }
 
@@ -122,7 +122,7 @@ where
 pub async fn next_message<S>(subscriber: &mut S, within: Duration) -> S::Message
 where
     S: Subscriber,
-    S::Error: std::fmt::Debug,
+    S::Error: fmt::Debug,
 {
     let mut stream = std::pin::pin!(subscriber.stream());
     let item = timeout(within, stream.next())

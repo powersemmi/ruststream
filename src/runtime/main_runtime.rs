@@ -1,8 +1,6 @@
 //! [`MainRuntime`]: the app's runtime as a handler reaches it, and the explicit way to send work
 //! there from a dedicated thread.
 
-use std::future::Future;
-
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle};
 

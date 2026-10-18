@@ -1,8 +1,8 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, future::Future,
-    marker::PhantomData, sync::Arc, time::Duration,
+    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, marker::PhantomData,
+    sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;

@@ -1,7 +1,5 @@
 //! Reply wirings: how a handler's return value reaches a publisher.
 
-use std::future::Future;
-
 use serde::Serialize;
 use tracing::warn;
 

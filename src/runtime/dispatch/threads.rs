@@ -22,7 +22,7 @@
 //! unsynchronized cached index stays one thread's at a time.
 
 use std::fmt::Display;
-use std::future::{Future, Pending, poll_fn};
+use std::future::{Pending, poll_fn};
 use std::hint::spin_loop;
 use std::io;
 use std::ops::Deref;
@@ -580,11 +580,12 @@ fn report(name: &str, stuck: &Stuck) {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
-    use std::sync::atomic::{AtomicU32, AtomicUsize};
+    use std::sync::atomic::AtomicU32;
 
     use futures::StreamExt;
     use futures::stream;
     use tokio::sync::{Notify, Semaphore};
+    use tokio::time;
 
     use super::*;
 
@@ -695,7 +696,7 @@ mod tests {
             .expect("the threads start");
             let items = stream::iter(0..1000u32).map(Ok::<_, Infallible>);
             let shutdown = Shutdown::new();
-            let fed = tokio::time::timeout(
+            let fed = time::timeout(
                 Duration::from_secs(10),
                 threads.feed(items, "dying", &shutdown, |_| Some(b"key".as_slice())),
             )

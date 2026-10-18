@@ -21,8 +21,9 @@ use futures::future::join_all;
 use ruststream::memory::{MemoryBroker, MemoryMessage};
 use ruststream::prelude::*;
 use ruststream::testing::{Outcome, TestApp};
-use ruststream::{BuildContext, ContextField, HeaderMap};
+use ruststream::{BuildContext, ContextField};
 use tokio::sync::Barrier;
+use tokio::{task, time};
 
 /// A pool that ran its deliveries one at a time parks on the barrier forever; the deadline turns
 /// that into a failed assertion.
@@ -103,7 +104,7 @@ async fn the_threads_run_as_that_many_workers() {
         });
     let tb = TestApp::start(app).await.expect("startup");
     let jobs: Vec<Order> = (1..=4).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
+    let published = time::timeout(
         CONCURRENCY_DEADLINE,
         join_all(
             jobs.iter()
@@ -126,7 +127,7 @@ async fn the_threads_run_as_that_many_workers() {
 #[subscriber("keyed", threads(4, by_key))]
 async fn keyed(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     HandlerOutcome::ack()
 }
 
@@ -206,7 +207,7 @@ async fn a_router_chain_gives_threads_through_workers() {
         .with_broker(MemoryBroker::new(), |b| b.include_router(router));
     let tb = TestApp::start(app).await.expect("startup");
     let jobs: Vec<Order> = (1..=3).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
+    let published = time::timeout(
         CONCURRENCY_DEADLINE,
         join_all(
             jobs.iter()
@@ -228,7 +229,7 @@ async fn a_router_chain_gives_threads_through_workers() {
 #[subscriber("routed.keyed")]
 async fn routed_keyed(order: &Order) -> HandlerOutcome {
     let _ = order.id;
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     HandlerOutcome::ack()
 }
 

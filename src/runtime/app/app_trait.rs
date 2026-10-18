@@ -2,7 +2,6 @@
 //! return `impl App` instead of spelling the full `RustStream<Layers, State, Pipeline>` type.
 
 use std::collections::BTreeMap;
-use std::future::Future;
 
 use crate::ServerSpec;
 use crate::runtime::metadata::HandlerMetadata;

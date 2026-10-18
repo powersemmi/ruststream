@@ -431,7 +431,6 @@ where
 #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
 mod tests {
     use std::collections::BTreeMap;
-    use std::future::Future;
 
     use super::{RawReplyWiring, ReplyWiring, TransactionalReply};
     use crate::asyncapi::{Binding, Bindings};

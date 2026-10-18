@@ -8,7 +8,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};

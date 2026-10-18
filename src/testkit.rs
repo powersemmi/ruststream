@@ -18,9 +18,9 @@ pub(crate) mod log_capture {
     use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
 
-    use tracing::Subscriber;
     use tracing::field::{Field, Visit};
     use tracing::subscriber::DefaultGuard;
+    use tracing::{Subscriber, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 
@@ -64,7 +64,7 @@ pub(crate) mod log_capture {
     /// returned guard is dropped.
     pub(crate) fn start() -> (Events, DefaultGuard) {
         let events: Events = Arc::new(Mutex::new(Vec::new()));
-        let guard = tracing::subscriber::set_default(
+        let guard = subscriber::set_default(
             tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
         );
         (events, guard)
@@ -93,7 +93,7 @@ pub(crate) mod log_capture {
 /// and the in-memory broker and codec their modules need.
 #[cfg(all(feature = "logging", feature = "memory", feature = "json"))]
 pub(crate) mod unreadable {
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use crate::codec::CodecError;
     use crate::{AckError, HeaderMap, IncomingMessage};
@@ -179,6 +179,8 @@ pub(crate) mod delivery {
 /// them back as one batch.
 #[cfg(all(feature = "memory", feature = "json"))]
 pub(crate) mod batch {
+    use std::num::NonZeroUsize;
+
     use futures::StreamExt;
 
     use crate::memory::{LogMode, MemoryBroker, MemoryMessage, MemorySubscriber};
@@ -217,8 +219,7 @@ pub(crate) mod batch {
     pub(crate) async fn pull_batch<Log: LogMode>(
         sub: &mut MemorySubscriber<Log>,
     ) -> Vec<MemoryMessage<Log>> {
-        let mut stream =
-            std::pin::pin!(sub.batches(std::num::NonZeroUsize::new(64).expect("64 is nonzero")));
+        let mut stream = std::pin::pin!(sub.batches(NonZeroUsize::new(64).expect("64 is nonzero")));
         stream.next().await.unwrap().unwrap()
     }
 }

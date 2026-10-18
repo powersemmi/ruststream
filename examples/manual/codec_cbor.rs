@@ -55,7 +55,7 @@ const FOREIGN: &[u8] = br#"{"id":7}"#;
 
 mod service {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::codec::CborCodec;
     use ruststream::memory::prelude::*;

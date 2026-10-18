@@ -4,8 +4,10 @@
 
 use std::any::{Any, TypeId, type_name};
 use std::fmt;
-use std::future::Future;
 use std::time::Duration;
+
+use tokio::time;
+use tokio::time::Instant;
 
 use crate::runtime::{BoxError, BoxFuture, InProcessConnect};
 use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
@@ -561,12 +563,12 @@ pub async fn expect_published<B: TestableBroker>(
     count: usize,
     timeout: Duration,
 ) -> Vec<RawMessage> {
-    let deadline = tokio::time::Instant::now() + timeout;
+    let deadline = Instant::now() + timeout;
     loop {
         let observed = broker.published(name);
-        if observed.len() >= count || tokio::time::Instant::now() >= deadline {
+        if observed.len() >= count || Instant::now() >= deadline {
             return observed;
         }
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        time::sleep(Duration::from_millis(2)).await;
     }
 }

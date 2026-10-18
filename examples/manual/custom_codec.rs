@@ -10,7 +10,8 @@
 
 use std::convert::Infallible;
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
+use rmp_serde::encode;
 use ruststream::codec::{Codec, CodecError};
 use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;
@@ -78,7 +79,7 @@ impl Codec for NamedMsgpack {
 
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
         // Straight into the publish path's buffer: nothing else is allocated.
-        rmp_serde::encode::write_named(&mut buf.writer(), value)
+        encode::write_named(&mut buf.writer(), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))
     }
 
@@ -90,7 +91,7 @@ impl Codec for NamedMsgpack {
 
 mod service {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

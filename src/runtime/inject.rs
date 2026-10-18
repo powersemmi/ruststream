@@ -9,7 +9,7 @@
 //! every combination - fully monomorphized, nothing to check on the hot path.
 
 use std::fmt;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::marker::PhantomData;
 
 use crate::{Broker, Connected, IncomingMessage, PairError};

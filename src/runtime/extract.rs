@@ -11,7 +11,6 @@
 use std::any::type_name;
 use std::convert::Infallible;
 use std::fmt;
-use std::future::Future;
 
 use serde::de::DeserializeOwned;
 use tracing::warn;

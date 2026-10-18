@@ -6,9 +6,10 @@
 //! `conformance::capabilities`), and these implementations are the executable reference for
 //! them.
 
+use std::mem;
 use std::{
     fmt,
-    future::{Future, ready},
+    future::ready,
     marker::PhantomData,
     num::{NonZeroU64, NonZeroUsize},
     sync::{
@@ -19,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{Stream, task::AtomicWaker};
+use futures::{Stream, stream, task::AtomicWaker};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::timeout};
 use tracing::warn;
@@ -227,7 +228,7 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
         let coordinator = self.coordinator();
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
-        futures::stream::poll_fn(move |cx| {
+        stream::poll_fn(move |cx| {
             // Same ordering as `MemorySubscriber::stream`: register, then apply a pending seek.
             // Only a seeker wakes this waker, and a discarding subscription mints none.
             if log::retains::<Log>() {
@@ -456,7 +457,7 @@ impl Transaction for MemoryTransaction {
         // Settled before the flush: a failed commit has still consumed the transaction (the
         // buffer is lost per the Transaction contract), so the drop warning must not fire.
         self.settled = true;
-        for outbound in std::mem::take(&mut self.buffered) {
+        for outbound in mem::take(&mut self.buffered) {
             if let Err(err) = self
                 .state
                 .fanout(&outbound.name, outbound.payload, outbound.headers)

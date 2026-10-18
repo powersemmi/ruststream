@@ -1,6 +1,6 @@
 //! Handler abstraction and the [`HandlerOutcome`] settlement unit returned to the router.
 
-use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{convert::Infallible, fmt, pin::Pin, sync::Arc, time::Duration};
 
 use super::context::Context;
 
@@ -352,8 +352,8 @@ impl HandlerOutcome {
     }
 }
 
-impl std::fmt::Debug for HandlerOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for HandlerOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HandlerOutcome")
             .field("outcome", &self.outcome)
             .field("after", &self.after.is_some())

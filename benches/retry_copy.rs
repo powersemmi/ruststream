@@ -22,7 +22,6 @@ use std::time::Duration;
 
 use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use ruststream::memory::MemoryBroker;
 use ruststream::memory::prelude::*;
 
 /// The scenario's application state: the latch every scenario has, plus the number of deliveries

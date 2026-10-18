@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
+use tokio::time;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -29,7 +30,7 @@ impl MessageHeaders for Order {
 
 /// Stands in for a call to a payment provider: a second of waiting on I/O.
 async fn charge(order: &Order) {
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    time::sleep(Duration::from_secs(1)).await;
     tracing::info!(order.id, "charged");
 }
 
@@ -54,6 +55,7 @@ mod pool {
     use futures::future::join_all;
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
+    use tokio::time;
     use tokio::time::Instant;
 
     use super::{Bill, Order};
@@ -69,7 +71,7 @@ mod pool {
 
     #[tokio::test]
     async fn four_orders_are_charged_together() -> Result<(), Box<dyn Error>> {
-        tokio::time::pause();
+        time::pause();
         let tb = TestApp::start(app()).await?;
         let broker = tb.broker::<MemoryBroker>();
         let orders: Vec<Order> = (1..=4).map(|id| Order { id }).collect();
@@ -99,10 +101,10 @@ mod by_key {
     use std::error::Error;
 
     use futures::future::join_all;
-    use ruststream::HeaderMap;
     use ruststream::memory::PARTITION_KEY_HEADER;
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
+    use tokio::time;
     use tokio::time::Instant;
 
     use super::{Bill, Order};
@@ -123,7 +125,7 @@ mod by_key {
 
     #[tokio::test]
     async fn one_customer_waits_for_its_own_orders_only() -> Result<(), Box<dyn Error>> {
-        tokio::time::pause();
+        time::pause();
         let tb = TestApp::start(app()).await?;
         let broker = tb.broker::<MemoryBroker>();
         // Two orders of each customer; the in-memory broker reads the key from a header.

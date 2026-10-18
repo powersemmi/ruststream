@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::Serializer;
 
 use super::*;
 

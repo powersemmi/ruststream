@@ -7,7 +7,7 @@
 //! nothing on its way to one and takes no reference count: a worker borrows what the loop
 //! shares for as long as it runs.
 
-use std::future::{Future, poll_fn};
+use std::future::poll_fn;
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::Poll;

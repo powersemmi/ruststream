@@ -38,6 +38,7 @@ use ruststream::{
     RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 use tracing::Level;
+use tracing::subscriber::set_global_default;
 use tracing_subscriber::fmt::MakeWriter;
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -221,8 +222,7 @@ impl Captured {
                 .with_ansi(false)
                 .with_max_level(Level::WARN)
                 .finish();
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("no other global subscriber in this test binary");
+            set_global_default(subscriber).expect("no other global subscriber in this test binary");
         });
         CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));
         Installed

@@ -1,6 +1,6 @@
 //! The [`Publisher`] trait and its declaration-side counterpart, [`PublishPolicy`].
 
-use std::{error::Error as StdError, future::Future};
+use std::error::Error as StdError;
 
 use bytes::BytesMut;
 use serde::Serialize;

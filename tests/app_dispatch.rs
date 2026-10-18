@@ -6,7 +6,7 @@
 
 use std::{
     convert::Infallible,
-    future::{Future, ready},
+    future::ready,
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -15,12 +15,8 @@ use std::{
 
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Input, Layer, MessageWire, SerializedWire,
-    SoloDeserialized,
-};
+use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Layer};
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use tokio::sync::Notify;
 
 /// The payload view the byte-level bodies below take. The bodies never look at the bytes - the

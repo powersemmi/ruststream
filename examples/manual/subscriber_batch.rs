@@ -10,7 +10,7 @@
 
 mod batch {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -77,7 +77,7 @@ mod batch {
 
 mod per_element {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;

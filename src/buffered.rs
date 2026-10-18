@@ -11,11 +11,10 @@
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 
-use std::future::Future;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use tokio::time::sleep;
 
 use crate::{
@@ -291,7 +290,7 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
         let max_size = size.get();
         let max_wait = self.max_wait;
         let inner = Box::pin(self.inner.stream());
-        futures::stream::unfold(
+        stream::unfold(
             (inner, Carry::Nothing),
             move |(mut stream, carry)| async move {
                 // An error or end-of-stream observed while filling the previous batch could not be
@@ -342,8 +341,8 @@ impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
 #[cfg(all(test, feature = "memory"))]
 mod tests {
     use std::future::ready;
-
-    use futures::StreamExt;
+    use std::mem;
+    use std::sync::LazyLock;
 
     use super::*;
     use crate::memory::{LogMode, MemoryBroker, MemorySubscriber, Retention};
@@ -383,8 +382,7 @@ mod tests {
         }
 
         fn headers(&self) -> &crate::HeaderMap {
-            static EMPTY: std::sync::LazyLock<crate::HeaderMap> =
-                std::sync::LazyLock::new(crate::HeaderMap::new);
+            static EMPTY: LazyLock<crate::HeaderMap> = LazyLock::new(crate::HeaderMap::new);
             &EMPTY
         }
 
@@ -405,7 +403,7 @@ mod tests {
         type Error = StreamFault;
 
         fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-            futures::stream::iter(std::mem::take(&mut self.0))
+            stream::iter(mem::take(&mut self.0))
         }
     }
 

@@ -10,7 +10,8 @@
 
 mod common;
 
-use std::future::{Future, ready};
+use std::convert::Infallible;
+use std::future::ready;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -225,7 +226,7 @@ async fn per_element_outcomes_retry_individually() {
     }
     let app = RustStream::new(AppInfo::new("batches", "0.1.0"))
         .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Attempts {
+            Ok::<_, Infallible>(Attempts {
                 retried_once: AtomicBool::new(false),
             })
         })
@@ -333,7 +334,7 @@ async fn scale(orders: &[Order], ctx: &mut Context<'_, (), Tally>) -> Vec<Order>
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_handler_reads_typed_state() {
     let app = RustStream::new(AppInfo::new("billing", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Tally { multiplier: 10 }))
+        .on_startup(async move |()| Ok::<_, Infallible>(Tally { multiplier: 10 }))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(scale.batch(nonzero!(64))).out_reply(Publish);
         });

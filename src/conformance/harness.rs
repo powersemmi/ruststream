@@ -21,7 +21,7 @@
 //! # }
 //! ```
 
-use std::{fmt, future::Future, thread, time::Duration};
+use std::{fmt, thread, time::Duration};
 
 pub use super::retry::redelivery_address;
 #[cfg(feature = "asyncapi")]

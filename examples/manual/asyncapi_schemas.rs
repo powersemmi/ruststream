@@ -10,7 +10,7 @@
 // A plain build compiles the service; the tests that use it exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::asyncapi::Spec;
 use ruststream::memory::prelude::*;

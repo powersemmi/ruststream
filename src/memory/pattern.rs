@@ -5,10 +5,7 @@
 //! the last token matches one or more tokens: the NATS subject syntax, so a service that moves
 //! between this broker and NATS keeps its subscriptions as written.
 
-use std::{
-    cmp::Ordering,
-    future::{Future, ready},
-};
+use std::{cmp::Ordering, future::ready};
 
 use thiserror::Error;
 use tokio::sync::mpsc;

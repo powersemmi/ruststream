@@ -4,13 +4,18 @@
 //! live, each connects through its ordinary `connect`, against a running stand.
 
 use std::any::{TypeId, type_name};
-use std::fmt;
+use std::hint;
 use std::marker::PhantomData;
+use std::ptr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant as WallClock};
+use std::{error, fmt};
 
 use thiserror::Error;
+use tokio::task;
 use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 
 use crate::OutgoingDestination;
@@ -41,10 +46,10 @@ const DEFAULT_SETTLE_DEADLINE: Duration = Duration::from_secs(10);
 pub enum TestError {
     /// An `on_startup` or `after_startup` lifecycle hook failed while starting the harness.
     #[error("startup hook failed: {0}")]
-    Startup(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Startup(#[source] Box<dyn error::Error + Send + Sync>),
     /// A subscription failed to open while starting the harness.
     #[error("subscription failed: {0}")]
-    Subscribe(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Subscribe(#[source] Box<dyn error::Error + Send + Sync>),
     /// A reaction did not settle within the step budget (a non-terminating requeue?).
     #[error("the reaction did not settle within {processed} dispatched deliveries")]
     NotQuiescent {
@@ -77,7 +82,7 @@ pub enum TestError {
         broker: String,
         /// The broker's own connect error.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Box<dyn error::Error + Send + Sync>,
     },
     /// A live broker refused a message the test published onto it.
     #[error("broker {broker} refused the test's publish: {source}")]
@@ -86,7 +91,7 @@ pub enum TestError {
         broker: String,
         /// The broker's own publish error.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: Box<dyn error::Error + Send + Sync>,
     },
     /// A publish was attempted after a fail-fast failure tore the service down.
     #[error("publish after the service shut down")]
@@ -351,12 +356,12 @@ impl Mode {
 /// still until a timer is awaited, while a running one moves with the wall clock, so the two
 /// readings below tell them apart.
 fn clock_is_paused() -> bool {
-    let before = tokio::time::Instant::now();
+    let before = Instant::now();
     let wall = WallClock::now();
     while wall.elapsed() < Duration::from_micros(50) {
-        std::hint::spin_loop();
+        hint::spin_loop();
     }
-    tokio::time::Instant::now() == before
+    Instant::now() == before
 }
 
 impl<State: Send + Sync + 'static> TestApp<State> {
@@ -899,7 +904,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         let scope_id = self
             .entries
             .iter()
-            .position(|e| std::ptr::eq(e, entry))
+            .position(|e| ptr::eq(e, entry))
             .expect("entry belongs to this app");
         let transport = match &self.mode {
             Mode::InProcess => Transport::InProcess(
@@ -1040,10 +1045,10 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// unsettled at the deadline.
     pub async fn advance(&self, by: Duration) -> Result<(), TestError> {
         match self.mode {
-            Mode::InProcess => tokio::time::advance(by).await,
+            Mode::InProcess => time::advance(by).await,
             // Why real time passes here: the delay belongs to the real broker's own timer, which a
             // paused clock in this process does not reach.
-            Mode::Live { .. } => tokio::time::sleep(by).await,
+            Mode::Live { .. } => time::sleep(by).await,
         }
         self.coordinator.fire_due_timers().await;
         self.settle().await
@@ -1058,7 +1063,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// injection that has returned has already put its continuations here for this to find.
     pub async fn drain(&self) {
         while !self.continuations.is_empty() {
-            tokio::task::yield_now().await;
+            task::yield_now().await;
         }
     }
 
@@ -1143,13 +1148,13 @@ async fn stop_dispatch(
     timeout: Option<Duration>,
 ) {
     shutdown.cancel();
-    let until = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+    let until = timeout.map(|timeout| Instant::now() + timeout);
     for mut handle in handles {
         let Some(until) = until else {
             let _ = handle.await;
             continue;
         };
-        if tokio::time::timeout_at(until, &mut handle).await.is_err() {
+        if time::timeout_at(until, &mut handle).await.is_err() {
             handle.abort();
             // Awaited, so the loop is gone, not merely told to go, when this returns.
             let _ = handle.await;
@@ -1162,7 +1167,7 @@ async fn drain_continuations(continuations: &TaskTracker, timeout: Option<Durati
     continuations.close();
     match timeout {
         Some(timeout) => {
-            let _ = tokio::time::timeout(timeout, continuations.wait()).await;
+            let _ = time::timeout(timeout, continuations.wait()).await;
         }
         None => continuations.wait().await,
     }

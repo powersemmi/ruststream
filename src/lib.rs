@@ -287,6 +287,10 @@ pub mod otel;
 pub mod __private {
     use core::marker::PhantomData;
 
+    #[cfg(feature = "asyncapi")]
+    use crate::asyncapi;
+    use crate::runtime::Serialized;
+
     /// A type-carrying probe the macro reads a payload schema off.
     ///
     /// Schema selection uses inherent-vs-trait specialization: the schema
@@ -329,7 +333,7 @@ pub mod __private {
         /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
         #[must_use]
         pub fn schema_json(&self) -> Option<String> {
-            crate::asyncapi::schema_json::<T>()
+            asyncapi::schema_json::<T>()
         }
     }
 
@@ -346,7 +350,7 @@ pub mod __private {
         }
     }
 
-    impl<T: crate::runtime::Serialized> Probe<T> {
+    impl<T: Serialized> Probe<T> {
         /// Returns `true`: the probed type carries its own wire bytes (inherent; preferred
         /// over the trait fallback).
         #[must_use]
@@ -424,7 +428,7 @@ pub mod __private {
     #[cfg(feature = "asyncapi")]
     impl<H: schemars::JsonSchema> ContractSchema for crate::WithHeaders<H> {
         fn schema_json() -> Option<String> {
-            crate::asyncapi::schema_json::<H>()
+            asyncapi::schema_json::<H>()
         }
     }
 

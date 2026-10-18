@@ -24,6 +24,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::prelude::*;
 use ruststream::testing::{Outcome, TestApp};
 use tokio::sync::Barrier;
+use tokio::{task, time};
 
 /// The deadline every "did the pool run these together?" wait rides. A pool that dispatched
 /// sequentially would park on the barrier forever, so the timeout is what turns that deadlock
@@ -50,7 +51,7 @@ async fn pool_processes_deliveries_concurrently() {
     // Exactly the barrier's worth of jobs: dispatched sequentially, the first would park on the
     // barrier and the deadline below would expire.
     let jobs: Vec<Order> = (1..=4u32).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
+    let published = time::timeout(
         CONCURRENCY_DEADLINE,
         join_all(jobs.iter().map(|job| tb.message(job).to("jobs").publish())),
     )
@@ -91,7 +92,7 @@ async fn a_router_chain_gives_a_batch_registration_its_pool() {
     let tb = TestApp::start(app).await.expect("startup failed");
 
     let jobs: Vec<Order> = (1..=2u32).map(|id| Order { id }).collect();
-    let published = tokio::time::timeout(
+    let published = time::timeout(
         CONCURRENCY_DEADLINE,
         join_all(
             jobs.iter()
@@ -116,7 +117,7 @@ async fn a_router_chain_gives_a_batch_registration_its_pool() {
 async fn keyed(order: &Order) -> HandlerOutcome {
     let _ = order.id;
     // Encourage interleaving between lanes; each lane itself stays sequential.
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     HandlerOutcome::ack()
 }
 

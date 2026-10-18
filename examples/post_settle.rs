@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use ruststream::memory::prelude::*;
+use tokio::task;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
 #[outgoing(name = "orders")]
@@ -29,7 +30,7 @@ struct Notifier {
 
 impl Notifier {
     async fn send(&self, note: String) {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if let Ok(mut sent) = self.sent.lock() {
             sent.push(note);
         }

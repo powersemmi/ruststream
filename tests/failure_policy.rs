@@ -12,7 +12,6 @@ mod common;
 use common::{Order, Wire};
 
 use ruststream::memory::prelude::*;
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 

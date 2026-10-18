@@ -8,9 +8,10 @@
 //! [`Handler`](super::Handler) counterpart, and [`TypedBatch`] the [`Typed`](super::Typed) decode
 //! adapter.
 
+use std::iter;
 #[cfg(feature = "otel")]
 use std::sync::LazyLock;
-use std::{fmt, future::Future, marker::PhantomData};
+use std::{any, fmt, marker::PhantomData};
 
 #[cfg(feature = "otel")]
 use opentelemetry::metrics::Histogram;
@@ -31,6 +32,16 @@ use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
+#[cfg(all(test, feature = "memory", feature = "json"))]
+use crate::codec::Codec;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Delivered;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::PendingRecord;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::RecordedValue;
 
 /// The settlement of one dispatched batch.
 ///
@@ -139,7 +150,7 @@ pub fn uniform_batch(outcome: HandlerOutcome, batch_len: usize) -> Vec<HandlerOu
         return Vec::new();
     }
     let status = outcome.outcome();
-    let mut settles: Vec<HandlerOutcome> = std::iter::repeat_with(|| HandlerOutcome::from(status))
+    let mut settles: Vec<HandlerOutcome> = iter::repeat_with(|| HandlerOutcome::from(status))
         .take(batch_len - 1)
         .collect();
     settles.push(outcome);
@@ -290,7 +301,7 @@ pub(crate) trait TakenBatch<C>: Send {
     /// while a harness watches the dispatch; a batch that lends its values keeps the copies it
     /// makes here for the record of its settlement, so each value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered>;
+    fn unsettled(&mut self) -> Vec<Delivered>;
 }
 
 // The decoding forms collect the deliveries, and a batch's context is built from its first.
@@ -304,9 +315,9 @@ where
     }
 
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered> {
+    fn unsettled(&mut self) -> Vec<Delivered> {
         self.iter()
-            .map(|msg| crate::testing::coordinator::Delivered {
+            .map(|msg| Delivered {
                 raw: bytes::Bytes::copy_from_slice(msg.payload()),
                 value: None,
                 settle: None,
@@ -373,7 +384,7 @@ pub(crate) fn typed_batch<M, T, C, H>(
 where
     M: IncomingMessage,
     T: DeserializeOwned + Send + Sync + 'static,
-    C: crate::codec::Codec,
+    C: Codec,
 {
     TypedBatch {
         codec,
@@ -546,7 +557,7 @@ where
         // (index into `batch`, its settlement); empty on the happy path, so nothing allocates.
         let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
         for (index, msg) in batch.iter().enumerate() {
-            if let Some(outcome) = reported(msg, std::any::type_name::<F>(), self.decode, ctx) {
+            if let Some(outcome) = reported(msg, any::type_name::<F>(), self.decode, ctx) {
                 rejected.push((index, outcome));
                 continue;
             }
@@ -556,7 +567,7 @@ where
                     warn!(
                         target: "ruststream::dispatch",
                         subscription = %subscription,
-                        message_type = std::any::type_name::<F>(),
+                        message_type = any::type_name::<F>(),
                         error = %err,
                         "payload construction failed",
                     );
@@ -693,7 +704,7 @@ pub(crate) async fn settle_batch<M, C>(
 /// What the harness records of the values a batch lent its handler, one per accepted delivery
 /// in order: empty where the batch lent none, and nothing at all outside the `testing` feature.
 #[cfg(feature = "testing")]
-pub(crate) type LentValues = Vec<crate::testing::coordinator::RecordedValue>;
+pub(crate) type LentValues = Vec<RecordedValue>;
 
 /// See the `testing` counterpart: without the harness there is nothing to record.
 #[cfg(not(feature = "testing"))]
@@ -787,9 +798,9 @@ pub(crate) async fn settle_lent_batch<M, C>(
 /// as it lives, and a quiescence wait cannot return between the final settle and the record.
 #[cfg(feature = "testing")]
 struct BatchLog {
-    deliveries: Vec<crate::testing::coordinator::Delivered>,
+    deliveries: Vec<Delivered>,
     settled: usize,
-    _pending: crate::testing::coordinator::PendingRecord,
+    _pending: PendingRecord,
 }
 
 #[cfg(feature = "testing")]
@@ -802,14 +813,14 @@ impl BatchLog {
         Self {
             deliveries: accepted
                 .into_iter()
-                .map(|msg| crate::testing::coordinator::Delivered {
+                .map(|msg| Delivered {
                     raw: bytes::Bytes::copy_from_slice(msg.payload()),
                     value: lent.next(),
                     settle: None,
                 })
                 .collect(),
             settled: 0,
-            _pending: crate::testing::coordinator::PendingRecord::new(),
+            _pending: PendingRecord::new(),
         }
     }
 
@@ -821,7 +832,7 @@ impl BatchLog {
     }
 
     fn record(self, subscription: &str) {
-        crate::testing::coordinator::record_batch(subscription, self.deliveries);
+        coordinator::record_batch(subscription, self.deliveries);
     }
 }
 

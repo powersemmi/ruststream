@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use std::fmt;
 use std::sync::Mutex;
 
 #[cfg(feature = "asyncapi")]
@@ -88,8 +89,8 @@ pub struct Bindable<B: Broker> {
     pub(crate) slot: ConnectedSlot<B>,
 }
 
-impl<B: Broker + std::fmt::Debug> std::fmt::Debug for Bindable<B> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<B: Broker + fmt::Debug> fmt::Debug for Bindable<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Bindable")
             .field("broker", &self.broker)
             .finish_non_exhaustive()
@@ -167,8 +168,8 @@ pub struct Bound<B2: Broker, S> {
     pub(crate) source: S,
 }
 
-impl<B2: Broker, S: std::fmt::Debug> std::fmt::Debug for Bound<B2, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<B2: Broker, S: fmt::Debug> fmt::Debug for Bound<B2, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Bound")
             .field("source", &self.source)
             .finish_non_exhaustive()

@@ -4,8 +4,8 @@
 use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tracing::Level;
 use tracing::subscriber::DefaultGuard;
+use tracing::{Level, subscriber};
 use tracing_subscriber::fmt::MakeWriter;
 
 /// A buffer the installed subscriber writes into; clones share it.
@@ -22,7 +22,7 @@ impl CapturedLogs {
             .with_ansi(false)
             .with_max_level(level)
             .finish();
-        tracing::subscriber::set_default(subscriber)
+        subscriber::set_default(subscriber)
     }
 
     /// Everything written so far.

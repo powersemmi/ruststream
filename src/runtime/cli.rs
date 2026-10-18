@@ -73,6 +73,9 @@
 //! versions a requirement accepts, and then adds the `[patch.crates-io]` entry pointing at a
 //! sibling checkout of `ruststream`.
 
+use std::env;
+#[cfg(feature = "asyncapi")]
+use std::fs;
 use std::io;
 use std::num::NonZeroUsize;
 use std::process::ExitCode;
@@ -81,6 +84,10 @@ use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 
 use super::app::{App, RustStreamError};
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi;
+#[cfg(feature = "logging")]
+use crate::logging;
 
 /// Errors surfaced by the generated CLI entry point.
 #[derive(Debug, Error)]
@@ -295,7 +302,7 @@ where
     A: App,
     F: FnOnce() -> A,
 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = env::args().skip(1).collect();
     report(execute(&args, runtime, build))
 }
 
@@ -322,7 +329,7 @@ where
             // of the box. Ignore the error: it only fails if the app already installed its own
             // subscriber, which we must not replace.
             #[cfg(feature = "logging")]
-            let _ = crate::logging::init();
+            let _ = logging::init();
             let app = build();
             let runtime = runtime.build().map_err(CliError::Runtime)?;
             runtime.block_on(app.run())?;
@@ -360,14 +367,14 @@ fn parse_asyncapi(args: &[String]) -> Result<Command, CliError> {
 
 #[cfg(feature = "asyncapi")]
 fn generate_spec<A: App>(app: &A, out: Option<&str>, yaml: bool) -> Result<(), CliError> {
-    let spec = crate::asyncapi::build_spec(app);
+    let spec = asyncapi::build_spec(app);
     let text = if yaml {
         spec.to_yaml().map_err(CliError::SerializeYaml)?
     } else {
         spec.to_json()?
     };
     if let Some(path) = out {
-        std::fs::write(path, text).map_err(|source| CliError::WriteSpec {
+        fs::write(path, text).map_err(|source| CliError::WriteSpec {
             path: path.to_owned(),
             source,
         })
@@ -384,8 +391,14 @@ fn generate_spec<A: App>(_app: &A, _out: Option<&str>, _yaml: bool) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    use std::env;
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    use std::fs;
     #[cfg(feature = "memory")]
     use std::io;
+    #[cfg(all(feature = "memory", feature = "asyncapi"))]
+    use std::process;
     use std::process::ExitCode;
 
     #[cfg(feature = "memory")]
@@ -500,30 +513,30 @@ mod tests {
     #[cfg(all(feature = "memory", feature = "asyncapi"))]
     #[test]
     fn asyncapi_gen_writes_json_and_yaml_to_a_file() {
-        let dir = std::env::temp_dir();
-        let json_path = dir.join(format!("ruststream-cli-{}-spec.json", std::process::id()));
+        let dir = env::temp_dir();
+        let json_path = dir.join(format!("ruststream-cli-{}-spec.json", process::id()));
         let json_out = json_path.to_str().expect("utf-8 temp path").to_owned();
         execute_default(
             &args(&["asyncapi", "gen", "-o", json_out.as_str()]),
             demo_app,
         )
         .expect("the spec must be written");
-        let text = std::fs::read_to_string(&json_path).expect("the spec file exists");
+        let text = fs::read_to_string(&json_path).expect("the spec file exists");
         let spec: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(spec["info"]["title"], "cli-demo");
-        std::fs::remove_file(&json_path).expect("cleanup");
+        fs::remove_file(&json_path).expect("cleanup");
 
-        let yaml_path = dir.join(format!("ruststream-cli-{}-spec.yaml", std::process::id()));
+        let yaml_path = dir.join(format!("ruststream-cli-{}-spec.yaml", process::id()));
         let yaml_out = yaml_path.to_str().expect("utf-8 temp path").to_owned();
         execute_default(
             &args(&["asyncapi", "gen", "-o", yaml_out.as_str(), "--yaml"]),
             demo_app,
         )
         .expect("the spec must be written");
-        let text = std::fs::read_to_string(&yaml_path).expect("the spec file exists");
+        let text = fs::read_to_string(&yaml_path).expect("the spec file exists");
         let spec: serde_norway::Value = serde_norway::from_str(&text).expect("valid YAML");
         assert_eq!(spec["info"]["title"].as_str(), Some("cli-demo"));
-        std::fs::remove_file(&yaml_path).expect("cleanup");
+        fs::remove_file(&yaml_path).expect("cleanup");
     }
 
     #[cfg(all(feature = "memory", feature = "asyncapi"))]
@@ -537,7 +550,7 @@ mod tests {
     #[cfg(all(feature = "memory", feature = "asyncapi"))]
     #[test]
     fn asyncapi_gen_reports_the_path_it_could_not_write() {
-        let missing = std::env::temp_dir()
+        let missing = env::temp_dir()
             .join("ruststream-cli-absent-directory")
             .join("spec.json");
         let out = missing.to_str().expect("utf-8 temp path").to_owned();

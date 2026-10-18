@@ -15,7 +15,7 @@ mod common;
 
 use common::{Order, Receipt};
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

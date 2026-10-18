@@ -18,7 +18,7 @@
 mod common;
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;

@@ -10,6 +10,7 @@ use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
 use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
+use crate::runtime::router::IncludeDef;
 
 /// The phantom carrying a definition's axes.
 ///
@@ -276,11 +277,11 @@ pub struct UnbuiltDefinition;
 // The settings chain (`.workers(..)`, `.batch(..)`, ...) rides the `Declared` blanket over
 // `IncludeDef`, so the unsealed values carry the diagnostic form token: settings chain freely,
 // and a mount before `.build()` names the missing step.
-impl<A, R, O, C, H, Doc> crate::runtime::router::IncludeDef for HandleValue<A, R, O, C, H, Doc> {
+impl<A, R, O, C, H, Doc> IncludeDef for HandleValue<A, R, O, C, H, Doc> {
     type Form = UnbuiltDefinition;
 }
 
-impl<V, Dest> crate::runtime::router::IncludeDef for ReplyValue<V, Dest> {
+impl<V, Dest> IncludeDef for ReplyValue<V, Dest> {
     type Form = UnbuiltDefinition;
 }
 

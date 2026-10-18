@@ -9,12 +9,12 @@
 
 mod common;
 
+use std::str;
+
 use common::{Order, Receipt};
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{
-    ContextKind, ForReply, Names, Outgoing, PublishContext, PublishTransform, Reads,
-};
+use ruststream::runtime::{Outgoing, PublishContext};
 use ruststream::testing::TestApp;
 
 /// The one header the reply-to pattern reads, as a delivery carries it.
@@ -148,7 +148,7 @@ impl<K: ContextKind, Options> PublishTransform<K, Options> for ByTenant {
 
     fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         if let Some(tenant) = out.headers().get("x-tenant")
-            && let Ok(tenant) = std::str::from_utf8(tenant)
+            && let Ok(tenant) = str::from_utf8(tenant)
         {
             out.set_name(format!("redirect.audit.{tenant}"));
         }

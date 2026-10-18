@@ -1286,6 +1286,9 @@ unreachable_pub = "deny"
 missing_docs = "deny"
 missing_debug_implementations = "warn"
 unused_qualifications = "warn"
+# Imports: a name is imported once, at the top of the file.
+redundant_imports = "warn"
+unused_import_braces = "warn"
 
 [workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }
@@ -1299,6 +1302,10 @@ missing_const_for_fn = "allow"
 multiple_crate_versions = "allow"
 redundant_pub_crate = "allow"
 cognitive_complexity = "warn"
+# Imports: a path is brought into scope with `use`, never spelled out inline.
+absolute_paths = "warn"
+alloc_instead_of_core = "warn"
+unnecessary_self_imports = "warn"
 
 [lints]
 workspace = true

@@ -1,6 +1,7 @@
 //! Message types and the [`IncomingMessage`] trait.
 
-use std::{future::Future, time::Duration};
+use std::future;
+use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use bytes_utils::Str;
@@ -772,7 +773,7 @@ pub trait IncomingMessage: Send + Sync {
         Self: Sized,
     {
         let _ = delay;
-        std::future::ready(Err(AckError::Unsupported))
+        future::ready(Err(AckError::Unsupported))
     }
 }
 

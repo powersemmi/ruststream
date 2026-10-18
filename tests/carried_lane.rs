@@ -6,7 +6,9 @@
 mod carrying;
 mod common;
 
-use std::future::{Future, ready};
+use std::convert::Infallible;
+use std::error;
+use std::future::ready;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use carrying::{PageContext, PageRows, Row, Rows};
@@ -27,8 +29,7 @@ fn greeting() -> RustStream {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_handler_reads_the_value_its_delivery_carries() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn a_handler_reads_the_value_its_delivery_carries() -> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(greeting()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(Row::new(7, "alice").payload()))
@@ -59,8 +60,7 @@ fn skipping() -> RustStream {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_delivery_without_a_value_is_dropped_by_default() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn a_delivery_without_a_value_is_dropped_by_default() -> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(greeting()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of("gone"))
@@ -78,7 +78,7 @@ async fn a_delivery_without_a_value_is_dropped_by_default() -> Result<(), Box<dy
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_delivery_without_a_value_settles_by_the_decode_policy()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(skipping()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of("gone"))
@@ -115,7 +115,7 @@ fn welcoming() -> RustStream {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_carried_handler_replies() -> Result<(), Box<dyn std::error::Error>> {
+async fn a_carried_handler_replies() -> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(welcoming()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(Row::new(3, "carol").payload()))
@@ -162,7 +162,7 @@ fn auditing() -> RustStream {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_carried_handler_publishes_through_a_slot() -> Result<(), Box<dyn std::error::Error>> {
+async fn a_carried_handler_publishes_through_a_slot() -> Result<(), Box<dyn error::Error>> {
     let tb = TestApp::start(auditing()).await?;
     tb.broker::<MemoryBroker>()
         .message(&Wire::of(Row::new(4, "dave").payload()))
@@ -193,7 +193,7 @@ async fn receipt(row: &Row) -> Receipt {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_carried_handler_replies_with_its_own_bytes() -> Result<(), Box<dyn std::error::Error>> {
+async fn a_carried_handler_replies_with_its_own_bytes() -> Result<(), Box<dyn error::Error>> {
     let app =
         RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(receipt).out_reply(Publish);
@@ -224,7 +224,7 @@ async fn announce(row: &Row, Out(out): Out<impl Publisher, Audit>) -> Greeting {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_handler_replies_and_publishes_through_a_slot()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let app =
         RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(announce)
@@ -268,7 +268,7 @@ impl Handle<Row> for Greeter {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_carried_body_mounts_by_value() -> Result<(), Box<dyn std::error::Error>> {
+async fn a_carried_body_mounts_by_value() -> Result<(), Box<dyn error::Error>> {
     let app =
         RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber(Rows::new("rows"), Greeter).build());
@@ -381,7 +381,7 @@ async fn tally(rows: &[Row]) -> HandlerOutcome {
 
 /// A retaining bus that already holds `rows`: a subscription opened at the start of its log
 /// replays them, so the first batch carries all of them.
-async fn holding(rows: &[&str]) -> Result<MemoryBroker<Retaining>, Box<dyn std::error::Error>> {
+async fn holding(rows: &[&str]) -> Result<MemoryBroker<Retaining>, Box<dyn error::Error>> {
     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(32)));
     let publisher = broker.publisher();
     for row in rows {
@@ -395,8 +395,7 @@ async fn holding(rows: &[&str]) -> Result<MemoryBroker<Retaining>, Box<dyn std::
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_batch_handler_reads_the_values_its_batch_lends() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn a_batch_handler_reads_the_values_its_batch_lends() -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
         b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()));
@@ -420,7 +419,7 @@ async fn a_batch_handler_reads_the_values_its_batch_lends() -> Result<(), Box<dy
 /// delivery whose row is gone goes past the end of the slice, where the decode policy settles it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_delivery_without_a_value_is_dropped_by_default()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "gone", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
         b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()));
@@ -446,7 +445,7 @@ async fn a_batch_delivery_without_a_value_is_dropped_by_default()
 /// stops the service, naming what the delivery did not carry.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_batch_delivery_without_a_value_settles_by_the_decode_policy()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "gone"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
         b.include(
@@ -478,7 +477,7 @@ async fn explode(rows: &[Row]) -> HandlerOutcome {
 /// A page whose body panics settles nothing, and the harness still records the rows it lent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_batch_whose_body_panics_is_recorded_with_its_values()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
         b.include(explode.batch(nonzero!(8)).start_at(MemoryPosition::start()));
@@ -507,8 +506,7 @@ async fn count(rows: &[Row], ctx: &mut Context<'_, PageContext>) -> HandlerOutco
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_carried_batch_builds_its_context_from_the_batch()
--> Result<(), Box<dyn std::error::Error>> {
+async fn a_carried_batch_builds_its_context_from_the_batch() -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
         b.include(count.batch(nonzero!(8)).start_at(MemoryPosition::start()));
@@ -547,11 +545,11 @@ async fn sift(rows: &[Row], ctx: &mut Context<'_, (), Refusals>) -> Vec<HandlerO
 /// which carries bob again, and the deliveries around it stay settled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_batch_settles_each_delivery_by_its_own_value()
--> Result<(), Box<dyn std::error::Error>> {
+-> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0"))
         .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Refusals {
+            Ok::<_, Infallible>(Refusals {
                 bob: AtomicBool::new(false),
             })
         })

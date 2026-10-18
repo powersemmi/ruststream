@@ -11,7 +11,7 @@
 
 mod common;
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use common::{Order, Receipt, Wire};
 use ruststream::memory::prelude::*;

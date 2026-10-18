@@ -11,17 +11,13 @@
 mod common;
 
 use std::error::Error;
-use std::future::Future;
 
 use common::{Order, Receipt, Wire};
 #[cfg(feature = "cbor")]
 use ruststream::codec::CborCodec;
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{
-    ForReply, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform, Reads,
-};
+use ruststream::runtime::{Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
 

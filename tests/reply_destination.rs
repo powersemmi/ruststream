@@ -14,15 +14,17 @@
 ))]
 
 use std::cell::RefCell;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::io;
 use std::sync::{Arc, Mutex, Once, PoisonError};
 
+#[cfg(feature = "asyncapi")]
+use ruststream::asyncapi;
 use ruststream::memory::prelude::*;
 use ruststream::nonzero;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
-use tracing::Level;
+use tracing::{Level, subscriber};
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq, schemars::JsonSchema)]
@@ -188,7 +190,7 @@ fn the_document_reports_the_resolved_destination() {
         },
     );
 
-    let spec = ruststream::asyncapi::build_spec(&app);
+    let spec = asyncapi::build_spec(&app);
 
     assert!(
         spec.channels.contains_key("dest.declared"),
@@ -241,7 +243,7 @@ impl Captured {
                 .with_ansi(false)
                 .with_max_level(Level::WARN)
                 .finish();
-            tracing::subscriber::set_global_default(subscriber)
+            subscriber::set_global_default(subscriber)
                 .expect("no other global subscriber in this test binary");
         });
         CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));

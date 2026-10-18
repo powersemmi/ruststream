@@ -1,5 +1,7 @@
 //! `#[derive(Outgoing)]`: everything a message type declares about being sent.
 
+use std::mem;
+
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, format_ident, quote};
 use syn::punctuated::Punctuated;
@@ -262,7 +264,7 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
             ));
         }
         placeholders.push(ident);
-        literals.push(std::mem::take(&mut current));
+        literals.push(mem::take(&mut current));
         rest = &after[close + 1..];
     }
     if rest.contains('}') {

@@ -26,7 +26,7 @@ pub(crate) use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
 use std::sync::Arc;
 
 use thiserror::Error;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
@@ -268,7 +268,7 @@ pub enum RustStreamError {
     Shutdown(#[source] BoxError),
     /// A dispatch task panicked or was aborted.
     #[error("dispatch task failed: {0}")]
-    Join(#[source] tokio::task::JoinError),
+    Join(#[source] JoinError),
     /// A subscriber hit a fail-fast failure (a handler panic, or a decode failure under
     /// `on_failure(decode = fail_fast)`) and tore the service down. The string names the
     /// subscription and the reason.
@@ -278,7 +278,7 @@ pub enum RustStreamError {
 
 /// Boxing helpers for scope-registered lifecycle hooks.
 pub(super) mod lifecycle_hooks {
-    use std::{error::Error as StdError, future::Future, sync::Arc};
+    use std::{error::Error as StdError, sync::Arc};
 
     use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
     use crate::runtime::publish_source::pair_bound;

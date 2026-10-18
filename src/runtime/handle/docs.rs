@@ -8,6 +8,8 @@
 
 use std::borrow::Cow;
 
+#[cfg(feature = "asyncapi")]
+use crate::asyncapi;
 use crate::runtime::metadata::OutgoingMessageMetadata;
 
 /// The documentation state a definition starts in: its message types' schemas are reported in
@@ -48,7 +50,7 @@ pub trait Documentable {
 #[cfg(feature = "asyncapi")]
 impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
     fn schema_json() -> Option<String> {
-        crate::asyncapi::schema_json::<T>()
+        asyncapi::schema_json::<T>()
     }
 }
 

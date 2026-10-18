@@ -10,7 +10,7 @@
 #![cfg(all(feature = "memory", feature = "testing"))]
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;

@@ -5,7 +5,7 @@
 
 use std::{
     collections::HashMap,
-    future::{Future, ready},
+    future::ready,
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };

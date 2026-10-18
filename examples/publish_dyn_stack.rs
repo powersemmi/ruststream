@@ -11,9 +11,9 @@
 use std::error::Error;
 use std::pin::Pin;
 
+use ruststream::Bytes;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{Outgoing, PublishDynLayer, PublishDynNext};
-use ruststream::{Bytes, Str};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -52,10 +52,10 @@ mod service {
     use std::error::Error;
     use std::sync::Arc;
 
+    use ruststream::Bytes;
     use ruststream::memory::prelude::*;
     use ruststream::runtime::{PublishDynLayer, PublishDynStack};
     use ruststream::testing::TestApp;
-    use ruststream::{Bytes, Str};
 
     use super::{Order, Receipt, Stamp};
 

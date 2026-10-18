@@ -4,6 +4,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tokio::task::JoinHandle;
+use tokio::time;
 use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
@@ -176,7 +177,7 @@ pub(crate) async fn drain_handles(
     let until = Instant::now() + timeout;
     let mut timed_out = false;
     for mut handle in handles {
-        if tokio::time::timeout_at(until, &mut handle).await.is_ok() {
+        if time::timeout_at(until, &mut handle).await.is_ok() {
             continue;
         }
         if !timed_out {
@@ -205,10 +206,7 @@ pub(crate) async fn drain_continuations(continuations: TaskTracker, timeout: Opt
     debug!(target: "ruststream::lifecycle", "draining post-settle continuations");
     match timeout {
         Some(timeout) => {
-            if tokio::time::timeout(timeout, continuations.wait())
-                .await
-                .is_err()
-            {
+            if time::timeout(timeout, continuations.wait()).await.is_err() {
                 warn!(
                     target: "ruststream::lifecycle",
                     "graceful shutdown timed out; abandoning in-flight continuations",
@@ -224,6 +222,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use tokio::sync::oneshot;
+    use tokio::task;
 
     use super::*;
 
@@ -245,8 +244,8 @@ mod tests {
             (drained, finished.load(Ordering::SeqCst))
         };
         let releaser = async {
-            tokio::task::yield_now().await;
-            tokio::task::yield_now().await;
+            task::yield_now().await;
+            task::yield_now().await;
             let _ = release.send(());
         };
         let ((drained, gated_finished), ()) = tokio::join!(drain, releaser);

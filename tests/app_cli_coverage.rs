@@ -19,6 +19,10 @@ mod common;
 use std::convert::Infallible;
 use std::future::{pending, ready};
 use std::io;
+#[cfg(unix)]
+use std::process;
+#[cfg(unix)]
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -27,16 +31,21 @@ use ruststream::codec::CborCodec;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
 use ruststream::runtime::{
-    ContextKind, HealthState, IntoSource, Outgoing, PublishError, PublishTransform, Reads,
-    RustStreamError, subscriber as subscriber_def,
+    HealthState, IntoSource, Outgoing, PublishError, RustStreamError, subscriber as subscriber_def,
 };
 use ruststream::testing::TestApp;
 use ruststream::{
     AddressedCopies, ConnectedBroker, DescribeServer, RedeliveryAddress, RedeliveryAddressed,
     ServerSpec, SubscriptionSource,
 };
+#[cfg(unix)]
+use tokio::signal::unix;
+#[cfg(unix)]
+use tokio::signal::unix::SignalKind;
 use tokio::sync::Notify;
+use tokio::time;
 use tokio::time::timeout;
+use tracing::subscriber;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -116,7 +125,7 @@ fn logs() -> &'static LogBuffer {
             .with_ansi(false)
             .with_writer(buffer.clone())
             .finish();
-        tracing::subscriber::set_global_default(subscriber)
+        subscriber::set_global_default(subscriber)
             .expect("this binary installs no other subscriber");
         buffer
     })
@@ -224,9 +233,9 @@ async fn signalled(_order: &Order) -> HandlerOutcome {
 /// Sends `SIGTERM` to this process through the shell (the crate takes no libc dependency).
 #[cfg(unix)]
 fn raise_sigterm() {
-    let status = std::process::Command::new("sh")
+    let status = Command::new("sh")
         .arg("-c")
-        .arg(format!("kill -TERM {}", std::process::id()))
+        .arg(format!("kill -TERM {}", process::id()))
         .status()
         .expect("sending a signal to this process");
     assert!(status.success(), "kill -TERM failed: {status:?}");
@@ -239,8 +248,7 @@ fn raise_sigterm() {
 async fn run_shuts_down_gracefully_on_a_termination_signal() {
     // Registering a listener up front replaces the process-wide default disposition, so a signal
     // that lands before `run` has installed its own handler cannot kill the test binary.
-    let _guard = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("SIGTERM registration");
+    let _guard = unix::signal(SignalKind::terminate()).expect("SIGTERM registration");
 
     let app = RustStream::new(AppInfo::new("cov-signal", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
@@ -609,7 +617,7 @@ async fn with_brief_continuation(
     let drain = Arc::clone(ctx.state());
     HandlerOutcome::ack().and_after(async move {
         drain.started.notify_one();
-        tokio::time::sleep(BRIEF_WORK).await;
+        time::sleep(BRIEF_WORK).await;
         drain.finished.store(true, Ordering::SeqCst);
     })
 }

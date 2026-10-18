@@ -24,7 +24,7 @@
 //! broker starts on such a call has to run on the runtime it connected on, and a call after
 //! shutdown has to return an error at once, because a silent success there is a lost message.
 
-use std::{fmt, future::Future, time::Duration};
+use std::{fmt, time::Duration};
 
 use futures::{Stream, StreamExt};
 use tokio::time::timeout;

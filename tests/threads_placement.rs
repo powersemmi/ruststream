@@ -11,25 +11,26 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::pin::pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
-use std::thread;
 use std::time::{Duration, Instant};
+use std::{future, thread};
 
 use common::Order;
 use futures::{Stream, StreamExt};
 use ruststream::memory::prelude::*;
 use ruststream::memory::{MemoryMessage, MemoryPublisher};
 use ruststream::{
-    AckError, AddressedCopies, HeaderMap, IncomingMessage, Outgoing, RedeliveryAddress,
-    RedeliveryAddressed, Subscribe, Subscriber, SubscriptionSource,
+    AckError, AddressedCopies, Outgoing, RedeliveryAddress, RedeliveryAddressed, Subscribe,
+    Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::Notify;
 use tokio::time::timeout;
+use tokio::{task, time};
 
 /// What the app runtime's threads are named: no other thread in the process carries it.
 const APP_THREADS: &str = "the-app-runtime";
@@ -66,7 +67,7 @@ struct Trace {
 #[subscriber("jobs", threads(2), reply("traces"))]
 async fn traced(job: &Order, Ctx(main): Ctx<MainRuntime>) -> Trace {
     let start = here();
-    tokio::time::sleep(Duration::from_millis(1)).await;
+    time::sleep(Duration::from_millis(1)).await;
     let after_timer = here();
     // A plain spawn stays where the handler runs; the explicit route goes to the app's runtime.
     let spawned = tokio::spawn(async { here() }).await.unwrap_or_default();
@@ -177,7 +178,7 @@ struct Placed {
 #[subscriber("keyed", threads(3, by_key), reply("placed"))]
 async fn placed(job: &Order) -> Placed {
     // Enough of a pause for the lanes to interleave.
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     Placed {
         id: job.id,
         thread: here(),
@@ -424,7 +425,7 @@ async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> Handl
     let id = job.id;
     let publisher = ctx.state().publisher.clone();
     ctx.after(HandlerOutcome::ack()).then(async move {
-        tokio::time::sleep(LATER).await;
+        time::sleep(LATER).await;
         let reply = Placed { id, thread: here() };
         let _ = publisher
             .message(&reply)
@@ -435,7 +436,7 @@ async fn continued(job: &Order, ctx: &mut Context<'_, (), Arc<Report>>) -> Handl
     let publisher = ctx.state().publisher.clone();
     ctx.state().handled.notify_one();
     HandlerOutcome::ack().and_after(async move {
-        tokio::time::sleep(LATER).await;
+        time::sleep(LATER).await;
         let reply = Placed {
             id: id + 1000,
             thread: here(),
@@ -531,7 +532,7 @@ async fn stuck(_job: &Order, ctx: &mut Context<'_, (), Arc<Stuck>>) -> HandlerOu
         .clone();
     let _guard = Cancelled(sender);
     ctx.state().started.notify_one();
-    std::future::pending::<()>().await;
+    future::pending::<()>().await;
     HandlerOutcome::ack()
 }
 

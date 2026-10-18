@@ -14,7 +14,6 @@
 
 mod common;
 
-use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;

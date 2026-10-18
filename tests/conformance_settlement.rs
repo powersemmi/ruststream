@@ -11,10 +11,7 @@
 
 #![cfg(all(feature = "conformance", feature = "memory", feature = "testing"))]
 
-use std::{
-    future::{Future, ready},
-    marker::PhantomData,
-};
+use std::{future::ready, marker::PhantomData};
 
 use futures::{Stream, StreamExt};
 use ruststream::{

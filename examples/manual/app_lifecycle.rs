@@ -28,7 +28,7 @@ impl MessageHeaders for Order {
 mod hooks {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -116,7 +116,7 @@ mod hooks {
 
 mod announce {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

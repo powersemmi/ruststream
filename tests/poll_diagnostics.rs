@@ -29,6 +29,9 @@ use ruststream::nonzero;
 use ruststream::prelude::*;
 use ruststream::runtime::PollDiagnostics;
 use ruststream::testing::TestApp;
+use tokio::time;
+use tracing::subscriber;
+use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::fmt::MakeWriter;
 
 /// Two million dependent multiply-adds: at least two million cycles on any machine, so well over
@@ -85,13 +88,13 @@ async fn publish(tb: &TestApp<()>, to: &str, count: u32) {
 struct Captured(Arc<Mutex<Vec<u8>>>);
 
 impl Captured {
-    fn install(&self) -> tracing::subscriber::DefaultGuard {
+    fn install(&self) -> DefaultGuard {
         let subscriber = tracing_subscriber::fmt()
             .with_writer(self.clone())
             .with_ansi(false)
             .with_max_level(tracing::Level::WARN)
             .finish();
-        tracing::subscriber::set_default(subscriber)
+        subscriber::set_default(subscriber)
     }
 
     fn text(&self) -> String {
@@ -274,13 +277,13 @@ async fn every_nth_poll_is_sampled() {
 /// Waits on a timer, so its delivery takes two polls.
 #[subscriber("waits")]
 async fn waits(_order: &Order) -> HandlerOutcome {
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    time::sleep(Duration::from_secs(1)).await;
     HandlerOutcome::ack()
 }
 
 #[tokio::test]
 async fn each_poll_is_a_sample() {
-    tokio::time::pause();
+    time::pause();
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())

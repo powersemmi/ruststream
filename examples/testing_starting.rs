@@ -131,6 +131,7 @@ mod with_state {
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::{Deserialize, Serialize};
+    use tokio::task;
 
     use super::Order;
 
@@ -155,7 +156,7 @@ mod with_state {
             // Stands in for the network call to `url`. No catalog runs beside this example, so the
             // call fails, and so would a test that ran this `on_startup`.
             let _ = url;
-            tokio::task::yield_now().await;
+            task::yield_now().await;
             Err(CatalogError)
         }
     }

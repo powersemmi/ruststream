@@ -32,7 +32,7 @@ impl MessageHeaders for Payment {
 
 mod mount {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::runtime::{Outgoing, PublishContext};
@@ -100,7 +100,7 @@ mod mount {
 
 mod named {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::asyncapi::build_spec;

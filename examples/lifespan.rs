@@ -8,11 +8,13 @@
 //! cargo run --example lifespan --features macros,memory,json -- run
 //! ```
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::Identity;
 use serde::Deserialize;
+use tokio::task;
 
 #[derive(Debug, Deserialize)]
 struct Order {
@@ -30,19 +32,19 @@ struct DbError;
 impl Database {
     async fn connect(url: &str) -> Result<Self, DbError> {
         println!("connecting to {url}");
-        tokio::task::yield_now().await; // stands in for the real network round trip
+        task::yield_now().await; // stands in for the real network round trip
         Ok(Self)
     }
 
     async fn insert_order(&self, id: u64) -> Result<(), DbError> {
         println!("insert order {id}");
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         Ok(())
     }
 
     async fn close(&self) {
         println!("closing the database");
-        tokio::task::yield_now().await;
+        task::yield_now().await;
     }
 }
 
@@ -67,7 +69,7 @@ fn app() -> RustStream<Identity, Database> {
         // before brokers connect: open the resource; the produced value becomes the typed app state
         .on_startup(async move |()| Database::connect("postgres://localhost/orders").await)
         // after brokers shut down: close it cleanly (the state is shared as `Arc<Database>`)
-        .after_shutdown(|db: std::sync::Arc<Database>| async move {
+        .after_shutdown(|db: Arc<Database>| async move {
             db.close().await;
             Ok::<_, DbError>(())
         })

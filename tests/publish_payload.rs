@@ -519,10 +519,10 @@ async fn a_header_costs_the_in_memory_broker_only_what_writing_it_costs() {
 #[cfg(all(feature = "memory", feature = "testing"))]
 mod pool {
     use super::*;
+    use ruststream::PairError;
     use ruststream::memory::ConnectedMemoryBroker;
     use ruststream::prelude::*;
     use ruststream::testing::TestApp;
-    use ruststream::{PairError, PublishPolicy};
     use serde::Deserialize;
 
     #[derive(Debug, Serialize, Deserialize, Outgoing)]

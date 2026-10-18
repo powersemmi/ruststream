@@ -21,7 +21,7 @@
 //!
 //! [`harness::describes_without_credentials`]: super::harness::describes_without_credentials
 
-use std::{fmt, future::Future, time::Duration};
+use std::{fmt, time::Duration};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};

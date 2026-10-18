@@ -11,7 +11,7 @@
 #![allow(clippy::redundant_closure, clippy::redundant_closure_for_method_calls)]
 
 use std::{
-    future::{Future, pending, ready},
+    future::{pending, ready},
     num::NonZeroUsize,
     sync::{
         Arc, Mutex, MutexGuard,
@@ -21,6 +21,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt, stream};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::{
     runtime::{Handle, RuntimeFlavor},
     time::{sleep, timeout},
@@ -798,7 +799,7 @@ struct FaultyRequester {
     publisher: MemoryPublisher,
     requester: MemoryRequester,
     inbox_name: String,
-    shared: tokio::sync::Mutex<Option<MemorySubscriber>>,
+    shared: AsyncMutex<Option<MemorySubscriber>>,
     fault: RequestFault,
 }
 
@@ -809,7 +810,7 @@ impl FaultyRequester {
             publisher: connected.publisher(),
             requester: connected.requester(),
             inbox_name: unique_subject("faulty.inbox"),
-            shared: tokio::sync::Mutex::new(None),
+            shared: AsyncMutex::new(None),
             fault,
         }
     }

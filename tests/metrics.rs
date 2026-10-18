@@ -15,7 +15,7 @@ mod common;
 use common::Wire;
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;

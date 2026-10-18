@@ -19,7 +19,7 @@
 
 mod common;
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::time::Duration;
 
 use common::{Order, Receipt};

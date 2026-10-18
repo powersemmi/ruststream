@@ -12,6 +12,14 @@
 
 use std::time::Duration;
 
+use ruststream::memory::ConnectedMemoryBroker;
+#[cfg(any(all(feature = "memory", feature = "testing"), feature = "memory"))]
+use ruststream::memory::LogMode;
+#[cfg(feature = "memory")]
+use ruststream::memory::Retention;
+use ruststream::memory::{MemoryBroker, MemoryPublisher, Retaining};
+#[cfg(all(feature = "memory", feature = "testing"))]
+use ruststream::testing;
 use serde::{Deserialize, Serialize};
 
 /// The message the suites drive when the payload is not what they are asserting on: one field,
@@ -105,9 +113,9 @@ pub(crate) struct Resp {
 /// connection, not to the configuration the app was built from.
 #[cfg(feature = "memory")]
 #[allow(dead_code)]
-pub(crate) async fn connected<Log: ruststream::memory::LogMode>(
-    broker: &ruststream::memory::MemoryBroker<Log>,
-) -> ruststream::memory::ConnectedMemoryBroker<Log> {
+pub(crate) async fn connected<Log: LogMode>(
+    broker: &MemoryBroker<Log>,
+) -> ConnectedMemoryBroker<Log> {
     ruststream::Broker::connect(broker.clone())
         .await
         .expect("memory connect is infallible")
@@ -121,13 +129,11 @@ pub(crate) async fn connected<Log: ruststream::memory::LogMode>(
 #[cfg(feature = "memory")]
 #[allow(dead_code)]
 pub(crate) async fn observed_memory() -> (
-    ruststream::memory::MemoryBroker<ruststream::memory::Retaining>,
-    ruststream::memory::MemoryPublisher,
-    ruststream::memory::ConnectedMemoryBroker<ruststream::memory::Retaining>,
+    MemoryBroker<Retaining>,
+    MemoryPublisher,
+    ConnectedMemoryBroker<Retaining>,
 ) {
-    let broker = ruststream::memory::MemoryBroker::retaining(
-        ruststream::memory::Retention::Messages(ruststream::nonzero!(64)),
-    );
+    let broker = MemoryBroker::retaining(Retention::Messages(ruststream::nonzero!(64)));
     let ingress = broker.publisher();
     let observer = connected(&broker).await;
     (broker, ingress, observer)
@@ -136,13 +142,12 @@ pub(crate) async fn observed_memory() -> (
 /// Asserts that exactly one [`Event`] carrying `id` was published to `name`.
 #[cfg(all(feature = "memory", feature = "testing"))]
 #[allow(dead_code)]
-pub(crate) async fn expect_id<Log: ruststream::memory::LogMode>(
-    observer: &ruststream::memory::ConnectedMemoryBroker<Log>,
+pub(crate) async fn expect_id<Log: LogMode>(
+    observer: &ConnectedMemoryBroker<Log>,
     name: &str,
     id: u64,
 ) {
-    let seen =
-        ruststream::testing::expect_published(observer, name, 1, Duration::from_secs(2)).await;
+    let seen = testing::expect_published(observer, name, 1, Duration::from_secs(2)).await;
     assert_eq!(seen.len(), 1, "expected one publish on {name}");
     let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
     assert_eq!(event.id, id);

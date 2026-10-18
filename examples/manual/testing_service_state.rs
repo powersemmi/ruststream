@@ -30,7 +30,7 @@ impl MessageHeaders for Order {
 
 mod run_result {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::runtime::RustStreamError;
@@ -74,7 +74,7 @@ mod run_result {
 
 mod assert_running {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -120,7 +120,7 @@ mod assert_running {
 
 mod assert_shut_down {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::runtime::PublishError;

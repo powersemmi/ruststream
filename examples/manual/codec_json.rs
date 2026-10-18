@@ -55,7 +55,7 @@ const FOREIGN: &[u8] = b"\xa1\x62id\x07";
 
 mod service {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::codec::JsonCodec;
     use ruststream::memory::prelude::*;

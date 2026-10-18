@@ -14,7 +14,6 @@ use std::any::{Any, TypeId};
 use std::{
     any::type_name,
     error::Error as StdError,
-    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
 };

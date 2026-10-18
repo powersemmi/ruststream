@@ -1,14 +1,13 @@
 //! Poll-time diagnostics (`poll-diagnostics` feature): how long each subscription's handler
 //! computes between two `.await` points, sampled on every Nth poll.
 
-use std::fmt;
-use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
+use std::{array, fmt};
 
 use pin_project_lite::pin_project;
 use quanta::Clock;
@@ -436,7 +435,7 @@ impl PollStats {
             samples: AtomicU64::new(0),
             sum_ns: AtomicU64::new(0),
             average_ns: AtomicU64::new(0),
-            buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+            buckets: array::from_fn(|_| AtomicU64::new(0)),
             on_app_runtime: AtomicUsize::new(0),
         }
     }
@@ -450,7 +449,7 @@ impl PollStats {
     /// The samples taken, their sum in nanoseconds, and the count in each bucket of
     /// [`BUCKET_BOUNDS_NS`] (the last one past every bound).
     pub(crate) fn histogram(&self) -> (u64, u64, [u64; BUCKETS]) {
-        let buckets = std::array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed));
+        let buckets = array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed));
         (
             buckets.iter().sum(),
             self.sum_ns.load(Ordering::Relaxed),

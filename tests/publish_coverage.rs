@@ -18,7 +18,7 @@ use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::RustStreamError;
 use ruststream::testing::{Outcome, TestApp};
-use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
+use ruststream::{OutgoingMessage, PairError, Take};
 use serde::Serialize;
 
 use common::{Order, Wire};

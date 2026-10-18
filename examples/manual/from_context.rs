@@ -10,7 +10,7 @@
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
