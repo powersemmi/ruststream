@@ -24,3 +24,6 @@ pub-underscore-fields-behavior = "AllPubFields"
 
 # A test may print what it inspects with dbg!.
 allow-dbg-in-tests = true
+
+# Tests build on the minimum supported Rust version too, so they use nothing newer.
+check-incompatible-msrv-in-tests = true
