@@ -55,7 +55,7 @@ type SealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
 pub struct HandleValue<A, R, O, C, H, Doc = Documented> {
     pub(super) body: H,
     pub(super) docs: Docs,
-    pub(super) _axes: HandleAxes<A, R, O, C, Doc>,
+    axes: HandleAxes<A, R, O, C, Doc>,
 }
 
 impl<A, R, O, C, H, Doc> fmt::Debug for HandleValue<A, R, O, C, H, Doc> {
@@ -70,7 +70,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
         HandleValue {
             body: self.body,
             docs: self.docs,
-            _axes: PhantomData,
+            axes: PhantomData,
         }
     }
 }
@@ -134,7 +134,7 @@ where
         HandleValue {
             body,
             docs: Docs::default(),
-            _axes: PhantomData,
+            axes: PhantomData,
         },
         source.into_source(),
     )
@@ -152,7 +152,7 @@ pub fn probed_def<A, R, O, C, H>(
     Sealed(HandleValue {
         body,
         docs: docs.into_docs(),
-        _axes: PhantomData,
+        axes: PhantomData,
     })
 }
 

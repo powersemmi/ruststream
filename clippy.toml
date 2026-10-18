@@ -18,3 +18,6 @@ check-inconsistent-struct-field-initializers = true
 
 # A comment does not stop collapsing an `if`; the fix keeps the comment.
 lint-commented-code = true
+
+# A leading underscore means unused, so no field named that way is visible outside its type.
+pub-underscore-fields-behavior = "AllPubFields"
