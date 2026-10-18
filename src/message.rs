@@ -164,11 +164,13 @@ pub struct OutgoingMessage<'a, Payload = &'a [u8]> {
 // here rather than left to be measured later.
 const _: () = assert!(
     size_of::<OutgoingMessage<'static>>()
-        == size_of::<&str>() + size_of::<&[u8]>() + size_of::<HeaderMap>()
+        == size_of::<&str>() + size_of::<&[u8]>() + size_of::<HeaderMap>(),
+    "a lent outgoing message is its name, its bytes and its headers",
 );
 const _: () = assert!(
     size_of::<OutgoingMessage<'static, BytesMut>>()
-        == size_of::<&str>() + size_of::<BytesMut>() + size_of::<HeaderMap>()
+        == size_of::<&str>() + size_of::<BytesMut>() + size_of::<HeaderMap>(),
+    "an owned outgoing message is its name, its buffer and its headers",
 );
 
 impl<'a, Payload> OutgoingMessage<'a, Payload> {

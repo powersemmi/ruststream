@@ -152,7 +152,7 @@ async fn reconcile(order: &Order, ctx: &mut Context) -> HandlerOutcome {
         .and_then(|count| count.parse::<u64>().ok())
         .unwrap_or(0);
     if attempt == 0 {
-        assert_eq!(order.id, 1);
+        assert_eq!(order.id, 1, "the first attempt carries the published order");
         HandlerOutcome::retry_after(RETRY_DELAY)
     } else {
         HandlerOutcome::ack()
@@ -168,7 +168,7 @@ async fn refund(order: &Order, ctx: &mut Context) -> HandlerOutcome {
         .and_then(|count| count.parse::<u64>().ok())
         .unwrap_or(0);
     if attempt == 0 {
-        assert_eq!(order.id, 1);
+        assert_eq!(order.id, 1, "the first attempt carries the published order");
         HandlerOutcome::retry_after(Duration::ZERO)
     } else {
         HandlerOutcome::ack()

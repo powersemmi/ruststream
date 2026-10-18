@@ -666,7 +666,10 @@ async fn deferred_copies(
         // Settled, because a delivery dropped unsettled comes back.
         msg.ack().await.expect("the memory broker acknowledges");
     }
-    assert!(futures::poll!(stream.next()).is_pending());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "no copy beyond the expected ones"
+    );
     copies.sort();
     copies
 }

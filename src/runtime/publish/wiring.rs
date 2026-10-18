@@ -478,12 +478,25 @@ mod tests {
     }
 
     fn assert_forwards<P: PublishPolicy<ConnectedMemoryBroker>>(wrapper: &P) {
-        assert_eq!(wrapper.channel_bindings("orders"), one("nats", "orders"));
-        assert_eq!(wrapper.operation_bindings("orders"), one("kafka", "orders"));
-        assert_eq!(wrapper.message_bindings("orders"), one("mqtt", "orders"));
+        assert_eq!(
+            wrapper.channel_bindings("orders"),
+            one("nats", "orders"),
+            "the wrapper forwards the channel bindings"
+        );
+        assert_eq!(
+            wrapper.operation_bindings("orders"),
+            one("kafka", "orders"),
+            "the wrapper forwards the operation bindings"
+        );
+        assert_eq!(
+            wrapper.message_bindings("orders"),
+            one("mqtt", "orders"),
+            "the wrapper forwards the message bindings"
+        );
         assert_eq!(
             wrapper.reply_address_location(),
             Some("$message.header#/reply-to"),
+            "the wrapper forwards the reply address location"
         );
     }
 

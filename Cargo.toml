@@ -1323,6 +1323,7 @@ unnecessary_self_imports = "warn"
 # Panics: library code returns its errors; tests may unwrap.
 unwrap_used = "warn"
 unwrap_in_result = "warn"
+missing_assert_message = "warn"
 
 [lints]
 workspace = true

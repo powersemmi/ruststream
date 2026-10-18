@@ -150,5 +150,5 @@ pub(crate) async fn expect_id<Log: LogMode>(
     let seen = testing::expect_published(observer, name, 1, Duration::from_secs(2)).await;
     assert_eq!(seen.len(), 1, "expected one publish on {name}");
     let event: Event = serde_json::from_slice(seen[0].payload()).expect("decodes");
-    assert_eq!(event.id, id);
+    assert_eq!(event.id, id, "the event published on {name}");
 }

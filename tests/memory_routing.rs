@@ -77,7 +77,8 @@ async fn every_match_reaches_the_name_and_the_pattern(
         tb.broker::<MemoryBroker>()
             .subscriber("orders.*")
             .received::<Order>(),
-        [Order { id: 1 }, Order { id: 2 }]
+        [Order { id: 1 }, Order { id: 2 }],
+        "the pattern subscription receives both regions"
     );
     tb.shutdown().await?;
     Ok(())
