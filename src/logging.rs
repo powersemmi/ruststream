@@ -281,7 +281,10 @@ mod tests {
 
     impl io::Write for BufWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
+            self.0
+                .lock()
+                .map_err(|_| io::Error::other("log buffer mutex poisoned"))?
+                .extend_from_slice(buf);
             Ok(buf.len())
         }
 

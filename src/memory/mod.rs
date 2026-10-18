@@ -43,7 +43,7 @@ use std::{
     mem,
     num::NonZeroU64,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::Poll,
@@ -235,6 +235,22 @@ impl MemoryState {
         }
     }
 
+    /// The bus, for a call that answers through its `Result`.
+    ///
+    /// The bus changes by whole steps (a push, an insert, a swap to shut down), so a lock that a
+    /// panic poisoned still guards a whole bus and the call goes on with it.
+    fn lock_bus(&self) -> MutexGuard<'_, Bus> {
+        self.subscribers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The published log, for a call that answers through its `Result`; poisoning as for
+    /// [`lock_bus`](Self::lock_bus).
+    fn lock_log(&self) -> MutexGuard<'_, LogState> {
+        self.log.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Registers a subscriber sender on the live bus.
     ///
     /// The name is shared from here on, and a second subscription to the same name joins the
@@ -246,11 +262,7 @@ impl MemoryState {
     /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
     /// inherent constructor).
     fn register(&self, name: &str, tx: Sender) -> Result<(), MemoryError> {
-        match &mut *self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned")
-        {
+        match &mut *self.lock_bus() {
             Bus::Live(registry) => {
                 registry.names.entry(Arc::from(name)).or_default().push(tx);
                 Ok(())
@@ -271,11 +283,7 @@ impl MemoryState {
         pattern: Pattern,
         tx: Sender,
     ) -> Result<(), MemoryError> {
-        match &mut *self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned")
-        {
+        match &mut *self.lock_bus() {
             Bus::Live(registry) => {
                 match registry
                     .patterns
@@ -367,10 +375,7 @@ impl MemoryState {
     #[allow(clippy::significant_drop_tightening)]
     fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
         {
-            let bus = self
-                .subscribers
-                .lock()
-                .expect("memory broker mutex poisoned");
+            let bus = self.lock_bus();
             let Bus::Live(registry) = &*bus else {
                 return Err(MemoryError::ShutDown);
             };
@@ -379,7 +384,7 @@ impl MemoryState {
             let mut log = self
                 .recording
                 .load(Ordering::Acquire)
-                .then(|| self.log.lock().expect("memory broker mutex poisoned"));
+                .then(|| self.lock_log());
             // A broker with pattern subscriptions takes its own path, so the one without them
             // pays a single emptiness check for their existence.
             if registry.patterns.is_empty() {

@@ -17,7 +17,7 @@ mod common;
 use std::io;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use common::Order;
 use ruststream::memory::{MemoryBroker, MemoryPublish};
@@ -186,7 +186,7 @@ impl Subscribe for ConnectedBus<Mapped> {
         }
         self.declared
             .lock()
-            .expect("declaration mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .push((name.to_owned(), declaration.clone()));
         Ok(())
     }

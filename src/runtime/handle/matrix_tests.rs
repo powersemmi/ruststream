@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::future::ready;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -287,7 +287,7 @@ impl BatchLog {
     fn verdict(&self, len: usize) -> Result<(), Vec<HandlerOutcome>> {
         self.seen
             .lock()
-            .expect("the test holds no poisoned lock")
+            .unwrap_or_else(PoisonError::into_inner)
             .push(len);
         if len == self.expected {
             Ok(())
