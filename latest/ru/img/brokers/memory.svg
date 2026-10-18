@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>Memory broker</title>
+  <rect x="8" y="8" width="16" height="16" rx="2"/>
+  <rect x="12" y="12" width="8" height="8" rx="1" fill="currentColor" stroke="none"/>
+  <path d="M12 3v5M16 3v5M20 3v5M12 24v5M16 24v5M20 24v5M3 12h5M3 16h5M3 20h5M24 12h5M24 16h5M24 20h5"/>
+</svg>
