@@ -12,6 +12,7 @@ description: "run starts the service and serves until SIGINT or SIGTERM, then sh
 A startup failure is the error it returns.
 A signal starts the same [shutdown](./shutdown.md) a started service gets.
 A subscriber that fails fast tears the service down, and `run` returns that failure as its error.
+A subscription whose stream ends while the service runs does the same under [`SubscriptionEnd::FailFast`](./health.md#a-subscription-that-stops).
 The `main` that [`#[ruststream::app]`](../app-macro.md) generates calls `run`.
 
 ## Example

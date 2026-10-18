@@ -105,9 +105,22 @@ async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
 /// state for as long as requests still reach it. Here that window is the graceful drain: a
 /// fail-fast also resolves the `stopping()` future below and stops the HTTP server. A host
 /// that should keep serving after the messaging side dies would omit that select arm.
+///
+/// This service is unhealthy once a subscription stops consuming, even though the rest of it
+/// still runs: the orders it no longer reads would wait unanswered.
 async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
+    let count = health.subscriptions();
     match health.state() {
-        HealthState::Running => (StatusCode::OK, "running".to_owned()),
+        HealthState::Running if count.active == count.started => {
+            (StatusCode::OK, "running".to_owned())
+        }
+        HealthState::Running => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "{} of {} subscriptions consuming",
+                count.active, count.started
+            ),
+        ),
         state => (StatusCode::SERVICE_UNAVAILABLE, format!("{state:?}")),
     }
 }

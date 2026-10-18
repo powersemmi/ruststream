@@ -22,6 +22,7 @@ use crate::runtime::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
 
+use super::health::SubscriptionEnd;
 use super::scope::BrokerScope;
 use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 
@@ -95,6 +96,7 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     pub(super) on_shutdown: Vec<LifecycleHook<State>>,
     pub(super) after_shutdown: Vec<LifecycleHook<State>>,
     pub(super) shutdown_timeout: Option<Duration>,
+    pub(super) subscription_end: SubscriptionEnd,
     /// Tracks post-settle `and_after` continuations spawned during dispatch, so a graceful
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
@@ -151,6 +153,7 @@ pub struct TestParts<State> {
     pub(crate) on_shutdown: Vec<LifecycleHook<State>>,
     pub(crate) after_shutdown: Vec<LifecycleHook<State>>,
     pub(crate) shutdown_timeout: Option<Duration>,
+    pub(crate) subscription_end: SubscriptionEnd,
     pub(crate) continuations: TaskTracker,
     pub(crate) test_hooks: Arc<TestHooks>,
 }
@@ -182,6 +185,7 @@ impl RustStream<Identity, (), PublishIdentity, Setup> {
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
             shutdown_timeout: None,
+            subscription_end: SubscriptionEnd::default(),
             continuations: TaskTracker::new(),
             #[cfg(feature = "testing")]
             test_hooks: Arc::new(TestHooks::detached()),
@@ -213,6 +217,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -331,6 +336,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: Vec::new(),
             after_shutdown: Vec::new(),
             shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -379,6 +385,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -454,6 +461,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             #[cfg(feature = "testing")]
             test_hooks: self.test_hooks,
@@ -528,6 +536,49 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     #[must_use]
     pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets what a subscription's stream ending while the service runs does.
+    ///
+    /// The default, [`SubscriptionEnd::Log`], logs the end and lets the rest of the service run
+    /// on; [`HealthProbe::subscriptions`](super::HealthProbe::subscriptions) then counts one
+    /// subscription fewer. [`SubscriptionEnd::FailFast`] tears the service down the way a
+    /// fail-fast handler failure does. An end during shutdown is never reported.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::SubscriptionEnd;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn accept(order: &Order) -> HandlerOutcome {
+    ///     tracing::info!(order.id, "accepted");
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// pub fn app() -> impl App {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .on_subscription_end(SubscriptionEnd::FailFast)
+    ///         .with_broker(MemoryBroker::new(), |b| {
+    ///             b.include(accept);
+    ///         })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub fn on_subscription_end(mut self, on_end: SubscriptionEnd) -> Self {
+        self.subscription_end = on_end;
         self
     }
 
@@ -888,6 +939,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
             on_shutdown: self.on_shutdown,
             after_shutdown: self.after_shutdown,
             shutdown_timeout: self.shutdown_timeout,
+            subscription_end: self.subscription_end,
             continuations: self.continuations,
             test_hooks: self.test_hooks,
         }

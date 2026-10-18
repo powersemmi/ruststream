@@ -16,7 +16,7 @@ use bytes::BytesMut;
 use futures::Stream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error};
+use tracing::error;
 
 use super::{
     Delivery, DispatchFailure, Handler, Shutdown, Slot, Turn, Workers, dispatch, lane_of,
@@ -187,7 +187,9 @@ where
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     State: Send + Sync + 'static,
 {
+    let consuming = shutdown.consuming();
     tokio::spawn(async move {
+        let _consuming = consuming;
         let count = workers.count.get();
         let keyed = workers.by_key;
         let shared = Arc::new(Shared {
@@ -269,11 +271,7 @@ where
                     );
                 }
                 Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscription = %name,
-                        "subscriber stream ended",
-                    );
+                    shutdown.stream_ended(name);
                     break;
                 }
                 Turn::Shutdown => break,

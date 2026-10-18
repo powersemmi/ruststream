@@ -45,7 +45,7 @@ pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as crate::BatchSubsc
 
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, Wired,
+    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 #[cfg(feature = "testing")]
 pub(crate) use app::{

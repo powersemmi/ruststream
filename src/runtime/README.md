@@ -174,7 +174,8 @@ below shows its attribute form and its manual form ([`subscriber`], [`Handle`]) 
 - [Shutdown](https://powersemmi.github.io/ruststream/latest/components/application/running/shutdown/):
   [`RunningApp::shutdown`].
 - [Health](https://powersemmi.github.io/ruststream/latest/components/application/running/health/):
-  [`RunningApp::health`] and its [`HealthProbe`].
+  [`RunningApp::health`] and its [`HealthProbe`], the [`SubscriptionCount`] it reports, and what
+  [`RustStream::on_subscription_end`] makes of a stream that ends while the service runs.
 
 # Middleware
 

@@ -16,7 +16,8 @@ use tokio_util::task::TaskTracker;
 use crate::OutgoingDestination;
 use crate::runtime::{
     App, ConnectedEntry, ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    RegisteredBroker, RustStreamError, Shutdown, ShutdownHooks, Starter, Teardown, TestParts,
+    RegisteredBroker, RustStreamError, Shutdown, ShutdownHooks, Starter, SubscriptionEnd, Teardown,
+    TestParts,
 };
 use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Broker, DefaultPublish, PublishPolicy, Publisher};
@@ -462,6 +463,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             on_shutdown,
             after_shutdown,
             shutdown_timeout,
+            subscription_end,
             continuations,
             ..
         } = parts;
@@ -480,6 +482,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             after_shutdown,
             continuations,
             shutdown_timeout,
+            subscription_end,
             state: Arc::new(state),
         })
         .await
@@ -627,6 +630,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             on_shutdown,
             after_shutdown,
             shutdown_timeout,
+            subscription_end,
             continuations,
             test_hooks,
         } = parts;
@@ -648,6 +652,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             after_shutdown,
             continuations,
             shutdown_timeout,
+            subscription_end,
             state: Arc::new(state),
         })
         .await
@@ -677,6 +682,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             on_shutdown,
             after_shutdown,
             shutdown_timeout,
+            subscription_end,
             continuations,
             ..
         } = parts;
@@ -693,6 +699,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             after_shutdown,
             continuations,
             shutdown_timeout,
+            subscription_end,
             state: Arc::new(state),
         })
         .await
@@ -723,12 +730,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             after_shutdown,
             continuations,
             shutdown_timeout,
+            subscription_end,
             state,
         } = args;
         // A publisher the runtime pairs names the connected broker it was paired against; this
         // is how the harness knows which registration that is.
         coordinator.locate(entries.iter().map(|entry| entry.lifecycle.as_any()));
-        let shutdown = Shutdown::new();
+        let shutdown = Shutdown::with_subscription_end(subscription_end);
         let mut handles = Vec::with_capacity(starters.len());
         let failed = 'start: {
             for starter in starters {
@@ -1268,5 +1276,6 @@ struct SpawnArgs<State> {
     after_shutdown: Vec<LifecycleHook<State>>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
+    subscription_end: SubscriptionEnd,
     state: Arc<State>,
 }

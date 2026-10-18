@@ -10,7 +10,8 @@ mod service;
 mod teardown;
 
 pub use app_trait::App;
-pub use health::{HealthProbe, HealthState};
+pub(crate) use health::HealthReport;
+pub use health::{HealthProbe, HealthState, SubscriptionCount, SubscriptionEnd};
 #[doc(hidden)]
 pub use include::{IncludeMount, ScopeCommit};
 pub use include::{Mounting, MountingSlots};
