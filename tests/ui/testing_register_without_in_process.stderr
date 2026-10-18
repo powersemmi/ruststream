@@ -13,8 +13,8 @@ help: the trait `InProcess` is not implemented for `Networked`
 help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
   --> src/memory/mod.rs
    |
-   | impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `TestableRegistration::of`
   --> src/testing/broker.rs
    |
