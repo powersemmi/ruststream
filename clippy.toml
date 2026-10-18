@@ -27,3 +27,6 @@ allow-dbg-in-tests = true
 
 # Tests build on the minimum supported Rust version too, so they use nothing newer.
 check-incompatible-msrv-in-tests = true
+
+# An acronym in a name is one capitalized word: `HttpClient`, not `HTTPClient`.
+upper-case-acronyms-aggressive = true
