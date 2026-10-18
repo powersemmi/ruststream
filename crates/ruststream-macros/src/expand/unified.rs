@@ -398,36 +398,15 @@ fn slot_binding_impls(
         }
     });
     let markers: Vec<&TokenStream2> = outs.iter().map(|out| &out.marker).collect();
-    let policies: Vec<Ident> = (0..outs.len())
-        .map(|index| Ident::new(&format!("__RsPolicy{index}"), name.span()))
-        .collect();
-    let codecs: Vec<Ident> = (0..outs.len())
-        .map(|index| Ident::new(&format!("__RsCodec{index}"), name.span()))
-        .collect();
+    let policies = numbered_idents("__RsPolicy", outs.len(), name);
+    let codecs = numbered_idents("__RsCodec", outs.len(), name);
     // The slot's publish pipeline: what the mount site composed from its `.transform(..)` steps
     // and the app's own middleware. The definition stays generic over it, so one handler mounts
     // under any of them.
-    let pipelines: Vec<Ident> = (0..outs.len())
-        .map(|index| Ident::new(&format!("__RsPipeline{index}"), name.span()))
-        .collect();
-    let bound_entries: Vec<TokenStream2> = outs
-        .iter()
-        .zip(policies.iter().zip(codecs.iter().zip(&pipelines)))
-        .map(|(out, (policy, (codec, pipeline)))| {
-            let marker = &out.marker;
-            let body = body_ty(out.bodies.as_ref());
-            quote! {
-                ::ruststream::runtime::Slot<
-                    #marker,
-                    <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
-                    #codec,
-                    #pipeline,
-                    #body,
-                >
-            }
-        })
-        .collect();
+    let pipelines = numbered_idents("__RsPipeline", outs.len(), name);
+    let bound_entries = bound_slot_entries(outs, &policies, &codecs, &pipelines);
     let bound_ty = sealed_ty(&quote!(::ruststream::runtime::Outs<(#(#bound_entries,)*)>));
+    let bind_slots = bind_slots_impl(name, &policies, &codecs, &pipelines, &bound_ty, def_expr);
     let witness_tys: Vec<&syn::Type> = outs.iter().map(|out| out.ty).collect();
     quote! {
         #caps_batches
@@ -436,6 +415,28 @@ fn slot_binding_impls(
             type Markers = (#(#markers,)*);
         }
 
+        #bind_slots
+
+        // Keeps the signature's own vocabulary (the `Out` path, the markers, the declared
+        // capabilities) used, the way the retired shell bindings did.
+        const _: () = {
+            #[allow(dead_code)]
+            fn __rs_signature_witness(#(_: #witness_tys),*) {}
+        };
+    }
+}
+
+/// The `BindSlots` instantiation: given the policy, codec and pipeline of every slot, it builds the
+/// sealed arena definition and hands the sources back as the extra state.
+fn bind_slots_impl(
+    name: &Ident,
+    policies: &[Ident],
+    codecs: &[Ident],
+    pipelines: &[Ident],
+    bound_ty: &TokenStream2,
+    def_expr: &TokenStream2,
+) -> TokenStream2 {
+    quote! {
         impl<__RsConn, #(#policies,)* #(#codecs,)* #(#pipelines,)*>
             ::ruststream::runtime::BindSlots<
                 __RsConn,
@@ -456,14 +457,40 @@ fn slot_binding_impls(
                 (#def_expr, sources)
             }
         }
-
-        // Keeps the signature's own vocabulary (the `Out` path, the markers, the declared
-        // capabilities) used, the way the retired shell bindings did.
-        const _: () = {
-            #[allow(dead_code)]
-            fn __rs_signature_witness(#(_: #witness_tys),*) {}
-        };
     }
+}
+
+/// One generic parameter per slot, `{prefix}0`, `{prefix}1`, .., spanned at the handler's name.
+fn numbered_idents(prefix: &str, count: usize, name: &Ident) -> Vec<Ident> {
+    (0..count)
+        .map(|index| Ident::new(&format!("{prefix}{index}"), name.span()))
+        .collect()
+}
+
+/// The bound `Slot` type of every slot: its marker, the live publisher its policy pairs into, its
+/// codec, its publish pipeline and the bodies it publishes.
+fn bound_slot_entries(
+    outs: &[OutParam<'_>],
+    policies: &[Ident],
+    codecs: &[Ident],
+    pipelines: &[Ident],
+) -> Vec<TokenStream2> {
+    outs.iter()
+        .zip(policies.iter().zip(codecs.iter().zip(pipelines)))
+        .map(|(out, (policy, (codec, pipeline)))| {
+            let marker = &out.marker;
+            let body = body_ty(out.bodies.as_ref());
+            quote! {
+                ::ruststream::runtime::Slot<
+                    #marker,
+                    <#policy as ::ruststream::PublishPolicy<__RsConn>>::Live,
+                    #codec,
+                    #pipeline,
+                    #body,
+                >
+            }
+        })
+        .collect()
 }
 
 /// The pieces of one handler's computed verdict: the emitted `handle` method's return type, the
