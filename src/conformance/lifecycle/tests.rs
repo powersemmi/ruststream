@@ -205,6 +205,26 @@ type Deferred = Arc<Mutex<Vec<(String, Bytes, HeaderMap)>>>;
 /// What a publish hands the connection a [`Fault::AttachesOnFirstCaller`] publisher attached.
 type Frame = (String, Bytes, HeaderMap, Option<oneshot::Sender<()>>);
 
+/// Opens the socket the first caller attaches: a task that publishes every frame in order and
+/// acknowledges the attaching frame once it went out.
+fn attach_socket(publisher: MemoryPublisher) -> mpsc::UnboundedSender<Frame> {
+    let (frames, mut incoming) = mpsc::unbounded_channel::<Frame>();
+    drop(tokio::spawn(async move {
+        while let Some((name, payload, headers, attached)) = incoming.recv().await {
+            let _ = publisher
+                .publish(
+                    OutgoingMessage::new(&name, &payload).with_headers(headers),
+                    None,
+                )
+                .await;
+            if let Some(attached) = attached {
+                let _ = attached.send(());
+            }
+        }
+    }));
+    frames
+}
+
 struct FaultyPublisher {
     fault: Fault,
     bus: MemoryBroker,
@@ -261,26 +281,8 @@ impl Publisher for FaultyPublisher {
                 let (socket, first) = {
                     let mut socket = self.socket.lock().expect("poisoned");
                     let first = socket.is_none();
-                    let sender = socket.get_or_insert_with(|| {
-                        let (frames, mut incoming) = mpsc::unbounded_channel::<Frame>();
-                        let publisher = self.connected.publisher();
-                        drop(tokio::spawn(async move {
-                            while let Some((name, payload, headers, attached)) =
-                                incoming.recv().await
-                            {
-                                let _ = publisher
-                                    .publish(
-                                        OutgoingMessage::new(&name, &payload).with_headers(headers),
-                                        None,
-                                    )
-                                    .await;
-                                if let Some(attached) = attached {
-                                    let _ = attached.send(());
-                                }
-                            }
-                        }));
-                        frames
-                    });
+                    let sender =
+                        socket.get_or_insert_with(|| attach_socket(self.connected.publisher()));
                     let sender = sender.clone();
                     drop(socket);
                     (sender, first)
@@ -349,17 +351,7 @@ impl SubscriptionSource<ConnectedFaulty> for FaultySource {
         } else {
             let inner = Subscribe::subscribe(&connected.inner, &self.0).await?;
             if connected.fault == Fault::SubscribesOnCaller {
-                let (forward, pumped) = mpsc::unbounded_channel();
-                drop(tokio::spawn(async move {
-                    let mut inner = inner;
-                    let mut deliveries = pin!(inner.stream());
-                    while let Some(item) = deliveries.next().await {
-                        if forward.send(item).is_err() {
-                            break;
-                        }
-                    }
-                }));
-                Feed::Pumped(pumped)
+                Feed::Pumped(pump(inner))
             } else {
                 Feed::Direct(inner)
             }
@@ -377,6 +369,21 @@ impl SubscriptionSource<ConnectedFaulty> for FaultySource {
 }
 
 type Pumped = mpsc::UnboundedReceiver<Result<MemoryMessage, MemoryStreamError>>;
+
+/// Moves the subscription onto a task of its own that forwards every delivery, the way a client
+/// whose subscription lives on the calling task's runtime does.
+fn pump(mut inner: MemorySubscriber) -> Pumped {
+    let (forward, pumped) = mpsc::unbounded_channel();
+    drop(tokio::spawn(async move {
+        let mut deliveries = pin!(inner.stream());
+        while let Some(item) = deliveries.next().await {
+            if forward.send(item).is_err() {
+                break;
+            }
+        }
+    }));
+    pumped
+}
 
 enum Feed {
     Direct(MemorySubscriber),

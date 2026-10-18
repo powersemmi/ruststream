@@ -296,6 +296,9 @@ mod tests {
     }
 
     /// Renders one event at every level through `ColorFormatter` and returns the captured output.
+    // The score is the expansion of five `tracing` event macros, one per level, which is the
+    // fixture itself; the body has no branching of its own.
+    #[allow(clippy::cognitive_complexity)]
     fn render(ansi: bool, target: bool) -> String {
         let buf = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::fmt()
