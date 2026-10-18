@@ -6,7 +6,6 @@ use std::{future::Future, sync::Arc, time::Duration};
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
-use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
@@ -15,7 +14,7 @@ use crate::runtime::publish_source::Bound;
 use crate::runtime::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
 
-use super::health::{self, HealthProbe, HealthState};
+use super::health::{HealthProbe, HealthState};
 use super::service::RegisteredBroker;
 use super::teardown::{
     ConnectedEntry, ShutdownHooks, Teardown, drain_continuations, drain_handles,
@@ -110,6 +109,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             after_shutdown,
             shutdown_timeout,
             continuations,
+            subscription_end,
             ..
         } = self;
 
@@ -145,7 +145,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 
         // Shared with every dispatch task: a fail-fast failure records its reason here and raises
         // the signal, which both stops the loops and resolves `stopping()`.
-        let shutdown = Shutdown::new();
+        let shutdown = Shutdown::with_subscription_end(subscription_end);
         let mut handles = Vec::with_capacity(starters.len());
         for (starter, meta) in starters.into_iter().zip(handlers) {
             let handle = match starter(state.clone(), shutdown.clone()).await {
@@ -190,8 +190,7 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
 
-        let health = health::channel();
-        watch_for_failure(shutdown.clone(), health.clone());
+        watch_for_failure(shutdown.clone());
 
         Ok(RunningApp {
             teardown: Teardown {
@@ -202,7 +201,6 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
                 shutdown_timeout,
                 continuations,
             },
-            health,
         })
     }
 }
@@ -231,7 +229,6 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 #[must_use = "dropping the handle detaches the service without graceful shutdown"]
 pub struct RunningApp {
     teardown: Teardown,
-    health: watch::Sender<HealthState>,
 }
 
 impl fmt::Debug for RunningApp {
@@ -304,7 +301,7 @@ impl RunningApp {
     /// ```
     #[must_use]
     pub fn health(&self) -> HealthProbe {
-        HealthProbe::new(self.health.subscribe())
+        self.teardown.shutdown.health().probe()
     }
 
     /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
@@ -372,8 +369,11 @@ impl RunningApp {
     /// A failure does not cut the teardown short: every broker is still shut down and the
     /// `after_shutdown` hooks still run before the first failure is returned.
     pub async fn shutdown(self) -> Result<(), RustStreamError> {
-        let Self { teardown, health } = self;
-        health.send_replace(HealthState::ShuttingDown);
+        let Self { teardown } = self;
+        // The teardown consumes its signal; the probes read the report the signal shares.
+        let shutdown = teardown.shutdown.clone();
+        let health = shutdown.health();
+        health.transition(HealthState::ShuttingDown);
         let outcome = teardown.run().await;
         let terminal = match &outcome {
             Ok(()) => HealthState::Stopped,
@@ -385,7 +385,7 @@ impl RunningApp {
                 reason: err.to_string(),
             },
         };
-        health.send_replace(terminal);
+        health.transition(terminal);
         outcome
     }
 }
@@ -394,14 +394,11 @@ impl RunningApp {
 /// [`RunningApp::shutdown`]: the process may stay alive serving healthz from a sibling task, which
 /// is exactly when the probe matters.
 ///
-/// Every transition uses `send_replace` rather than `send`: `send` drops the value when no probe
-/// is subscribed yet, and a probe taken after the transition must still observe the terminal
-/// state.
-fn watch_for_failure(shutdown: Shutdown, health: watch::Sender<HealthState>) {
+fn watch_for_failure(shutdown: Shutdown) {
     tokio::spawn(async move {
         shutdown.cancelled().await;
         if let Some(reason) = shutdown.peek_failure() {
-            health.send_replace(HealthState::Failed { reason });
+            shutdown.health().transition(HealthState::Failed { reason });
         }
     });
 }

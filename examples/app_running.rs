@@ -32,7 +32,7 @@ mod start {
     use ruststream::Subscriber;
     use ruststream::memory::MemorySubscriber;
     use ruststream::memory::prelude::*;
-    use ruststream::runtime::HealthState;
+    use ruststream::runtime::{HealthState, SubscriptionEnd};
     use tokio::time::timeout;
 
     use super::{Order, Receipt};
@@ -42,11 +42,17 @@ mod start {
         Receipt { order_id: order.id }
     }
 
+    // --8<-- [start:subscription_end]
+    /// The service exists to answer orders, so a subscription whose stream ends while the
+    /// service runs stops the service.
     fn app(broker: MemoryBroker) -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-            b.include(issue_receipt).out_reply(Publish);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .on_subscription_end(SubscriptionEnd::FailFast)
+            .with_broker(broker, |b| {
+                b.include(issue_receipt).out_reply(Publish);
+            })
     }
+    // --8<-- [end:subscription_end]
 
     // --8<-- [start:run]
     /// Runs the service until `SIGINT` or `SIGTERM`, then shuts it down gracefully.

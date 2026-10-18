@@ -1,11 +1,14 @@
 //! The app's shutdown signal: the flag a running loop reads, the wait a parked one parks on, and
-//! the failure that raised it.
+//! the failure that raised it; beside it, the health report the loops keep their count in and
+//! what a stream ending while the service runs does.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::error;
+use tracing::{debug, error};
+
+use super::app::{HealthReport, SubscriptionEnd};
 
 /// What every dispatch loop stops on, in the two forms a loop asks for, plus the reason where a
 /// failure raised it.
@@ -23,23 +26,96 @@ use tracing::error;
 /// Both ends belong to the runtime: [`cancel`](Self::cancel) and [`signal`](Self::signal) are the
 /// only ways to raise one, so the flag and the wait cannot come apart. Cloning shares all of it,
 /// which is how any dispatch task tears the whole service down.
+///
+/// It also carries what every loop reports to the service as a whole: its place in the health
+/// report's subscription count ([`consuming`](Self::consuming)), and the end of its stream
+/// ([`stream_ended`](Self::stream_ended)).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Shutdown {
     token: CancellationToken,
     state: Arc<State>,
 }
 
-/// What every holder of a [`Shutdown`] shares: the flag, and the first failure's description.
-#[derive(Debug, Default)]
+/// What every holder of a [`Shutdown`] shares: the flag, the first failure's description, the
+/// health report, and what a stream ending outside shutdown does.
+#[derive(Debug)]
 struct State {
     cancelled: AtomicBool,
+    stopping: AtomicBool,
     failure: Mutex<Option<String>>,
+    health: HealthReport,
+    on_end: SubscriptionEnd,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            failure: Mutex::new(None),
+            health: HealthReport::new(),
+            on_end: SubscriptionEnd::default(),
+        }
+    }
 }
 
 impl Shutdown {
-    /// A signal nobody has raised yet.
+    /// A signal nobody has raised yet, under the default [`SubscriptionEnd`].
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A signal nobody has raised yet, where a stream ending outside shutdown does what
+    /// `on_end` says.
+    pub(crate) fn with_subscription_end(on_end: SubscriptionEnd) -> Self {
+        Self {
+            token: CancellationToken::new(),
+            state: Arc::new(State {
+                on_end,
+                ..State::default()
+            }),
+        }
+    }
+
+    /// The health report every probe of the app reads.
+    pub(crate) fn health(&self) -> &HealthReport {
+        &self.state.health
+    }
+
+    /// Counts a subscription's dispatch loop as consuming until the returned guard drops.
+    ///
+    /// Made where the loop is spawned and moved into it, so the count covers the loop from
+    /// before [`start`](super::RustStream::start) returns, and the guard dropping with the loop's
+    /// task (an end, a shutdown, an abort, a panic) is what takes it off again. Nothing per
+    /// delivery touches it.
+    pub(crate) fn consuming(&self) -> Consuming {
+        self.state.health.subscription_started();
+        Consuming(Arc::clone(&self.state))
+    }
+
+    /// What a dispatch loop does when its stream ended: nothing more where shutdown is under way,
+    /// since the end is part of it; otherwise what the app's [`SubscriptionEnd`] says.
+    pub(crate) fn stream_ended(&self, subscription: &str) {
+        if self.is_cancelled() || self.state.stopping.load(Ordering::Relaxed) {
+            return;
+        }
+        match self.state.on_end {
+            SubscriptionEnd::Log => debug!(
+                target: "ruststream::dispatch",
+                subscription = %subscription,
+                "subscriber stream ended",
+            ),
+            SubscriptionEnd::FailFast => {
+                self.signal(subscription, "the subscription's stream ended");
+            }
+        }
+    }
+
+    /// Marks the orderly teardown as begun while the loops still run: the `on_shutdown` hooks run
+    /// before [`cancel`](Self::cancel), and a stream they end is part of the shutdown.
+    pub(crate) fn begin(&self) {
+        self.state.stopping.store(true, Ordering::Relaxed);
     }
 
     /// Raises the signal for every holder of this handle, with no failure behind it: the orderly
@@ -105,6 +181,16 @@ impl Shutdown {
     /// `run_result` more than once.
     pub(crate) fn peek_failure(&self) -> Option<String> {
         self.state.failure.lock().ok().and_then(|slot| slot.clone())
+    }
+}
+
+/// A subscription's dispatch loop counted as consuming; see [`Shutdown::consuming`].
+#[derive(Debug)]
+pub(crate) struct Consuming(Arc<State>);
+
+impl Drop for Consuming {
+    fn drop(&mut self) {
+        self.0.health.subscription_ended();
     }
 }
 

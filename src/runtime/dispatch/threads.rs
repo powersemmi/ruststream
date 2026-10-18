@@ -41,7 +41,7 @@ use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 use tokio::task::coop::consume_budget;
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error};
+use tracing::error;
 
 use super::{Shutdown, Turn, lane_of};
 
@@ -534,11 +534,7 @@ impl<Item: Send + 'static> Threads<Item> {
                     );
                 }
                 Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscription = %name,
-                        "subscriber stream ended",
-                    );
+                    shutdown.stream_ended(name);
                     break;
                 }
                 Turn::Shutdown => break,

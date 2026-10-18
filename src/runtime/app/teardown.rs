@@ -86,6 +86,7 @@ impl Teardown {
             continuations,
         } = self;
 
+        shutdown.begin();
         run_hooks(hooks.on_shutdown, "on_shutdown").await;
 
         shutdown.cancel();

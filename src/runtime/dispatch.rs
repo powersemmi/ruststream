@@ -18,7 +18,7 @@ use futures::{FutureExt, Stream};
 use tokio::runtime::Handle;
 use tokio::task::{JoinError, JoinHandle, JoinSet};
 use tokio_util::task::TaskTracker;
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 use crate::{
     AckError, BatchSubscriber, HeaderMap, IncomingMessage, OutgoingMessage, RetryDeclaration, Str,
@@ -802,7 +802,9 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
+    let consuming = shutdown.consuming();
     tokio::spawn(async move {
+        let _consuming = consuming;
         let mut stream = std::pin::pin!(subscriber.stream());
         let mut cancelled = std::pin::pin!(shutdown.cancelled());
         // One encode buffer for the whole loop: a reply that leaves through a publisher which
@@ -839,11 +841,7 @@ where
                     );
                 }
                 Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscriber = %name,
-                        "subscriber stream ended",
-                    );
+                    shutdown.stream_ended(&name);
                     break;
                 }
                 Turn::Shutdown => break,
@@ -1062,7 +1060,9 @@ where
             .await;
         }
     })?;
+    let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
+        let _consuming = consuming;
         threads
             .feed(
                 subscriber.stream(),
@@ -1139,7 +1139,9 @@ where
             subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
         );
     }
+    let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
+        let _consuming = consuming;
         // The registration's own batch size, straight to the broker: whatever comes back is the
         // batch the handler sees.
         let mut stream = std::pin::pin!(subscriber.batches(batch_size));
@@ -1222,11 +1224,7 @@ where
                     );
                 }
                 Turn::Ended => {
-                    debug!(
-                        target: "ruststream::dispatch",
-                        subscriber = %name,
-                        "subscriber stream ended",
-                    );
+                    shutdown.stream_ended(&name);
                     break;
                 }
                 Turn::Shutdown => break,
@@ -1287,7 +1285,9 @@ where
             .await;
         }
     })?;
+    let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
+        let _consuming = consuming;
         threads
             .feed(
                 subscriber.batches(batch_size),

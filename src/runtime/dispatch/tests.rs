@@ -7,6 +7,7 @@ use std::sync::{
 use futures::{StreamExt, poll, stream};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::runtime::redelivery::bare_retry_publisher;
@@ -15,6 +16,7 @@ use crate::runtime::redelivery::bare_retry_publisher;
 /// would see.
 fn unit_cx<M>(_msg: &M) {}
 use crate::memory::MemoryBroker;
+use crate::runtime::SubscriptionEnd;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::HandlerOutcome;
 use crate::runtime::handler::HandlerResult;
@@ -535,6 +537,189 @@ async fn shutdown_wakes_a_loop_parked_on_an_empty_subscription() {
             handled,
             [0],
             "batches under {form:?} lost or repeated the one delivery",
+        );
+    }
+}
+
+/// Every loop a subscription can run under, the dedicated threads included: each of them reads
+/// its stream to the end on its own.
+const ALL_WORKER_FORMS: [Workers; 5] = [
+    Workers::sequential(),
+    Workers::pool(crate::nonzero!(2usize)),
+    Workers::keyed(crate::nonzero!(2usize)),
+    Workers::threads(crate::nonzero!(2usize)),
+    Workers::threads_keyed(crate::nonzero!(2usize)),
+];
+
+/// The batch counterpart of [`ALL_WORKER_FORMS`].
+const ALL_BATCH_FORMS: [Workers; 3] = [
+    Workers::sequential(),
+    Workers::pool(crate::nonzero!(2usize)),
+    Workers::threads(crate::nonzero!(2usize)),
+];
+
+/// A subscriber whose stream has ended before the loop reads it: the consumer the server
+/// cancelled.
+struct EndedSubscriber;
+
+impl Subscriber for EndedSubscriber {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        stream::empty()
+    }
+}
+
+impl BatchSubscriber for EndedSubscriber {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+        batched(self.stream(), size)
+    }
+}
+
+/// A subscriber whose stream ends because shutdown began: one delivery, then the end the
+/// shutdown signal brings, which the loop reads before it reads the signal.
+struct EndsOnShutdown(CancellationToken);
+
+impl Subscriber for EndsOnShutdown {
+    type Message = PlainMessage;
+    type Error = StreamFault;
+
+    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
+        let ended = self.0.clone().cancelled_owned();
+        stream::once(ready(Ok(numbered(0)))).chain(stream::once(ended).filter_map(|()| ready(None)))
+    }
+}
+
+impl BatchSubscriber for EndsOnShutdown {
+    type Batch = Vec<PlainMessage>;
+
+    fn batches(
+        &mut self,
+        size: NonZeroUsize,
+    ) -> impl Stream<Item = Result<Self::Batch, <Self as Subscriber>::Error>> + Send + '_ {
+        batched(self.stream(), size)
+    }
+}
+
+/// Runs the loop `spawn` starts until it ends on its own, under `on_end`, and hands back the
+/// signal it ran on.
+async fn ended_under<Spawn>(on_end: SubscriptionEnd, spawn: Spawn, form: Workers) -> Shutdown
+where
+    Spawn: FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
+{
+    let shutdown = Shutdown::with_subscription_end(on_end);
+    let (seen, _arrived) = mpsc::unbounded_channel();
+    timeout(Duration::from_secs(5), spawn(shutdown.clone(), seen))
+        .await
+        .unwrap_or_else(|_| panic!("{form:?} kept running on an ended stream"))
+        .expect("dispatch task should not panic");
+    shutdown
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_end_leaves_the_service_running_by_default() {
+    let check = |shutdown: &Shutdown, form: Workers| {
+        assert!(!shutdown.is_cancelled(), "{form:?} stopped the service");
+        assert_eq!(shutdown.peek_failure(), None, "{form:?} reported a failure");
+        let count = shutdown.health().probe().subscriptions();
+        assert_eq!(
+            (count.active, count.started),
+            (0, 1),
+            "{form:?} still counts the ended subscription as consuming",
+        );
+    };
+    for form in ALL_WORKER_FORMS {
+        let spawn = reporting_workers(EndedSubscriber, form);
+        check(&ended_under(SubscriptionEnd::Log, spawn, form).await, form);
+    }
+    for form in ALL_BATCH_FORMS {
+        let spawn = reporting_batches(EndedSubscriber, form);
+        check(&ended_under(SubscriptionEnd::Log, spawn, form).await, form);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_end_under_fail_fast_tears_the_service_down() {
+    let check = |shutdown: &Shutdown, form: Workers| {
+        assert!(shutdown.is_cancelled(), "{form:?} left the service running");
+        let reason = shutdown.peek_failure().unwrap_or_default();
+        assert!(
+            reason.starts_with("orders: "),
+            "{form:?} must name the subscription, got: {reason:?}",
+        );
+    };
+    for form in ALL_WORKER_FORMS {
+        let spawn = reporting_workers(EndedSubscriber, form);
+        check(
+            &ended_under(SubscriptionEnd::FailFast, spawn, form).await,
+            form,
+        );
+    }
+    for form in ALL_BATCH_FORMS {
+        let spawn = reporting_batches(EndedSubscriber, form);
+        check(
+            &ended_under(SubscriptionEnd::FailFast, spawn, form).await,
+            form,
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_end_during_shutdown_is_never_reported() {
+    async fn run<Spawn>(spawn: impl FnOnce(EndsOnShutdown) -> Spawn, form: Workers)
+    where
+        Spawn: FnOnce(Shutdown, mpsc::UnboundedSender<Bytes>) -> JoinHandle<()>,
+    {
+        let shutdown = Shutdown::with_subscription_end(SubscriptionEnd::FailFast);
+        let (seen, mut arrived) = mpsc::unbounded_channel();
+        let joined = spawn(EndsOnShutdown(shutdown.token().clone()))(shutdown.clone(), seen);
+        // One delivery in, so the loop is reading the stream when shutdown ends it.
+        arrived.recv().await.expect("a first delivery");
+        shutdown.cancel();
+        timeout(Duration::from_secs(5), joined)
+            .await
+            .unwrap_or_else(|_| panic!("{form:?} never stopped"))
+            .expect("dispatch task should not panic");
+        assert_eq!(
+            shutdown.peek_failure(),
+            None,
+            "{form:?} reported the end that shutdown brought",
+        );
+    }
+    for form in ALL_WORKER_FORMS {
+        run(|sub| reporting_workers(sub, form), form).await;
+    }
+    for form in ALL_BATCH_FORMS {
+        run(|sub| reporting_batches(sub, form), form).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_counts_as_consuming_while_its_loop_runs() {
+    for form in ALL_WORKER_FORMS {
+        let shutdown = Shutdown::new();
+        let (seen, mut arrived) = mpsc::unbounded_channel();
+        let joined = reporting_workers(QuietSubscriber, form)(shutdown.clone(), seen);
+        let count = shutdown.health().probe().subscriptions();
+        assert_eq!(
+            (count.active, count.started),
+            (1, 1),
+            "{form:?} must count once from its spawn on, whatever its workers",
+        );
+        arrived.recv().await.expect("a first delivery");
+        shutdown.cancel();
+        joined.await.expect("dispatch task should not panic");
+        let count = shutdown.health().probe().subscriptions();
+        assert_eq!(
+            (count.active, count.started),
+            (0, 1),
+            "{form:?} after shutdown"
         );
     }
 }
