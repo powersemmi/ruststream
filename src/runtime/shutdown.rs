@@ -169,18 +169,14 @@ impl Shutdown {
     /// Takes the first recorded failure description, if any. Read by the run loop once the
     /// service has drained, to decide whether to return an error.
     pub(crate) fn taken_failure(&self) -> Option<String> {
-        self.state
-            .failure
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
+        self.state.failure.lock().ok()?.take()
     }
 
     /// Reads the first recorded failure description without taking it: the health-probe watcher
     /// reports it without racing the run loop's consuming read, and the test harness reports
     /// `run_result` more than once.
     pub(crate) fn peek_failure(&self) -> Option<String> {
-        self.state.failure.lock().ok().and_then(|slot| slot.clone())
+        self.state.failure.lock().ok()?.clone()
     }
 }
 

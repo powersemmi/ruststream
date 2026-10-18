@@ -274,7 +274,7 @@ impl HeaderMap {
     /// Returns the value of a header decoded as UTF-8, or `None` if absent or not valid UTF-8.
     #[must_use]
     pub fn get_str(&self, name: &str) -> Option<&str> {
-        self.get(name).and_then(|raw| str::from_utf8(raw).ok())
+        str::from_utf8(self.get(name)?).ok()
     }
 
     /// Removes a header by name and returns its previous value, if any.

@@ -144,8 +144,7 @@ pub(super) struct BrokerEntry {
 impl BrokerEntry {
     /// The broker's `TestableBroker` view, recovered from the erased handle via its registration.
     fn testable(&self) -> Option<&dyn TestableBroker> {
-        self.registration
-            .and_then(|registration| registration.resolve(self.lifecycle.as_any()))
+        self.registration?.resolve(self.lifecycle.as_any())
     }
 
     /// The name used to address this broker in diagnostics: its label, else its broker type name.
