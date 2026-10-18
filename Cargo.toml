@@ -1325,6 +1325,8 @@ unwrap_used = "warn"
 unwrap_in_result = "warn"
 missing_assert_message = "warn"
 string_slice = "warn"
+# Numbers: big endian, the network order, on the wire.
+little_endian_bytes = "warn"
 
 [lints]
 workspace = true

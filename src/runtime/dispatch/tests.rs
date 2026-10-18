@@ -165,7 +165,7 @@ const BACKLOG: usize = 10_000;
 /// tell a delivery the loop lost from one it handled twice.
 fn numbered(position: usize) -> PlainMessage {
     PlainMessage {
-        payload: Bytes::copy_from_slice(&position.to_le_bytes()),
+        payload: Bytes::copy_from_slice(&position.to_be_bytes()),
         headers: HeaderMap::new(),
         settled: Arc::new(AtomicU8::new(0)),
         settlement: Settlement::Accepted,
@@ -174,7 +174,7 @@ fn numbered(position: usize) -> PlainMessage {
 
 /// The position [`numbered`] wrote into a delivery.
 fn position_of(payload: &Bytes) -> usize {
-    usize::from_le_bytes(
+    usize::from_be_bytes(
         payload
             .as_ref()
             .try_into()
