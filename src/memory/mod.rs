@@ -1335,18 +1335,18 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
             self.apply_pending_seek();
             loop {
                 match self.rx.poll_recv(cx) {
-                    Poll::Ready(Some(delivery)) => {
-                        // A stale pre-seek copy (a requeue that raced the seek): drop it, the
-                        // replay already covers everything from the watermark on.
+                    // A stale pre-seek copy (a requeue that raced the seek): drop it, the replay
+                    // already covers everything from the watermark on.
+                    Poll::Ready(Some(delivery))
                         if log::retains::<Log>()
-                            && delivery.seq < self.subscription.seek.watermark()
-                        {
-                            #[cfg(feature = "testing")]
-                            if let Some(coordinator) = &coordinator {
-                                coordinator.consumed();
-                            }
-                            continue;
+                            && delivery.seq < self.subscription.seek.watermark() =>
+                    {
+                        #[cfg(feature = "testing")]
+                        if let Some(coordinator) = &coordinator {
+                            coordinator.consumed();
                         }
+                    }
+                    Poll::Ready(Some(delivery)) => {
                         return Poll::Ready(Some(Ok(MemoryMessage {
                             delivery: Some(delivery),
                             subscription: Some(Arc::clone(&self.subscription)),

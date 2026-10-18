@@ -642,6 +642,23 @@ mod tests {
         );
     }
 
+    /// The busy thread's handler: the first item spawns a task on the thread's own runtime, every
+    /// later one records the first item that saw it run.
+    fn handle_busy(item: u32, ran: &Arc<AtomicBool>, first_seen: &AtomicU32) {
+        if item == 0 {
+            let ran = Arc::clone(ran);
+            tokio::spawn(async move { ran.store(true, Ordering::SeqCst) });
+        } else if ran.load(Ordering::SeqCst) {
+            let _ = first_seen.compare_exchange(u32::MAX, item, Ordering::SeqCst, Ordering::SeqCst);
+        }
+        // Computation that never waits, long enough for the loop to refill the ring: the thread
+        // never finds it empty, so it never parks.
+        let until = Instant::now() + Duration::from_micros(50);
+        while Instant::now() < until {
+            spin_loop();
+        }
+    }
+
     /// A thread that never runs out of work still lets the tasks of its own runtime run: a task
     /// its handler spawns runs within a bounded run of deliveries, not after the whole burst.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -651,25 +668,7 @@ mod tests {
         let first_seen = Arc::new(AtomicU32::new(u32::MAX));
         let threads = Threads::start("busy", 1, false, |_own| {
             let (ran, first_seen) = (Arc::clone(&ran), Arc::clone(&first_seen));
-            async move |item: u32| {
-                if item == 0 {
-                    let ran = Arc::clone(&ran);
-                    tokio::spawn(async move { ran.store(true, Ordering::SeqCst) });
-                } else if ran.load(Ordering::SeqCst) {
-                    let _ = first_seen.compare_exchange(
-                        u32::MAX,
-                        item,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    );
-                }
-                // Computation that never waits, long enough for the loop to refill the ring:
-                // the thread never finds it empty, so it never parks.
-                let until = Instant::now() + Duration::from_micros(50);
-                while Instant::now() < until {
-                    spin_loop();
-                }
-            }
+            async move |item: u32| handle_busy(item, &ran, &first_seen)
         })
         .expect("the threads start");
         let items = stream::iter(0..ITEMS).map(Ok::<_, Infallible>);

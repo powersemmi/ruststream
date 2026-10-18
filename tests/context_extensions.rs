@@ -234,9 +234,7 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
                 let stamp = ctx.context(Stamp).copied();
                 let seen = Arc::clone(&seen_clone);
                 async move {
-                    if let Some(n) = stamp {
-                        seen.lock().expect("poisoned").push(n);
-                    }
+                    seen.lock().expect("poisoned").extend(stamp);
                     HandlerOutcome::ack()
                 }
             })
