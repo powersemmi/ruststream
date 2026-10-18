@@ -101,25 +101,7 @@ impl Teardown {
         // at-most-once, so timing one out only abandons follow-up work, never a settlement.
         drain_continuations(continuations, shutdown_timeout).await;
 
-        let mut closed = Ok(());
-        for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
-            let name = lifecycle.name();
-            let broker = label.as_deref().unwrap_or(name);
-            match lifecycle.shutdown().await {
-                Ok(()) => debug!(target: "ruststream::lifecycle", broker, "broker shut down"),
-                Err(err) => {
-                    warn!(
-                        target: "ruststream::lifecycle",
-                        broker,
-                        error = %err,
-                        "broker shutdown failed",
-                    );
-                    if closed.is_ok() {
-                        closed = Err(RustStreamError::Shutdown(err));
-                    }
-                }
-            }
-        }
+        let closed = close_brokers(brokers).await;
 
         run_hooks(hooks.after_shutdown, "after_shutdown").await;
         info!(target: "ruststream::lifecycle", "service stopped");
@@ -133,6 +115,31 @@ impl Teardown {
             .taken_failure()
             .map_or(Ok(()), |reason| Err(RustStreamError::Dispatch(reason)))
     }
+}
+
+/// Shuts the brokers down in reverse registration order. Every broker gets its turn even after
+/// one fails; the first failure is the one returned.
+async fn close_brokers(brokers: Vec<ConnectedEntry>) -> Result<(), RustStreamError> {
+    let mut closed = Ok(());
+    for ConnectedEntry { lifecycle, label } in brokers.into_iter().rev() {
+        let name = lifecycle.name();
+        let broker = label.as_deref().unwrap_or(name);
+        match lifecycle.shutdown().await {
+            Ok(()) => debug!(target: "ruststream::lifecycle", broker, "broker shut down"),
+            Err(err) => {
+                warn!(
+                    target: "ruststream::lifecycle",
+                    broker,
+                    error = %err,
+                    "broker shutdown failed",
+                );
+                if closed.is_ok() {
+                    closed = Err(RustStreamError::Shutdown(err));
+                }
+            }
+        }
+    }
+    closed
 }
 
 /// Runs one list of shutdown hooks in order. A failing hook is logged and does not stop the

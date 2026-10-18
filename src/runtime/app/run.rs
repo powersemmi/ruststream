@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
+use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::publish_source::Bound;
 use crate::runtime::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
@@ -19,7 +20,7 @@ use super::service::RegisteredBroker;
 use super::teardown::{
     ConnectedEntry, ShutdownHooks, Teardown, drain_continuations, drain_handles,
 };
-use super::{RustStream, RustStreamError};
+use super::{LifecycleHook, RustStream, RustStreamError, Starter, StateInit};
 
 // `run`/`run_until` are routinely driven from a multi-thread runtime (`tokio::spawn`, the CLI's
 // `block_on`), so their futures must be `Send`: the shared state is held as `Arc<State>` across the
@@ -122,70 +123,28 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
             "starting service",
         );
 
-        debug!(target: "ruststream::lifecycle", "producing application state");
-        let state = state_init().await.map_err(RustStreamError::Startup)?;
-        let state = Arc::new(state);
-
-        let mut connected = Vec::with_capacity(brokers.len());
-        for RegisteredBroker { lifecycle, label } in brokers {
-            let lifecycle = match lifecycle.connect().await {
-                Ok(lifecycle) => lifecycle,
-                Err(err) => {
-                    unwind_connected(connected).await;
-                    return Err(RustStreamError::Connect(err));
-                }
-            };
-            info!(
-                target: "ruststream::lifecycle",
-                broker = label.as_deref().unwrap_or_else(|| lifecycle.name()),
-                "broker connected",
-            );
-            connected.push(ConnectedEntry { lifecycle, label });
-        }
+        let state = produce_state(state_init).await?;
+        let connected = connect_brokers(brokers).await?;
 
         // Shared with every dispatch task: a fail-fast failure records its reason here and raises
         // the signal, which both stops the loops and resolves `stopping()`.
         let shutdown = Shutdown::with_subscription_end(subscription_end);
         let mut handles = Vec::with_capacity(starters.len());
-        for (starter, meta) in starters.into_iter().zip(handlers) {
-            let handle = match starter(state.clone(), shutdown.clone()).await {
-                Ok(handle) => handle,
-                Err(err) => {
-                    unwind_started(
-                        &shutdown,
-                        handles,
-                        shutdown_timeout,
-                        connected,
-                        continuations,
-                    )
-                    .await;
-                    return Err(RustStreamError::Subscribe(err));
-                }
-            };
-            info!(
-                target: "ruststream::dispatch",
-                subscriber = %meta.name,
-                input = meta.input_type,
-                "subscriber started",
-            );
-            handles.push(handle);
+        let mut started =
+            start_subscribers(starters, handlers, &state, &shutdown, &mut handles).await;
+        if started.is_ok() {
+            started = run_after_startup(after_startup, &state).await;
         }
-
-        if !after_startup.is_empty() {
-            debug!(target: "ruststream::lifecycle", count = after_startup.len(), "running after_startup hooks");
-        }
-        for hook in after_startup {
-            if let Err(err) = hook(Arc::clone(&state)).await {
-                unwind_started(
-                    &shutdown,
-                    handles,
-                    shutdown_timeout,
-                    connected,
-                    continuations,
-                )
-                .await;
-                return Err(RustStreamError::Startup(err));
-            }
+        if let Err(err) = started {
+            unwind_started(
+                &shutdown,
+                handles,
+                shutdown_timeout,
+                connected,
+                continuations,
+            )
+            .await;
+            return Err(err);
         }
 
         info!(target: "ruststream::lifecycle", subscribers = handles.len(), "service running");
@@ -388,6 +347,78 @@ impl RunningApp {
         health.transition(terminal);
         outcome
     }
+}
+
+/// Produces the application state through the `on_startup` producer chain, once, before any
+/// broker connects.
+async fn produce_state<State>(state_init: StateInit<State>) -> Result<Arc<State>, RustStreamError> {
+    debug!(target: "ruststream::lifecycle", "producing application state");
+    let state = state_init().await.map_err(RustStreamError::Startup)?;
+    Ok(Arc::new(state))
+}
+
+/// Connects the registered brokers in registration order. A failed connect shuts down the
+/// brokers connected before it, so a failed startup leaks no live connection.
+async fn connect_brokers(
+    brokers: Vec<RegisteredBroker>,
+) -> Result<Vec<ConnectedEntry>, RustStreamError> {
+    let mut connected = Vec::with_capacity(brokers.len());
+    for RegisteredBroker { lifecycle, label } in brokers {
+        let lifecycle = match lifecycle.connect().await {
+            Ok(lifecycle) => lifecycle,
+            Err(err) => {
+                unwind_connected(connected).await;
+                return Err(RustStreamError::Connect(err));
+            }
+        };
+        info!(
+            target: "ruststream::lifecycle",
+            broker = label.as_deref().unwrap_or_else(|| lifecycle.name()),
+            "broker connected",
+        );
+        connected.push(ConnectedEntry { lifecycle, label });
+    }
+    Ok(connected)
+}
+
+/// Opens every subscription and spawns its dispatch task, collecting the task handles into
+/// `handles`. The handles stay with the caller on a failure, which is what the unwind drains.
+async fn start_subscribers<State: Send + Sync>(
+    starters: Vec<Starter<State>>,
+    metadata: Vec<HandlerMetadata>,
+    state: &Arc<State>,
+    shutdown: &Shutdown,
+    handles: &mut Vec<JoinHandle<()>>,
+) -> Result<(), RustStreamError> {
+    for (starter, meta) in starters.into_iter().zip(metadata) {
+        let handle = starter(Arc::clone(state), shutdown.clone())
+            .await
+            .map_err(RustStreamError::Subscribe)?;
+        info!(
+            target: "ruststream::dispatch",
+            subscriber = %meta.name,
+            input = meta.input_type,
+            "subscriber started",
+        );
+        handles.push(handle);
+    }
+    Ok(())
+}
+
+/// Runs the `after_startup` hooks in registration order, stopping at the first failure.
+async fn run_after_startup<State: Send + Sync>(
+    hooks: Vec<LifecycleHook<State>>,
+    state: &Arc<State>,
+) -> Result<(), RustStreamError> {
+    if !hooks.is_empty() {
+        debug!(target: "ruststream::lifecycle", count = hooks.len(), "running after_startup hooks");
+    }
+    for hook in hooks {
+        hook(Arc::clone(state))
+            .await
+            .map_err(RustStreamError::Startup)?;
+    }
+    Ok(())
 }
 
 /// Reports a fail-fast teardown on the health probe even when nobody ever calls
