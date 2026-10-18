@@ -170,9 +170,6 @@ impl FaultyConnected {
     fn publisher(&self) -> FaultyPublisher {
         FaultyPublisher {
             inner: self.inner.publisher(),
-            counts_unread: self
-                .faulty(Fault::CountsUnread)
-                .then(|| (Arc::clone(&self.opened), Arc::clone(&self.coordinator))),
             unread: match self.fault {
                 Fault::RefusesUnread | Fault::RefusedPublishLeaks => Some(Arc::clone(&self.opened)),
                 Fault::InProcessRefusesUnread if !self.server => Some(Arc::clone(&self.opened)),
@@ -183,6 +180,9 @@ impl FaultyConnected {
                 Fault::InProcessRefusesEverything => Some(Opened::default()),
                 _ => None,
             },
+            counts_unread: self
+                .faulty(Fault::CountsUnread)
+                .then(|| (Arc::clone(&self.opened), Arc::clone(&self.coordinator))),
             refuses_over: match self.fault {
                 Fault::ServerRefusesOver(limit) if self.server => Some(limit),
                 Fault::InProcessRefusesOver(limit) if !self.server => Some(limit),

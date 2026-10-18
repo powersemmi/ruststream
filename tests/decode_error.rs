@@ -114,10 +114,8 @@ struct Claim<Log> {
 
 impl<Log: LogMode> Claim<Log> {
     fn read(inner: MemoryMessage<Log>) -> Self {
-        Self {
-            error: carrying::reported(inner.payload()),
-            inner,
-        }
+        let error = carrying::reported(inner.payload());
+        Self { inner, error }
     }
 }
 

@@ -12,3 +12,6 @@ excessive-nesting-threshold = 6
 
 # Tests may unwrap: a failed test is the report.
 allow-unwrap-in-tests = true
+
+# A struct literal lists its fields in the order the struct defines them.
+check-inconsistent-struct-field-initializers = true

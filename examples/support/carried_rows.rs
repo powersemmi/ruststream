@@ -104,9 +104,9 @@ impl<Log: LogMode> Subscriber for RowSubscriber<Log> {
 
     fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery<Log>, Infallible>> + Send + '_ {
         self.0.stream().map(|delivery| {
-            delivery.map(|inner| RowDelivery {
-                row: Row::read(inner.payload()),
-                inner,
+            delivery.map(|inner| {
+                let row = Row::read(inner.payload());
+                RowDelivery { inner, row }
             })
         })
     }

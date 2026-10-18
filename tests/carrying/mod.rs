@@ -222,12 +222,13 @@ impl<Log: LogMode> RowSubscriber<Log> {
             (Fault::PlaceholderForGone, None) => Some(Row::new(0, "placeholder")),
             (_, row) => row,
         };
+        let error = reported(inner.payload());
         RowDelivery {
-            error: reported(inner.payload()),
             inner,
             row,
             fault,
             slot: None,
+            error,
         }
     }
 }
