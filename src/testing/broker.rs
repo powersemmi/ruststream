@@ -4,8 +4,10 @@
 
 use std::any::{Any, TypeId, type_name};
 use std::fmt;
-use std::future::Future;
 use std::time::Duration;
+
+use tokio::time;
+use tokio::time::Instant;
 
 use crate::runtime::{BoxError, BoxFuture, InProcessConnect};
 use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
@@ -366,17 +368,17 @@ where
     <<B::Connected as DefaultPublish>::Policy as PublishPolicy<B::Connected>>::Live: Publisher,
 {
     let connected = connected.downcast_ref::<B::Connected>().ok_or_else(|| {
-        Box::from(format!(
+        BoxError::from(format!(
             "the live publisher of {} was handed another connected form",
             type_name::<B>(),
-        )) as BoxError
+        ))
     });
     Box::pin(async move {
         let connected = connected?;
         let publisher = <B::Connected as DefaultPublish>::Policy::default()
             .pair(connected)
             .await
-            .map_err(|err| Box::new(err) as BoxError)?;
+            .map_err(BoxError::from)?;
         let (name, payload, headers) = msg.into_parts();
         publisher
             .publish(
@@ -384,7 +386,7 @@ where
                 None,
             )
             .await
-            .map_err(|err| Box::new(err) as BoxError)
+            .map_err(BoxError::from)
     })
 }
 
@@ -455,23 +457,21 @@ fn connect_erased<B: InProcess + 'static>(
 ) -> BoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>> {
     Box::pin(async move {
         let broker = broker.downcast::<B>().map_err(|_| {
-            Box::from(format!(
+            BoxError::from(format!(
                 "the in-process transition of {} was handed another broker",
                 type_name::<B>(),
-            )) as BoxError
+            ))
         })?;
-        let connected = broker
-            .connect_in_process()
-            .await
-            .map_err(|err| Box::new(err) as BoxError)?;
-        Ok(Box::new(connected) as Box<dyn Any + Send>)
+        let connected = broker.connect_in_process().await.map_err(BoxError::from)?;
+        let connected: Box<dyn Any + Send> = Box::new(connected);
+        Ok(connected)
     })
 }
 
 /// The [`TestableBroker`] view of `B`'s connected form, when `any` is one.
 fn testable_view<B: InProcess + 'static>(any: &dyn Any) -> Option<&dyn TestableBroker> {
-    any.downcast_ref::<B::Connected>()
-        .map(|connected| connected as &dyn TestableBroker)
+    let connected: &dyn TestableBroker = any.downcast_ref::<B::Connected>()?;
+    Some(connected)
 }
 
 inventory::collect!(TestableRegistration);
@@ -561,12 +561,12 @@ pub async fn expect_published<B: TestableBroker>(
     count: usize,
     timeout: Duration,
 ) -> Vec<RawMessage> {
-    let deadline = tokio::time::Instant::now() + timeout;
+    let deadline = Instant::now() + timeout;
     loop {
         let observed = broker.published(name);
-        if observed.len() >= count || tokio::time::Instant::now() >= deadline {
+        if observed.len() >= count || Instant::now() >= deadline {
             return observed;
         }
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        time::sleep(Duration::from_millis(2)).await;
     }
 }

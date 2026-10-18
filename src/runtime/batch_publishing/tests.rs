@@ -15,9 +15,7 @@ use crate::runtime::input::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
-use crate::{
-    BytesMut, HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take,
-};
+use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take};
 
 struct Confirm {
     reply_to: &'static str,

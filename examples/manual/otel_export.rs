@@ -14,7 +14,7 @@
 
 use std::convert::Infallible;
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use opentelemetry::KeyValue;

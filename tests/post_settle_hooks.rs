@@ -13,6 +13,7 @@
 
 mod common;
 
+use std::convert::Infallible;
 use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -24,6 +25,7 @@ use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSettings};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{nonzero, subscriber};
+use tokio::time;
 
 /// What the hooks under test count, held in application state so a macro handler (a free fn)
 /// reaches it the way a service reaches any dependency.
@@ -81,7 +83,7 @@ async fn outcome_gated_and_ungated_hooks_fire_per_settlement() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_order);
         });
@@ -123,7 +125,7 @@ const HOOK_DELAY: Duration = Duration::from_secs(60);
 async fn handle_slow(_order: &Order, ctx: &mut Context<'_, (), Counters>) -> HandlerOutcome {
     let done = Arc::clone(&ctx.state().ack);
     ctx.after_ack(async move {
-        tokio::time::sleep(HOOK_DELAY).await;
+        time::sleep(HOOK_DELAY).await;
         done.fetch_add(1, Ordering::SeqCst);
     });
     HandlerOutcome::ack()
@@ -137,7 +139,7 @@ async fn hooks_drain_on_graceful_shutdown() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_slow);
         });
@@ -181,7 +183,7 @@ async fn batch_runs_after_settle_drops_outcome_gated() {
     let startup_counters = counters.clone();
 
     let app = RustStream::new(AppInfo::new("batched", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(startup_counters) })
+        .on_startup(async move |()| Ok::<_, Infallible>(startup_counters))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(handle_batch.batch(nonzero!(64)));
         });

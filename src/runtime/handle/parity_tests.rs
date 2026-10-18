@@ -6,7 +6,7 @@
 //! lives behind the `testing` feature this module's gate deliberately leaves out.
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,11 +17,12 @@ use crate::memory::{
     MemoryPublisher, MemorySource, Position, Retaining, Retention, SeekHandle,
 };
 use crate::nonzero;
+use crate::runtime::PublishedThrough;
 use crate::runtime::{
     Context, ContextKind, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire,
-    OutEntry, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router, RouterDef,
-    Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized, SubscriberSettings,
-    Verdict, WireBytes, for_batch, subscriber,
+    OutEntry, OutSlot, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router,
+    RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
+    SubscriberSettings, Verdict, WireBytes, for_batch, subscriber,
 };
 use crate::{
     Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
@@ -326,7 +327,7 @@ impl Handle<Order, Message<Meta, Confirmation>> for ConfirmWithMeta {
 
 struct Analytics;
 
-impl crate::runtime::OutSlot for Analytics {
+impl OutSlot for Analytics {
     const NAME: &'static str = "Analytics";
     type Destination = Reads;
 }
@@ -344,7 +345,7 @@ impl MessageHeaders for Event {
     type Contract = NoHeaders;
 }
 
-impl crate::runtime::PublishedThrough<Analytics> for Event {}
+impl PublishedThrough<Analytics> for Event {}
 
 // A serialized out type is a first-class dictionary member: it declares its destination and
 // membership like any model, and its bytes leave through the same typed builder, uncoded.
@@ -356,7 +357,7 @@ impl MessageHeaders for Export {
     type Contract = NoHeaders;
 }
 
-impl crate::runtime::PublishedThrough<Analytics> for Export {}
+impl PublishedThrough<Analytics> for Export {}
 
 /// Publishes a serialized dictionary member's own bytes through the slot.
 struct RawMirror;
@@ -420,12 +421,12 @@ where
 /// a transform.
 struct Ledger;
 
-impl crate::runtime::OutSlot for Ledger {
+impl OutSlot for Ledger {
     const NAME: &'static str = "Ledger";
     type Destination = Reads;
 }
 
-impl crate::runtime::PublishedThrough<Ledger> for Event {}
+impl PublishedThrough<Ledger> for Event {}
 
 /// Two slots, each with its own publish path.
 struct PairMirror;
@@ -561,8 +562,6 @@ fn every_eager_spelling_mounts() {
 /// with an explicit and the broker's default publisher - selected by the reply type alone),
 /// the batch form, and typed reply headers.
 fn reply_axes() -> impl RouterDef<Bus> {
-    use crate::codec::JsonCodec;
-
     Router::<Bus>::new()
         .include(
             subscriber("orders", Confirm)
@@ -678,8 +677,7 @@ fn every_reply_spelling_mounts() {
 /// them names it. Both spellings of each pair are built here; a step reachable on one side only
 /// would fail this module's build.
 fn order_free_reply_axes() -> impl RouterDef<Bus> {
-    use crate::codec::JsonCodec;
-    use crate::runtime::{FailurePolicies, SubscriberSettings};
+    use crate::runtime::FailurePolicies;
 
     Router::<Bus>::new()
         // a batch setting, before and after the reply declaration

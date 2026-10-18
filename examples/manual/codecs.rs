@@ -41,7 +41,7 @@ impl MessageHeaders for Receipt {
 
 mod ladder {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::codec::{CborCodec, JsonCodec};
     use ruststream::memory::prelude::*;

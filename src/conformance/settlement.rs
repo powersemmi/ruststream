@@ -50,7 +50,7 @@
 //! # }
 //! ```
 
-use std::{fmt, future::Future, pin::pin, time::Duration};
+use std::{fmt, pin::pin, time::Duration};
 
 use futures::{Stream, StreamExt};
 use tokio::time::{Instant, timeout, timeout_at};

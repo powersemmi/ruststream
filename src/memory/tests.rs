@@ -1,4 +1,6 @@
 use futures::{FutureExt, StreamExt};
+use tokio::runtime::Builder;
+use tokio::{task, time};
 
 use super::*;
 
@@ -91,12 +93,12 @@ async fn nack_after_redelivers_after_the_delay() {
 
     // The timer task needs a turn to arm its timer, and one after each advance to act on it. One
     // tick short of the delay nothing is redelivered; the tick that reaches it redelivers.
-    tokio::task::yield_now().await;
-    tokio::time::advance(DELAY.saturating_sub(Duration::from_millis(1))).await;
-    tokio::task::yield_now().await;
+    task::yield_now().await;
+    time::advance(DELAY.saturating_sub(Duration::from_millis(1))).await;
+    task::yield_now().await;
     assert!(futures::poll!(stream.next()).is_pending());
-    tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_millis(1)).await;
+    task::yield_now().await;
 
     let Some(Some(Ok(redelivered))) = stream.next().now_or_never() else {
         panic!("the redelivery must land on the tick that reaches the delay");
@@ -109,9 +111,7 @@ async fn nack_after_redelivers_after_the_delay() {
 #[test]
 fn connect_captures_the_runtime_that_polls_it() {
     let connecting = MemoryBroker::new().connect();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let runtime = Builder::new_current_thread().build().unwrap();
     assert!(runtime.block_on(connecting).is_ok());
 }
 
@@ -120,13 +120,11 @@ fn connect_captures_the_runtime_that_polls_it() {
 #[test]
 fn an_unconnected_subscription_redelivers_on_the_settling_runtime() {
     let broker = MemoryBroker::new();
-    let opening = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let opening = Builder::new_current_thread().build().unwrap();
     let mut sub = opening.block_on(async { broker.subscribe("delayed") });
     drop(opening);
 
-    let settling = tokio::runtime::Builder::new_current_thread()
+    let settling = Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
         .build()
@@ -140,7 +138,7 @@ fn an_unconnected_subscription_redelivers_on_the_settling_runtime() {
         let mut stream = std::pin::pin!(sub.stream());
         let msg = stream.next().await.unwrap().unwrap();
         msg.nack_after(Duration::from_secs(5)).await.unwrap();
-        let redelivered = tokio::time::timeout(Duration::from_secs(60), stream.next()).await;
+        let redelivered = time::timeout(Duration::from_secs(60), stream.next()).await;
         assert!(
             matches!(redelivered, Ok(Some(Ok(_)))),
             "the redelivery was spawned on the stopped runtime"
@@ -173,8 +171,8 @@ async fn a_pending_redelivery_does_not_keep_the_bus_alive() {
     );
 
     // The timer still fires, into a subscription that is gone.
-    tokio::time::advance(Duration::from_secs(3600)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(3600)).await;
+    task::yield_now().await;
 }
 
 /// What the default broker keeps: nothing. A service publishing forever on it grows only by

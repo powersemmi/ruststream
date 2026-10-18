@@ -10,16 +10,16 @@
     feature = "cbor"
 ))]
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use ruststream::codec::{CborCodec, Codec};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPosition, MemoryPublisher};
-use ruststream::runtime::{ContextKind, Outgoing, PublishTransform, Reads, for_batch};
+use ruststream::memory::{ConnectedMemoryBroker, LogMode, MemoryPublisher};
+use ruststream::runtime::{Outgoing, for_batch};
 use ruststream::testing::TestApp;
-use ruststream::{BytesMut, HeaderMap, OutgoingMessage, PairError, PublishPolicy, Take};
+use ruststream::{OutgoingMessage, PairError, Take};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq)]

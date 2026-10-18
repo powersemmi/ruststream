@@ -38,11 +38,12 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     fmt,
-    future::{Future, ready},
+    future::ready,
     marker::PhantomData,
+    mem,
     num::NonZeroU64,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::Poll,
@@ -52,6 +53,10 @@ use std::{
 #[cfg(feature = "testing")]
 use crate::testing::Backlog;
 #[cfg(feature = "testing")]
+use crate::testing::InProcess;
+#[cfg(feature = "testing")]
+use crate::testing::TestableBroker;
+#[cfg(feature = "testing")]
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
@@ -60,8 +65,8 @@ use crate::{
     SubscriptionSource, Take,
 };
 use bytes::Bytes;
-use futures::Stream;
 use futures::future::lazy;
+use futures::{Stream, stream};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
@@ -230,6 +235,22 @@ impl MemoryState {
         }
     }
 
+    /// The bus, for a call that answers through its `Result`.
+    ///
+    /// The bus changes by whole steps (a push, an insert, a swap to shut down), so a lock that a
+    /// panic poisoned still guards a whole bus and the call goes on with it.
+    fn lock_bus(&self) -> MutexGuard<'_, Bus> {
+        self.subscribers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The published log, for a call that answers through its `Result`; poisoning as for
+    /// [`lock_bus`](Self::lock_bus).
+    fn lock_log(&self) -> MutexGuard<'_, LogState> {
+        self.log.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Registers a subscriber sender on the live bus.
     ///
     /// The name is shared from here on, and a second subscription to the same name joins the
@@ -241,11 +262,7 @@ impl MemoryState {
     /// that is an error (the `Subscribe` path) or a silent no-registration (the infallible
     /// inherent constructor).
     fn register(&self, name: &str, tx: Sender) -> Result<(), MemoryError> {
-        match &mut *self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned")
-        {
+        match &mut *self.lock_bus() {
             Bus::Live(registry) => {
                 registry.names.entry(Arc::from(name)).or_default().push(tx);
                 Ok(())
@@ -266,11 +283,7 @@ impl MemoryState {
         pattern: Pattern,
         tx: Sender,
     ) -> Result<(), MemoryError> {
-        match &mut *self
-            .subscribers
-            .lock()
-            .expect("memory broker mutex poisoned")
-        {
+        match &mut *self.lock_bus() {
             Bus::Live(registry) => {
                 match registry
                     .patterns
@@ -362,10 +375,7 @@ impl MemoryState {
     #[allow(clippy::significant_drop_tightening)]
     fn fanout(&self, name: &str, payload: Bytes, headers: HeaderMap) -> Result<(), MemoryError> {
         {
-            let bus = self
-                .subscribers
-                .lock()
-                .expect("memory broker mutex poisoned");
+            let bus = self.lock_bus();
             let Bus::Live(registry) = &*bus else {
                 return Err(MemoryError::ShutDown);
             };
@@ -374,7 +384,7 @@ impl MemoryState {
             let mut log = self
                 .recording
                 .load(Ordering::Acquire)
-                .then(|| self.log.lock().expect("memory broker mutex poisoned"));
+                .then(|| self.lock_log());
             // A broker with pattern subscriptions takes its own path, so the one without them
             // pays a single emptiness check for their existence.
             if registry.patterns.is_empty() {
@@ -885,7 +895,7 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
                 Bus::Live(registry) => registry.routing,
                 Bus::ShutDown(routing) => *routing,
             };
-            match std::mem::replace(&mut *bus, Bus::ShutDown(routing)) {
+            match mem::replace(&mut *bus, Bus::ShutDown(routing)) {
                 Bus::Live(registry) => registry.len(),
                 Bus::ShutDown(_) => 0,
             }
@@ -1062,7 +1072,7 @@ impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
 // The bus is in-process by nature, so the transition the harness connects through is the ordinary
 // `connect`: the connected form a test drives is the one production gets.
 #[cfg(feature = "testing")]
-impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
+impl<Log: LogMode> InProcess for MemoryBroker<Log> {
     fn connect_in_process(
         self,
     ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
@@ -1073,7 +1083,7 @@ impl<Log: LogMode> crate::testing::InProcess for MemoryBroker<Log> {
 // The harness drives the connected form that transition produces, and run_suite scenarios
 // receive it too.
 #[cfg(feature = "testing")]
-impl<Log: LogMode> crate::testing::TestableBroker for ConnectedMemoryBroker<Log> {
+impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
     fn install_coordinator(&self, coordinator: Coordinator) {
         self.state.install_coordinator(coordinator);
     }
@@ -1325,7 +1335,7 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
         let coordinator = self.coordinator();
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
-        futures::stream::poll_fn(move |cx| {
+        stream::poll_fn(move |cx| {
             // Register before reading the pending seek: a seek landing between the read and the
             // park then still finds a waker to rouse.
             // Only a seeker wakes this waker, and a discarding subscription mints none.

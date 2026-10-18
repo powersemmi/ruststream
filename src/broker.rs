@@ -1,6 +1,8 @@
 //! The [`Broker`] / [`ConnectedBroker`] ladder: the entry point of any broker implementation.
 
-use std::{error::Error as StdError, future::Future};
+use std::error::Error as StdError;
+
+use crate::runtime::Bindable;
 
 /// An unconnected broker: configuration captured, no I/O performed yet.
 ///
@@ -242,11 +244,11 @@ pub trait Broker: Send + Sync + Sized {
     /// # fn main() {}
     /// ```
     #[must_use]
-    fn bindable(self) -> crate::runtime::Bindable<Self>
+    fn bindable(self) -> Bindable<Self>
     where
         Self: 'static,
     {
-        crate::runtime::Bindable::new(self)
+        Bindable::new(self)
     }
 }
 

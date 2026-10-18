@@ -18,7 +18,6 @@ use std::hint::black_box;
 
 use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use ruststream::memory::MemoryBroker;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{BlanketLayer, Handler, Layer};
 

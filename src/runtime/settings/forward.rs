@@ -11,7 +11,6 @@
 //! Associated types are named through the wrapped definition rather than through `Self`: the
 //! builder implements every definition form, so a bare `Self::Input` would be ambiguous.
 
-use std::future::Future;
 use std::marker::PhantomData;
 
 use crate::ConnectedBroker;

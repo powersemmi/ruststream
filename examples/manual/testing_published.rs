@@ -65,7 +65,7 @@ impl<M: OutSlot> OutMessages<M> for Ticket {
 
 mod assert_called_once {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -189,7 +189,7 @@ mod assert_called {
 
 mod assert_not_called {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -323,12 +323,10 @@ mod messages {
 
 mod with_header {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
-    use ruststream::runtime::{
-        ContextKind, Outgoing, PublishLayer, PublishNext, PublishPipeline, PublishTransform, Reads,
-    };
+    use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
     use ruststream::testing::TestApp;
 
     use super::{Order, Receipt};

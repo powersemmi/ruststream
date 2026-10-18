@@ -3,6 +3,7 @@
 //! contracts here.
 
 use std::marker::PhantomData;
+use std::{any, fmt};
 
 use tracing::warn;
 
@@ -36,7 +37,7 @@ where
             warn!(
                 target: "ruststream::dispatch",
                 subscription = %ctx.name(),
-                message_type = std::any::type_name::<F>(),
+                message_type = any::type_name::<F>(),
                 error = %err,
                 "payload construction failed",
             );
@@ -68,8 +69,8 @@ pub struct SoloBody<A, C, H> {
 /// The phantom carrying a solo adapter's axes.
 type SoloAxes<A, C> = PhantomData<fn() -> (A, C)>;
 
-impl<A, C, H> std::fmt::Debug for SoloBody<A, C, H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<A, C, H> fmt::Debug for SoloBody<A, C, H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoloBody").finish_non_exhaustive()
     }
 }
@@ -210,8 +211,8 @@ pub struct BatchBody<A, H> {
     _axes: PhantomData<fn() -> A>,
 }
 
-impl<A, H> std::fmt::Debug for BatchBody<A, H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<A, H> fmt::Debug for BatchBody<A, H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchBody").finish_non_exhaustive()
     }
 }

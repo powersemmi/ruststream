@@ -1,11 +1,13 @@
 //! `#[derive(Outgoing)]`: everything a message type declares about being sent.
 
+use std::mem;
+
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::{Attribute, DeriveInput, Expr, Ident, LitStr, Meta, Token, Type};
 
-use crate::parse::doc_description;
+use crate::parse::{derive_generics, doc_description};
 
 /// The parsed `#[outgoing(..)]` attribute: the declared destination and the header contract.
 struct OutgoingArgs {
@@ -38,7 +40,8 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         || quote!(::ruststream::NoHeaders),
         |headers| quote!(::ruststream::WithHeaders<#headers>),
     );
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let generics = derive_generics(&input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let template = args.name.as_ref().map(parse_template).transpose()?;
     let address = args
@@ -55,7 +58,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 .placeholders
                 .iter()
                 .map(|placeholder| LitStr::new(&placeholder.to_string(), placeholder.span()));
-            let items = template_builder(name, vis, template, &input.generics);
+            let items = template_builder(name, vis, template, &generics);
             (
                 quote!(::ruststream::NameTemplate),
                 quote!(&[#(#names),*]),
@@ -68,7 +71,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     // The OutMessages impl adds its own marker type parameter; pushing it onto a clone of the
     // generics (after any lifetimes) keeps the emitted parameter order legal.
-    let mut set_generics = input.generics.clone();
+    let mut set_generics = generics.clone();
     set_generics
         .params
         .push(syn::parse_quote!(__RsM: ::ruststream::runtime::OutSlot));
@@ -227,16 +230,14 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
     let mut placeholders: Vec<Ident> = Vec::new();
     let mut current = String::new();
     let mut rest = declared.as_str();
-    while let Some(open) = rest.find('{') {
-        current.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('}') else {
+    while let Some((before, after)) = rest.split_once('{') {
+        current.push_str(before);
+        let Some((placeholder, tail)) = after.split_once('}') else {
             return Err(syn::Error::new(
                 span,
                 "unclosed `{` in the declared name: every placeholder reads `{segment}`",
             ));
         };
-        let placeholder = &after[..close];
         if placeholder.is_empty() {
             return Err(syn::Error::new(
                 span,
@@ -262,8 +263,8 @@ fn parse_template(literal: &LitStr) -> syn::Result<Template> {
             ));
         }
         placeholders.push(ident);
-        literals.push(std::mem::take(&mut current));
-        rest = &after[close + 1..];
+        literals.push(mem::take(&mut current));
+        rest = tail;
     }
     if rest.contains('}') {
         return Err(syn::Error::new(

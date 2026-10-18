@@ -5,7 +5,8 @@
 //! client would; a payload that is no row carries no value.
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
+use std::str;
 
 use futures::{Stream, StreamExt};
 use ruststream::memory::{
@@ -34,7 +35,7 @@ impl Row {
     }
 
     fn read(payload: &[u8]) -> Option<Self> {
-        let (id, name) = std::str::from_utf8(payload).ok()?.split_once(':')?;
+        let (id, name) = str::from_utf8(payload).ok()?.split_once(':')?;
         Some(Self::new(id.parse().ok()?, name))
     }
 }
@@ -103,9 +104,9 @@ impl<Log: LogMode> Subscriber for RowSubscriber<Log> {
 
     fn stream(&mut self) -> impl Stream<Item = Result<RowDelivery<Log>, Infallible>> + Send + '_ {
         self.0.stream().map(|delivery| {
-            delivery.map(|inner| RowDelivery {
-                row: Row::read(inner.payload()),
-                inner,
+            delivery.map(|inner| {
+                let row = Row::read(inner.payload());
+                RowDelivery { inner, row }
             })
         })
     }

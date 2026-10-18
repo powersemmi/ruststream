@@ -11,9 +11,9 @@
 use std::error::Error;
 use std::pin::Pin;
 
+use ruststream::Bytes;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{Outgoing, PublishDynLayer, PublishDynNext};
-use ruststream::{Bytes, Str};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
@@ -52,10 +52,10 @@ mod service {
     use std::error::Error;
     use std::sync::Arc;
 
+    use ruststream::Bytes;
     use ruststream::memory::prelude::*;
     use ruststream::runtime::{PublishDynLayer, PublishDynStack};
     use ruststream::testing::TestApp;
-    use ruststream::{Bytes, Str};
 
     use super::{Order, Receipt, Stamp};
 
@@ -67,13 +67,14 @@ mod service {
 
     /// The chain comes from configuration: one `Stamp` per header the operator listed.
     fn app(headers: &[(&str, &str)]) -> impl App {
-        let chain = headers.iter().map(|(name, value)| {
-            let stamp = Stamp {
-                name: Str::from((*name).to_owned()),
-                value: Bytes::from((*value).to_owned()),
-            };
-            Arc::new(stamp) as Arc<dyn PublishDynLayer>
-        });
+        let chain = headers
+            .iter()
+            .map(|(name, value)| -> Arc<dyn PublishDynLayer> {
+                Arc::new(Stamp {
+                    name: Str::from((*name).to_owned()),
+                    value: Bytes::from((*value).to_owned()),
+                })
+            });
         RustStream::new(AppInfo::new("billing", "0.1.0"))
             .publish_layer(PublishDynStack::new(chain))
             .with_broker(MemoryBroker::new(), |b| {

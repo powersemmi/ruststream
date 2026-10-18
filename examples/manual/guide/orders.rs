@@ -2,7 +2,7 @@
 //! destination and headers through the trait impls the derives would write, and each subscriber
 //! is a named type with an `impl Handle`.
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;

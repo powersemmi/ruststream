@@ -15,8 +15,7 @@ use common::Order;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{
-    ContextKind, ForReply, ForSlot, Outgoing, PublishContext, PublishLayer, PublishNext,
-    PublishPipeline, PublishTransform, Reads, SlotContext,
+    Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline, SlotContext,
 };
 use ruststream::testing::TestApp;
 

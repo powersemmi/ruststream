@@ -11,8 +11,11 @@
 mod de;
 mod ser;
 
+use std::fmt;
+
 use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Error as DeError};
+use serde::ser::Error as SerError;
 use thiserror::Error;
 
 use crate::headers::HeaderMap;
@@ -62,8 +65,8 @@ pub enum DeserializeHeadersError {
     Message(String),
 }
 
-impl serde::de::Error for DeserializeHeadersError {
-    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+impl DeError for DeserializeHeadersError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
 }
@@ -92,8 +95,8 @@ pub enum SerializeHeadersError {
     Message(String),
 }
 
-impl serde::ser::Error for SerializeHeadersError {
-    fn custom<T: std::fmt::Display>(msg: T) -> Self {
+impl SerError for SerializeHeadersError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
 }
@@ -250,6 +253,7 @@ impl HeaderMap {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use serde::ser::Error;
     use serde::{Deserialize, Serialize};
 
     use super::*;
@@ -319,7 +323,7 @@ mod tests {
 
         impl Serialize for Refuses {
             fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("this value refuses to travel"))
+                Err(Error::custom("this value refuses to travel"))
             }
         }
 

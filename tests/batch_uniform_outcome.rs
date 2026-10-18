@@ -16,6 +16,7 @@
 
 mod common;
 
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -88,7 +89,7 @@ async fn a_uniform_ack_runs_its_attached_work_once_for_the_batch() {
     let app = RustStream::new(AppInfo::new("uniform-after", "0.1.0"))
         .on_startup(move |()| {
             let counter = state_counter;
-            async move { Ok::<_, std::convert::Infallible>(Continued(counter)) }
+            async move { Ok::<_, Infallible>(Continued(counter)) }
         })
         .with_broker(broker, |b| {
             b.include(accept.batch(nonzero!(8)).start_at(MemoryPosition::start()));

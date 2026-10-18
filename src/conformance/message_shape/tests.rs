@@ -2,7 +2,7 @@
 //! which the check must fail: a check no broker can fail proves nothing.
 
 use std::{
-    future::{Future, pending},
+    future::pending,
     mem,
     sync::{
         Mutex, PoisonError,
@@ -787,13 +787,16 @@ async fn options_with_no_override_are_rejected() {
 
 #[cfg(feature = "asyncapi")]
 mod credentials {
-    use std::future::Future;
+
+    use std::panic;
 
     use serde_json::json;
 
     use super::super::{describes_addresses_without_credentials, publishes_without_credentials};
     use crate::asyncapi::{Binding, Bindings};
-    use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish};
+    use crate::memory::{
+        ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemoryPublisher,
+    };
     use crate::{Broker, DescribeServer, PairError, PublishPolicy, ServerSpec};
 
     /// A policy that puts its connection URL, password and all, into its operation binding.
@@ -802,7 +805,7 @@ mod credentials {
     }
 
     impl PublishPolicy<ConnectedMemoryBroker> for LeakyPublish {
-        type Live = crate::memory::MemoryPublisher;
+        type Live = MemoryPublisher;
 
         async fn pair(self, connected: &ConnectedMemoryBroker) -> Result<Self::Live, PairError> {
             MemoryPublish.pair(connected).await
@@ -846,7 +849,7 @@ mod credentials {
     /// The failure must not print the password it found.
     #[test]
     fn the_failure_does_not_print_the_password() {
-        let failure = std::panic::catch_unwind(|| {
+        let failure = panic::catch_unwind(|| {
             publishes_without_credentials::<ConnectedMemoryBroker, _>(
                 &LeakyPublish {
                     url: "amqp://svc:hunter2@broker:5672",

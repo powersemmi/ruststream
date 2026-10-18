@@ -2,12 +2,13 @@
 //! what may leave through it with the trait impls `#[derive(OutSlot)]` would write.
 
 use std::any::type_name;
-use std::fmt;
 use std::sync::Arc;
+use std::{error, fmt};
 
 use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::task;
 
 use crate::state::Shop;
 
@@ -71,7 +72,7 @@ impl fmt::Display for MailError {
     }
 }
 
-impl std::error::Error for MailError {}
+impl error::Error for MailError {}
 
 /// Stands in for an SMTP client: it refuses an address with no `@` and logs what it sends.
 #[derive(Debug)]
@@ -82,7 +83,7 @@ pub(crate) struct Mailer {
 impl Mailer {
     /// Opens a connection to the mail server.
     pub(crate) async fn connect(server: &str) -> Result<Self, MailError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         Ok(Self {
             server: server.to_owned(),
         })
@@ -90,7 +91,7 @@ impl Mailer {
 
     /// Sends one message.
     pub(crate) async fn send(&self, to: &str, text: &str) -> Result<(), MailError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if !to.contains('@') {
             return Err(MailError(format!("no mailbox at {to:?}")));
         }

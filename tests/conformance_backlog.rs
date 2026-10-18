@@ -7,8 +7,6 @@
 
 #![cfg(all(feature = "testing", feature = "memory", feature = "conformance"))]
 
-use std::future::Future;
-
 use ruststream::conformance::harness;
 use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPosition, MemorySubscriber, Retaining,

@@ -2,7 +2,7 @@
 //! and one clone of each value a batch lends while one does.
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -3,7 +3,7 @@
 //! trait with its reply type filled in - the mount site binds each to its subject.
 
 // --8<-- [start:order]
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::prelude::*;
 use ruststream::schemars::JsonSchema;

@@ -3,7 +3,7 @@
 //! The attribute expands the builder below into a binary that understands `run` (the default) and
 //! `asyncapi gen`. Try it with `cargo run --example macro_app --features macros,memory -- run`.
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 

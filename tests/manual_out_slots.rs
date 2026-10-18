@@ -13,7 +13,6 @@ use std::convert::Infallible;
 use ruststream::PairError;
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
-use ruststream::runtime::Reads;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 

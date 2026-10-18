@@ -43,7 +43,7 @@ impl MessageHeaders for Wire {
 
 mod with_value {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -94,7 +94,7 @@ mod with_value {
 
 mod received_values {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

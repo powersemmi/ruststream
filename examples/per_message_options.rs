@@ -10,9 +10,9 @@
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishBuilder, PublishSink};
-use ruststream::{BytesMut, OutgoingMessage, PairError, Take};
+use ruststream::{OutgoingMessage, PairError, Take};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]

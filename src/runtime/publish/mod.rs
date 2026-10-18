@@ -9,7 +9,6 @@
 
 use std::borrow::Cow;
 use std::fmt::{self, Display, Formatter};
-use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Deref;

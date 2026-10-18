@@ -55,7 +55,7 @@ impl Ledger {
 mod retry_after {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -117,7 +117,7 @@ mod retry_after {
 mod batch_retry_after {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -192,7 +192,7 @@ mod batch_retry_after {
 
 mod declaration {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

@@ -1,11 +1,12 @@
 //! Integration test for `AsyncAPI` document generation.
 #![cfg(all(feature = "asyncapi", feature = "memory"))]
 
+use std::convert::Infallible;
 use std::future::ready;
 
 use ruststream::asyncapi::{ViewerOptions, build_spec, render_viewer_html};
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{HandlerMetadata, OutgoingMessageMetadata};
+use ruststream::runtime::HandlerMetadata;
 use ruststream::{SecurityScheme, ServerSpec};
 
 #[test]
@@ -15,13 +16,13 @@ fn build_spec_describes_handlers() {
         let orders = b.broker().subscribe("orders");
         b.handle(
             orders,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::raw("orders").with_description("Handles orders"),
         );
         let alerts = b.broker().subscribe("alerts");
         b.handle(
             alerts,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             HandlerMetadata::typed::<u64>("alerts"),
         );
     });
@@ -70,7 +71,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c1", "bytes"));
         b.handle(
             first,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             first_meta,
         );
 
@@ -85,7 +86,7 @@ fn message_components_merge_and_send_ids_stay_unique() {
             .push(OutgoingMessageMetadata::new("c2", "bytes"));
         b.handle(
             second,
-            |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+            |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
             second_meta,
         );
     });
@@ -134,7 +135,7 @@ impl DescribingBroker {
 }
 
 impl Broker for DescribingBroker {
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
     type Connected = ConnectedDescribingBroker;
 
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
@@ -145,7 +146,7 @@ impl Broker for DescribingBroker {
 struct ConnectedDescribingBroker;
 
 impl ruststream::ConnectedBroker for ConnectedDescribingBroker {
-    type Error = std::convert::Infallible;
+    type Error = Infallible;
     type Closed = ();
 
     fn shutdown(self) -> impl Future<Output = Result<(), Self::Error>> {
@@ -186,7 +187,7 @@ fn labeled_memory_broker_is_an_in_process_server() {
             let orders = b.broker().subscribe("orders");
             b.handle(
                 orders,
-                |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
             );
         },
@@ -853,13 +854,15 @@ mod dead_letter {
 /// registration declared about giving up.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod document_surface {
+    use std::future::ready;
+
     use ruststream::memory::prelude::*;
     use ruststream::runtime::HandlerMetadata;
     use ruststream::schemars::JsonSchema;
     use ruststream::{AppId, Contact, ExternalDocs, License, ServerSpec, Tag, nonzero};
     use serde::{Deserialize, Serialize};
 
-    use super::{Context, HandlerOutcome, build_spec};
+    use super::build_spec;
 
     /// An order to confirm.
     #[derive(Deserialize, JsonSchema)]
@@ -931,7 +934,7 @@ mod document_surface {
                 let audit = b.broker().subscribe("audit");
                 b.handle(
                     audit,
-                    |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                    |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                     HandlerMetadata::raw("audit"),
                 );
             });
@@ -1257,7 +1260,10 @@ mod document_surface {
 /// broker's own vocabulary, without the core naming a single field of it.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod protocol_bindings {
-    use std::future::Future;
+
+    use std::future;
+    #[cfg(feature = "conformance")]
+    use std::panic;
 
     use ruststream::asyncapi::{Binding, Bindings};
     use ruststream::memory::prelude::*;
@@ -1354,7 +1360,7 @@ mod protocol_bindings {
             &self,
             _connected: &C,
         ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
-            std::future::ready(Ok(RedeliveryAddress::new(self.name)))
+            future::ready(Ok(RedeliveryAddress::new(self.name)))
         }
     }
 
@@ -1495,11 +1501,11 @@ mod protocol_bindings {
                 &self,
                 _connected: &C,
             ) -> impl Future<Output = Result<RedeliveryAddress, C::Error>> + Send {
-                std::future::ready(Ok(RedeliveryAddress::new("orders")))
+                future::ready(Ok(RedeliveryAddress::new("orders")))
             }
         }
 
-        let leak = std::panic::catch_unwind(|| {
+        let leak = panic::catch_unwind(|| {
             harness::describes_without_credentials(&MemoryBroker::new(), &LeakyQueue, "hunter2");
         });
 
@@ -1524,16 +1530,13 @@ mod protocol_bindings {
 /// it publishes to, where a reply actually goes, and what media type leaves.
 #[cfg(all(feature = "macros", feature = "json"))]
 mod publish_bindings {
-    use std::future::Future;
 
+    use ruststream::PairError;
     use ruststream::asyncapi::{Binding, Bindings};
     use ruststream::memory::prelude::*;
     use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
-    use ruststream::runtime::{
-        ForReply, Names, Outgoing, OutgoingKind, PublishContext, PublishTransform,
-    };
+    use ruststream::runtime::{Outgoing, OutgoingKind, PublishContext};
     use ruststream::schemars::JsonSchema;
-    use ruststream::{Broker, PairError, PublishPolicy};
     use serde::{Deserialize, Serialize};
 
     use super::build_spec;

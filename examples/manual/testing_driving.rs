@@ -30,7 +30,7 @@ impl MessageHeaders for Order {
 
 mod broker {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -101,7 +101,7 @@ mod broker {
 
 mod broker_named {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -156,7 +156,7 @@ mod broker_named {
 
 mod message {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -240,7 +240,7 @@ mod message {
 
 mod publish {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -317,7 +317,7 @@ mod publish {
 
 mod publish_shortcuts {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -400,7 +400,7 @@ mod publish_shortcuts {
 
 mod settle {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -449,7 +449,7 @@ mod settle {
 
 mod advance {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;
@@ -524,11 +524,12 @@ mod advance {
 mod drain {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::{Arc, Mutex};
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
+    use tokio::task;
 
     use super::Order;
 
@@ -540,7 +541,7 @@ mod drain {
 
     impl Mailer {
         async fn confirm(&self, order_id: u64) {
-            tokio::task::yield_now().await;
+            task::yield_now().await;
             if let Ok(mut sent) = self.sent.lock() {
                 sent.push(order_id);
             }

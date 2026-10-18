@@ -24,8 +24,11 @@ struct Receipt {
 
 mod start {
     use std::error::Error;
-    use std::future::Future;
     use std::pin::pin;
+    #[cfg(unix)]
+    use std::process;
+    #[cfg(unix)]
+    use std::process::Command;
     use std::time::Duration;
 
     use futures::StreamExt;
@@ -33,6 +36,10 @@ mod start {
     use ruststream::memory::MemorySubscriber;
     use ruststream::memory::prelude::*;
     use ruststream::runtime::{HealthState, SubscriptionEnd};
+    #[cfg(unix)]
+    use tokio::signal::unix;
+    #[cfg(unix)]
+    use tokio::signal::unix::SignalKind;
     use tokio::time::timeout;
 
     use super::{Order, Receipt};
@@ -158,9 +165,9 @@ mod start {
     /// Sends `SIGTERM` to this process through the shell (the example takes no libc dependency).
     #[cfg(unix)]
     fn raise_sigterm() -> Result<(), Box<dyn Error>> {
-        let status = std::process::Command::new("sh")
+        let status = Command::new("sh")
             .arg("-c")
-            .arg(format!("kill -TERM {}", std::process::id()))
+            .arg(format!("kill -TERM {}", process::id()))
             .status()?;
         assert!(status.success(), "kill -TERM failed: {status:?}");
         Ok(())
@@ -171,7 +178,7 @@ mod start {
     async fn run_serves_until_a_termination_signal() -> Result<(), Box<dyn Error>> {
         // A listener registered first replaces the default disposition, so a signal that lands
         // before `run` installs its own handler cannot kill the test binary.
-        let _guard = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let _guard = unix::signal(SignalKind::terminate())?;
         let broker = MemoryBroker::new();
         let mut receipts = broker.subscribe("receipts");
         let orders = broker.publisher();

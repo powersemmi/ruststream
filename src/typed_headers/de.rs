@@ -2,6 +2,8 @@
 //! (or string-keyed map) reads one header per field, parsing the string-encoded value into
 //! whatever scalar the field expects.
 
+use std::slice::Iter;
+use std::str;
 use std::str::FromStr;
 
 use serde::de::value::{BorrowedStrDeserializer, StrDeserializer};
@@ -75,7 +77,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
 /// `Option` fields default to `None` and serde reports missing required fields by name.
 struct FieldAccess<'de> {
     headers: &'de HeaderMap,
-    fields: std::slice::Iter<'static, &'static str>,
+    fields: Iter<'static, &'static str>,
     pending: Option<(&'static str, &'de [u8])>,
 }
 
@@ -154,7 +156,7 @@ struct ValueDeserializer<'de> {
 
 impl<'de> ValueDeserializer<'de> {
     fn utf8(&self) -> Result<&'de str, DeserializeHeadersError> {
-        std::str::from_utf8(self.raw).map_err(|_| DeserializeHeadersError::NotUtf8 {
+        str::from_utf8(self.raw).map_err(|_| DeserializeHeadersError::NotUtf8 {
             header: self.header.to_owned(),
         })
     }
@@ -252,7 +254,7 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
     }
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match std::str::from_utf8(self.raw) {
+        match str::from_utf8(self.raw) {
             Ok(s) => visitor.visit_borrowed_str(s),
             Err(_) => visitor.visit_borrowed_bytes(self.raw),
         }

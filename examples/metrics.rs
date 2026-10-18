@@ -17,6 +17,7 @@ use ruststream::memory::prelude::*;
 use ruststream::metrics::Metrics;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio::signal;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Outgoing)]
 struct Order {
@@ -86,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                _ = signal::ctrl_c() => {}
                 () = stopping => {}
             }
         })

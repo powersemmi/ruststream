@@ -13,7 +13,7 @@
 ))]
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

@@ -7,8 +7,10 @@ mod unified;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
+use syn::punctuated::Punctuated;
 use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, PatType, ReturnType, Type, TypePath};
 
+use crate::parse;
 use crate::parse::{
     FailurePolicyArg, SubscriberArgs, WorkersArg, doc_description, position_type, source_tokens,
     vec_element,
@@ -104,7 +106,7 @@ struct OutParam<'a> {
     /// The parameter type exactly as written, for the signature witness the unified emission
     /// keeps the user's imports used with.
     ty: &'a Type,
-    bounds: &'a syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+    bounds: &'a Punctuated<syn::TypeParamBound, syn::Token![+]>,
     marker: TokenStream2,
     /// The declared message set; `None` (also written `()`) leaves the slot unrestricted.
     bodies: Option<BodyDecl<'a>>,
@@ -789,11 +791,7 @@ fn handler_parts<'a>(args: &SubscriberArgs, func: &'a ItemFn) -> syn::Result<Han
                 quote!(::ruststream::runtime::Fixed),
             )
         }
-        None => (
-            source_ty.clone(),
-            quote!(),
-            quote!(::ruststream::runtime::Open),
-        ),
+        None => (source_ty, quote!(), quote!(::ruststream::runtime::Open)),
     };
 
     // Optional second handler parameter: the per-delivery `&mut Context`. If the user declares it,
@@ -881,7 +879,7 @@ fn batch_reply_body<'a>(
             ));
         }
     };
-    if let Some(ok_ty) = crate::parse::publish_result_reply(declared_ty) {
+    if let Some(ok_ty) = parse::publish_result_reply(declared_ty) {
         let Some(elem) = vec_element(ok_ty) else {
             return Err(Error::new_spanned(
                 ok_ty,
@@ -921,11 +919,13 @@ fn publishing_reply<'a>(
             ));
         }
     };
-    Ok(match crate::parse::publish_result_reply(declared_ty) {
-        Some(reply_ty) => (reply_ty, quote!((async move #block).await)),
-        None => (
-            declared_ty,
-            quote!(::core::result::Result::Ok((async move #block).await)),
-        ),
-    })
+    Ok(parse::publish_result_reply(declared_ty).map_or_else(
+        || {
+            (
+                declared_ty,
+                quote!(::core::result::Result::Ok((async move #block).await)),
+            )
+        },
+        |reply_ty| (reply_ty, quote!((async move #block).await)),
+    ))
 }

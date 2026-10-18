@@ -4,6 +4,7 @@ use ruststream::codec::JsonCodec;
 use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tokio::task;
 
 use crate::notifications::{Notice, Notices};
 use crate::orders::{Line, within_bounds};
@@ -52,7 +53,7 @@ pub(crate) fn plan(lines: &[Line]) -> Vec<Parcel> {
 
 /// Stands in for the courier's booking API: a call over the network that returns a tracking code.
 async fn book_courier(packed: &Packed) -> String {
-    tokio::task::yield_now().await;
+    task::yield_now().await;
     format!("TRK-{}-{}", packed.order, packed.parcels.len())
 }
 

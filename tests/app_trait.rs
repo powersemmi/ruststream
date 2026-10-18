@@ -5,6 +5,8 @@
 use std::sync::Arc;
 
 use ruststream::ServerSpec;
+#[cfg(feature = "asyncapi")]
+use ruststream::asyncapi;
 use ruststream::codec::JsonCodec;
 use ruststream::memory::MemoryBroker;
 use ruststream::runtime::{App, AppInfo, RustStream};
@@ -53,7 +55,7 @@ async fn an_impl_app_runs_and_shuts_down_through_the_trait() {
 #[cfg(feature = "asyncapi")]
 #[test]
 fn build_spec_reads_an_impl_app() {
-    let spec = ruststream::asyncapi::build_spec(&build());
+    let spec = asyncapi::build_spec(&build());
     assert_eq!(spec.info.title, "svc");
     assert!(spec.servers.contains_key("mem"));
     assert!(spec.channels.contains_key("orders"));

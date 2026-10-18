@@ -39,7 +39,7 @@ fn compute(order: &Order) -> u64 {
 
 mod diagnostics {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;

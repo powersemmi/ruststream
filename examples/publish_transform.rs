@@ -106,7 +106,6 @@ fn main() {}
 mod tests {
     use std::error::Error;
 
-    use ruststream::HeaderMap;
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
 

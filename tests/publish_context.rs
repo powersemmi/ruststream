@@ -10,15 +10,12 @@
 
 mod common;
 
-use std::future::Future;
+use std::error;
 
 use common::{Req, Resp};
 use ruststream::memory::MemoryMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{
-    ContextKind, ForReply, Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline,
-    PublishTransform, Reads,
-};
+use ruststream::runtime::{Outgoing, PublishContext, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
 use ruststream::{BuildContext, Field};
 
@@ -157,8 +154,7 @@ impl PublishLayer for AppendA {
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
-    {
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send + 'a {
         append_order(out, "A");
         next.run(out)
     }
@@ -172,8 +168,7 @@ impl PublishLayer for AppendB {
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
-    {
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send + 'a {
         append_order(out, "B");
         next.run(out)
     }

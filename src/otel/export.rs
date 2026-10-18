@@ -7,7 +7,6 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::Future;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -784,6 +783,9 @@ impl PublishLayer for OtelPublishLayer {
 mod tests {
     use std::env;
     use std::process::Command;
+    use std::time::Duration;
+
+    use opentelemetry_sdk::metrics::data::{ResourceMetrics, ScopeMetrics};
 
     use super::*;
 
@@ -799,9 +801,7 @@ mod tests {
             "nack_drop"
         );
         assert_eq!(
-            outcome_attr(HandlerResult::retry_after(std::time::Duration::from_secs(
-                1
-            ))),
+            outcome_attr(HandlerResult::retry_after(Duration::from_secs(1))),
             "retry_after"
         );
     }
@@ -838,8 +838,8 @@ mod tests {
                 .get_finished_metrics()
                 .expect("exporter drained")
                 .iter()
-                .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-                .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+                .flat_map(ResourceMetrics::scope_metrics)
+                .flat_map(ScopeMetrics::metrics)
                 .filter(|metric| metric.name() == name)
                 .flat_map(|metric| match metric.data() {
                     AggregatedMetrics::F64(MetricData::Histogram(histogram)) => histogram

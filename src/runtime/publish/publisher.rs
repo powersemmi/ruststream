@@ -98,7 +98,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PP: PublishPipeline,
     {
         let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(|e| Box::new(e) as BoxError)?;
+            .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         // A reply has no call site to adjust the broker's per-message settings, so the position
         // starts at the publish policy's own and only a transform fills it.
@@ -128,11 +128,11 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PP: PublishPipeline,
     {
         let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(|e| Box::new(e) as BoxError)?;
+            .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         out.headers_mut()
             .insert_typed(headers)
-            .map_err(|e| Box::new(e) as BoxError)?;
+            .map_err(BoxError::from)?;
         let mut options = None;
         self.layers.apply(&mut out, &mut options, cx);
         pipeline
@@ -159,7 +159,7 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         PP: PublishPipeline,
     {
         let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(|e| Box::new(e) as BoxError)?;
+            .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);

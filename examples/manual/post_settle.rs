@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use ruststream::memory::prelude::*;
+use tokio::task;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 struct Order {
@@ -39,7 +40,7 @@ struct Notifier {
 
 impl Notifier {
     async fn send(&self, note: String) {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if let Ok(mut sent) = self.sent.lock() {
             sent.push(note);
         }
@@ -60,7 +61,7 @@ impl Notifier {
 mod single {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
 
     use ruststream::memory::prelude::*;
@@ -113,7 +114,7 @@ mod single {
 mod batch {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
 
     use ruststream::memory::prelude::*;
@@ -183,7 +184,7 @@ mod batch {
 mod hooks {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
 
     use ruststream::memory::prelude::*;

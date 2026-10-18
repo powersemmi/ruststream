@@ -20,7 +20,7 @@ use syn::{
     Attribute, DeriveInput, Ident, ItemFn, LitInt, LitStr, Meta, Token, Type, parse_macro_input,
 };
 
-use parse::{SubscriberArgs, doc_description};
+use parse::{SubscriberArgs, derive_generics, doc_description};
 
 /// Turns an `async fn` handler into a mountable subscriber definition.
 ///
@@ -417,7 +417,8 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
         Ok(None) => quote!(::ruststream::NoHeaders),
         Err(err) => return err.into_compile_error().into(),
     };
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let generics = derive_generics(&input.generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
         impl #impl_generics ::ruststream::MessageInfo for #name #ty_generics #where_clause {
@@ -433,8 +434,10 @@ pub fn derive_message(item: TokenStream) -> TokenStream {
 }
 
 /// Derives everything a message type declares about being sent, from one `key = value`
-/// attribute: its destination
-/// ([`OutgoingDestination`](../ruststream/trait.OutgoingDestination.html)), its optional typed
+/// attribute.
+///
+/// What it derives: the destination
+/// ([`OutgoingDestination`](../ruststream/trait.OutgoingDestination.html)), an optional typed
 /// header contract, and the [`MessageInfo`](../ruststream/trait.MessageInfo.html) metadata the
 /// generated document reads (the type's name and doc comment).
 ///
@@ -653,8 +656,10 @@ fn slot_outgoing_metadata(name: &Ident, dictionary: &[Type]) -> TokenStream2 {
 }
 
 /// Derives a declared message set (`OutMessages` in the core crate) from an enum whose
-/// variants each wrap one message model. The enum is a type-level declaration: it is never
-/// constructed, its variants' inner types are the set.
+/// variants each wrap one message model.
+///
+/// The enum is a type-level declaration: it is never constructed, its variants' inner types are
+/// the set.
 ///
 /// Naming the enum as the third `Out` argument (`Out<impl Publisher, Marker, SendSet>`)
 /// declares that the handler publishes exactly those models: the publish builder compiles for

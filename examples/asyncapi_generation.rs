@@ -71,7 +71,7 @@ fn main() {}
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::fs;
+    use std::{env, fs, process};
 
     use serde_json::{Value, json};
 
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn the_document_is_written_as_json_and_yaml() -> Result<(), Box<dyn Error>> {
-        let dir = std::env::temp_dir().join(format!("asyncapi-generation-{}", std::process::id()));
+        let dir = env::temp_dir().join(format!("asyncapi-generation-{}", process::id()));
         fs::create_dir_all(&dir)?;
         write_document(&dir)?;
 

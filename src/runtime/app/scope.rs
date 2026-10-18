@@ -1,6 +1,6 @@
 //! The per-broker handler registration scope.
 
-use std::{error::Error as StdError, fmt, future::Future, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use crate::{Broker, Connected, Subscriber};
 

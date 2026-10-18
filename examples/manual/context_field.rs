@@ -33,6 +33,10 @@ fn main() {
     // the same call the generated handler makes; standalone, the same key reads the field
     // directly off the context value.
     let delivery = Delivery { offset: 42 };
-    assert_eq!(Offset.get(&delivery), 42);
+    assert_eq!(
+        Offset.get(&delivery),
+        42,
+        "the key reads the delivery's offset"
+    );
     println!("offset = {}", Offset.get(&delivery));
 }

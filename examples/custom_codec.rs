@@ -8,7 +8,8 @@
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
+use rmp_serde::encode;
 use ruststream::codec::{Codec, CodecError};
 use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;
@@ -47,7 +48,7 @@ impl Codec for NamedMsgpack {
 
     fn encode_into<T: Serialize>(&self, value: &T, buf: &mut BytesMut) -> Result<(), CodecError> {
         // Straight into the publish path's buffer: nothing else is allocated.
-        rmp_serde::encode::write_named(&mut buf.writer(), value)
+        encode::write_named(&mut buf.writer(), value)
             .map_err(|err| CodecError::Encode(Box::new(err)))
     }
 

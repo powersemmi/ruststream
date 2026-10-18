@@ -14,7 +14,6 @@ use std::any::{Any, TypeId};
 use std::{
     any::type_name,
     error::Error as StdError,
-    future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -98,11 +97,7 @@ impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
         self: Box<Self>,
     ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>> {
         Box::pin(async move {
-            let connected = self
-                .broker
-                .connect()
-                .await
-                .map_err(|e| Box::new(e) as BoxError)?;
+            let connected = self.broker.connect().await.map_err(BoxError::from)?;
             Ok(publish_connected::<B>(connected, self.slot))
         })
     }
@@ -126,10 +121,10 @@ impl<B: Broker + 'static> BrokerLifecycle for BrokerCell<B> {
         let connecting = transition(Box::new(broker));
         Box::pin(async move {
             let connected = connecting.await?.downcast::<B::Connected>().map_err(|_| {
-                Box::from(format!(
+                BoxError::from(format!(
                     "the in-process transition registered for {} produced another connected form",
                     type_name::<B>(),
-                )) as BoxError
+                ))
             })?;
             Ok(publish_connected::<B>(*connected, slot))
         })
@@ -181,16 +176,16 @@ impl<B: Broker + 'static> ConnectedLifecycle for ConnectedCell<B> {
                 .expect("connected slot mutex poisoned")
                 .take();
             let connected = Arc::try_unwrap(self.connected).map_err(|_| {
-                Box::from(format!(
+                BoxError::from(format!(
                     "connected broker {} still aliased at shutdown",
                     type_name::<B>(),
-                )) as BoxError
+                ))
             })?;
             connected
                 .shutdown()
                 .await
                 .map(|_closed| ())
-                .map_err(|e| Box::new(e) as BoxError)
+                .map_err(BoxError::from)
         })
     }
 }

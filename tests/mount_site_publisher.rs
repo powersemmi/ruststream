@@ -10,15 +10,15 @@
 mod common;
 
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use common::{Order, Wire};
 
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
 use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::TestApp;
-use ruststream::{BytesMut, OutgoingMessage, PairError, PublishPolicy, Take};
+use ruststream::{OutgoingMessage, PairError, Take};
 
 /// The app-wide middleware: it stamps every publish the service makes.
 #[derive(Clone)]

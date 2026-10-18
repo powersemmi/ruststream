@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use ruststream::memory::prelude::*;
 use serde::{Deserialize, Serialize};
+use tokio::task;
 
 /// An order placed by a customer, delivered on the `orders` channel.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -67,12 +68,12 @@ struct Repository {
 
 impl Repository {
     async fn open() -> Result<Self, ServiceError> {
-        tokio::task::yield_now().await; // stands in for the network round trip
+        task::yield_now().await; // stands in for the network round trip
         Ok(Self::default())
     }
 
     async fn record_order(&self, id: u64) -> Result<(), ServiceError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if self.fail_next.fetch_xor(true, Ordering::Relaxed) {
             return Err(ServiceError::Unavailable);
         }

@@ -72,7 +72,6 @@ impl BlanketLayer for SlowHandlers {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::future::Future;
     use std::io;
     use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
@@ -80,6 +79,8 @@ mod tests {
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::{Deserialize, Serialize};
+    use tokio::time;
+    use tracing::subscriber;
 
     use super::SlowHandlers;
     use crate::service::test_broker;
@@ -111,7 +112,7 @@ mod tests {
         ) -> impl Future<Output = Result<(), HandlerOutcome>> {
             let pages = report.pages;
             async move {
-                tokio::time::sleep(Duration::from_millis(pages)).await;
+                time::sleep(Duration::from_millis(pages)).await;
                 Ok(())
             }
         }
@@ -150,7 +151,7 @@ mod tests {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
-        let _guard = tracing::subscriber::set_default(logger);
+        let _guard = subscriber::set_default(logger);
 
         let app = RustStream::new(AppInfo::new("reports", "0.1.0"))
             .layer(SlowHandlers::over(Duration::from_millis(250)))

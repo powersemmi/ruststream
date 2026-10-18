@@ -87,7 +87,7 @@ async fn ctx_extractor_projects_the_context_from_its_key() {
     let seen_len = Arc::new(AtomicUsize::new(0));
     let state_seen = SeenLen(Arc::clone(&seen_len));
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(MeasureState { seen: state_seen }) })
+        .on_startup(async move |()| Ok::<_, Infallible>(MeasureState { seen: state_seen }))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(measure);
         });

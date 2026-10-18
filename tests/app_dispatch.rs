@@ -6,7 +6,7 @@
 
 use std::{
     convert::Infallible,
-    future::{Future, ready},
+    future::ready,
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -15,12 +15,8 @@ use std::{
 
 use ruststream::memory::{MemoryBroker, MemoryPublisher};
 use ruststream::prelude::*;
-use ruststream::runtime::{
-    BlanketLayer, Handler, HandlerMetadata, Input, Layer, MessageWire, SerializedWire,
-    SoloDeserialized,
-};
+use ruststream::runtime::{BlanketLayer, Handler, HandlerMetadata, Layer};
 use ruststream::testing::TestApp;
-use ruststream::{CallerName, MessageHeaders, NoHeaders, OutgoingDestination};
 use tokio::sync::Notify;
 
 /// The payload view the byte-level bodies below take. The bodies never look at the bytes - the
@@ -223,7 +219,7 @@ async fn global_layer_wraps_handlers() {
             let subscriber = b.broker().subscribe("orders");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
             );
         });
@@ -278,7 +274,7 @@ async fn cross_broker_publish_via_captured_publisher() {
             let subscriber = b.broker().subscribe("responses");
             b.handle(
                 subscriber,
-                move |_msg: &_, _ctx: &mut Context| async { HandlerOutcome::ack() },
+                move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("responses"),
             );
         });

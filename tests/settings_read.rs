@@ -8,7 +8,7 @@
 
 mod common;
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::num::NonZeroUsize;
 
 use common::Order;

@@ -1264,6 +1264,8 @@ gungraun = "=0.20.0"
 divan = "0.1.21"
 # The poll-diagnostics suite reads the warning the way an operator does: as a formatted log line.
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std"] }
+# Counts this thread's allocations around a publish, so a test reads what one costs.
+allocation-counter = "0.8.1"
 
 # What ships is optimized across crate boundaries: the framework is generic to the point where a
 # dispatch path is only as cheap as the inlining it gets, and a build that stops at each crate
@@ -1278,14 +1280,40 @@ lto = "fat"
 inherits = "release"
 debug = "line-tables-only"
 
-[lints.rust]
+# One lint table for both crates of the workspace, so the macros crate is held to what the
+# runtime crate is held to.
+[workspace.lints.rust]
+unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 missing_docs = "deny"
 missing_debug_implementations = "warn"
 unused_qualifications = "warn"
+# Imports: a name is imported once, at the top of the file.
+redundant_imports = "warn"
+unused_import_braces = "warn"
+# Dead and redundant code: casts, lifetimes and macro arms that change nothing.
+closure_returning_async_block = "warn"
+explicit_outlives_requirements = "warn"
+impl_trait_redundant_captures = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unused_extern_crates = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+# Hidden behaviour: code that reads one way and runs another.
+ambiguous_negative_literals = "warn"
+deref_into_dyn_supertrait = "warn"
+ffi_unwind_calls = "warn"
+non_ascii_idents = "warn"
+unstable_features = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
@@ -1297,3 +1325,85 @@ missing_const_for_fn = "allow"
 multiple_crate_versions = "allow"
 redundant_pub_crate = "allow"
 cognitive_complexity = "warn"
+# Imports: a path is brought into scope with `use`, never spelled out inline.
+absolute_paths = "warn"
+alloc_instead_of_core = "warn"
+unnecessary_self_imports = "warn"
+# Panics: library code returns its errors; tests may unwrap.
+unwrap_used = "warn"
+unwrap_in_result = "warn"
+missing_assert_message = "warn"
+string_slice = "warn"
+# Numbers: big endian, the network order, on the wire.
+little_endian_bytes = "warn"
+non_zero_suggestions = "warn"
+# Idiomatic std: the shortest form that says what the code does.
+map_with_unused_argument_over_ranges = "warn"
+return_and_then = "warn"
+deref_by_slicing = "warn"
+if_then_some_else_none = "warn"
+iter_over_hash_type = "warn"
+create_dir = "warn"
+filetype_is_file = "warn"
+mutex_atomic = "warn"
+mutex_integer = "warn"
+needless_raw_strings = "warn"
+pathbuf_init_then_push = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_lit_chars_any = "warn"
+verbose_file_reads = "warn"
+# Unfinished and debugging code does not ship.
+dbg_macro = "warn"
+exit = "warn"
+todo = "warn"
+unimplemented = "warn"
+# Numbers and casts say what they mean.
+as_pointer_underscore = "warn"
+as_underscore = "warn"
+decimal_literal_representation = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+host_endian_bytes = "warn"
+lossy_float_literal = "warn"
+modulo_arithmetic = "warn"
+precedence_bits = "warn"
+suspicious_xor_used_as_pow = "warn"
+# Memory and unsafe code, for any that a dependency's macro brings in.
+default_union_representation = "warn"
+inline_asm_x86_att_syntax = "warn"
+mem_forget = "warn"
+multiple_unsafe_ops_per_block = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+# Errors are kept, not dropped.
+pointer_format = "warn"
+try_err = "warn"
+unused_result_ok = "warn"
+# Names and modules.
+cfg_not_test = "warn"
+disallowed_script_idents = "warn"
+error_impl_error = "warn"
+partial_pub_fields = "warn"
+pub_without_shorthand = "warn"
+redundant_test_prefix = "warn"
+# Patterns and control flow.
+mixed_read_write_in_expression = "warn"
+ref_patterns = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+unnecessary_rest_pattern = "warn"
+unneeded_field_pattern = "warn"
+# Consistent style.
+doc_paragraphs_missing_punctuation = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+large_include_file = "warn"
+redundant_type_annotations = "warn"
+semicolon_inside_block = "warn"
+
+[lints]
+workspace = true

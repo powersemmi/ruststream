@@ -6,8 +6,9 @@
 //!
 //! [prometheus]: https://powersemmi.github.io/ruststream/latest/components/observability/metrics/
 
-use std::future::Future;
 use std::sync::Arc;
+use std::time::Instant;
+use std::{error, fmt};
 
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
@@ -85,8 +86,8 @@ pub struct Metrics {
     inner: Arc<Inner>,
 }
 
-impl std::fmt::Debug for Metrics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Metrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Metrics").finish_non_exhaustive()
     }
 }
@@ -231,8 +232,8 @@ pub struct MetricsLayer {
     inner: Arc<Inner>,
 }
 
-impl std::fmt::Debug for MetricsLayer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MetricsLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MetricsLayer").finish_non_exhaustive()
     }
 }
@@ -269,8 +270,8 @@ pub struct MetricsHandler<H> {
     metrics: Arc<Inner>,
 }
 
-impl<H> std::fmt::Debug for MetricsHandler<H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<H> fmt::Debug for MetricsHandler<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MetricsHandler").finish_non_exhaustive()
     }
 }
@@ -289,7 +290,7 @@ where
     ) -> impl Future<Output = HandlerOutcome> + Send {
         let name = ctx.name().to_owned();
         async move {
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             // Classify by the outcome inside the settlement; the continuation (if any) passes
             // through untouched to the dispatcher.
             let settle = self.inner.handle(msg, ctx).await;
@@ -312,8 +313,8 @@ pub struct MetricsPublish {
     inner: Arc<Inner>,
 }
 
-impl std::fmt::Debug for MetricsPublish {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for MetricsPublish {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MetricsPublish").finish_non_exhaustive()
     }
 }
@@ -323,8 +324,7 @@ impl PublishLayer for MetricsPublish {
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a
-    {
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync>>> + Send + 'a {
         let name = out.name().to_owned();
         async move {
             let result = next.run(out).await;

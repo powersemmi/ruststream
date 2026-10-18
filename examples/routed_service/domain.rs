@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use ruststream::schemars::JsonSchema;
 use ruststream::{MessageInfo, Outgoing};
 use serde::{Deserialize, Serialize};
+use tokio::task;
 
 /// An order placed by a customer, delivered on the `orders` channel.
 #[derive(Debug, Clone, Deserialize, JsonSchema, MessageInfo)]
@@ -102,7 +103,7 @@ impl Repository {
     /// Opens the store. Stands in for the real connect; the startup hook awaits this before any
     /// broker connects.
     pub(crate) async fn open() -> Result<Self, ServiceError> {
-        tokio::task::yield_now().await; // stands in for the network round trip
+        task::yield_now().await; // stands in for the network round trip
         Ok(Self {
             inner: Arc::new(RepoInner {
                 orders: Mutex::new(HashSet::new()),
@@ -114,7 +115,7 @@ impl Repository {
     /// Records an accepted order. Returns [`ServiceError::Unavailable`] on every other call to
     /// demonstrate transient-failure handling.
     pub(crate) async fn record_order(&self, id: u64) -> Result<(), ServiceError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if self.inner.fail_next.fetch_xor(true, Ordering::Relaxed) {
             return Err(ServiceError::Unavailable);
         }
@@ -129,13 +130,13 @@ impl Repository {
         _order_id: u64,
         _amount_cents: u64,
     ) -> Result<(), ServiceError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         Ok(())
     }
 
     /// Cancels a recorded order. Unknown orders are a permanent error, not a transient one.
     pub(crate) async fn cancel(&self, order_id: u64) -> Result<(), ServiceError> {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         if self
             .inner
             .orders
@@ -151,6 +152,6 @@ impl Repository {
 
     /// Closes the store. The after-shutdown hook awaits this once brokers are down.
     pub(crate) async fn close(&self) {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
     }
 }

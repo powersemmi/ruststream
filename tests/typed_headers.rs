@@ -317,8 +317,8 @@ async fn header_contract_violation_follows_decode_policy() {
 
 #[subscriber("frames", on_failure(decode = skip))]
 async fn frame(payload: &RawFrame<'_>, Headers(meta): Headers<ChunkMeta>) -> HandlerOutcome {
-    assert_ne!(payload.0, b"");
-    assert_eq!(meta.chunk_no, 3);
+    assert_ne!(payload.0, b"", "the raw body arrives");
+    assert_eq!(meta.chunk_no, 3, "the typed header arrives");
     HandlerOutcome::ack()
 }
 

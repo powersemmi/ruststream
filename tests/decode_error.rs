@@ -17,7 +17,7 @@ mod common;
 
 use std::convert::Infallible;
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
@@ -32,9 +32,8 @@ use ruststream::memory::{
 use ruststream::runtime::BrokerScope;
 use ruststream::testing::TestApp;
 use ruststream::{
-    AckError, AddressedCopies, BatchSubscriber, HeaderMap, IncomingMessage, RedeliveryAddress,
-    RedeliveryAddressed, Seekable, SerializeHeadersError, Subscribe, Subscriber,
-    SubscriptionSource,
+    AckError, AddressedCopies, BatchSubscriber, RedeliveryAddress, RedeliveryAddressed, Seekable,
+    SerializeHeadersError, Subscribe, Subscriber, SubscriptionSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -115,10 +114,8 @@ struct Claim<Log> {
 
 impl<Log: LogMode> Claim<Log> {
     fn read(inner: MemoryMessage<Log>) -> Self {
-        Self {
-            error: carrying::reported(inner.payload()),
-            inner,
-        }
+        let error = carrying::reported(inner.payload());
+        Self { inner, error }
     }
 }
 

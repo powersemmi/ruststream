@@ -10,7 +10,6 @@
 
 use std::pin::Pin;
 
-use ruststream::HeaderMap;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{DynMiddleware, Next};
 use serde::{Deserialize, Serialize};
@@ -62,7 +61,7 @@ impl<I: Send + Sync> DynMiddleware<I> for Block {
 
 mod service {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
 
     use ruststream::memory::MemoryMessage;
@@ -89,12 +88,13 @@ mod service {
 
     /// The chain comes from configuration: one `Block` per tenant the operator listed.
     fn app(blocked: &[&str]) -> impl App {
-        let chain = blocked.iter().map(|tenant| {
-            let block = Block {
-                tenant: (*tenant).to_owned(),
-            };
-            Arc::new(block) as Arc<dyn DynMiddleware<MemoryMessage>>
-        });
+        let chain = blocked
+            .iter()
+            .map(|tenant| -> Arc<dyn DynMiddleware<MemoryMessage>> {
+                Arc::new(Block {
+                    tenant: (*tenant).to_owned(),
+                })
+            });
         let stack = DynStack::new(chain);
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // The stack wraps one registration, which sees the broker's own message.

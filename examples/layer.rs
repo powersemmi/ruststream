@@ -8,7 +8,6 @@
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use ruststream::HeaderMap;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{BlanketLayer, Handler, Layer};
 use serde::{Deserialize, Serialize};

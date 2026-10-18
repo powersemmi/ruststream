@@ -27,7 +27,7 @@ use ruststream::otel::Otel;
 use ruststream::runtime::Layer;
 #[cfg(feature = "testing")]
 use ruststream::testing::TestApp;
-use ruststream::{Broker, ConnectedBroker, IncomingMessage, Subscriber};
+use ruststream::{ConnectedBroker, Subscriber};
 
 #[subscriber("debug.reply", reply("debug.reply.out"))]
 async fn answer(order: &Order) -> Receipt {

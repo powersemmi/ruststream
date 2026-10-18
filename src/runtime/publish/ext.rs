@@ -1,7 +1,5 @@
 //! The publish builder's entry points on a bare [`Publisher`].
 
-use std::future::Future;
-
 use crate::{OutgoingDestination, OwnedTransactions, Publisher, TransactionalPublisher};
 
 use super::builder::{HeadersUnset, MessageBody, PublishBuilder, message_of};

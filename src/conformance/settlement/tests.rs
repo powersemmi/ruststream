@@ -2,7 +2,7 @@
 //! each check must catch.
 
 use std::{
-    future::{Future, pending, ready},
+    future::{pending, ready},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},

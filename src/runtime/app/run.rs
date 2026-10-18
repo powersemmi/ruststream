@@ -1,11 +1,12 @@
 //! Running the service: startup sequence, signal handling and graceful shutdown.
 
-use std::fmt;
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
+#[cfg(unix)]
+use tokio::signal::ctrl_c;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
@@ -483,11 +484,11 @@ async fn wait_for_signal() {
     #[cfg(unix)]
     {
         let Ok(mut term) = signal(SignalKind::terminate()) else {
-            let _ = tokio::signal::ctrl_c().await;
+            let _ = ctrl_c().await;
             return;
         };
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
+            _ = ctrl_c() => {}
             _ = term.recv() => {}
         }
     }

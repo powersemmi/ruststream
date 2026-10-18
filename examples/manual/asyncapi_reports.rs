@@ -12,7 +12,7 @@
 
 use std::any::type_name;
 use std::fmt::Display;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{

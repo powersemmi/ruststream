@@ -4,8 +4,8 @@
 //! they can be reused by application tests against any broker.
 
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{future::Future, time::Duration};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fmt, process};
 
 use crate::Subscriber;
 use futures::StreamExt;
@@ -55,7 +55,7 @@ pub fn unique_subject(prefix: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
     let seq = NEXT.fetch_add(1, AtomicOrdering::Relaxed);
-    let pid = std::process::id();
+    let pid = process::id();
     format!("{prefix}.{pid:x}-{nanos:x}-{seq:x}")
 }
 
@@ -122,7 +122,7 @@ where
 pub async fn next_message<S>(subscriber: &mut S, within: Duration) -> S::Message
 where
     S: Subscriber,
-    S::Error: std::fmt::Debug,
+    S::Error: fmt::Debug,
 {
     let mut stream = std::pin::pin!(subscriber.stream());
     let item = timeout(within, stream.next())
@@ -135,6 +135,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::iter::repeat_with;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -146,8 +147,8 @@ mod tests {
     /// stays inside the grammar every broker's subjects, topics, queues and keys admit.
     #[test]
     fn unique_subjects_differ_and_stay_addressable() {
-        let subjects: Vec<String> = (0..64)
-            .map(|_| unique_subject("conformance.check"))
+        let subjects: Vec<String> = repeat_with(|| unique_subject("conformance.check"))
+            .take(64)
             .collect();
         let distinct: HashSet<&String> = subjects.iter().collect();
         assert_eq!(
@@ -202,7 +203,7 @@ mod tests {
             .await
         );
         assert!(
-            !wait_until_async(|| async { false }, Duration::from_millis(50)).await,
+            !wait_until_async(async move || false, Duration::from_millis(50)).await,
             "a never-true condition must time out"
         );
     }

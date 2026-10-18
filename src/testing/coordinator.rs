@@ -13,15 +13,18 @@
 
 use std::any::Any;
 use std::cell::Cell;
-use std::fmt;
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
+use std::{fmt, ptr};
 
 use bytes::Bytes;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::Instant;
 
 use crate::runtime::HandlerResult;
 use crate::{OutgoingMessage, RawMessage};
@@ -58,7 +61,7 @@ pub(crate) struct Origin(Option<usize>);
 impl Origin {
     /// The connected broker at `connected`.
     fn of<C: ?Sized>(connected: &C) -> Self {
-        Self(Some(std::ptr::from_ref(connected).cast::<()>() as usize))
+        Self(Some(ptr::from_ref(connected).cast::<()>() as usize))
     }
 }
 
@@ -428,7 +431,7 @@ struct Inner {
     in_flight: AtomicUsize,
     processed: AtomicUsize,
     max_steps: usize,
-    notify: tokio::sync::Notify,
+    notify: Notify,
     records: Mutex<Vec<Record>>,
     slot_records: Mutex<Vec<SlotRecord>>,
     /// The harness's clock: ticks once when a runtime publish is captured and once when the
@@ -478,14 +481,14 @@ struct Unsettled {
 /// `subscription`.
 struct DueRedelivery {
     subscription: usize,
-    due: tokio::time::Instant,
+    due: Instant,
 }
 
 /// A scheduled delayed redelivery (`nack_after` / `retry_after`): its deadline and the task that
 /// fires it. The harness awaits the due ones when a test advances time.
 struct Timer {
-    deadline: tokio::time::Instant,
-    handle: tokio::task::JoinHandle<()>,
+    deadline: Instant,
+    handle: JoinHandle<()>,
 }
 
 /// An open slot in the in-flight count, released on drop; see [`Coordinator::hold`].
@@ -510,7 +513,7 @@ impl Coordinator {
                 in_flight: AtomicUsize::new(0),
                 processed: AtomicUsize::new(0),
                 max_steps,
-                notify: tokio::sync::Notify::new(),
+                notify: Notify::new(),
                 records: Mutex::new(Vec::new()),
                 slot_records: Mutex::new(Vec::new()),
                 clock: AtomicU64::new(0),
@@ -578,9 +581,9 @@ impl Coordinator {
     where
         F: FnOnce() + Send + 'static,
     {
-        let deadline = tokio::time::Instant::now() + delay;
+        let deadline = Instant::now() + delay;
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            time::sleep(delay).await;
             redeliver();
         });
         self.push_timer(deadline, handle);
@@ -599,9 +602,9 @@ impl Coordinator {
     where
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let deadline = tokio::time::Instant::now() + delay;
+        let deadline = Instant::now() + delay;
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            time::sleep(delay).await;
             redeliver.await;
         });
         self.push_timer(deadline, handle);
@@ -609,7 +612,7 @@ impl Coordinator {
 
     /// Records one scheduled redelivery so [`fire_due_timers`](Self::fire_due_timers) can await it
     /// once its deadline passes.
-    fn push_timer(&self, deadline: tokio::time::Instant, handle: tokio::task::JoinHandle<()>) {
+    fn push_timer(&self, deadline: Instant, handle: JoinHandle<()>) {
         self.inner
             .timers
             .lock()
@@ -624,8 +627,8 @@ impl Coordinator {
     // timers out of the shared list.
     #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn fire_due_timers(&self) {
-        let now = tokio::time::Instant::now();
-        let due: Vec<tokio::task::JoinHandle<()>> = {
+        let now = Instant::now();
+        let due: Vec<JoinHandle<()>> = {
             let mut timers = self
                 .inner
                 .timers
@@ -775,7 +778,7 @@ impl Coordinator {
             .expect("coordinator redeliveries mutex poisoned")
             .push(DueRedelivery {
                 subscription,
-                due: tokio::time::Instant::now() + delay,
+                due: Instant::now() + delay,
             });
         self.inner.notify.notify_waiters();
     }
@@ -784,7 +787,7 @@ impl Coordinator {
     /// every publish its broker delivers to it, as that broker's routing says, and every
     /// redelivery due to it by now.
     fn owed(&self, subscriptions: &[LiveSubscription], routing: Routing<'_>) -> Option<Unsettled> {
-        let now = tokio::time::Instant::now();
+        let now = Instant::now();
         let mut expected = vec![0; subscriptions.len()];
         {
             let published = self
@@ -866,7 +869,7 @@ impl Coordinator {
     ) -> Result<(), TestError> {
         // Why a deadline: a live broker holds the messages in flight, and nothing in this process
         // can read its queues to tell a message still on its way from one that will never arrive.
-        let until = tokio::time::Instant::now() + deadline;
+        let until = Instant::now() + deadline;
         loop {
             // Interest is registered before the state is read, so a record or a settlement landing
             // in between still wakes the wait below.
@@ -879,7 +882,7 @@ impl Coordinator {
             if owed.is_none() && !running {
                 return Ok(());
             }
-            if tokio::time::timeout_at(until, notified).await.is_err() {
+            if time::timeout_at(until, notified).await.is_err() {
                 let (subscription, handled, expected) = owed.map_or((None, 0, 0), |owed| {
                     (Some(owed.subscription), owed.handled, owed.expected)
                 });
@@ -1039,10 +1042,8 @@ mod tests {
         /// A coordinator that knows `east` as the registration at 0 and `west` as the one at 1.
         fn coordinator(&self) -> Coordinator {
             let coordinator = Coordinator::new(16);
-            coordinator.locate([
-                &*self.east as &(dyn Any + Send + Sync),
-                &*self.west as &(dyn Any + Send + Sync),
-            ]);
+            let registrations: [&(dyn Any + Send + Sync); 2] = [&*self.east, &*self.west];
+            coordinator.locate(registrations);
             coordinator
         }
     }

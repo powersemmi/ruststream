@@ -1,7 +1,9 @@
+use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use futures::executor;
 use futures::future::join_all;
 
 use super::Context;
@@ -10,7 +12,7 @@ use crate::runtime::dispatch::Delivery;
 use crate::runtime::handler::{HandlerOutcome, HandlerResult};
 
 fn run_all(continuations: Vec<super::Continuation>) {
-    futures::executor::block_on(async {
+    executor::block_on(async {
         join_all(continuations).await;
     });
 }
@@ -198,13 +200,13 @@ fn headers_clone_only_on_first_mutation() {
     let mut ctx = Context::new("test", &original, &state, (), &delivery);
 
     // Untouched: the context borrows the message headers, no copy exists.
-    assert!(std::ptr::eq(ctx.headers(), &raw const original));
+    assert!(ptr::eq(ctx.headers(), &raw const original));
 
     ctx.headers_mut().insert("added", "1");
     ctx.headers_mut().insert("added2", "2");
 
     // Mutations land in one lazily-made copy; the original is untouched.
-    assert!(!std::ptr::eq(ctx.headers(), &raw const original));
+    assert!(!ptr::eq(ctx.headers(), &raw const original));
     assert_eq!(ctx.headers().get("added"), Some(&b"1"[..]));
     assert_eq!(ctx.headers().get("k"), Some(&b"v"[..]));
     assert_eq!(original.get("added"), None);

@@ -12,7 +12,6 @@
 ))]
 
 use std::error::Error;
-use std::future::Future;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

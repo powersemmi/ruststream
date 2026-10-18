@@ -21,7 +21,7 @@
 //! # }
 //! ```
 
-use std::{fmt, future::Future, thread, time::Duration};
+use std::{fmt, thread, time::Duration};
 
 pub use super::retry::redelivery_address;
 #[cfg(feature = "asyncapi")]
@@ -481,7 +481,11 @@ async fn nack_with_requeue_redelivers<C: TestableBroker + Subscribe>(broker: C) 
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let first = expect_next(&mut stream, "nack_with_requeue first").await;
-    assert_eq!(first.payload(), b"retry-me");
+    assert_eq!(
+        first.payload(),
+        b"retry-me",
+        "the subscriber must receive the published message"
+    );
     // The only scenario whose assertion IS the settlement: a transport that reports the requeue
     // unsupported has no redelivery to observe, so the scenario ends instead of accepting any
     // answer - reading the redelivery of a message the transport never took back would pass a
@@ -542,8 +546,16 @@ async fn headers_propagate<C: TestableBroker + Subscribe>(broker: C) {
 
     let mut stream = std::pin::pin!(subscriber.stream());
     let msg = expect_next(&mut stream, "headers_propagate").await;
-    assert_eq!(msg.headers().content_type(), Some("application/json"));
-    assert_eq!(msg.headers().get("x-tenant"), Some(b"acme".as_slice()));
+    assert_eq!(
+        msg.headers().content_type(),
+        Some("application/json"),
+        "the content type must reach the subscriber"
+    );
+    assert_eq!(
+        msg.headers().get("x-tenant"),
+        Some(b"acme".as_slice()),
+        "a custom header must reach the subscriber"
+    );
     match msg.ack().await {
         Ok(()) | Err(AckError::Unsupported) => {}
         Err(other) => panic!("ack must succeed or be unsupported, got: {other:?}"),
@@ -567,8 +579,16 @@ async fn published_log_observes_publishes<C: TestableBroker + Subscribe>(broker:
         2,
         "the publish log must observe every publish",
     );
-    assert_eq!(observed[0].payload(), b"first");
-    assert_eq!(observed[1].payload(), b"second");
+    assert_eq!(
+        observed[0].payload(),
+        b"first",
+        "the publish log must keep publish order"
+    );
+    assert_eq!(
+        observed[1].payload(),
+        b"second",
+        "the publish log must keep publish order"
+    );
     broker.shutdown().await.expect("shutdown failed");
 }
 

@@ -5,15 +5,17 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
+use tokio::{task, time};
 use tokio_util::task::TaskTracker;
 
-use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
+use super::super::dispatch::RETRY_COUNT_HEADER;
 use super::super::input::Decoded;
 use super::super::shutdown::Shutdown;
 use super::*;
-use crate::codec::JsonCodec;
+use crate::codec::{CodecError, JsonCodec};
 use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 use crate::runtime::redelivery::bare_retry_publisher;
+use crate::runtime::{Input, SoloDeserialized};
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
 #[cfg(feature = "logging")]
 use crate::testkit::log_capture;
@@ -112,8 +114,8 @@ async fn unmatched_remainder_is_retried() {
     publish_numbers(&broker, "short", &[0, 1, 2]).await;
 
     // A buggy handler returning one outcome for a batch of three: the unmatched two retry.
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        vec![HandlerOutcome::ack()]
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(vec![HandlerOutcome::ack()])
     });
 
     let state = ();
@@ -160,8 +162,8 @@ async fn per_element_outcomes_carry_delays() {
 
     let mut stream = std::pin::pin!(sub.stream());
     assert!(futures::poll!(stream.next()).is_pending());
-    tokio::time::advance(Duration::from_secs(5)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(5)).await;
+    task::yield_now().await;
 
     let redelivered = stream.next().await.unwrap().unwrap();
     assert_eq!(redelivered.payload(), b"1");
@@ -174,8 +176,8 @@ async fn uniform_outcome_settles_the_whole_batch() {
     let mut sub = broker.subscribe("uniform");
     publish_numbers(&broker, "uniform", &[0, 1]).await;
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::retry()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::retry())
     });
 
     let state = ();
@@ -285,11 +287,11 @@ fn batch_def_defaults_register_without_documentation() {
 
 #[test]
 fn typed_batch_debug_reports_the_decode_policy() {
-    let handler = typed_batch::<MemoryMessage, u32, _, _>(
-        JsonCodec,
-        |_batch: &[u32], _ctx: &mut Context| async { HandlerOutcome::ack() },
-    )
-    .with_decode(FailurePolicy::Retry);
+    let handler =
+        typed_batch::<MemoryMessage, u32, _, _>(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+            ready(HandlerOutcome::ack())
+        })
+        .with_decode(FailurePolicy::Retry);
 
     let rendered = format!("{handler:?}");
     assert!(rendered.contains("TypedBatch"), "{rendered}");
@@ -425,8 +427,8 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     publish_payloads(&broker, "diag-batch", &[b"not json"]).await;
 
     let (events, guard) = log_capture::start();
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::ack()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::ack())
     });
     let state = ();
     let delivery = Delivery::empty();
@@ -498,18 +500,18 @@ struct Frame<'a>(&'a [u8]);
 
 impl Deserialized for Frame<'_> {
     type Output<'a> = Frame<'a>;
-    type Error = crate::codec::CodecError;
+    type Error = CodecError;
 
     fn from_payload(payload: &[u8]) -> Result<Frame<'_>, Self::Error> {
         if payload.is_empty() {
-            return Err(crate::codec::CodecError::Decode(Box::from("empty frame")));
+            return Err(CodecError::Decode(Box::from("empty frame")));
         }
         Ok(Frame(payload))
     }
 }
 
-impl crate::runtime::Input for Frame<'_> {
-    type Axis = crate::runtime::SoloDeserialized<Frame<'static>>;
+impl Input for Frame<'_> {
+    type Axis = SoloDeserialized<Frame<'static>>;
 }
 
 /// A batch handler over self-constructed payload views, for the adapter below.
@@ -523,7 +525,7 @@ impl<'p> SliceHandler<Frame<'p>> for Frames {
     ) -> impl Future<Output = BatchResult> {
         self.0
             .lock()
-            .unwrap()
+            .expect("frames mutex poisoned")
             .extend(batch.iter().map(|frame| frame.0.to_vec()));
         ready(BatchResult::Uniform(HandlerOutcome::ack()))
     }
@@ -652,7 +654,7 @@ async fn deferred_copies(
     let mut stream = std::pin::pin!(sub.stream());
     let mut copies = Vec::with_capacity(expected);
     for _ in 0..expected {
-        let msg = tokio::time::timeout(DEFER * 100, stream.next())
+        let msg = time::timeout(DEFER * 100, stream.next())
             .await
             .expect("the deferred re-publish is the only retry an unsettled delivery gets")
             .expect("the subscriber outlives the deferred publish")
@@ -664,7 +666,10 @@ async fn deferred_copies(
         // Settled, because a delivery dropped unsettled comes back.
         msg.ack().await.expect("the memory broker acknowledges");
     }
-    assert!(futures::poll!(stream.next()).is_pending());
+    assert!(
+        futures::poll!(stream.next()).is_pending(),
+        "no copy beyond the expected ones"
+    );
     copies.sort();
     copies
 }
@@ -682,8 +687,8 @@ async fn a_uniform_batch_retry_after_defers_a_republish() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::retry_after(DEFER)
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::retry_after(DEFER))
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
@@ -719,8 +724,11 @@ async fn a_per_element_batch_retry_after_defers_only_its_own_element() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        vec![HandlerOutcome::retry_after(DEFER), HandlerOutcome::ack()]
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(vec![
+            HandlerOutcome::retry_after(DEFER),
+            HandlerOutcome::ack(),
+        ])
     });
     let dropped = Arc::new(AtomicUsize::new(0));
     let state = ();
@@ -754,8 +762,8 @@ async fn a_deferred_decode_rejection_is_republished() {
         TaskTracker::new(),
     );
 
-    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| async {
-        HandlerOutcome::ack()
+    let handler = typed_batch(JsonCodec, |_batch: &[u32], _ctx: &mut Context| {
+        ready(HandlerOutcome::ack())
     })
     .with_decode(FailurePolicy::RetryAfter(DEFER));
     let dropped = Arc::new(AtomicUsize::new(0));

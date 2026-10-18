@@ -1,8 +1,8 @@
 //! The [`RustStream`] builder: construction, configuration and handler registration.
 
 use std::{
-    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, future::Future,
-    marker::PhantomData, sync::Arc, time::Duration,
+    borrow::Cow, collections::BTreeMap, error::Error as StdError, fmt, marker::PhantomData,
+    sync::Arc, time::Duration,
 };
 
 use crate::codec::Codec;
@@ -329,7 +329,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
             state_init: Box::new(move || {
                 Box::pin(async move {
                     let prev_state = prev().await?;
-                    hook(prev_state).await.map_err(|e| Box::new(e) as BoxError)
+                    hook(prev_state).await.map_err(BoxError::from)
                 })
             }),
             after_startup: Vec::new(),
@@ -518,7 +518,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         E: StdError + Send + Sync + 'static,
     {
         let boxed: LifecycleHook<State> = Box::new(move |state| {
-            Box::pin(async move { hook(state).await.map_err(|e| Box::new(e) as BoxError) })
+            Box::pin(async move { hook(state).await.map_err(BoxError::from) })
         });
         match phase {
             LifecyclePhase::AfterStartup => self.after_startup.push(boxed),

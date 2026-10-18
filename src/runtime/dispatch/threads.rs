@@ -22,9 +22,10 @@
 //! unsynchronized cached index stays one thread's at a time.
 
 use std::fmt::Display;
-use std::future::{Future, Pending, poll_fn};
+use std::future::{Pending, poll_fn};
 use std::hint::spin_loop;
 use std::io;
+use std::iter::repeat_with;
 use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
@@ -114,8 +115,12 @@ enum Stuck {
 impl Signals {
     fn new(count: usize) -> Self {
         Self {
-            parked: (0..count).map(|_| Padded(AtomicBool::new(false))).collect(),
-            wakers: (0..count).map(|_| Padded(AtomicWaker::new())).collect(),
+            parked: repeat_with(|| Padded(AtomicBool::new(false)))
+                .take(count)
+                .collect(),
+            wakers: repeat_with(|| Padded(AtomicWaker::new()))
+                .take(count)
+                .collect(),
             loop_waiting: Padded(AtomicUsize::new(0)),
             loop_waker: AtomicWaker::new(),
         }
@@ -416,7 +421,7 @@ impl<Item: Send + 'static> Threads<Item> {
                 subscription,
                 index,
                 runtime,
-                move || async move {
+                async move || {
                     work(signals, index, consumer, handle).await;
                     // The ring is drained; what its deliveries left behind (a continuation, a
                     // hook, a retry timer) finishes here before the thread and its runtime go.
@@ -507,17 +512,16 @@ impl<Item: Send + 'static> Threads<Item> {
                     if keyed.is_none() {
                         turn = (index + 1) % count;
                     }
-                    if picked.is_none() {
-                        // A lane waits for its own ring, whatever else has room: a key stays in
-                        // order. Shutdown does not cut the wait short, so the delivery in hand is
-                        // handed over rather than dropped.
-                        if let Err(stuck) = self
+                    // A lane waits for its own ring, whatever else has room: a key stays in order.
+                    // Shutdown does not cut the wait short, so the delivery in hand is handed over
+                    // rather than dropped.
+                    if picked.is_none()
+                        && let Err(stuck) = self
                             .room(Which::One(index), None::<Pin<&mut Pending<()>>>)
                             .await
-                        {
-                            report(name, &stuck);
-                            break;
-                        }
+                    {
+                        report(name, &stuck);
+                        break;
                     }
                     if self.rings[index].push(item).is_err() {
                         // Only the loop fills a ring, and it pushes only after it saw room.
@@ -580,11 +584,12 @@ fn report(name: &str, stuck: &Stuck) {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
-    use std::sync::atomic::{AtomicU32, AtomicUsize};
+    use std::sync::atomic::AtomicU32;
 
     use futures::StreamExt;
     use futures::stream;
     use tokio::sync::{Notify, Semaphore};
+    use tokio::time;
 
     use super::*;
 
@@ -695,7 +700,7 @@ mod tests {
             .expect("the threads start");
             let items = stream::iter(0..1000u32).map(Ok::<_, Infallible>);
             let shutdown = Shutdown::new();
-            let fed = tokio::time::timeout(
+            let fed = time::timeout(
                 Duration::from_secs(10),
                 threads.feed(items, "dying", &shutdown, |_| Some(b"key".as_slice())),
             )

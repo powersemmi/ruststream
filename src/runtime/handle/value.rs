@@ -10,6 +10,7 @@ use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
 use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
+use crate::runtime::router::IncludeDef;
 
 /// The phantom carrying a definition's axes.
 ///
@@ -54,7 +55,7 @@ type SealedReplyChain<A, R, O, C, H, Doc, Dest, Src, State, DC> =
 pub struct HandleValue<A, R, O, C, H, Doc = Documented> {
     pub(super) body: H,
     pub(super) docs: Docs,
-    pub(super) _axes: HandleAxes<A, R, O, C, Doc>,
+    axes: HandleAxes<A, R, O, C, Doc>,
 }
 
 impl<A, R, O, C, H, Doc> fmt::Debug for HandleValue<A, R, O, C, H, Doc> {
@@ -69,7 +70,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
         HandleValue {
             body: self.body,
             docs: self.docs,
-            _axes: PhantomData,
+            axes: PhantomData,
         }
     }
 }
@@ -133,7 +134,7 @@ where
         HandleValue {
             body,
             docs: Docs::default(),
-            _axes: PhantomData,
+            axes: PhantomData,
         },
         source.into_source(),
     )
@@ -151,7 +152,7 @@ pub fn probed_def<A, R, O, C, H>(
     Sealed(HandleValue {
         body,
         docs: docs.into_docs(),
-        _axes: PhantomData,
+        axes: PhantomData,
     })
 }
 
@@ -276,11 +277,11 @@ pub struct UnbuiltDefinition;
 // The settings chain (`.workers(..)`, `.batch(..)`, ...) rides the `Declared` blanket over
 // `IncludeDef`, so the unsealed values carry the diagnostic form token: settings chain freely,
 // and a mount before `.build()` names the missing step.
-impl<A, R, O, C, H, Doc> crate::runtime::router::IncludeDef for HandleValue<A, R, O, C, H, Doc> {
+impl<A, R, O, C, H, Doc> IncludeDef for HandleValue<A, R, O, C, H, Doc> {
     type Form = UnbuiltDefinition;
 }
 
-impl<V, Dest> crate::runtime::router::IncludeDef for ReplyValue<V, Dest> {
+impl<V, Dest> IncludeDef for ReplyValue<V, Dest> {
     type Form = UnbuiltDefinition;
 }
 

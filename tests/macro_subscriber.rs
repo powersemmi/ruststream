@@ -7,13 +7,12 @@
 ))]
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::error;
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::memory::{ConnectedMemoryBroker, MemorySubscriber};
-use ruststream::runtime::{
-    ContextKind, Outgoing, PublishLayer, PublishNext, PublishTransform, Reads,
-};
+use ruststream::runtime::{Outgoing, PublishLayer, PublishNext, PublishPipeline};
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{
     AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscribe, SubscriptionSource,
@@ -189,11 +188,11 @@ struct Response {
 struct Tagger;
 
 impl PublishLayer for Tagger {
-    async fn on_publish<'a, N: ruststream::runtime::PublishPipeline, P: Publisher>(
+    async fn on_publish<'a, N: PublishPipeline, P: Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), Box<dyn error::Error + Send + Sync>> {
         out.headers_mut().insert("x-envelope", b"1".to_vec());
         next.run(out).await
     }

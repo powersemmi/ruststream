@@ -400,6 +400,7 @@ mod drain {
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
+    use tokio::task;
 
     use super::Order;
 
@@ -411,7 +412,7 @@ mod drain {
 
     impl Mailer {
         async fn confirm(&self, order_id: u64) {
-            tokio::task::yield_now().await;
+            task::yield_now().await;
             if let Ok(mut sent) = self.sent.lock() {
                 sent.push(order_id);
             }

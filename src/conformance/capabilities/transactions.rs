@@ -107,7 +107,11 @@ pub async fn transactions<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     );
     ack_or_unsupported(first, "transactions: first after commit").await;
     let second = expect_next(&mut stream, "transactions: second after commit").await;
-    assert_eq!(second.payload(), b"second");
+    assert_eq!(
+        second.payload(),
+        b"second",
+        "commit must make buffered messages visible in publish order",
+    );
     ack_or_unsupported(second, "transactions: second after commit").await;
 
     within(

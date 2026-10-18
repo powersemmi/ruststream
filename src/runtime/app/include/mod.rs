@@ -26,6 +26,7 @@ use crate::runtime::middleware::Identity;
 use crate::runtime::router::{Router, RouterMount, forms};
 
 use super::scope::BrokerScope;
+use crate::runtime::Declared;
 pub use guard::{Mounting, MountingSlots, ScopeCommit};
 
 /// The empty chain a scope drives one registration through: its codec and publish pipeline, no
@@ -195,7 +196,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
         def: D,
     ) -> <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::Out
     where
-        D: crate::runtime::Declared,
+        D: Declared,
         D::Form: IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>,
     {
         <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::begin(

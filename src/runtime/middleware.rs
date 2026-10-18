@@ -43,8 +43,6 @@
 //! # fn main() {}
 //! ```
 
-use std::future::Future;
-
 use super::context::Context;
 use super::handler::{Handler, HandlerOutcome};
 
@@ -247,7 +245,7 @@ pub mod layers {
     use tracing::{debug, info, instrument, warn};
 
     use super::super::handler::HandlerResult;
-    use super::{BlanketLayer, Context, Future, Handler, HandlerOutcome, Layer};
+    use super::{BlanketLayer, Context, Handler, HandlerOutcome, Layer};
 
     /// Logs every delivery and its outcome via [`tracing`]. Default level is `INFO` for the
     /// outcome and `DEBUG` for arrival.

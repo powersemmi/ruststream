@@ -17,7 +17,7 @@ use ruststream::memory::{
 };
 use ruststream::prelude::*;
 use ruststream::testing::TestApp;
-use ruststream::{OutgoingMessage, Publisher, Seeker, nonzero};
+use ruststream::{OutgoingMessage, Seeker, nonzero};
 
 /// The producer's cursor contract: an element carrying `resume_at` asks the consumer to
 /// reposition the subscription there once the batch is settled.

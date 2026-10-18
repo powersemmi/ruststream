@@ -62,7 +62,7 @@ fn app() -> impl App {
         // app state, shared with every handler.
         .on_startup(async move |()| Repository::open().await)
         // Close the repository after brokers stop, then dump the final metrics.
-        .after_shutdown(move |repo: Arc<Repository>| async move {
+        .after_shutdown(async move |repo: Arc<Repository>| {
             repo.close().await;
             match metrics_dump.export() {
                 Ok(text) => tracing::info!("final metrics:\n{text}"),

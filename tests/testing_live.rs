@@ -14,6 +14,7 @@
 
 use std::convert::Infallible;
 use std::error::Error;
+use std::future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -23,6 +24,8 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, Identity, PublishExt, RustStr
 use ruststream::testing::{TestApp, TestError};
 use ruststream::{Broker, Outgoing, subscriber};
 use serde::{Deserialize, Serialize};
+use tokio::time;
+use tokio::time::Instant;
 
 /// Short, so the live tests spend little real time on it; what matters is that it passes on the
 /// broker's own timer.
@@ -125,7 +128,7 @@ struct Job {
 async fn slow(job: &Job) -> HandlerOutcome {
     let _ = job.id;
     // The scenario is a handler that outlives the deadline, not a wait for synchronisation.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    time::sleep(Duration::from_secs(2)).await;
     HandlerOutcome::ack()
 }
 
@@ -161,7 +164,7 @@ async fn a_live_settle_that_outlasts_the_deadline_says_so() {
 async fn take_order_slowly(order: &Order) -> HandlerOutcome {
     let _ = order.id;
     // The scenario is a handler that takes time, not a wait for synchronisation.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     HandlerOutcome::ack()
 }
 
@@ -275,7 +278,7 @@ async fn stuck(job: &Job, ctx: &mut Context<'_, (), Arc<()>>) -> HandlerOutcome 
     let _ = (job.id, ctx.state());
     // The scenario is a handler that outlives the shutdown timeout, not a wait for
     // synchronisation.
-    tokio::time::sleep(Duration::from_secs(3600)).await;
+    time::sleep(Duration::from_secs(3600)).await;
     HandlerOutcome::ack()
 }
 
@@ -313,7 +316,7 @@ async fn a_timed_out_shutdown_stops_the_handler_it_waited_for() -> Result<(), Bo
 #[subscriber("stuck-a")]
 async fn stuck_a(job: &Job) -> HandlerOutcome {
     let _ = job.id;
-    std::future::pending::<()>().await;
+    future::pending::<()>().await;
     HandlerOutcome::ack()
 }
 
@@ -321,7 +324,7 @@ async fn stuck_a(job: &Job) -> HandlerOutcome {
 #[subscriber("stuck-b")]
 async fn stuck_b(job: &Job) -> HandlerOutcome {
     let _ = job.id;
-    std::future::pending::<()>().await;
+    future::pending::<()>().await;
     HandlerOutcome::ack()
 }
 
@@ -345,13 +348,13 @@ async fn one_shutdown_timeout_bounds_every_stuck_subscription() -> Result<(), Bo
             .to(name)
             .publish();
         assert!(
-            tokio::time::timeout(Duration::from_millis(1), publish)
+            time::timeout(Duration::from_millis(1), publish)
                 .await
                 .is_err()
         );
     }
 
-    let started = tokio::time::Instant::now();
+    let started = Instant::now();
     tb.shutdown().await?;
     assert_eq!(started.elapsed(), SHUTDOWN_TIMEOUT);
     Ok(())

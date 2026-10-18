@@ -16,8 +16,9 @@
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
+use std::any;
 use std::error::Error;
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
 use ruststream::testing::TestApp;
@@ -91,7 +92,7 @@ impl MessageHeaders for Order {
 impl<M: OutSlot> OutMessages<M> for Order {
     fn outgoing() -> Vec<OutgoingMessageMetadata> {
         vec![
-            OutgoingMessageMetadata::new(Self::DESTINATION, std::any::type_name::<Self>())
+            OutgoingMessageMetadata::new(Self::DESTINATION, any::type_name::<Self>())
                 .with_serialized(true),
         ]
     }

@@ -45,7 +45,7 @@ impl MessageHeaders for Shipment {
 
 mod router {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -113,7 +113,7 @@ mod router {
 
 mod layer {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -220,7 +220,7 @@ mod layer {
 #[cfg(feature = "cbor")]
 mod codec {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::codec::CborCodec;
     use ruststream::memory::prelude::*;

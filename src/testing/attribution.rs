@@ -28,7 +28,8 @@ impl RecordedOptions {
     ) -> Self {
         Self {
             type_name: type_name::<Options>(),
-            value: options.map(|options| Arc::new(options.clone()) as Arc<dyn Any + Send + Sync>),
+            value: options
+                .map(|options| -> Arc<dyn Any + Send + Sync> { Arc::new(options.clone()) }),
         }
     }
 

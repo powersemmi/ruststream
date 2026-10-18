@@ -8,6 +8,7 @@
 // chaining, so ending a chain on one is fine and none of them is `#[must_use]`.
 #![allow(clippy::return_self_not_must_use, clippy::must_use_candidate)]
 
+use std::any;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
@@ -185,7 +186,7 @@ impl<'a> SubscriberAssertions<'a> {
                                     "subscriber {:?} received a payload that did not decode as \
                                      {}: {err}",
                                     self.name,
-                                    std::any::type_name::<T>(),
+                                    any::type_name::<T>(),
                                 )
                             })
                         })
@@ -240,7 +241,7 @@ impl<'a> SubscriberAssertions<'a> {
                         panic!(
                             "subscriber {:?} received a payload that did not decode as {}: {err}",
                             self.name,
-                            std::any::type_name::<T>(),
+                            any::type_name::<T>(),
                         )
                     })
                 })
@@ -295,7 +296,7 @@ impl<'a> SubscriberAssertions<'a> {
                 panic!(
                     "subscriber {:?} received a payload that did not decode as {}: {err}",
                     self.name,
-                    std::any::type_name::<T>(),
+                    any::type_name::<T>(),
                 )
             });
             assert_eq!(
@@ -554,13 +555,13 @@ fn recorded<'a, T: 'static>(one: &'a Delivered, subscriber: &str) -> &'a T {
         panic!(
             "subscriber {subscriber:?} was lent no value: its handler takes no carried `{}`, or \
              the delivery carried none",
-            std::any::type_name::<T>(),
+            any::type_name::<T>(),
         )
     });
     value.downcast_ref::<T>().unwrap_or_else(|| {
         panic!(
             "subscriber {subscriber:?} was lent a value that is not a `{}`",
-            std::any::type_name::<T>(),
+            any::type_name::<T>(),
         )
     })
 }
@@ -840,7 +841,7 @@ where
                 panic!(
                     "channel {:?} published a payload that did not decode as {}: {err}",
                     self.name,
-                    std::any::type_name::<T>(),
+                    any::type_name::<T>(),
                 )
             });
         assert_eq!(
@@ -883,7 +884,7 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
                     panic!(
                         "channel {:?} published a payload that did not decode as {}: {err}",
                         self.name,
-                        std::any::type_name::<T>(),
+                        any::type_name::<T>(),
                     )
                 })
             })

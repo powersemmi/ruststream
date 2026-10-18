@@ -12,7 +12,8 @@
 //! curl http://127.0.0.1:8080/asyncapi.json
 //! ```
 
-use std::future::{Future, ready};
+use std::error;
+use std::future::ready;
 
 use axum::Router;
 use axum::http::header::CONTENT_TYPE;
@@ -23,6 +24,7 @@ use ruststream::memory::prelude::*;
 use ruststream::schemars::JsonSchema;
 use ruststream::{Contact, License, SecurityScheme, ServerSpec, Tag};
 use serde::Deserialize;
+use tokio::net::TcpListener;
 
 // --8<-- [start:payload]
 /// An order placed by a customer.
@@ -98,7 +100,7 @@ fn document() -> Result<(String, String), serde_json::Error> {
 // --8<-- [end:generate]
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let (spec, viewer) = document()?;
 
     let router = Router::new()
@@ -117,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         );
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
+    let listener = TcpListener::bind("127.0.0.1:8080").await?;
     println!("AsyncAPI viewer on http://127.0.0.1:8080/");
     axum::serve(listener, router).await?;
     Ok(())

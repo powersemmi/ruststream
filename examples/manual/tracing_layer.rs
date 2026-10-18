@@ -8,7 +8,7 @@
 //!     --features testing,memory,json,logging
 //! ```
 
-use std::future::{Future, ready};
+use std::future::ready;
 use std::process::ExitCode;
 
 use ruststream::memory::prelude::*;

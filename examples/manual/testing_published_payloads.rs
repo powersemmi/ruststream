@@ -10,7 +10,6 @@
 // A plain build compiles the services; the tests that use them exist only in the test build.
 #![cfg_attr(not(test), allow(dead_code, unused_imports))]
 
-use ruststream::BytesMut;
 use ruststream::codec::{Codec, CodecError, JsonCodec};
 use ruststream::memory::prelude::*;
 use serde::de::DeserializeOwned;
@@ -99,7 +98,7 @@ impl Codec for Versioned {
 
 mod decoded {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -260,7 +259,7 @@ mod decoded_as {
 
 mod with {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -334,7 +333,7 @@ mod with {
 
 mod with_raw {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;

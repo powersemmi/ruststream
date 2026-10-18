@@ -21,6 +21,7 @@ mod common;
 use std::cell::RefCell;
 use std::convert::Infallible;
 use std::io;
+use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Once, PoisonError};
 use std::time::Duration;
@@ -38,6 +39,7 @@ use ruststream::{
     RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
 use tracing::Level;
+use tracing::subscriber::set_global_default;
 use tracing_subscriber::fmt::MakeWriter;
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -81,7 +83,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for MovedQueue {
             .declared
             .max_attempts()
             .zip(self.declared.dead_letter())
-            .map(|(cap, dead)| (u64::from(cap.get()), dead.to_owned()));
+            .map(|(cap, dead)| (NonZeroU64::from(cap).get(), dead.to_owned()));
         Ok(MovedSubscriber {
             inner: connected.subscribe(self.name).await?,
             publisher: connected.publisher(),
@@ -221,8 +223,7 @@ impl Captured {
                 .with_ansi(false)
                 .with_max_level(Level::WARN)
                 .finish();
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("no other global subscriber in this test binary");
+            set_global_default(subscriber).expect("no other global subscriber in this test binary");
         });
         CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));
         Installed

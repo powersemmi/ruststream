@@ -7,10 +7,9 @@
 //! the delivery's headers.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::memory::prelude::*;
-use ruststream::runtime::Reads;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
 

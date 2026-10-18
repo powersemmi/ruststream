@@ -10,7 +10,7 @@
 mod common;
 
 use std::convert::Infallible;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;

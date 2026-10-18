@@ -3,7 +3,8 @@
 
 use std::{
     convert::Infallible,
-    future::{Future, ready},
+    future::ready,
+    num::NonZeroU64,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -12,7 +13,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt, stream};
-use tokio::{runtime::Handle, sync::Mutex as AsyncMutex};
+use tokio::{runtime::Handle, sync::Mutex as AsyncMutex, time};
 
 use super::{CONTROL, EXTRA_DELIVERIES, broker_moves, redelivery_address};
 use crate::{
@@ -706,7 +707,7 @@ impl IncomingMessage for ProbeMessage {
         if !requeue {
             return self.inner.nack(false).await;
         }
-        let control = |times: usize| async move {
+        let control = async move |times: usize| {
             for _ in 0..times {
                 self.publisher
                     .publish(OutgoingMessage::new(&self.name, CONTROL), None)
@@ -848,7 +849,7 @@ impl Publisher for SpawnsOnCaller {
         let publisher = self.0.clone();
         tokio::spawn(async move {
             // The task has not run by the time the caller's runtime stops.
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            time::sleep(Duration::from_millis(50)).await;
             let copy = OutgoingMessage::produced(&name, payload).with_headers(headers);
             let _ = publisher.publish(copy, None).await;
         });
@@ -952,7 +953,7 @@ impl SubscriptionSource<ConnectedMemoryBroker> for Moves {
         let inner = Subscribe::subscribe(connected, &self.name).await?;
         let rule = match (self.declared.max_attempts(), self.declared.dead_letter()) {
             (Some(cap), Some(dead)) if self.moving != Moving::Never => {
-                Some((u64::from(cap.get()), dead.to_owned()))
+                Some((NonZeroU64::from(cap).get(), dead.to_owned()))
             }
             _ => None,
         };

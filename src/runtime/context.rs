@@ -11,7 +11,9 @@
 //! the headers pays neither the broker's accessor nor a clone.
 
 use std::cell::OnceCell;
-use std::future::Future;
+use std::fmt;
+#[cfg(feature = "testing")]
+use std::mem;
 use std::pin::Pin;
 #[cfg(feature = "testing")]
 use std::sync::Arc;
@@ -200,8 +202,8 @@ pub struct Context<'a, C = (), S = ()> {
     carried: Option<RecordedValue>,
 }
 
-impl<C, S> std::fmt::Debug for Context<'_, C, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<C, S> fmt::Debug for Context<'_, C, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Context")
             .field("name", &self.name)
             .field("after_hooks", &self.after.len())
@@ -257,7 +259,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// Returns and clears the decode-failure flag for this delivery.
     #[cfg(feature = "testing")]
     pub(crate) fn took_decode_failed(&mut self) -> bool {
-        std::mem::take(&mut self.decode_failed)
+        mem::take(&mut self.decode_failed)
     }
 
     /// Keeps a clone of the value the delivery lent the handler, for the harness to record: the
@@ -787,8 +789,8 @@ pub struct After<'ctx, 'a, C = (), S = ()> {
     gate: Option<OutcomeKind>,
 }
 
-impl<C, S> std::fmt::Debug for After<'_, '_, C, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<C, S> fmt::Debug for After<'_, '_, C, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("After").field("gate", &self.gate).finish()
     }
 }

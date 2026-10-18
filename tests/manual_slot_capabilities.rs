@@ -7,13 +7,9 @@
 
 use std::time::Duration;
 
+use ruststream::OutgoingMessage;
 use ruststream::memory::prelude::*;
-use ruststream::runtime::PublishedThrough;
-use ruststream::runtime::Reads;
 use ruststream::testing::TestApp;
-use ruststream::{
-    CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, OutgoingMessage,
-};
 use serde::{Deserialize, Serialize};
 
 /// The input every body here takes; it declares no name, so the test names one per publish.

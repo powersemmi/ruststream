@@ -47,7 +47,7 @@ async fn extractor_resolves_from_state() {
     let hits = Arc::new(AtomicU32::new(0));
     let state_hits = hits.clone();
     let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(AppState { hits: state_hits }) })
+        .on_startup(async move |()| Ok::<_, Infallible>(AppState { hits: state_hits }))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(record);
         });
@@ -105,7 +105,7 @@ async fn extractor_rejection_short_circuits() {
     let ran = Arc::new(AtomicBool::new(false));
     let state_ran = ran.clone();
     let app = RustStream::new(AppInfo::new("guard", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, Infallible>(GuardState { ran: state_ran }) })
+        .on_startup(async move |()| Ok::<_, Infallible>(GuardState { ran: state_ran }))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(guarded);
         });
@@ -156,7 +156,7 @@ async fn derive_from_ref_injects_fields() {
     let count = Arc::new(AtomicU32::new(0));
     let tally = Tally(count.clone());
     let app = RustStream::new(AppInfo::new("derived", "0.1.0"))
-        .on_startup(move |()| async move {
+        .on_startup(async move |()| {
             Ok::<_, Infallible>(DerivedState {
                 tally,
                 _label: Label,

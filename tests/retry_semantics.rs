@@ -10,6 +10,7 @@
 
 mod common;
 
+use std::convert::Infallible;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -22,6 +23,7 @@ use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream, SubscriberSetting
 use ruststream::testing::{Outcome, TestApp};
 use ruststream::{nonzero, subscriber};
 use tokio::sync::Barrier;
+use tokio::time;
 
 /// The ids this subscription has already seen once. Held in application state so the handler
 /// reads it the way a service reads any dependency.
@@ -58,9 +60,7 @@ async fn undeferred(order: &Order, ctx: &mut Context<'_, (), Arc<FirstSeen>>) ->
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_zero_retry_after_delay_redelivers_without_advancing_the_clock() {
     let app = RustStream::new(AppInfo::new("undelayed", "0.1.0"))
-        .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Arc::new(FirstSeen::default()))
-        })
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(FirstSeen::default())))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(undeferred);
         });
@@ -95,14 +95,14 @@ async fn overlap(_orders: &[Order], ctx: &mut Context<'_, (), Arc<Barrier>>) -> 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_pool_overlaps_batches() {
     let app = RustStream::new(AppInfo::new("overlap", "0.1.0"))
-        .on_startup(async move |()| Ok::<_, std::convert::Infallible>(Arc::new(Barrier::new(2))))
+        .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(2))))
         .with_broker(MemoryBroker::new(), |b| {
             b.include(overlap.batch(nonzero!(1)));
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     let orders = [Order { id: 1 }, Order { id: 2 }];
-    let published = tokio::time::timeout(
+    let published = time::timeout(
         OVERLAP_DEADLINE,
         join_all(
             orders

@@ -31,7 +31,7 @@ impl MessageHeaders for Order {
 
 mod defaults {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -84,7 +84,7 @@ mod defaults {
 
 mod skip {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::{Outcome, TestApp};
@@ -141,7 +141,7 @@ mod skip {
 
 mod tuned {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;

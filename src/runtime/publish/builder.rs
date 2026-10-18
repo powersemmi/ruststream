@@ -10,7 +10,6 @@
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::Future;
 use std::marker::PhantomData;
 
 use bytes::BytesMut;
@@ -388,7 +387,7 @@ impl<'a> WireBytes<'a> {
     #[must_use]
     pub fn of(self, buf: &'a BytesMut) -> &'a [u8] {
         match self {
-            Self::InBuffer => &buf[..],
+            Self::InBuffer => buf,
             Self::Own(bytes) => bytes,
         }
     }

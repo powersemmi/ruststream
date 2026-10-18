@@ -1,16 +1,18 @@
+use std::future;
 use std::future::ready;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
-};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::{io, mem};
 
 use futures::{StreamExt, poll, stream};
 use tokio::sync::mpsc;
+use tokio::task;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::runtime::redelivery::bare_retry_publisher;
+#[cfg(feature = "logging")]
+use crate::testkit::log_capture;
 
 /// The per-delivery context of a registration that reads none: what a test delivery's transforms
 /// would see.
@@ -19,11 +21,7 @@ use crate::memory::MemoryBroker;
 use crate::runtime::SubscriptionEnd;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::handler::HandlerResult;
-use crate::runtime::shutdown::Shutdown;
-use crate::{
-    AckError, HeaderMap, IncomingMessage, Lend, OutgoingMessage, Publisher, RetryDeclaration,
-};
+use crate::{Lend, Publisher};
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -90,7 +88,7 @@ impl IncomingMessage for UnsettleableMessage {
     }
 
     fn headers(&self) -> &HeaderMap {
-        static EMPTY: std::sync::LazyLock<HeaderMap> = std::sync::LazyLock::new(HeaderMap::new);
+        static EMPTY: LazyLock<HeaderMap> = LazyLock::new(HeaderMap::new);
         &EMPTY
     }
 
@@ -110,7 +108,7 @@ struct FormReportingPublisher(mpsc::UnboundedSender<usize>);
 
 impl Publisher for FormReportingPublisher {
     type Payload = Lend;
-    type Error = std::io::Error;
+    type Error = io::Error;
     type Options = ();
 
     fn publish(
@@ -129,7 +127,7 @@ struct RejectingPublisher;
 
 impl Publisher for RejectingPublisher {
     type Payload = Lend;
-    type Error = std::io::Error;
+    type Error = io::Error;
     type Options = ();
 
     fn publish(
@@ -137,7 +135,7 @@ impl Publisher for RejectingPublisher {
         _msg: OutgoingMessage<'_, &[u8]>,
         _options: Option<&Self::Options>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
-        ready(Err(std::io::Error::other("connection closed")))
+        ready(Err(io::Error::other("connection closed")))
     }
 }
 
@@ -155,7 +153,7 @@ impl Subscriber for ScriptedSubscriber {
     type Error = StreamFault;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        stream::iter(std::mem::take(&mut self.items))
+        stream::iter(mem::take(&mut self.items))
     }
 }
 
@@ -167,7 +165,7 @@ const BACKLOG: usize = 10_000;
 /// tell a delivery the loop lost from one it handled twice.
 fn numbered(position: usize) -> PlainMessage {
     PlainMessage {
-        payload: Bytes::copy_from_slice(&position.to_le_bytes()),
+        payload: Bytes::copy_from_slice(&position.to_be_bytes()),
         headers: HeaderMap::new(),
         settled: Arc::new(AtomicU8::new(0)),
         settlement: Settlement::Accepted,
@@ -176,7 +174,7 @@ fn numbered(position: usize) -> PlainMessage {
 
 /// The position [`numbered`] wrote into a delivery.
 fn position_of(payload: &Bytes) -> usize {
-    usize::from_le_bytes(
+    usize::from_be_bytes(
         payload
             .as_ref()
             .try_into()
@@ -766,8 +764,8 @@ async fn a_failed_deferred_republish_is_logged_rather_than_propagated() {
     // The original is already dropped, so the failed republish loses the message; the point
     // is that the deferred task reports it instead of panicking the runtime.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
-    tokio::time::advance(Duration::from_secs(1)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(1)).await;
+    task::yield_now().await;
 }
 
 #[test]
@@ -797,12 +795,12 @@ fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
 async fn a_panicking_worker_is_reported_when_joined() {
     let joined = tokio::spawn(async { panic!("worker down") }).await;
     #[cfg(feature = "logging")]
-    let (events, guard) = crate::testkit::log_capture::start();
+    let (events, guard) = log_capture::start();
     assert!(log_worker_exit(joined).is_none());
     #[cfg(feature = "logging")]
     {
         drop(guard);
-        let failure = crate::testkit::log_capture::find(&events, "worker task failed");
+        let failure = log_capture::find(&events, "worker task failed");
         assert!(
             failure
                 .get("error")
@@ -827,7 +825,7 @@ impl Handler<PlainMessage, (), ()> for StuckHandler {
         let started = self.started.clone();
         async move {
             started.send(()).expect("the test holds the receiver");
-            std::future::pending::<()>().await;
+            future::pending::<()>().await;
             HandlerOutcome::ack()
         }
     }
@@ -877,7 +875,7 @@ impl Subscriber for HangingSubscriber {
     type Error = StreamFault;
 
     fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        stream::iter(std::mem::take(&mut self.items).into_iter().map(Ok)).chain(stream::pending())
+        stream::iter(mem::take(&mut self.items).into_iter().map(Ok)).chain(stream::pending())
     }
 }
 
@@ -942,7 +940,7 @@ async fn the_deferred_copy_lends_the_buffer_the_dispatch_holds() {
     .await
     .unwrap();
 
-    tokio::time::advance(Duration::from_secs(30)).await;
+    time::advance(Duration::from_secs(30)).await;
 
     let at = arrived.recv().await.expect("the copy is published");
     assert_ne!(
@@ -984,8 +982,8 @@ async fn fallback_defers_republish_to_the_reported_address_with_incremented_retr
     let mut stream = std::pin::pin!(sub.stream());
     assert!(poll!(stream.next()).is_pending());
 
-    tokio::time::advance(Duration::from_secs(30)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(30)).await;
+    task::yield_now().await;
 
     let redelivered = stream.next().await.unwrap().unwrap();
     assert_eq!(redelivered.payload(), b"body");
@@ -1020,8 +1018,8 @@ async fn fallback_defers_republish_when_the_transport_cannot_settle() {
     // The drop is still attempted; the transport just has nothing to drop it with.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
 
-    tokio::time::advance(Duration::from_secs(30)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(30)).await;
+    task::yield_now().await;
 
     let mut stream = std::pin::pin!(sub.stream());
     let redelivered = stream
@@ -1058,8 +1056,8 @@ async fn a_rejected_settle_aborts_the_fallback() {
     // The abort happens at the settle, so the drop was attempted before it was reported.
     assert_eq!(settled.load(Ordering::SeqCst), 1);
 
-    tokio::time::advance(Duration::from_secs(30)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(30)).await;
+    task::yield_now().await;
 
     // The original is still the broker's to redeliver, so a deferred copy would duplicate it.
     let mut stream = std::pin::pin!(sub.stream());
@@ -1088,8 +1086,8 @@ async fn fallback_increments_an_existing_retry_count() {
     .await
     .unwrap();
 
-    tokio::time::advance(Duration::from_secs(1)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(1)).await;
+    task::yield_now().await;
 
     let mut stream = std::pin::pin!(sub.stream());
     let redelivered = stream.next().await.unwrap().unwrap();
@@ -1150,8 +1148,8 @@ async fn native_support_defers_to_the_broker_nack_after() {
     .await
     .unwrap();
 
-    tokio::time::advance(Duration::from_secs(5)).await;
-    tokio::task::yield_now().await;
+    time::advance(Duration::from_secs(5)).await;
+    task::yield_now().await;
 
     let mut stream = std::pin::pin!(sub.stream());
     let redelivered = stream.next().await.unwrap().unwrap();

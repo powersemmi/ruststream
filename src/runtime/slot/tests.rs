@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::*;
 #[cfg(feature = "memory")]
 use crate::OutgoingMessage;
-use crate::{FixedName, MessageHeaders, NoHeaders, OutgoingDestination, WithHeaders};
+use crate::{MessageHeaders, NoHeaders, WithHeaders};
 
 #[derive(Debug)]
 struct A;

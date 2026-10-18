@@ -9,3 +9,24 @@ doc-valid-idents = ["RustStream", "AsyncAPI", ".."]
 cognitive-complexity-threshold = 25
 too-many-lines-threshold = 100
 excessive-nesting-threshold = 6
+
+# Tests may unwrap: a failed test is the report.
+allow-unwrap-in-tests = true
+
+# A struct literal lists its fields in the order the struct defines them.
+check-inconsistent-struct-field-initializers = true
+
+# A comment does not stop collapsing an `if`; the fix keeps the comment.
+lint-commented-code = true
+
+# A leading underscore means unused, so no field named that way is visible outside its type.
+pub-underscore-fields-behavior = "AllPubFields"
+
+# A test may print what it inspects with dbg!.
+allow-dbg-in-tests = true
+
+# Tests build on the minimum supported Rust version too, so they use nothing newer.
+check-incompatible-msrv-in-tests = true
+
+# An acronym in a name is one capitalized word: `HttpClient`, not `HTTPClient`.
+upper-case-acronyms-aggressive = true

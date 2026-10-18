@@ -24,7 +24,7 @@ use std::hint::black_box;
 use common::{Latch, MESSAGES, Order, Pending};
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ruststream::memory::prelude::*;
-use ruststream::runtime::{ContextKind, Outgoing as OutgoingMessageView, PublishTransform, Reads};
+use ruststream::runtime::Outgoing as OutgoingMessageView;
 use serde::Serialize;
 
 /// An event the call site names a destination for.

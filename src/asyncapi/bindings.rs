@@ -215,11 +215,12 @@ impl Binding {
     /// # Ok::<_, BindingError>(())
     /// ```
     pub fn extension<T: Serialize>(name: &'static str, body: &T) -> Result<Self, BindingError> {
-        let legal = name.starts_with("x-")
-            && name.len() > 2
-            && name[2..]
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'));
+        let legal = name.strip_prefix("x-").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        });
         if !legal {
             return Err(BindingError::NotAnExtension { name });
         }

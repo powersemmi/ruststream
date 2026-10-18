@@ -43,7 +43,6 @@
 
 use std::{
     fmt,
-    future::Future,
     pin::pin,
     sync::{
         Arc,

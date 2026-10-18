@@ -22,12 +22,19 @@
 //! generated document) hangs off the lifetime-free [`Axis`] marker, so definitions can carry the
 //! axis without carrying a borrow.
 
+use core::marker::PhantomData;
+use std::{error, fmt};
+
 use serde::de::DeserializeOwned;
 
 use crate::runtime::input::{Carried, Decoded, DecodedPair, InputKind, Provided};
 
 use super::docs::DocState;
 use super::verdict::{Batched, OneByOne, VerdictFamily};
+use crate::runtime::router::forms;
+use crate::runtime::router::forms::{
+    BatchOut, CarriedBatch, Out, RawBatch, RawSubscribing, Subscribing,
+};
 
 /// One incoming message together with its decoded typed header contract.
 ///
@@ -145,7 +152,7 @@ pub trait Deserialized: Sized {
     type Output<'a>: Send + Sync;
 
     /// The construction failure; `Infallible` for a plain view over the bytes.
-    type Error: std::fmt::Display;
+    type Error: fmt::Display;
 
     /// Constructs the value from one delivery's payload, borrowing it.
     ///
@@ -169,12 +176,12 @@ pub trait DecodeOutcome<T> {
     /// # Errors
     ///
     /// Returns the format's own error, boxed.
-    fn finish(self) -> Result<T, Box<dyn std::error::Error + Send + Sync>>;
+    fn finish(self) -> Result<T, Box<dyn error::Error + Send + Sync>>;
 }
 
-impl<T, E: std::error::Error + Send + Sync + 'static> DecodeOutcome<T> for Result<T, E> {
-    fn finish(self) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
-        self.map_err(|err| Box::new(err) as Box<dyn std::error::Error + Send + Sync>)
+impl<T, E: error::Error + Send + Sync + 'static> DecodeOutcome<T> for Result<T, E> {
+    fn finish(self) -> Result<T, Box<dyn error::Error + Send + Sync>> {
+        self.map_err(Into::into)
     }
 }
 
@@ -232,18 +239,18 @@ pub trait AxisDocs<A: Axis + ?Sized> {
 
 /// The single decoded input: `In = T`.
 #[derive(Debug)]
-pub struct Solo<T>(core::marker::PhantomData<T>);
+pub struct Solo<T>(PhantomData<T>);
 
 /// The single self-deserializing input: `In = F<'_>` for a [`Deserialized`] `F`.
 ///
 /// The parameter is the family's lifetime-free representative (`Frame<'static>`), which every
 /// lifetime of the input projects to.
 #[derive(Debug)]
-pub struct SoloDeserialized<F>(core::marker::PhantomData<F>);
+pub struct SoloDeserialized<F>(PhantomData<F>);
 
 /// The single pair input: `In = Message<H, P>`.
 #[derive(Debug)]
-pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
+pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 
 /// The single carried input: `In = T` for a `T` the subscription's deliveries lend
 /// ([`Carries<T>`](crate::Carries)). A broker crate's derive selects it for the type, with
@@ -357,25 +364,25 @@ pub struct SoloPair<H, P>(core::marker::PhantomData<(H, P)>);
 /// # fn main() {}
 /// ```
 #[derive(Debug)]
-pub struct SoloCarried<T>(core::marker::PhantomData<T>);
+pub struct SoloCarried<T>(PhantomData<T>);
 
 /// The decoded batch input: `In = [T]`.
 #[derive(Debug)]
-pub struct Batch<T>(core::marker::PhantomData<T>);
+pub struct Batch<T>(PhantomData<T>);
 
 /// The self-deserializing batch input: `In = [F<'_>]` for a [`Deserialized`] `F`. See
 /// [`SoloDeserialized`] for the parameter.
 #[derive(Debug)]
-pub struct BatchDeserialized<F>(core::marker::PhantomData<F>);
+pub struct BatchDeserialized<F>(PhantomData<F>);
 
 /// The pair batch input: `In = [Message<H, P>]`.
 #[derive(Debug)]
-pub struct BatchPair<H, P>(core::marker::PhantomData<(H, P)>);
+pub struct BatchPair<H, P>(PhantomData<(H, P)>);
 
 /// The carried batch input: `In = [T]` for a `T` the subscription's batches lend as one slice
 /// ([`CarriesBatch<T>`](crate::CarriesBatch)). See [`SoloCarried`].
 #[derive(Debug)]
-pub struct BatchCarried<T>(core::marker::PhantomData<T>);
+pub struct BatchCarried<T>(PhantomData<T>);
 
 impl<T: DeserializeOwned + Send + Sync + 'static> Input for T {
     type Axis = Solo<T>;
@@ -429,57 +436,57 @@ where
 impl<T: Send + Sync + 'static> Axis for Solo<T> {
     type Family = OneByOne;
     type Kind = Decoded<T>;
-    type EagerForm = crate::runtime::router::forms::Subscribing;
-    type SlotForm = crate::runtime::router::forms::Out;
+    type EagerForm = Subscribing;
+    type SlotForm = Out;
 }
 
 impl<F: Send + Sync + 'static> Axis for SoloDeserialized<F> {
     type Family = OneByOne;
     type Kind = Provided<F>;
-    type EagerForm = crate::runtime::router::forms::RawSubscribing;
-    type SlotForm = crate::runtime::router::forms::Out;
+    type EagerForm = RawSubscribing;
+    type SlotForm = Out;
 }
 
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P> {
     type Family = OneByOne;
     type Kind = DecodedPair<H, P>;
-    type EagerForm = crate::runtime::router::forms::Subscribing;
-    type SlotForm = crate::runtime::router::forms::Out;
+    type EagerForm = Subscribing;
+    type SlotForm = Out;
 }
 
 impl<T: Clone + Send + Sync + 'static> Axis for SoloCarried<T> {
     type Family = OneByOne;
     type Kind = Carried<T>;
-    type EagerForm = crate::runtime::router::forms::Subscribing;
-    type SlotForm = crate::runtime::router::forms::Out;
+    type EagerForm = Subscribing;
+    type SlotForm = Out;
 }
 
 impl<T: Send + Sync + 'static> Axis for Batch<T> {
     type Family = Batched;
     type Kind = Decoded<T>;
-    type EagerForm = crate::runtime::router::forms::Batch;
-    type SlotForm = crate::runtime::router::forms::BatchOut;
+    type EagerForm = forms::Batch;
+    type SlotForm = BatchOut;
 }
 
 impl<F: Send + Sync + 'static> Axis for BatchDeserialized<F> {
     type Family = Batched;
     type Kind = Provided<F>;
-    type EagerForm = crate::runtime::router::forms::RawBatch;
-    type SlotForm = crate::runtime::router::forms::BatchOut;
+    type EagerForm = RawBatch;
+    type SlotForm = BatchOut;
 }
 
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for BatchPair<H, P> {
     type Family = Batched;
     type Kind = DecodedPair<H, P>;
-    type EagerForm = crate::runtime::router::forms::Batch;
-    type SlotForm = crate::runtime::router::forms::BatchOut;
+    type EagerForm = forms::Batch;
+    type SlotForm = BatchOut;
 }
 
 impl<T: Clone + Send + Sync + 'static> Axis for BatchCarried<T> {
     type Family = Batched;
     type Kind = Carried<T>;
-    type EagerForm = crate::runtime::router::forms::CarriedBatch;
-    type SlotForm = crate::runtime::router::forms::BatchOut;
+    type EagerForm = CarriedBatch;
+    type SlotForm = BatchOut;
 }
 
 impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {

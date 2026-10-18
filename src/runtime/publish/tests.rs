@@ -1,7 +1,5 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
-#[cfg(all(feature = "json", feature = "logging"))]
-use std::fmt;
 #[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
 use std::sync::Arc;
 
@@ -13,6 +11,19 @@ use crate::Publisher;
 use crate::codec::Codec;
 
 use std::collections::HashSet;
+#[cfg(all(feature = "json", feature = "logging"))]
+use std::convert::Infallible;
+#[cfg(all(feature = "json", feature = "logging"))]
+use std::sync::Mutex;
+
+#[cfg(all(feature = "json", feature = "logging"))]
+use tracing::field::Field;
+#[cfg(all(feature = "json", feature = "logging"))]
+use tracing::field::Visit;
+#[cfg(all(feature = "json", feature = "logging"))]
+use tracing::subscriber;
+#[cfg(all(feature = "json", feature = "logging"))]
+use tracing::subscriber::DefaultGuard;
 
 use super::*;
 use crate::{Lend, PayloadForm, Take};
@@ -127,12 +138,7 @@ mod fixtures {
 /// Collects the `tracing` messages emitted on this thread: a warning's field values are only
 /// evaluated while a subscriber listens, so asserting on one needs a capture in place.
 #[cfg(all(feature = "json", feature = "logging"))]
-fn capture_events() -> (
-    Arc<std::sync::Mutex<Vec<String>>>,
-    tracing::subscriber::DefaultGuard,
-) {
-    use std::sync::Mutex;
-
+fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
 
@@ -141,8 +147,8 @@ fn capture_events() -> (
     impl<S: tracing::Subscriber> Layer<S> for Capture {
         fn on_event(&self, event: &tracing::Event<'_>, _ctx: LayerContext<'_, S>) {
             struct Grab(Vec<String>);
-            impl tracing::field::Visit for Grab {
-                fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+            impl Visit for Grab {
+                fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
                     self.0.push(format!("{}={value:?}", field.name()));
                 }
             }
@@ -153,9 +159,8 @@ fn capture_events() -> (
     }
 
     let events = Arc::new(Mutex::new(Vec::new()));
-    let guard = tracing::subscriber::set_default(
-        tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
-    );
+    let guard =
+        subscriber::set_default(tracing_subscriber::registry().with(Capture(Arc::clone(&events))));
     (events, guard)
 }
 
@@ -173,7 +178,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
 
     impl Publisher for PendingCommit {
         type Payload = Lend;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
         type Options = ();
 
         fn publish(
@@ -249,10 +254,11 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     }
 
     let hits = Arc::new(AtomicUsize::new(0));
-    let stack = PublishDynStack::new([
-        Arc::new(Mark(Arc::clone(&hits), 1)) as Arc<dyn PublishDynLayer>,
+    let layers: [Arc<dyn PublishDynLayer>; 2] = [
+        Arc::new(Mark(Arc::clone(&hits), 1)),
         Arc::new(Mark(Arc::clone(&hits), 10)),
-    ]);
+    ];
+    let stack = PublishDynStack::new(layers);
     assert!(format!("{stack:?}").contains("middleware"));
     let pipeline = PublishStack::new(stack.clone(), PublishIdentity);
 
@@ -441,10 +447,11 @@ async fn the_pipeline_cursors_render_their_position() {
     }
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let dynamic = PublishDynStack::new([
-        Arc::new(Record(Arc::clone(&seen))) as Arc<dyn PublishDynLayer>,
+    let layers: [Arc<dyn PublishDynLayer>; 2] = [
         Arc::new(Record(Arc::clone(&seen))),
-    ]);
+        Arc::new(Record(Arc::clone(&seen))),
+    ];
+    let dynamic = PublishDynStack::new(layers);
     let pipeline = PublishStack::new(
         Record(Arc::clone(&seen)),
         PublishStack::new(dynamic, PublishIdentity),

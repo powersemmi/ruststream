@@ -62,6 +62,7 @@ mod matrix_tests;
 #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
 mod parity_tests;
 
+use crate::runtime::settings::{AllOpen, SubscriberBuilder};
 #[doc(hidden)]
 pub use axis::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,
@@ -96,14 +97,9 @@ pub use verdict::{Batched, OneByOne, VerdictFamily};
 
 /// What the constructor returns: the settings builder over its definition, mounted on the
 /// converted source with every setting open.
-pub type ValueBuilder<Def, Src> = crate::runtime::settings::SubscriberBuilder<
-    Def,
-    <Src as IntoSource>::Source,
-    crate::runtime::settings::AllOpen,
->;
+pub type ValueBuilder<Def, Src> = SubscriberBuilder<Def, <Src as IntoSource>::Source, AllOpen>;
 
 use std::borrow::Cow;
-use std::future::Future;
 
 #[cfg(feature = "memory")]
 use crate::memory::{MemoryPattern, MemorySource};

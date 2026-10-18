@@ -13,6 +13,7 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::error;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +26,10 @@ use ruststream::memory::MemoryPublisher;
 use ruststream::memory::prelude::*;
 use ruststream::runtime::{HealthProbe, HealthState};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
+use tokio::signal;
 use tokio::sync::Mutex;
+use tokio::time;
 
 // --8<-- [start:event]
 /// The integration event the HTTP side hands to the messaging side.
@@ -77,7 +81,7 @@ async fn place_order(
 /// broker outage delays events instead of losing them; a crash between publish and removal
 /// re-publishes the row on restart, which is the usual at-least-once contract of an outbox.
 async fn relay_outbox(store: Arc<Mutex<Store>>, egress: MemoryPublisher) {
-    let mut tick = tokio::time::interval(Duration::from_millis(200));
+    let mut tick = time::interval(Duration::from_millis(200));
     loop {
         tick.tick().await;
         loop {
@@ -128,7 +132,7 @@ async fn healthz(State(health): State<HealthProbe>) -> (StatusCode, String) {
 
 // --8<-- [start:wiring]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let broker = MemoryBroker::new().bindable();
     // A token, not a publisher: minted before registration, paired after start.
     let egress = broker.bind(Publish);
@@ -153,7 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // moment the messaging side fail-fasts, answering through the graceful drain below.
         .route("/healthz", get(healthz).with_state(running.health()));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
+    let listener = TcpListener::bind("127.0.0.1:8080").await?;
     tracing::info!("orders API on http://127.0.0.1:8080/orders");
     // The host owns the signals. HTTP stops on Ctrl+C, or when the messaging side tears itself
     // down (fail-fast) so the process does not keep serving with a dead consumer; either way the
@@ -162,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                _ = signal::ctrl_c() => {}
                 () = stopping => {}
             }
         })

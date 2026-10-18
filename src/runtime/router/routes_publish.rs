@@ -34,7 +34,7 @@ use crate::runtime::publish::{
     ForReply, NamesDestination, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
 use crate::runtime::publishing::{
-    PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
+    EncodeReply, PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
 };
 use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
 use crate::runtime::retry::RetryOpen;
@@ -46,6 +46,7 @@ use super::routes::{
     MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
 };
 use super::sink::RouterSink;
+use crate::runtime::Serialized;
 
 /// What the reply position's transform stack does to the destination, projected against the
 /// publisher it runs over: [`Names`](crate::runtime::Names) where a transform decides where each
@@ -222,7 +223,7 @@ where
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: crate::runtime::publishing::EncodeReply + Send + Sync + 'static,
+    Def::Reply: EncodeReply + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
@@ -292,7 +293,7 @@ where
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                     #[cfg(not(feature = "testing"))]
                     let publisher = pairing.await;
-                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                    let publisher = publisher.map_err(BoxError::from)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -304,7 +305,7 @@ where
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
-                            .map_err(|e| Box::new(e) as BoxError)?;
+                            .map_err(BoxError::from)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
@@ -350,7 +351,7 @@ where
     Def: PublishingCall<State> + 'static,
     Def::Input: Materialize<DecodeCodec, SourceMessage<B, Source>>,
     Def::Injections: FromStartup<B, Source::Subscriber, Extra> + Send + Sync + 'static,
-    Def::Reply: crate::runtime::Serialized + Send + Sync + 'static,
+    Def::Reply: Serialized + Send + Sync + 'static,
     Def::Context: BuildContext<SourceMessage<B, Source>> + Send + Sync + 'static,
     // `Materialize` above carries whatever the input asks of the codec, and a byte input asks
     // for nothing - so this route mounts with `()` in a build with no codec feature.
@@ -408,7 +409,7 @@ where
                     let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                     #[cfg(not(feature = "testing"))]
                     let publisher = pairing.await;
-                    let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                    let publisher = publisher.map_err(BoxError::from)?;
                     let (subscriber, delivery) = open_subscription::<B, _, Def::Context>(
                         source,
                         connected.as_ref(),
@@ -420,7 +421,7 @@ where
                     let injections =
                         Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                             .await
-                            .map_err(|e| Box::new(e) as BoxError)?;
+                            .map_err(BoxError::from)?;
                     let handler = global.apply::<SourceMessage<B, Source>, Def::Context, State, _>(
                         PublishingHandler {
                             def,
@@ -530,10 +531,10 @@ where
                 let (publisher, origin) = paired(connected.as_ref(), pairing).await;
                 #[cfg(not(feature = "testing"))]
                 let publisher = pairing.await;
-                let publisher = publisher.map_err(|e| Box::new(e) as BoxError)?;
+                let publisher = publisher.map_err(BoxError::from)?;
                 let injections = Def::Injections::resolve(extra, connected.as_ref(), &subscriber)
                     .await
-                    .map_err(|e| Box::new(e) as BoxError)?;
+                    .map_err(BoxError::from)?;
                 let handler = BatchPublishingHandler {
                     def,
                     codec,

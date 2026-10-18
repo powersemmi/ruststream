@@ -31,7 +31,7 @@ impl MessageHeaders for Order {
 mod start {
     use std::convert::Infallible;
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
@@ -87,7 +87,7 @@ mod start {
 
 mod start_live {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
     use std::time::Duration;
 
     use ruststream::memory::prelude::*;
@@ -159,6 +159,7 @@ mod with_state {
     use ruststream::memory::prelude::*;
     use ruststream::testing::TestApp;
     use serde::{Deserialize, Serialize};
+    use tokio::task;
 
     use super::Order;
 
@@ -193,7 +194,7 @@ mod with_state {
             // Stands in for the network call to `url`. No catalog runs beside this example, so the
             // call fails, and so would a test that ran this `on_startup`.
             let _ = url;
-            tokio::task::yield_now().await;
+            task::yield_now().await;
             Err(CatalogError)
         }
     }
@@ -269,7 +270,7 @@ mod with_state {
 
 mod shutdown {
     use std::error::Error;
-    use std::future::{Future, ready};
+    use std::future::ready;
 
     use ruststream::memory::prelude::*;
     use ruststream::runtime::RustStreamError;

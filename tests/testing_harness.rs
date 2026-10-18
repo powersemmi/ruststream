@@ -9,12 +9,14 @@
     feature = "macros"
 ))]
 
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use ruststream::memory::{MemoryBroker, MemoryPosition, Retaining, Retention};
+use ruststream::memory::{MemoryBroker, MemoryPosition, MemoryPublisher, Retaining, Retention};
 // `Context` is named in handler signatures below but the `#[subscriber]` macro rewrites them, so it
 // needs no import.
+use ruststream::runtime::RustStreamError;
 use ruststream::runtime::{
     AppInfo, HandlerOutcome, PublishError, PublishExt, RustStream, SubscriberSettings,
 };
@@ -183,10 +185,7 @@ async fn fail_fast_panic_shuts_down_and_blocks_further_publishes() {
         .assert_called_once()
         .panicked();
     tb.assert_shut_down();
-    assert!(matches!(
-        tb.run_result(),
-        Err(ruststream::runtime::RustStreamError::Dispatch(_))
-    ));
+    assert!(matches!(tb.run_result(), Err(RustStreamError::Dispatch(_))));
     // A publish after the fail-fast shutdown is rejected.
     assert!(matches!(
         tb.broker::<MemoryBroker>()
@@ -347,7 +346,7 @@ async fn retry_once(order: &Order, ctx: &mut Context<'_, (), Counter>) -> Handle
 async fn requeue_redelivers_and_settles() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Counter {
+            Ok::<_, Infallible>(Counter {
                 seen: AtomicU32::new(0),
             })
         })
@@ -390,7 +389,7 @@ async fn delayed_retry(order: &Order, ctx: &mut Context<'_, (), Counter>) -> Han
 async fn retry_after_redelivers_after_advancing_time() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| {
-            Ok::<_, std::convert::Infallible>(Counter {
+            Ok::<_, Infallible>(Counter {
                 seen: AtomicU32::new(0),
             })
         })
@@ -443,7 +442,7 @@ async fn on_event(event: &Event) -> HandlerOutcome {
 }
 
 struct Egress {
-    egress: ruststream::memory::MemoryPublisher,
+    egress: MemoryPublisher,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -453,7 +452,7 @@ async fn cross_broker_cascade_settles_before_publish_returns() {
     let egress = redis.publisher();
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .on_startup(move |()| async move { Ok::<_, std::convert::Infallible>(Egress { egress }) })
+        .on_startup(async move |()| Ok::<_, Infallible>(Egress { egress }))
         .with_broker_labeled("ingress", nats, |b| {
             b.include(forward);
         })
@@ -532,7 +531,7 @@ async fn with_state_injects_a_mirror_state() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| {
             // The real startup would build a publisher; the harness replaces it below.
-            Ok::<_, std::convert::Infallible>(Egress {
+            Ok::<_, Infallible>(Egress {
                 egress: MemoryBroker::new().publisher(),
             })
         })

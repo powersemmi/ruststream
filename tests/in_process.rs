@@ -12,7 +12,7 @@
     feature = "macros"
 ))]
 
-use std::future::{Future, ready};
+use std::future::ready;
 
 use ruststream::conformance::harness::{self, InProcessBroker};
 use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemorySource, Retaining, Retention};

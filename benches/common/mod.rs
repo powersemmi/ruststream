@@ -81,7 +81,7 @@
 #![allow(dead_code)]
 
 use std::fmt::Write;
-use std::future::{Future, ready};
+use std::future::ready;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -90,9 +90,9 @@ use std::convert::Infallible;
 
 use gungraun::{Callgrind, Dhat, DhatMetric, EntryPoint, LibraryBenchmarkConfig};
 use ruststream::memory::prelude::*;
-use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryPublisher};
-use ruststream::runtime::{BrokerScope, Identity, RunningApp};
-use ruststream::{HeaderMap, Lend, OutgoingMessage, PairError, PublishPolicy, Publisher};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
+use ruststream::runtime::{BrokerScope, Identity};
+use ruststream::{Lend, OutgoingMessage, PairError};
 use serde::Deserialize;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::Notify;

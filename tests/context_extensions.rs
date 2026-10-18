@@ -18,6 +18,7 @@ mod common;
 
 use common::Wire;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures::{Stream, StreamExt};
@@ -177,12 +178,12 @@ impl FieldMut<Scratch> for Stamp {
 /// stamp survived from a previous delivery (proving per-delivery isolation through the dispatch
 /// loop).
 struct StampLayer {
-    counter: Arc<std::sync::atomic::AtomicU32>,
+    counter: Arc<AtomicU32>,
 }
 
 struct StampHandler<H> {
     inner: H,
-    counter: Arc<std::sync::atomic::AtomicU32>,
+    counter: Arc<AtomicU32>,
 }
 
 impl<H> Layer<H> for StampLayer {
@@ -208,9 +209,7 @@ where
             ctx.context(Stamp).is_none(),
             "scratch leaked across deliveries"
         );
-        let n = self
-            .counter
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let n = self.counter.fetch_add(1, Ordering::SeqCst);
         ctx.set(Stamp, n);
         self.inner.handle(msg, ctx).await
     }
@@ -220,7 +219,7 @@ where
 async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated() {
     let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_clone = Arc::clone(&seen);
-    let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter = Arc::new(AtomicU32::new(0));
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         let subscriber = b.broker().subscribe("orders");

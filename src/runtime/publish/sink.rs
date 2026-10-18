@@ -2,9 +2,10 @@
 //! sink that finally takes the message, and the codec that encodes a value into it.
 
 use std::error::Error as StdError;
-use std::future::Future;
 
 use crate::codec::Codec;
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+use crate::codec::DefaultCodec;
 use crate::{HeaderMap, OutgoingFor, PayloadForm, Publisher, Transaction};
 
 /// The byte sink a publish builder resolves down to.
@@ -199,7 +200,7 @@ pub struct UnnamedCodec {
     // the default codec the ladder falls back to, and without one it owns nothing and satisfies
     // no bound.
     #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-    resolved: crate::codec::DefaultCodec,
+    resolved: DefaultCodec,
 }
 
 impl UnnamedCodec {
@@ -212,7 +213,7 @@ impl UnnamedCodec {
 
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 impl PublishCodec for UnnamedCodec {
-    type Codec = crate::codec::DefaultCodec;
+    type Codec = DefaultCodec;
 
     fn codec(&self) -> &Self::Codec {
         &self.resolved

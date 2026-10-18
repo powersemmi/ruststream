@@ -27,6 +27,10 @@ use super::record_batch_size;
 use super::{
     BatchHandler, LentValues, SliceHandler, TakenBatch, rejection, reported, settle_lent_batch,
 };
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::Delivered;
+#[cfg(feature = "testing")]
+use crate::testing::coordinator::RecordedValue;
 
 /// A subscription whose batches lend a slice of `T`: what a handler taking `&[T]` on the carried
 /// lane asks of the subscription it mounts on.
@@ -90,14 +94,14 @@ where
     // The deliveries are unread until the body returns, so a panic leaves the lent values to
     // stand for them. The settlement records the same copies, so a value is cloned once.
     #[cfg(feature = "testing")]
-    fn unsettled(&mut self) -> Vec<crate::testing::coordinator::Delivered> {
+    fn unsettled(&mut self) -> Vec<Delivered> {
         self.recorded = Src::lend(&self.batch)
             .iter()
-            .map(|value| Arc::new(value.clone()) as crate::testing::coordinator::RecordedValue)
+            .map(|value| -> RecordedValue { Arc::new(value.clone()) })
             .collect();
         self.recorded
             .iter()
-            .map(|value| crate::testing::coordinator::Delivered {
+            .map(|value| Delivered {
                 raw: bytes::Bytes::new(),
                 value: Some(Arc::clone(value)),
                 settle: None,
@@ -227,7 +231,7 @@ where
                 outcome,
                 subscription,
                 delivery,
-                <C as BuildBatchContext<M>>::build as fn(&M) -> C,
+                <C as BuildBatchContext<M>>::build,
             )
             .await;
         }
