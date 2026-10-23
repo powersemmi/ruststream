@@ -1,0 +1,81 @@
+name: Project board
+
+# The family board collects the open issues and pull requests of every repository linked to it.
+# GitHub's own auto-add rule watches one repository per rule, and the free plan allows only a few
+# rules, so this job adds whatever the broker repositories opened since its last run. Projects
+# have no built-in author field, so the job also fills the "Opened by" text field.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-board
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync the family board
+    runs-on: ubuntu-latest
+    env:
+      # A classic token with the `project` scope; the repositories are public, so reading them
+      # needs nothing more. The default GITHUB_TOKEN cannot reach a user-owned project.
+      GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+      OWNER: powersemmi
+      PROJECT: "3"
+      FIELD: Opened by
+    steps:
+      - name: Add new items and fill their authors
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::secret PROJECT_BOARD_TOKEN is not set"
+            exit 1
+          fi
+
+          project_id=$(gh project view "$PROJECT" --owner "$OWNER" --format json -q .id)
+          field_id=$(gh project field-list "$PROJECT" --owner "$OWNER" --format json \
+            -q ".fields[] | select(.name == \"$FIELD\") | .id")
+          repos=$(gh api graphql -F owner="$OWNER" -F number="$PROJECT" -f query='
+            query($owner: String!, $number: Int!) {
+              user(login: $owner) {
+                projectV2(number: $number) {
+                  repositories(first: 100) { nodes { nameWithOwner } }
+                }
+              }
+            }' -q '.data.user.projectV2.repositories.nodes[].nameWithOwner')
+
+          on_board=$(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 \
+            --format json -q '.items[].content.url')
+          added=0
+          for repo in $repos; do
+            urls=$( {
+              gh issue list -R "$repo" --state open --limit 500 --json url -q '.[].url'
+              gh pr list -R "$repo" --state open --limit 500 --json url -q '.[].url'
+            } )
+            for url in $urls; do
+              if ! grep -qxF "$url" <<< "$on_board"; then
+                gh project item-add "$PROJECT" --owner "$OWNER" --url "$url" > /dev/null
+                added=$((added + 1))
+              fi
+            done
+          done
+
+          key=$(tr '[:upper:]' '[:lower:]' <<< "$FIELD")
+          filled=0
+          while read -r item url; do
+            [ -n "$item" ] || continue
+            repo=$(cut -d/ -f4-5 <<< "$url")
+            login=$(gh api "repos/$repo/issues/${url##*/}" -q .user.login)
+            gh project item-edit --project-id "$project_id" --id "$item" \
+              --field-id "$field_id" --text "$login" > /dev/null
+            filled=$((filled + 1))
+          done < <(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 --format json \
+            -q ".items[] | select(.content.url != null and (.[\"$key\"] // \"\") == \"\")
+                | \"\(.id) \(.content.url)\"")
+
+          echo "added $added items, filled the author of $filled" >> "$GITHUB_STEP_SUMMARY"
