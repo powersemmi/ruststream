@@ -17,8 +17,11 @@ permissions:
 jobs:
   label:
     name: Label by changed files
-    # Dependabot labels its own pull requests, and a version bump needs no review bot.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # Dependabot labels its own pull requests, and neither a dependency bump nor a release
+    # (a `chore/release-<version>` branch) needs the review bot.
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]'
+      && !startsWith(github.event.pull_request.head.ref, 'chore/release-')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
