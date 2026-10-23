@@ -2,8 +2,10 @@ name: Pull request labels
 
 # The labels start the automated reviews, so they follow what a pull request changes:
 # `enhancement` for code and tests, `documentation` for rustdoc and the docs, `github_actions` for
-# workflows. `bug` is a judgement about the shipped library and stays with the author. The job
-# only adds labels, so one set by hand is never taken away. Every repository of the family calls
+# workflows. `bug` is a judgement about the shipped library and stays with the author. A release,
+# a pull request that changes only the manifests and the lock file and bumps a manifest's own
+# version, gets a label named after the version instead, created on first use. The job only adds
+# labels, so one set by hand is never taken away. Every repository of the family calls
 # this workflow, so the rules live here once.
 
 on:
@@ -12,16 +14,15 @@ on:
   workflow_call:
 
 permissions:
+  # Creating a repository label is an issues permission.
+  issues: write
   pull-requests: write
 
 jobs:
   label:
     name: Label by changed files
-    # Dependabot labels its own pull requests, and neither a dependency bump nor a release
-    # (a `chore/release-<version>` branch) needs the review bot.
-    if: >-
-      github.event.pull_request.user.login != 'dependabot[bot]'
-      && !startsWith(github.event.pull_request.head.ref, 'chore/release-')
+    # Dependabot labels its own pull requests.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -39,6 +40,28 @@ jobs:
           files=$(jq -r .filename <<< "$entries")
           patches=$(jq -r .patch <<< "$entries")
           rust_patches=$(jq -r 'select(.filename | endswith(".rs")) | .patch' <<< "$entries")
+          existing=$(gh label list -R "$REPO" --limit 500 --json name -q '.[].name')
+
+          # A package's own version is a top-level `version` key; a dependency's sits inside its
+          # entry. The root manifest names the version when a workspace bumps several.
+          version=""
+          if ! grep -qvE '(^|/)Cargo\.(toml|lock)$' <<< "$files"; then
+            root=$(jq -r 'select(.filename == "Cargo.toml") | .patch' <<< "$entries")
+            members=$(jq -r 'select(.filename | endswith("/Cargo.toml")) | .patch' <<< "$entries")
+            bump='^\+version\s*=\s*"\K[^"]+'
+            version=$(grep -m1 -oP "$bump" <<< "$root" || grep -m1 -oP "$bump" <<< "$members" \
+              || true)
+          fi
+          if [ -n "$version" ]; then
+            label="v$version"
+            if ! grep -qxF "$label" <<< "$existing"; then
+              gh label create "$label" -R "$REPO" --color 0E8A16 \
+                --description "Release $version" > /dev/null
+            fi
+            gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" > /dev/null
+            echo "release: $label" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           wanted=()
           # A Rust file whose changed lines are all comments is a documentation change only.
@@ -59,7 +82,6 @@ jobs:
           fi
 
           # A label the repository does not define is skipped rather than created.
-          existing=$(gh label list -R "$REPO" --limit 500 --json name -q '.[].name')
           args=()
           for label in "${wanted[@]}"; do
             if grep -qxF "$label" <<< "$existing"; then
