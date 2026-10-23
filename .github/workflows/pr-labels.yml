@@ -9,7 +9,7 @@ name: Pull request labels
 # this workflow, so the rules live here once.
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_call:
 
@@ -21,16 +21,18 @@ permissions:
 jobs:
   label:
     name: Label by changed files
-    # Dependabot labels its own pull requests.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # Dependabot labels its own pull requests. A pull request from a fork gets a read-only
+    # token, so it is labelled by hand.
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
-      # The pull request's code is never checked out: the job reads the changed files through the
-      # API, so `pull_request_target` runs nothing a fork wrote.
+      # The job reads the changed files through the API and never checks the code out.
       - name: Add the labels the changes call for
         run: |
           set -euo pipefail
