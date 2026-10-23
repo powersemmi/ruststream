@@ -12,7 +12,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::{Order, Receipt};
 use ruststream::codec::CborCodec;

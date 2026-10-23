@@ -12,7 +12,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use std::io;
 use std::marker::PhantomData;

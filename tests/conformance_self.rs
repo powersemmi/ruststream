@@ -3,6 +3,8 @@
 //! If this test fails, either `MemoryBroker` regressed or the harness expectations are
 //! inconsistent.
 
+#![cfg(all(feature = "conformance", feature = "memory"))]
+
 use ruststream::{
     conformance::{capabilities, harness, lifecycle},
     memory::{MemoryBroker, MemorySource, Retaining, Retention},

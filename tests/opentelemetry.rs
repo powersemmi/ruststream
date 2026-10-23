@@ -8,7 +8,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::{Req, Resp};
 use opentelemetry::Context as OtelContext;

@@ -13,7 +13,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::Order;
 use ruststream::codec::{CborCodec, MsgpackCodec};

@@ -12,8 +12,8 @@
     feature = "testing"
 ))]
 
-mod carrying;
-mod common;
+use crate::carrying;
+use crate::common;
 
 use std::convert::Infallible;
 use std::error::Error;

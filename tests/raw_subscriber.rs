@@ -3,7 +3,7 @@
 //! anywhere on the path.
 //!
 //! The codec-free path itself is additionally pinned by a feature-stripped compile:
-//! `cargo check --no-default-features --features macros,memory,testing --test raw_subscriber`
+//! `cargo check --no-default-features --features macros,memory,testing --test suite`
 //! builds this file with every codec-gated test compiled out.
 #![cfg(all(feature = "macros", feature = "memory", feature = "testing"))]
 

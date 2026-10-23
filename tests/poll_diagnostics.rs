@@ -15,7 +15,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use std::hint::black_box;
 use std::io;

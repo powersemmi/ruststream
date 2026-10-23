@@ -3,7 +3,7 @@
 //! but must not print (a borrowed scope, a closure, a connection, a payload). One test per module.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
-mod common;
+use crate::common;
 
 #[cfg(any(feature = "metrics", feature = "otel"))]
 use std::future::ready;

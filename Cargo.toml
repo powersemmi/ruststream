@@ -928,89 +928,17 @@ path = "examples/manual/guide/http.rs"
 required-features = ["testing", "memory", "json", "cbor", "asyncapi", "logging"]
 test = true
 
+# Every file under `tests/` is a module of one test binary: one link instead of one per file.
 [[test]]
-name = "app_dispatch"
-required-features = ["memory", "json"]
+name = "suite"
+path = "tests/main.rs"
 
+# The OpenTelemetry metrics own their process: `init()` installs the global tracing subscriber
+# and providers, and the batch-size histogram binds to the global meter at the first batch the
+# process dispatches, so a test running beside them would decide what they observe.
 [[test]]
-name = "seek_api"
-required-features = ["testing", "macros", "memory", "json"]
-
-[[test]]
-name = "asyncapi"
-required-features = ["asyncapi", "memory", "macros"]
-
-[[test]]
-name = "settings_read"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "batch_subscriber"
-required-features = ["macros", "memory", "json", "testing"]
-
-[[test]]
-name = "codecs"
-required-features = ["macros", "memory", "cbor", "msgpack"]
-
-[[test]]
-name = "composition_rules"
-required-features = ["macros", "memory", "json", "testing"]
-
-[[test]]
-name = "conformance_self"
-required-features = ["conformance", "memory"]
-
-[[test]]
-name = "failure_policy"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "from_context"
-required-features = ["macros", "memory", "json", "testing"]
-
-[[test]]
-name = "ctx_extractor"
-required-features = ["macros", "memory", "json", "testing"]
-
-[[test]]
-name = "macro_subscriber"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "metrics"
-required-features = ["metrics", "memory", "json"]
-
-[[test]]
-name = "retry_semantics"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "scope_codec"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "router_include"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "router_publishing"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "workers"
-required-features = ["macros", "memory", "json"]
-
-[[test]]
-name = "testing_harness"
-required-features = ["testing", "macros", "memory", "json"]
-
-[[test]]
-name = "memory_routing"
-required-features = ["testing", "macros", "memory", "json"]
-
-[[test]]
-name = "ui"
-required-features = ["macros", "memory", "json"]
+name = "otel_metrics"
+path = "tests/otel_metrics.rs"
 
 [package]
 name = "ruststream"
@@ -1025,6 +953,7 @@ description = "Async messaging framework for Rust: broker-agnostic traits, route
 readme = "README.md"
 keywords = ["messaging", "async", "broker", "pubsub", "event-driven"]
 categories = ["asynchronous", "network-programming"]
+autotests = false
 
 # The whole surface is behind additive features, and `default` is `json` alone, so a default build
 # on docs.rs publishes a reference with the runtime, codec, AsyncAPI, metrics, testing and

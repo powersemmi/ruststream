@@ -13,10 +13,7 @@
     feature = "json"
 ))]
 
-use std::cell::RefCell;
 use std::future::ready;
-use std::io;
-use std::sync::{Arc, Mutex, Once, PoisonError};
 
 #[cfg(feature = "asyncapi")]
 use ruststream::asyncapi;
@@ -24,8 +21,8 @@ use ruststream::memory::prelude::*;
 use ruststream::nonzero;
 use ruststream::testing::TestApp;
 use serde::{Deserialize, Serialize};
-use tracing::{Level, subscriber};
-use tracing_subscriber::fmt::MakeWriter;
+
+use crate::log_capture::Captured;
 
 #[derive(Debug, Deserialize, Outgoing, Serialize, PartialEq, schemars::JsonSchema)]
 struct Order {
@@ -207,92 +204,9 @@ fn the_document_reports_the_resolved_destination() {
 /// The startup warning's message, as the log renders it.
 const IGNORED: &str = "the mount-site reply name is ignored";
 
-/// The log lines written on one thread while its [`Installed`] guard lives, as text.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-thread_local! {
-    /// The capture the current thread's log lines go to, if a test installed one.
-    static CURRENT: RefCell<Option<Captured>> = const { RefCell::new(None) };
-}
-
-/// Clears the current thread's capture when dropped.
-struct Installed;
-
-impl Drop for Installed {
-    fn drop(&mut self) {
-        CURRENT.with(|current| current.borrow_mut().take());
-    }
-}
-
-impl Captured {
-    /// Routes the current thread's log lines into this capture until the guard drops.
-    ///
-    /// The subscriber is process-wide, installed once, rather than a per-thread default. The
-    /// warning is one callsite shared by every test here, including the ones that start an app
-    /// without capturing, and tracing caches a callsite's interest globally: with a per-thread
-    /// default, a test thread that had no subscriber could register the callsite while another
-    /// test's subscriber was the only one alive, cache it as never enabled, and silence the
-    /// warning for the capturing test. A global subscriber is the same on every thread, so the
-    /// cached interest is always the right one; only where its lines go is per thread.
-    fn install(&self) -> Installed {
-        static GLOBAL: Once = Once::new();
-        GLOBAL.call_once(|| {
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(ThreadCapture)
-                .with_ansi(false)
-                .with_max_level(Level::WARN)
-                .finish();
-            subscriber::set_global_default(subscriber)
-                .expect("no other global subscriber in this test binary");
-        });
-        CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));
-        Installed
-    }
-
-    fn text(&self) -> String {
-        let bytes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        String::from_utf8_lossy(&bytes).into_owned()
-    }
-
-    /// The warning lines, one per registration that reported an ignored name.
-    fn ignored(&self) -> Vec<String> {
-        self.text()
-            .lines()
-            .filter(|line| line.contains(IGNORED))
-            .map(str::to_owned)
-            .collect()
-    }
-}
-
-/// The global subscriber's writer: the current thread's capture, or nowhere.
-struct ThreadCapture;
-
-/// One log line's destination, resolved on the thread that wrote it.
-struct LineWriter(Option<Captured>);
-
-impl io::Write for LineWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(Captured(bytes)) = &self.0 {
-            bytes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend_from_slice(buf);
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> MakeWriter<'a> for ThreadCapture {
-    type Writer = LineWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LineWriter(CURRENT.with(|current| current.borrow().clone()))
-    }
+/// The warning lines, one per registration that reported an ignored name.
+fn ignored(log: &Captured) -> Vec<String> {
+    log.lines_with(IGNORED)
 }
 
 /// Starts `app` with the log captured and returns what startup wrote.
@@ -338,7 +252,7 @@ async fn an_attribute_name_the_type_overrides_is_reported_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],
@@ -366,7 +280,7 @@ async fn a_chain_name_the_type_overrides_is_reported_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],
@@ -397,7 +311,7 @@ async fn a_batch_reply_name_the_type_overrides_is_reported_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],
@@ -430,7 +344,7 @@ async fn a_serialized_reply_name_the_type_overrides_is_reported_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],
@@ -465,7 +379,7 @@ async fn a_mount_site_name_equal_to_the_declared_one_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
+    assert_eq!(ignored(&log), Vec::<String>::new(), "{}", log.text());
 }
 
 /// Nothing is ignored where the mount site names nothing, on either surface.
@@ -481,7 +395,7 @@ async fn a_bare_publish_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
+    assert_eq!(ignored(&log), Vec::<String>::new(), "{}", log.text());
 }
 
 /// A reply type declaring no destination takes the mount-site name, so nothing is ignored.
@@ -496,7 +410,7 @@ async fn a_name_a_type_declaring_none_takes_is_not_reported() {
 
     let log = startup_log(app).await;
 
-    assert_eq!(log.ignored(), Vec::<String>::new(), "{}", log.text());
+    assert_eq!(ignored(&log), Vec::<String>::new(), "{}", log.text());
 }
 
 #[derive(OutSlot)]
@@ -522,7 +436,7 @@ async fn a_slot_carrying_handler_reports_an_overridden_name_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],
@@ -561,7 +475,7 @@ async fn a_slot_carrying_batch_handler_reports_an_overridden_name_at_startup() {
 
     let log = startup_log(app).await;
 
-    let warnings = log.ignored();
+    let warnings = ignored(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert_names(
         &warnings[0],

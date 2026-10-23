@@ -19,8 +19,8 @@
 //! A row is written `id:name` (`7:alice`). A [`Fault`] breaks the subscription in one way, for the
 //! conformance checks that must fail against it. The descriptor declares [`AddressedCopies`];
 //! [`Rows::copy_path`] declares another copy path, for the checks that hold only where the runtime
-//! publishes copies. Each test binary that names this module uses part of it, hence the
-//! `dead_code` allowance.
+//! publishes copies. Each suite that names this module uses part of it, hence the `dead_code`
+//! allowance.
 #![allow(dead_code)]
 
 use std::convert::Infallible;

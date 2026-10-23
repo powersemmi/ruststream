@@ -14,7 +14,8 @@
     feature = "logging"
 ))]
 
-mod common;
+use crate::common;
+use crate::log_capture;
 
 use std::convert::Infallible;
 use std::future::{pending, ready};
@@ -23,8 +24,8 @@ use std::io;
 use std::process;
 #[cfg(unix)]
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use ruststream::codec::CborCodec;
@@ -45,9 +46,6 @@ use tokio::signal::unix::SignalKind;
 use tokio::sync::Notify;
 use tokio::time;
 use tokio::time::timeout;
-use tracing::subscriber;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::MakeWriter;
 
 use common::{Order, Receipt, Wire};
 
@@ -62,74 +60,6 @@ struct Export(Vec<u8>);
 
 // Captured logs: the lifecycle's structured fields are only evaluated when a subscriber is
 // interested, so what the service reports about itself is observable only with one installed.
-
-/// A `MakeWriter` appending every formatted event to a shared buffer.
-#[derive(Clone)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl LogBuffer {
-    fn text(&self) -> String {
-        let bytes = self.0.lock().expect("log buffer").clone();
-        String::from_utf8(bytes).expect("utf-8 logs")
-    }
-}
-
-/// One event's bytes, appended to the shared buffer as a unit. The formatter writes an event in
-/// several calls, so writing straight into the shared buffer would let concurrent tests interleave
-/// fragments and split a line an assertion is looking for.
-struct EventWriter {
-    shared: Arc<Mutex<Vec<u8>>>,
-    event: Vec<u8>,
-}
-
-impl io::Write for EventWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.event.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for EventWriter {
-    fn drop(&mut self) {
-        // A destructor must not panic, so a poisoned buffer drops the line instead.
-        if let Ok(mut shared) = self.shared.lock() {
-            shared.extend_from_slice(&self.event);
-        }
-    }
-}
-
-impl<'a> MakeWriter<'a> for LogBuffer {
-    type Writer = EventWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        EventWriter {
-            shared: Arc::clone(&self.0),
-            event: Vec::new(),
-        }
-    }
-}
-
-static LOGS: OnceLock<LogBuffer> = OnceLock::new();
-
-/// Installs the capturing subscriber the first time any test asks for it (the global slot takes
-/// one subscriber per process) and hands back the shared buffer.
-fn logs() -> &'static LogBuffer {
-    LOGS.get_or_init(|| {
-        let buffer = LogBuffer(Arc::new(Mutex::new(Vec::new())));
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new("ruststream=debug"))
-            .with_ansi(false)
-            .with_writer(buffer.clone())
-            .finish();
-        subscriber::set_global_default(subscriber)
-            .expect("this binary installs no other subscriber");
-        buffer
-    })
-}
 
 /// The single captured line containing every marker, for an assertion that must not be satisfied
 /// by another test's events in the shared buffer.
@@ -148,7 +78,7 @@ async fn logged(_order: &Order) -> HandlerOutcome {
 /// broker (by label when registered with one, by type otherwise) and each subscriber.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
-    let logs = logs();
+    log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-logged-service", "0.3.0"))
         .register_broker(MemoryBroker::new())
         .with_broker_labeled("cov-logged-ingress", MemoryBroker::new(), |b| {
@@ -158,7 +88,7 @@ async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
     let running = app.start().await.expect("startup failed");
     running.shutdown().await.expect("graceful shutdown failed");
 
-    let text = logs.text();
+    let text = log_capture::shared_text();
     let starting = line_with(&text, &["starting service", "cov-logged-service"]);
     assert!(starting.contains("version=0.3.0"), "{starting}");
     assert!(starting.contains("brokers=2"), "{starting}");
@@ -341,7 +271,7 @@ impl<'p> Handle<Frame<'p>> for NeverDelivered {
 /// silently deaf, and the brokers connected so far are torn down on the way out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
-    let logs = logs();
+    log_capture::record_shared();
     let broker = MemoryBroker::new();
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("cov-refused", "0.1.0")).with_broker_labeled(
@@ -368,7 +298,7 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
         "got: {refused:?}",
     );
     line_with(
-        &logs.text(),
+        &log_capture::shared_text(),
         &[
             "broker shut down after a startup failure",
             r#"broker="cov-refused-ingress""#,
@@ -502,7 +432,7 @@ async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdo
 /// and the original startup error stays the caller's answer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
-    let logs = logs();
+    log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-unwind", "0.1.0"))
         .with_broker_labeled("cov-unwind-egress", StubbornBroker, |_b| {})
         .register_broker(UnreachableBroker);
@@ -513,7 +443,7 @@ async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
         .expect_err("the second broker cannot connect");
     assert!(matches!(err, RustStreamError::Connect(_)), "got: {err:?}");
     line_with(
-        &logs.text(),
+        &log_capture::shared_text(),
         &[
             "broker shutdown failed during the startup unwind",
             r#"broker="cov-unwind-egress""#,

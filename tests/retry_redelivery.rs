@@ -17,7 +17,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use std::future::ready;
 use std::time::Duration;

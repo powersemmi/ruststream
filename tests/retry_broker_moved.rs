@@ -16,14 +16,13 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
+use crate::log_capture::Captured;
 
-use std::cell::RefCell;
 use std::convert::Infallible;
-use std::io;
 use std::num::NonZeroU64;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Once, PoisonError};
 use std::time::Duration;
 
 use common::Order;
@@ -38,9 +37,6 @@ use ruststream::{
     AckError, BrokerMoves, FromRef, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
     RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, nonzero, subscriber,
 };
-use tracing::Level;
-use tracing::subscriber::set_global_default;
-use tracing_subscriber::fmt::MakeWriter;
 
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
@@ -191,87 +187,9 @@ async fn ready_on_return(order: &Order, State(seen): State<Arc<AtomicU32>>) -> H
 /// The warning's message, as the log renders it.
 const DELAY_DROPPED: &str = "the delay is dropped";
 
-/// The log lines written on one thread while its [`Installed`] guard lives, as text.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-thread_local! {
-    /// The capture the current thread's log lines go to, if a test installed one.
-    static CURRENT: RefCell<Option<Captured>> = const { RefCell::new(None) };
-}
-
-/// Clears the current thread's capture when dropped.
-struct Installed;
-
-impl Drop for Installed {
-    fn drop(&mut self) {
-        CURRENT.with(|current| current.borrow_mut().take());
-    }
-}
-
-impl Captured {
-    /// Routes the current thread's log lines into this capture until the guard drops.
-    ///
-    /// The subscriber is process-wide, installed once, rather than a per-thread default: tracing
-    /// caches a callsite's interest globally, and a thread with no subscriber of its own could
-    /// register the warning's callsite as never enabled and silence it for every test.
-    fn install(&self) -> Installed {
-        static GLOBAL: Once = Once::new();
-        GLOBAL.call_once(|| {
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(ThreadCapture)
-                .with_ansi(false)
-                .with_max_level(Level::WARN)
-                .finish();
-            set_global_default(subscriber).expect("no other global subscriber in this test binary");
-        });
-        CURRENT.with(|current| *current.borrow_mut() = Some(self.clone()));
-        Installed
-    }
-
-    fn text(&self) -> String {
-        let bytes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        String::from_utf8_lossy(&bytes).into_owned()
-    }
-
-    /// The warning lines, one per delivery requeued without its delay.
-    fn dropped_delays(&self) -> Vec<String> {
-        self.text()
-            .lines()
-            .filter(|line| line.contains(DELAY_DROPPED))
-            .map(str::to_owned)
-            .collect()
-    }
-}
-
-/// The global subscriber's writer: the current thread's capture, or nowhere.
-struct ThreadCapture;
-
-/// One log line's destination, resolved on the thread that wrote it.
-struct LineWriter(Option<Captured>);
-
-impl io::Write for LineWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(Captured(bytes)) = &self.0 {
-            bytes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend_from_slice(buf);
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> MakeWriter<'a> for ThreadCapture {
-    type Writer = LineWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LineWriter(CURRENT.with(|current| current.borrow().clone()))
-    }
+/// The warning lines, one per delivery requeued without its delay.
+fn dropped_delays(log: &Captured) -> Vec<String> {
+    log.lines_with(DELAY_DROPPED)
 }
 
 /// A delivery that spends the cap is the broker's to move, and the requeue is what moves it: no
@@ -303,7 +221,7 @@ async fn a_spent_delivery_is_moved_without_a_dropped_delay_warning() {
         .published::<Order>("orders.dead")
         .assert_called_once()
         .with(&Order { id: 1 });
-    assert_eq!(log.dropped_delays(), Vec::<String>::new(), "{}", log.text());
+    assert_eq!(dropped_delays(&log), Vec::<String>::new(), "{}", log.text());
 }
 
 /// A delivery with attempts left comes back at once, without its delay, and the runtime says so,
@@ -338,7 +256,7 @@ async fn a_delivery_with_attempts_left_warns_that_its_delay_is_dropped() {
     tb.broker::<MemoryBroker>()
         .published::<Order>("invoices.dead")
         .assert_not_called();
-    let warnings = log.dropped_delays();
+    let warnings = dropped_delays(&log);
     assert_eq!(warnings.len(), 1, "{}", log.text());
     assert!(
         warnings[0].contains("subscription=invoices"),

@@ -7,7 +7,7 @@
 //! each handler replies with the names of the threads its steps ran on.
 #![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, HashSet};
 use std::convert::Infallible;

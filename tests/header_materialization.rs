@@ -11,7 +11,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::{Order, Receipt};
 use std::convert::Infallible;
