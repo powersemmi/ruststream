@@ -3,7 +3,8 @@ name: Project board
 # The family board collects the open issues and pull requests of every repository linked to it.
 # GitHub's own auto-add rule watches one repository per rule, and the free plan allows only a few
 # rules, so this job adds whatever the broker repositories opened since its last run. Projects
-# have no built-in author field, so the job also fills the "Opened by" text field.
+# have no built-in author field, so the job also fills the "Opened by" text field, and it keeps the
+# "Closes" field of every open pull request equal to the issues the pull request closes.
 
 on:
   schedule:
@@ -28,8 +29,9 @@ jobs:
       OWNER: powersemmi
       PROJECT: "3"
       FIELD: Opened by
+      CLOSES_FIELD: Closes
     steps:
-      - name: Add new items and fill their authors
+      - name: Add new items, fill their authors and the issues they close
         run: |
           set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
@@ -78,4 +80,36 @@ jobs:
             -q ".items[] | select(.content.url != null and (.[\"$key\"] // \"\") == \"\")
                 | \"\(.id) \(.content.url)\"")
 
-          echo "added $added items, filled the author of $filled" >> "$GITHUB_STEP_SUMMARY"
+          # A description can gain or lose its closing keywords at any time, so the field of every
+          # open pull request is compared with its references on each run.
+          closes_id=$(gh project field-list "$PROJECT" --owner "$OWNER" --format json \
+            -q ".fields[] | select(.name == \"$CLOSES_FIELD\") | .id")
+          closes_key=$(tr '[:upper:]' '[:lower:]' <<< "$CLOSES_FIELD")
+          pr_items=$(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 --format json \
+            -q ".items[] | select(.content.type == \"PullRequest\")
+                | \"\(.content.url)\t\(.id)\t\(.[\"$closes_key\"] // \"\")\"")
+          relinked=0
+          for repo in $repos; do
+            while IFS=$'\t' read -r url refs; do
+              line=$(awk -F'\t' -v u="$url" '$1 == u' <<< "$pr_items")
+              [ -n "$line" ] || continue
+              item=$(cut -f2 <<< "$line")
+              [ "$refs" != "$(cut -f3 <<< "$line")" ] || continue
+              if [ -n "$refs" ]; then
+                gh project item-edit --project-id "$project_id" --id "$item" \
+                  --field-id "$closes_id" --text "$refs" > /dev/null
+              else
+                gh project item-edit --project-id "$project_id" --id "$item" \
+                  --field-id "$closes_id" --clear > /dev/null
+              fi
+              relinked=$((relinked + 1))
+            done < <(gh pr list -R "$repo" --state open --limit 500 \
+              --json url,closingIssuesReferences \
+              -q '.[] | "\(.url)\t\([.closingIssuesReferences[]
+                    | "\(.repository.name)#\(.number)"] | join(", "))"')
+          done
+
+          {
+            echo "added $added items, filled the author of $filled"
+            echo "updated the closed issues of $relinked pull requests"
+          } >> "$GITHUB_STEP_SUMMARY"
