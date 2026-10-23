@@ -1,0 +1,69 @@
+name: Pull request labels
+
+# The labels start the automated reviews, so they follow what a pull request changes:
+# `enhancement` for code and tests, `documentation` for rustdoc and the docs, `github_actions` for
+# workflows. `bug` is a judgement about the shipped library and stays with the author. The job
+# only adds labels, so one set by hand is never taken away. Every repository of the family calls
+# this workflow, so the rules live here once.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_call:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    name: Label by changed files
+    # Dependabot labels its own pull requests, and a version bump needs no review bot.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # The pull request's code is never checked out: the job reads the changed files through the
+      # API, so `pull_request_target` runs nothing a fork wrote.
+      - name: Add the labels the changes call for
+        run: |
+          set -euo pipefail
+          # GitHub omits the patch of a very large file; such a file counts as changed code.
+          entries=$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+            -q '.[] | {filename, patch: (.patch // "+<patch omitted>")}')
+          files=$(jq -r .filename <<< "$entries")
+          patches=$(jq -r .patch <<< "$entries")
+          rust_patches=$(jq -r 'select(.filename | endswith(".rs")) | .patch' <<< "$entries")
+
+          wanted=()
+          # A Rust file whose changed lines are all comments is a documentation change only.
+          rust_code=$(grep -E '^[+-]' <<< "$rust_patches" \
+            | grep -vE '^[+-][[:space:]]*(//.*)?$' || true)
+          if [ -n "$rust_code" ] || grep -qE '(^|/)Cargo\.toml$' <<< "$files"; then
+            wanted+=(enhancement)
+          fi
+          outside_github=$(grep -vE '^\.github/' <<< "$files" || true)
+          if grep -qE '\.md$|^docs/|^website/|llms\.txt$|^context7\.json$|^\.agents/' \
+              <<< "$outside_github"; then
+            wanted+=(documentation)
+          elif grep -qE '^[+-][[:space:]]*//[/!]' <<< "$patches"; then
+            wanted+=(documentation)
+          fi
+          if grep -qE '^\.github/workflows/' <<< "$files"; then
+            wanted+=(github_actions)
+          fi
+
+          # A label the repository does not define is skipped rather than created.
+          existing=$(gh label list -R "$REPO" --limit 500 --json name -q '.[].name')
+          args=()
+          for label in "${wanted[@]}"; do
+            if grep -qxF "$label" <<< "$existing"; then
+              args+=(-f "labels[]=$label")
+            fi
+          done
+          if [ ${#args[@]} -gt 0 ]; then
+            gh api "repos/$REPO/issues/$PR/labels" "${args[@]}" > /dev/null
+          fi
+          echo "labels: ${wanted[*]:-none}" >> "$GITHUB_STEP_SUMMARY"
