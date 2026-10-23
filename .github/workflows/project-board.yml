@@ -4,11 +4,13 @@ name: Project board
 # GitHub's own auto-add rule watches one repository per rule, and the free plan allows only a few
 # rules, so this job adds whatever the broker repositories opened since its last run. Projects
 # have no built-in author field, so the job also fills the "Opened by" text field, and it keeps the
-# "Closes" field of every open pull request equal to the issues the pull request closes.
+# "Closes" field of every open pull request equal to the issues the pull request closes. An issue
+# that a pull request ready for review closes moves to "In Review". The token's GraphQL budget is
+# the owner's own, so each repository costs two list queries and only a change costs a mutation.
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,93 +25,116 @@ jobs:
     name: Sync the family board
     runs-on: ubuntu-latest
     env:
-      # A classic token with the `project` scope; the repositories are public, so reading them
-      # needs nothing more. The default GITHUB_TOKEN cannot reach a user-owned project.
+      # A classic token of the board's owner with the `project` scope; the repositories are
+      # public, so reading them needs nothing more. The default GITHUB_TOKEN cannot reach a
+      # user-owned project. The board is addressed as the token owner's (`@me`): resolving an
+      # owner by login needs a scope this token does not carry.
       GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
-      OWNER: powersemmi
+      OWNER: "@me"
       PROJECT: "3"
-      FIELD: Opened by
+      AUTHOR_FIELD: Opened by
       CLOSES_FIELD: Closes
+      REVIEW_STATUS: In Review
     steps:
-      - name: Add new items, fill their authors and the issues they close
+      - name: Add new items and fill their fields
         run: |
           set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::secret PROJECT_BOARD_TOKEN is not set"
             exit 1
           fi
+          # Fields are joined with the unit separator: unlike a tab, `read` keeps an empty one.
+          sep=$'\x1f'
 
           project_id=$(gh project view "$PROJECT" --owner "$OWNER" --format json -q .id)
-          field_id=$(gh project field-list "$PROJECT" --owner "$OWNER" --format json \
-            -q ".fields[] | select(.name == \"$FIELD\") | .id")
-          repos=$(gh api graphql -F owner="$OWNER" -F number="$PROJECT" -f query='
-            query($owner: String!, $number: Int!) {
-              user(login: $owner) {
+          fields=$(gh project field-list "$PROJECT" --owner "$OWNER" --format json)
+          field_id() { jq -r --arg n "$1" '.fields[] | select(.name == $n) | .id' <<< "$fields"; }
+          author_id=$(field_id "$AUTHOR_FIELD")
+          closes_id=$(field_id "$CLOSES_FIELD")
+          status_id=$(field_id Status)
+          review_option=$(jq -r --arg n "$REVIEW_STATUS" \
+            '.fields[] | select(.name == "Status") | .options[] | select(.name == $n) | .id' \
+            <<< "$fields")
+          repos=$(gh api graphql -F number="$PROJECT" -f query='
+            query($number: Int!) {
+              viewer {
                 projectV2(number: $number) {
                   repositories(first: 100) { nodes { nameWithOwner } }
                 }
               }
-            }' -q '.data.user.projectV2.repositories.nodes[].nameWithOwner')
+            }' -q '.data.viewer.projectV2.repositories.nodes[].nameWithOwner')
 
-          on_board=$(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 \
-            --format json -q '.items[].content.url')
+          # One line per board item: url, item id, author, closed issues, status.
+          board=$(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 --format json \
+            | jq -r --arg a "${AUTHOR_FIELD,,}" --arg c "${CLOSES_FIELD,,}" \
+              '.items[] | select(.content.url != null)
+                | [.content.url, .id, (.[$a] // ""), (.[$c] // ""), (.status // "")]
+                | join("\u001f")')
+          find_item() { grep -m1 -F -- "$1$sep" <<< "$board" || true; }
+          set_text() {
+            if [ -n "$3" ]; then
+              gh project item-edit --project-id "$project_id" --id "$1" --field-id "$2" \
+                --text "$3" > /dev/null
+            else
+              gh project item-edit --project-id "$project_id" --id "$1" --field-id "$2" \
+                --clear > /dev/null
+            fi
+          }
+
+          login='(if .author.is_bot then (.author.login | sub("^app/"; "")) + "[bot]"
+            else .author.login end)'
           added=0
+          changed=0
+          reviewed=0
           for repo in $repos; do
-            urls=$( {
-              gh issue list -R "$repo" --state open --limit 500 --json url -q '.[].url'
-              gh pr list -R "$repo" --state open --limit 500 --json url -q '.[].url'
+            # url, author, draft, urls of the closed issues, short names of the closed issues;
+            # an issue leaves the last three empty.
+            open_items=$( {
+              gh issue list -R "$repo" --state open --limit 500 --json url,author \
+                -q ".[] | [.url, $login, \"\", \"\", \"\"] | join(\"\u001f\")"
+              gh pr list -R "$repo" --state open --limit 500 \
+                --json url,author,isDraft,closingIssuesReferences \
+                -q ".[] | [.url, $login, (.isDraft | tostring),
+                    ([.closingIssuesReferences[].url] | join(\" \")),
+                    ([.closingIssuesReferences[] | \"\(.repository.name)#\(.number)\"]
+                      | join(\", \"))] | join(\"\u001f\")"
             } )
-            for url in $urls; do
-              if ! grep -qxF "$url" <<< "$on_board"; then
-                gh project item-add "$PROJECT" --owner "$OWNER" --url "$url" > /dev/null
+            while IFS="$sep" read -r url author draft issues refs; do
+              [ -n "$url" ] || continue
+              line=$(find_item "$url")
+              if [ -z "$line" ]; then
+                item=$(gh project item-add "$PROJECT" --owner "$OWNER" --url "$url" \
+                  --format json -q .id)
+                line="$url$sep$item$sep$sep$sep"
+                board+=$'\n'"$line"
                 added=$((added + 1))
               fi
-            done
-          done
-
-          key=$(tr '[:upper:]' '[:lower:]' <<< "$FIELD")
-          filled=0
-          while read -r item url; do
-            [ -n "$item" ] || continue
-            repo=$(cut -d/ -f4-5 <<< "$url")
-            login=$(gh api "repos/$repo/issues/${url##*/}" -q .user.login)
-            gh project item-edit --project-id "$project_id" --id "$item" \
-              --field-id "$field_id" --text "$login" > /dev/null
-            filled=$((filled + 1))
-          done < <(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 --format json \
-            -q ".items[] | select(.content.url != null and (.[\"$key\"] // \"\") == \"\")
-                | \"\(.id) \(.content.url)\"")
-
-          # A description can gain or lose its closing keywords at any time, so the field of every
-          # open pull request is compared with its references on each run.
-          closes_id=$(gh project field-list "$PROJECT" --owner "$OWNER" --format json \
-            -q ".fields[] | select(.name == \"$CLOSES_FIELD\") | .id")
-          closes_key=$(tr '[:upper:]' '[:lower:]' <<< "$CLOSES_FIELD")
-          pr_items=$(gh project item-list "$PROJECT" --owner "$OWNER" --limit 5000 --format json \
-            -q ".items[] | select(.content.type == \"PullRequest\")
-                | \"\(.content.url)\t\(.id)\t\(.[\"$closes_key\"] // \"\")\"")
-          relinked=0
-          for repo in $repos; do
-            while IFS=$'\t' read -r url refs; do
-              line=$(awk -F'\t' -v u="$url" '$1 == u' <<< "$pr_items")
-              [ -n "$line" ] || continue
-              item=$(cut -f2 <<< "$line")
-              [ "$refs" != "$(cut -f3 <<< "$line")" ] || continue
-              if [ -n "$refs" ]; then
-                gh project item-edit --project-id "$project_id" --id "$item" \
-                  --field-id "$closes_id" --text "$refs" > /dev/null
-              else
-                gh project item-edit --project-id "$project_id" --id "$item" \
-                  --field-id "$closes_id" --clear > /dev/null
+              IFS="$sep" read -r _ item have_author have_refs _ <<< "$line"
+              if [ "$have_author" != "$author" ]; then
+                set_text "$item" "$author_id" "$author"
+                changed=$((changed + 1))
               fi
-              relinked=$((relinked + 1))
-            done < <(gh pr list -R "$repo" --state open --limit 500 \
-              --json url,closingIssuesReferences \
-              -q '.[] | "\(.url)\t\([.closingIssuesReferences[]
-                    | "\(.repository.name)#\(.number)"] | join(", "))"')
+              # A description can gain or lose its closing keywords at any time.
+              if [ -n "$draft" ] && [ "$have_refs" != "$refs" ]; then
+                set_text "$item" "$closes_id" "$refs"
+                changed=$((changed + 1))
+              fi
+              [ "$draft" = false ] || continue
+              for issue in $issues; do
+                issue_line=$(find_item "$issue")
+                [ -n "$issue_line" ] || continue
+                IFS="$sep" read -r _ issue_item _ _ status <<< "$issue_line"
+                case "$status" in
+                  "$REVIEW_STATUS" | Done) continue ;;
+                esac
+                gh project item-edit --project-id "$project_id" --id "$issue_item" \
+                  --field-id "$status_id" --single-select-option-id "$review_option" > /dev/null
+                reviewed=$((reviewed + 1))
+              done
+            done <<< "$open_items"
           done
 
           {
-            echo "added $added items, filled the author of $filled"
-            echo "updated the closed issues of $relinked pull requests"
+            echo "added $added items, changed $changed fields"
+            echo "moved $reviewed issues to $REVIEW_STATUS"
           } >> "$GITHUB_STEP_SUMMARY"
