@@ -2,6 +2,13 @@
 //! shared state and handed to the handler as an argument, and an extractor whose rejection
 //! short-circuits the delivery before the body runs.
 
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
+
 use std::convert::Infallible;
 use std::future::ready;
 use std::sync::Arc;

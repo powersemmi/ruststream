@@ -1,5 +1,5 @@
 //! Integration test for `AsyncAPI` document generation.
-#![cfg(all(feature = "asyncapi", feature = "memory"))]
+#![cfg(all(feature = "asyncapi", feature = "memory", feature = "macros"))]
 
 use std::convert::Infallible;
 use std::future::ready;

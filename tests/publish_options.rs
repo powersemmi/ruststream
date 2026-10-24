@@ -14,7 +14,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::{Order, Receipt};
 

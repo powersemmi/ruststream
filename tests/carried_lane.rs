@@ -1,10 +1,15 @@
 //! The carried lane: a handler takes the value a subscription's deliveries already hold, with no
 //! codec between the broker and the body.
 
-#![cfg(all(feature = "macros", feature = "memory", feature = "testing"))]
+#![cfg(all(
+    feature = "macros",
+    feature = "memory",
+    feature = "json",
+    feature = "testing"
+))]
 
-mod carrying;
-mod common;
+use crate::carrying;
+use crate::common;
 
 use std::convert::Infallible;
 use std::error;

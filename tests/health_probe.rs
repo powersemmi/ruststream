@@ -9,9 +9,9 @@
 //! `RunningApp`; the harness hands out no health probe.
 //!
 //! [`RunningApp`]: ruststream::runtime::RunningApp
-#![cfg(feature = "macros")]
+#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
-mod common;
+use crate::common;
 
 use std::convert::Infallible;
 use std::future::{pending, ready};

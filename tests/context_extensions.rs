@@ -14,7 +14,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use common::Wire;
 use std::convert::Infallible;

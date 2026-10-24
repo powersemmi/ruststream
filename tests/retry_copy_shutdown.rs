@@ -7,7 +7,7 @@
 //! the copy is read off the broker.
 #![cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 
-mod common;
+use crate::common;
 
 use std::convert::Infallible;
 use std::future::ready;

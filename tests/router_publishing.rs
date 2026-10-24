@@ -8,7 +8,7 @@
     feature = "json"
 ))]
 
-mod common;
+use crate::common;
 
 use std::error::Error;
 

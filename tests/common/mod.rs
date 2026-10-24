@@ -4,12 +4,12 @@
 //! stand-in message and the connected form the publish-log assertions read from. A suite that
 //! tests one of these shapes itself declares its own instead.
 //!
-//! Each test binary compiles its own copy of this module and uses what it needs, hence the
-//! `dead_code` allowances.
+//! Each suite uses what it needs, hence the `dead_code` allowances.
 //!
 //! Registrations are documented by default, so every message type here derives `JsonSchema`:
 //! a suite mounting one of them is not asking to be the file that opts documentation out.
 
+#[cfg(feature = "testing")]
 use std::time::Duration;
 
 use ruststream::memory::ConnectedMemoryBroker;

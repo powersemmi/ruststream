@@ -6,7 +6,7 @@
 //! is what the tests read: it carries the numbers the step derived from the chain.
 #![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
-mod common;
+use crate::common;
 
 use std::future::ready;
 use std::num::NonZeroUsize;

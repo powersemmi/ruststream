@@ -5,9 +5,9 @@
 //! is exactly what the `TestApp` harness bypasses by design - hence the raw broker + publisher
 //! wiring. `start()` resolves only after subscriptions are open, so a single publish suffices;
 //! no republish loops.
-#![cfg(feature = "macros")]
+#![cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 
-mod common;
+use crate::common;
 
 use std::convert::Infallible;
 use std::future::ready;

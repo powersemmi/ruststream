@@ -6,7 +6,7 @@
 //! include site decides it with nothing erased.
 #![cfg(all(feature = "memory", feature = "json", feature = "testing"))]
 
-mod common;
+use crate::common;
 
 use common::{connected, expect_id};
 

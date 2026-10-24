@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! TRYBUILD=overwrite RUN_UI_TESTS=1 cargo test --no-default-features \
-//!     --features testing,memory,macros --test ui_codec_free
+//!     --features testing,memory,macros --test suite ui_codec_free::
 //! ```
 #![cfg(all(
     feature = "memory",
@@ -15,8 +15,8 @@
 ))]
 
 /// Whether this run skips the snapshots, and whether skipping them is allowed. The counterpart of
-/// the guard in `tests/ui.rs`; each test binary carries its own, because this one compiles only
-/// where no codec feature resolves.
+/// the guard in `tests/ui.rs`; each suite carries its own, because this one compiles only where
+/// no codec feature resolves.
 ///
 /// # Panics
 ///

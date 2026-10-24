@@ -10,7 +10,7 @@
     feature = "testing"
 ))]
 
-mod common;
+use crate::common;
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};

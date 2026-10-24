@@ -4,7 +4,7 @@
 
 #![cfg(all(feature = "conformance", feature = "memory"))]
 
-mod carrying;
+use crate::carrying;
 
 use std::cell::Cell;
 use std::time::Duration;
