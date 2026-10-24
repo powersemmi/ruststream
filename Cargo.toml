@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ruststream-macros"]
+members = ["crates/ruststream-macros", "crates/ruststream-example-suite"]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
 # must stay out of the workspace. `exclude` alone is not enough: cargo's git-source package
@@ -28,13 +28,11 @@ required-features = ["macros", "memory"]
 [[example]]
 name = "otel_propagation"
 required-features = ["testing", "macros", "memory", "json", "otel"]
-test = true
 
 [[example]]
 name = "manual_otel_propagation"
 path = "examples/manual/otel_propagation.rs"
 required-features = ["testing", "memory", "json", "otel"]
-test = true
 
 [[example]]
 name = "otel_export"
@@ -53,14 +51,12 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "threads"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 # No codec feature in the list, and none missing: the message serializes itself, so the whole
 # service builds with the codec layer switched off.
 [[example]]
 name = "protobuf"
 required-features = ["testing", "macros", "memory"]
-test = true
 
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
@@ -76,18 +72,15 @@ required-features = ["memory", "json"]
 name = "manual_protobuf"
 path = "examples/manual/protobuf.rs"
 required-features = ["testing", "memory"]
-test = true
 
 [[example]]
 name = "byte_lanes"
 required-features = ["testing", "macros", "memory"]
-test = true
 
 [[example]]
 name = "manual_byte_lanes"
 path = "examples/manual/byte_lanes.rs"
 required-features = ["testing", "memory"]
-test = true
 
 [[example]]
 name = "manual_tutorial"
@@ -113,94 +106,78 @@ required-features = ["memory", "json"]
 name = "manual_seek"
 path = "examples/manual/seek.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_retry"
 path = "examples/manual/retry.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_settle_retry_destination"
 path = "examples/manual/settle_retry_destination.rs"
 required-features = ["testing", "memory", "json", "asyncapi"]
-test = true
 
 [[example]]
 name = "manual_handler_outcome"
 path = "examples/manual/handler_outcome.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_failure_policy"
 path = "examples/manual/failure_policy.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_post_settle"
 path = "examples/manual/post_settle.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_routing"
 path = "examples/manual/routing.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_codecs"
 path = "examples/manual/codecs.rs"
 required-features = ["testing", "memory", "json", "cbor"]
-test = true
 
 [[example]]
 name = "codec_json"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_codec_json"
 path = "examples/manual/codec_json.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "codec_cbor"
 required-features = ["testing", "macros", "memory", "cbor"]
-test = true
 
 [[example]]
 name = "manual_codec_cbor"
 path = "examples/manual/codec_cbor.rs"
 required-features = ["testing", "memory", "cbor"]
-test = true
 
 [[example]]
 name = "codec_msgpack"
 required-features = ["testing", "macros", "memory", "msgpack"]
-test = true
 
 [[example]]
 name = "manual_codec_msgpack"
 path = "examples/manual/codec_msgpack.rs"
 required-features = ["testing", "memory", "msgpack"]
-test = true
 
 [[example]]
 name = "manual_custom_codec"
 path = "examples/manual/custom_codec.rs"
 required-features = ["testing", "memory", "msgpack"]
-test = true
 
 [[example]]
 name = "manual_context"
 path = "examples/manual/context.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_context_field"
@@ -210,13 +187,11 @@ path = "examples/manual/context_field.rs"
 name = "manual_from_context"
 path = "examples/manual/from_context.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_typed_headers"
 path = "examples/manual/typed_headers.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_lifespan"
@@ -233,69 +208,57 @@ required-features = ["memory", "asyncapi"]
 [[example]]
 name = "asyncapi_generation"
 required-features = ["macros", "memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "manual_asyncapi_generation"
 path = "examples/manual/asyncapi_generation.rs"
 required-features = ["memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "asyncapi_schemas"
 required-features = ["macros", "memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "manual_asyncapi_schemas"
 path = "examples/manual/asyncapi_schemas.rs"
 required-features = ["memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "asyncapi_reports"
 required-features = ["macros", "memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "manual_asyncapi_reports"
 path = "examples/manual/asyncapi_reports.rs"
 required-features = ["memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "asyncapi_content_type"
 required-features = ["macros", "memory", "asyncapi", "cbor"]
-test = true
 
 [[example]]
 name = "manual_asyncapi_content_type"
 path = "examples/manual/asyncapi_content_type.rs"
 required-features = ["memory", "asyncapi", "cbor"]
-test = true
 
 [[example]]
 name = "asyncapi_servers"
 required-features = ["macros", "memory", "asyncapi"]
-test = true
 
 [[example]]
 name = "manual_asyncapi_servers"
 path = "examples/manual/asyncapi_servers.rs"
 required-features = ["memory", "asyncapi"]
-test = true
 
 # No macro in reach: the `info` section is built from plain values, so this file is both forms.
 [[example]]
 name = "asyncapi_info"
 required-features = ["asyncapi"]
-test = true
 
 [[example]]
 name = "manual_metrics"
 path = "examples/manual/metrics.rs"
 required-features = ["testing", "memory", "json", "metrics"]
-test = true
 
 [[example]]
 name = "manual_http_outbox"
@@ -306,13 +269,11 @@ required-features = ["memory", "json"]
 name = "manual_logging"
 path = "examples/manual/logging.rs"
 required-features = ["testing", "memory", "json", "logging"]
-test = true
 
 [[example]]
 name = "manual_tracing_layer"
 path = "examples/manual/tracing_layer.rs"
 required-features = ["testing", "memory", "json", "logging"]
-test = true
 
 [[example]]
 name = "manual_routed_service_orders"
@@ -347,344 +308,281 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "memory_broker"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_memory_broker"
 path = "examples/manual/memory_broker.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "memory_retention"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_memory_retention"
 path = "examples/manual/memory_retention.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "memory_patterns"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_memory_patterns"
 path = "examples/manual/memory_patterns.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "seek"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "retry"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "settle_retry_destination"
 required-features = ["testing", "macros", "memory", "json", "asyncapi"]
-test = true
 
 [[example]]
 name = "handler_outcome"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "failure_policy"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "post_settle"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "routing"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "subscriber_handler"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_subscriber_handler"
 path = "examples/manual/subscriber_handler.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "subscriber_source"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_subscriber_source"
 path = "examples/manual/subscriber_source.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "subscriber_settings"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_subscriber_settings"
 path = "examples/manual/subscriber_settings.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "subscriber_batch"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_subscriber_batch"
 path = "examples/manual/subscriber_batch.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "codecs"
 required-features = ["testing", "macros", "memory", "json", "cbor"]
-test = true
 
 [[example]]
 name = "custom_codec"
 required-features = ["testing", "macros", "memory", "msgpack"]
-test = true
 
 [[example]]
 name = "workers"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_workers"
 path = "examples/manual/workers.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_threads"
 path = "examples/manual/threads.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "poll_diagnostics"
 required-features = ["testing", "macros", "memory", "json", "poll-diagnostics"]
-test = true
 
 [[example]]
 name = "manual_poll_diagnostics"
 path = "examples/manual/poll_diagnostics.rs"
 required-features = ["testing", "memory", "json", "poll-diagnostics"]
-test = true
 
 [[example]]
 name = "layer"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_layer"
 path = "examples/manual/layer.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "publish_layer"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_publish_layer"
 path = "examples/manual/publish_layer.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "dyn_stack"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_dyn_stack"
 path = "examples/manual/dyn_stack.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "publish_dyn_stack"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_publish_dyn_stack"
 path = "examples/manual/publish_dyn_stack.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "replies"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_replies"
 path = "examples/manual/replies.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "out_slots"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_out_slots"
 path = "examples/manual/out_slots.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "destinations"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_destinations"
 path = "examples/manual/destinations.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "publish_builder"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_publish_builder"
 path = "examples/manual/publish_builder.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "per_message_options"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_per_message_options"
 path = "examples/manual/per_message_options.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "cross_broker"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_cross_broker"
 path = "examples/manual/cross_broker.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "publisher"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_publisher"
 path = "examples/manual/publisher.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "transactional_publisher"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_transactional_publisher"
 path = "examples/manual/transactional_publisher.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "owned_transactions"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_owned_transactions"
 path = "examples/manual/owned_transactions.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "requester"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_requester"
 path = "examples/manual/requester.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "publish_transform"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_publish_transform"
 path = "examples/manual/publish_transform.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "naming_transform"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_naming_transform"
 path = "examples/manual/naming_transform.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "batch_transform"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_batch_transform"
 path = "examples/manual/batch_transform.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "context"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "context_field"
@@ -692,12 +590,10 @@ name = "context_field"
 [[example]]
 name = "from_context"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "typed_headers"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "lifespan"
@@ -710,7 +606,6 @@ required-features = ["macros", "memory", "asyncapi"]
 [[example]]
 name = "metrics"
 required-features = ["testing", "macros", "memory", "json", "metrics"]
-test = true
 
 [[example]]
 name = "http_outbox"
@@ -719,12 +614,10 @@ required-features = ["macros", "memory", "json"]
 [[example]]
 name = "logging"
 required-features = ["testing", "macros", "memory", "json", "logging"]
-test = true
 
 [[example]]
 name = "tracing_layer"
 required-features = ["testing", "macros", "memory", "json", "logging"]
-test = true
 
 [[example]]
 name = "testing"
@@ -736,125 +629,103 @@ required-features = ["testing", "macros", "memory", "json"]
 [[example]]
 name = "testing_records"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_records"
 path = "examples/manual/testing_records.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_published"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_published"
 path = "examples/manual/testing_published.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_published_payloads"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_published_payloads"
 path = "examples/manual/testing_published_payloads.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_published_options"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_published_options"
 path = "examples/manual/testing_published_options.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_starting"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_starting"
 path = "examples/manual/testing_starting.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_driving"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_driving"
 path = "examples/manual/testing_driving.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_service_state"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_service_state"
 path = "examples/manual/testing_service_state.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_subscriber_calls"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_subscriber_calls"
 path = "examples/manual/testing_subscriber_calls.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_subscriber_payloads"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_subscriber_payloads"
 path = "examples/manual/testing_subscriber_payloads.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "testing_subscriber_carried"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_testing_subscriber_carried"
 path = "examples/manual/testing_subscriber_carried.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 # The application scenarios of the component pages run as tests too: the macro form and its
 # manual twin drive the same service through the same test body.
 [[example]]
 name = "app_macro"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_app_macro"
 path = "examples/manual/app_macro.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "app_running"
@@ -870,24 +741,20 @@ test = true
 [[example]]
 name = "app_state"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_app_state"
 path = "examples/manual/app_state.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "app_lifecycle"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_app_lifecycle"
 path = "examples/manual/app_lifecycle.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 # The shop the "Build a service" guide builds: `guide_first` is the service as its first chapter
 # leaves it, `guide` the finished one, `guide_http` the same shop beside an HTTP server. The
@@ -896,7 +763,6 @@ test = true
 name = "guide_first"
 path = "examples/guide/first.rs"
 required-features = ["testing", "macros", "memory", "json"]
-test = true
 
 [[example]]
 name = "guide"
@@ -914,7 +780,6 @@ test = true
 name = "manual_guide_first"
 path = "examples/manual/guide/first.rs"
 required-features = ["testing", "memory", "json"]
-test = true
 
 [[example]]
 name = "manual_guide"
@@ -932,6 +797,12 @@ test = true
 [[test]]
 name = "suite"
 path = "tests/main.rs"
+
+# The tests of the examples, one module per example: a binary of its own, so it compiles beside
+# the suite instead of after it.
+[[test]]
+name = "examples"
+path = "tests/examples.rs"
 
 # The OpenTelemetry metrics own their process: `init()` installs the global tracing subscriber
 # and providers, and the batch-size histogram binds to the global meter at the first batch the
@@ -1195,6 +1066,9 @@ divan = "0.1.21"
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["fmt", "std"] }
 # Counts this thread's allocations around a publish, so a test reads what one costs.
 allocation-counter = "0.8.1"
+# Builds the examples' tests into one test binary (`tests/examples.rs`) instead of a test
+# binary per example. Unpublished: a path dev-dependency without a version is dropped on publish.
+ruststream-example-suite = { path = "crates/ruststream-example-suite" }
 
 # What ships is optimized across crate boundaries: the framework is generic to the point where a
 # dispatch path is only as cheap as the inlining it gets, and a build that stops at each crate

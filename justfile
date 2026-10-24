@@ -54,7 +54,11 @@ check:
     RUN_UI_TESTS=1 REQUIRE_UI_TESTS=1 cargo test --no-default-features --features macros,memory,testing --test suite ui_codec_free::
 
 test:
-    cargo test --workspace --all-features
+    # The examples' tests are modules of one test binary, so `--tests` builds none per example;
+    # `check` compiles every example on its own. `--tests` leaves the doc examples out, so they
+    # run on their own line.
+    cargo test --workspace --all-features --tests
+    cargo test --workspace --all-features --doc
     # The reduced-feature legs CI runs, in CI's order. A module compiled only with a feature off
     # is invisible to the all-features run above, so an API a refactor removed can survive there
     # until CI says otherwise: `codec_free_lanes` and `ui_codec_free` build only where no codec
@@ -65,7 +69,9 @@ test:
         raw_subscriber:: codec_free_lanes:: ui_codec_free::
     cargo test --no-default-features --features memory,testing --test suite lane_traits_without_macros::
     # The manual examples teach the API with `macros` off; build and run them that way.
-    cargo test --no-default-features --features testing,memory,json --examples
+    cargo check --no-default-features --features testing,memory,json --examples
+    cargo test --no-default-features --features testing,memory,json --test examples
+    cargo test --no-default-features --features testing,memory,json --example manual_app_running
     # Plain `cargo test`: every target needing a non-default feature has to gate itself.
     cargo test --workspace
     # Both feature edges, because an all-features run hides a doc example that names a

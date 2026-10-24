@@ -256,7 +256,10 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
-        run: cargo test --locked --workspace --all-features --no-fail-fast
+        run: |
+          cargo check --locked --workspace --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast --tests
+          cargo test --locked --workspace --all-features --no-fail-fast --doc
 
       # Everything above still sees dev-dependencies, which raise shared floors before the library
       # is built: the run proves the workspace resolves, not that the manifest is honest for a
@@ -379,7 +382,9 @@ jobs:
         env:
           RUN_UI_TESTS: '1'
           REQUIRE_UI_TESTS: '1'
-        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast
+        # `--tests` and not every target: the examples' tests are modules of one test binary, so
+        # an example needs no binary of its own, and clippy has already compiled each one.
+        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
       # failure.
@@ -439,7 +444,10 @@ jobs:
             -- raw_subscriber:: codec_free_lanes:: ui_codec_free::
           cargo test --locked --no-default-features --features memory,testing --test suite \
             lane_traits_without_macros::
-          cargo test --locked --no-default-features --features testing,memory,json --examples
+          cargo check --locked --no-default-features --features testing,memory,json --examples
+          cargo test --locked --no-default-features --features testing,memory,json --test examples
+          cargo test --locked --no-default-features --features testing,memory,json \
+            --example manual_app_running
 
       # Plain `cargo test`, the first command a contributor runs. Every target that needs a
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only
@@ -455,6 +463,7 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
+          cargo test --locked --workspace --doc --all-features
           cargo test --locked --workspace --doc
           cargo test --locked --workspace --doc --no-default-features
 
@@ -501,7 +510,10 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo test --locked --workspace --all-features --no-fail-fast
+        run: |
+          cargo check --locked --workspace --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast --tests
+          cargo test --locked --workspace --all-features --no-fail-fast --doc
 
       - name: Delete the beta build
         if: always()
@@ -526,7 +538,10 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo test --locked --workspace --all-features --no-fail-fast
+        run: |
+          cargo check --locked --workspace --examples --all-features
+          cargo test --locked --workspace --all-features --no-fail-fast --tests
+          cargo test --locked --workspace --all-features --no-fail-fast --doc
 
       - name: Delete the floor build
         if: always()

@@ -1227,6 +1227,7 @@ dependencies = [
  "quanta",
  "rmp-serde",
  "rtrb",
+ "ruststream-example-suite",
  "ruststream-macros",
  "schemars",
  "serde",
@@ -1239,6 +1240,13 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "trybuild",
+]
+
+[[package]]
+name = "ruststream-example-suite"
+version = "0.0.0"
+dependencies = [
+ "toml",
 ]
 
 [[package]]

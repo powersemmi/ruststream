@@ -1,0 +1,18 @@
+[package]
+name = "ruststream-example-suite"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Builds the examples' tests into the integration suite, one module per example."
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+toml = "1"
+
+[lints]
+workspace = true
