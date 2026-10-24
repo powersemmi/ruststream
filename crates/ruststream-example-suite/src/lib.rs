@@ -51,13 +51,18 @@ fn expand(input: TokenStream) -> Result<String, String> {
             )));
         }
     }
-    // rustc does not see a file a macro reads; including it makes an edit to the manifest
-    // expand the suite again.
+    // rustc does not see a file a macro reads; including it makes an edit to the manifest, or
+    // the first test added to an example the suite left out, expand the suite again.
     let mut code = format!(
         "const _: &[u8] = include_bytes!({:?});\n",
         manifest.display()
     );
     for example in &examples {
+        let _ = writeln!(
+            code,
+            "const _: &[u8] = include_bytes!({:?});",
+            example.path.display()
+        );
         let has_tests = has_tests(&example.path)?;
         if !has_tests && !standalone.contains(&example.name) {
             continue;
