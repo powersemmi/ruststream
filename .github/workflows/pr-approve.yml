@@ -1,0 +1,52 @@
+name: Approve green pull requests
+
+# The `main` ruleset asks for one approval, and GitHub never lets an author approve their own pull
+# request. With a single maintainer a green CI run stands in for that review, so a merge needs no
+# admin bypass. Only the repository owner's pull requests from branches of the repository itself
+# are approved: a fork or a bot still waits for a person. Each broker repository calls this
+# workflow when its `CI` run completes, and the repository must allow GitHub Actions to approve
+# pull requests. The core repository does not call it.
+
+on:
+  workflow_call:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  approve:
+    name: Approve after a green CI run
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      # Nothing from the pull request is checked out or run: the job reads it through the API.
+      - name: Approve the pull requests whose head passed
+        run: |
+          set -euo pipefail
+          # A run of an older commit approves nothing once the branch has moved on.
+          prs=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[]
+            | select(.state == "open" and (.draft | not)
+              and .user.login == $ENV.OWNER
+              and .head.repo.full_name == $ENV.REPO
+              and .head.sha == $ENV.HEAD_SHA)
+            | .number')
+          for pr in $prs; do
+            # Stale approvals are kept on push, so one approval per pull request is enough.
+            approved=$(gh api "repos/$REPO/pulls/$pr/reviews" --paginate \
+              -q '.[] | select(.user.login == "github-actions[bot]" and .state == "APPROVED")
+                | .id')
+            if [ -n "$approved" ]; then
+              echo "#$pr: already approved" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            gh pr review "$pr" -R "$REPO" --approve --body "CI passed on $HEAD_SHA."
+            echo "#$pr: approved" >> "$GITHUB_STEP_SUMMARY"
+          done
