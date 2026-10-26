@@ -1,0 +1,75 @@
+name: Issue labels
+
+# Every issue of the family lives in this repository, so the broker an issue is about is a label.
+# The job reads the title only: a body names other brokers as examples and comparisons too often
+# to be a signal. A name counts as a whole word: `ruststream-nats` and `nats:` match `nats`,
+# `notsqs` matches nothing. The job only adds labels, so one set or removed by hand stays as the
+# person left it: an edit adds only what the new title names and the old one did not.
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions: {}
+
+jobs:
+  label:
+    name: Label by broker
+    # A bot files its issues with the labels it means (the broker compatibility probe does).
+    if: >-
+      github.event.issue.user.type != 'Bot' &&
+      (github.event.action == 'opened' || github.event.changes.title.from != null)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      # One line per label: the label, then every name in a title that means it.
+      BROKERS: |
+        nats nats
+        fred fred
+        lapin lapin
+        rdkafka rdkafka
+        amqp amqp
+        gcp-pubsub gcp-pubsub pubsub
+        sqs-sns sqs-sns sqs sns
+        pulsar pulsar
+        rumqttc rumqttc
+        zeromq zeromq
+        sea-file sea-file
+        kinesis kinesis
+        sqlx sqlx
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+      TITLE: ${{ github.event.issue.title }}
+      OLD_TITLE: ${{ github.event.changes.title.from }}
+    steps:
+      - name: Add the labels the title calls for
+        run: |
+          set -euo pipefail
+          # Prints the labels whose names occur in the title as whole words.
+          labels_for() {
+            local title="${1,,}" label names name
+            while read -r label names; do
+              [ -n "$label" ] || continue
+              for name in $names; do
+                if grep -qP "(?<![a-z0-9])\Q$name\E(?![a-z0-9])" <<< "$title"; then
+                  echo "$label"
+                  break
+                fi
+              done
+            done <<< "$BROKERS"
+          }
+
+          old=$(labels_for "$OLD_TITLE")
+          added=()
+          while read -r label; do
+            [ -n "$label" ] || continue
+            grep -qxF "$label" <<< "$old" || added+=("$label")
+          done <<< "$(labels_for "$TITLE")"
+          if [ ${#added[@]} -gt 0 ]; then
+            args=()
+            for label in "${added[@]}"; do args+=(-f "labels[]=$label"); done
+            gh api "repos/$REPO/issues/$ISSUE/labels" "${args[@]}" > /dev/null
+          fi
+          echo "labels: ${added[*]:-none}" >> "$GITHUB_STEP_SUMMARY"
