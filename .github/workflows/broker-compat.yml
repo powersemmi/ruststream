@@ -4,8 +4,8 @@ name: Broker compatibility
 # previous minor line, so nothing fails anywhere when the tag lands - the breakage only surfaces
 # when a broker author starts the adoption by hand. This probe builds each broker against the
 # released core the moment the release exists, and reports what broke where the broker's
-# maintainer will look for it: an issue in that broker's repository, carrying the compiler's own
-# error text.
+# maintainer will look for it: an issue in the core repository, where the family files every
+# issue, labelled with the broker's name and carrying the compiler's own error text.
 #
 # The probe is compile-surface only. `--all-targets` compiles the broker's tests and examples
 # without running them, which is exactly what a core version bump breaks; behavioral drift is the
@@ -35,6 +35,10 @@ jobs:
   probe:
     name: ${{ matrix.broker }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The verdict is an issue in this repository; only the report step sees the token.
+      issues: write
     strategy:
       # Every broker gets its verdict: one broken broker must not hide the other twelve.
       fail-fast: false
@@ -125,30 +129,33 @@ jobs:
           cargo check --workspace --no-default-features 2>&1 | tee -a "$log" || status=1
           exit "$status"
 
-      - name: Report the verdict to the broker repository
+      - name: Report the verdict in the core repository
         env:
-          GH_TOKEN: ${{ secrets.BROKER_COMPAT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          # A classic token of the board's owner with the `project` scope, as the board sync uses.
+          BOARD_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+          REPO: ${{ github.repository }}
           BROKER: ${{ matrix.broker }}
           OUTCOME: ${{ steps.check.outcome }}
           CORE_REF: ${{ inputs.ref || github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::warning::BROKER_COMPAT_TOKEN is not set; the verdict for $BROKER is only this run's status"
-            exit 0
-          fi
-          repo="powersemmi/$BROKER"
+          set -euo pipefail
+          # The broker's label in this repository is its crate name without the family prefix.
+          label="${BROKER#ruststream-}"
           version="${CORE_REF#v}"
           marker="against ruststream v$version"
-          # One open core-compat issue per repo is the whole protocol: filing opens it, the next
+          prefix="core-compat: $BROKER "
+          # One open core-compat issue per broker is the whole protocol: filing opens it, the next
           # broken release comments on it, the first green probe closes it.
-          existing="$(gh issue list --repo "$repo" --state open --search 'core-compat in:title' \
-            --json number --jq '.[0].number // empty')"
+          existing="$(gh issue list --repo "$REPO" --state open --label "$label" \
+            --search 'core-compat in:title' --limit 100 --json number,title \
+            | jq -r --arg p "$prefix" 'map(select(.title | startswith($p))) | .[0].number // empty')"
 
           if [ "$OUTCOME" = "success" ]; then
             if [ -n "$existing" ]; then
-              gh issue close "$existing" --repo "$repo" \
-                --comment "Builds $marker (checked by [this probe]($RUN_URL))."
+              gh issue close "$existing" --repo "$REPO" \
+                --comment "$BROKER builds $marker (checked by [this probe]($RUN_URL))."
             fi
             exit 0
           fi
@@ -161,7 +168,7 @@ jobs:
           # a report the maintainer can read.
           [ -n "$log" ] || log="$(tail -c 20000 "$RUNNER_TEMP/check.log")"
           body="$(printf '%s\n' \
-            "ruststream v$version was released and this crate does not build against it." \
+            "ruststream v$version was released and \`$BROKER\` does not build against it." \
             "Checked by [this probe]($RUN_URL): the version requirement replaced by a path" \
             "dependency on the released core, then \`cargo check --all-targets\` of the" \
             "published crates with every feature and of the others with their own, and" \
@@ -177,18 +184,40 @@ jobs:
 
           if [ -n "$existing" ]; then
             # A re-run of the same probe adds nothing; a new version failing on an open issue does.
-            if gh issue view "$existing" --repo "$repo" --json body,comments \
+            if gh issue view "$existing" --repo "$REPO" --json body,comments \
                 --jq '.body, .comments[].body' | grep -qF "$marker"; then
-              echo "already reported $marker in $repo#$existing"
+              echo "already reported $marker in #$existing"
               exit 0
             fi
             comment="$(printf 'Still broken %s.\n\n%s' "$marker" "$body")"
-            gh issue comment "$existing" --repo "$repo" --body "$comment"
-          else
-            gh issue create --repo "$repo" \
-              --title "core-compat: broken against ruststream v$version" \
-              --body "$body"
+            gh issue comment "$existing" --repo "$REPO" --body "$comment"
+            exit 0
           fi
+
+          url="$(gh issue create --repo "$REPO" --label "$label" \
+            --title "${prefix}broken $marker" --body "$body")"
+          echo "filed $url"
+
+          # The board sync would pick the issue up within hours; adding it here puts it on the
+          # board the moment it exists. A board failure leaves the filed issue standing.
+          if [ -z "$BOARD_TOKEN" ]; then
+            echo "::warning::PROJECT_BOARD_TOKEN is not set; $url waits for the board sync"
+            exit 0
+          fi
+          export GH_TOKEN="$BOARD_TOKEN"
+          board() {
+            local item project_id field_id
+            item="$(gh project item-add 3 --owner "@me" --url "$url" --format json -q .id)" \
+              || return 1
+            project_id="$(gh project view 3 --owner "@me" --format json -q .id)" || return 1
+            field_id="$(gh project field-list 3 --owner "@me" --format json \
+              -q '.fields[] | select(.name == "Opened by") | .id')" || return 1
+            # The board sync writes the issue's author into the field, and the issue's author is
+            # the Actions bot, so the same value goes in here and the sync leaves it alone.
+            gh project item-edit --project-id "$project_id" --id "$item" --field-id "$field_id" \
+              --text "github-actions[bot]" > /dev/null
+          }
+          board || echo "::warning::could not put $url on the board; it waits for the board sync"
 
       # continue-on-error swallowed the check's status so the report step could run; put it back,
       # so the run page reads as the summary: a red leg is a broken broker.
