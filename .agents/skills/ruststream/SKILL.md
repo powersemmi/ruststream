@@ -138,8 +138,10 @@ A mount site imports the broker's prelude (`use ruststream_nats::prelude::*;`,
 ### The first parameter's type picks the form
 
 `&T` is one message, `&[T]` a batch. `T: Deserialize` decodes with the codec. A type with
-`#[derive(Deserialized)]` builds itself from the bytes. A bare `&[u8]` or an owned `T` does not
-compile. Further parameters are extractors (`State<T>`, `Ctx<K>`, `Headers<T>`) or injections
+`#[derive(Deserialized)]` builds itself from the bytes. An enum with `#[derive(InMessages)]`
+receives several message types on one subscription, one model per variant, picked by a header
+(`#[in_messages(header = "..")]`, `#[in_messages(value = "..")]`). A bare `&[u8]` or an owned
+`T` does not compile. Further parameters are extractors (`State<T>`, `Ctx<K>`, `Headers<T>`) or injections
 (`Out<impl Publisher, Marker>`). An explicit `ctx: &mut Context` comes right after the payload,
 and only when the body uses it.
 

@@ -1,0 +1,5 @@
+error: a variant owns its model past the delivery: a type over a lifetime borrows the payload, so it cannot be one
+  --> tests/ui/in_messages_borrowing_model.rs:18:9
+   |
+18 |     Raw(Frame<'static>),
+   |         ^^^^^^^^^^^^^^

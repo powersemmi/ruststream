@@ -238,6 +238,46 @@ struct Order {
 compiles with no codec feature at all. For a custom serialization format you want *typed* handlers
 for, implement `Codec` instead and keep the typed path.
 
+## Several message types on one subscription
+
+A subscription that carries more than one message type takes an enum deriving `InMessages`, one
+model per variant, as the handler's input. Each variant decodes through its own model's path (the
+codec for a `serde` model, `Deserialized` for a Protobuf one), and the generated document lists
+one message per variant with its own name, description and content type. The rule that picks the
+variant is a header the producer sets, declared on the enum and valued on each variant; the
+chosen variant decodes once, and the document carries the header with its `const` value in each
+message's headers schema. Every model derives `MessageInfo`; the set itself does not.
+
+```rust
+#[derive(InMessages)]
+#[in_messages(header = "event")]
+enum OrderEvent {
+    #[in_messages(value = "created")]
+    Created(OrderCreated),
+    #[in_messages(value = "cancelled")]
+    Cancelled(OrderCancelled),
+}
+
+#[subscriber("orders")]
+async fn on_event(event: &OrderEvent) -> HandlerOutcome {
+    match event {
+        OrderEvent::Created(created) => { /* .. */ }
+        OrderEvent::Cancelled(cancelled) => { /* .. */ }
+    }
+    HandlerOutcome::ack()
+}
+```
+
+A rule a header cannot state (a schema id, a field of the payload) is a function:
+`#[in_messages(discriminate = path)]` names a `fn(&impl IncomingMessage) -> Option<OrderEventKind>`
+over the generated kind enum, and `None` is a decode failure naming the set. With no rule the
+variants are tried in their order and the first that decodes wins; that is exact only as far as
+the formats are strict (a Protobuf reader skips unknown fields), so order the strictest model
+first or name a rule. A missing header, an unknown value and a payload no variant decodes are
+decode failures, settled by `on_failure(decode = ..)` like any other. Do not reach for
+`#[serde(tag = "..")]` or `#[serde(untagged)]` for this: they work for `serde` formats only and
+the document shows one message for the enum.
+
 ## Broker context fields (`Ctx<K>`)
 
 `Ctx<K>` injects one field of the broker's per-delivery context, the way `State<T>` injects a

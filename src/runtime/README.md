@@ -46,6 +46,11 @@ below shows its attribute form and its manual form ([`subscriber`], [`Handle`]) 
   derive [`Deserialized`](macro@crate::Deserialized) and [`Serialized`](macro@crate::Serialized)
   (see [`codec`](crate::codec)). A value the broker already holds reaches a handler as `&T` with
   no codec ([`SoloCarried`], [`Carries`](crate::Carries)).
+- [Message sets](https://powersemmi.github.io/ruststream/latest/components/subscribers/message-sets/):
+  several message types on one subscription, declared as an enum that derives
+  [`InMessages`](macro@crate::InMessages); a rule picks the variant (a header, a function, or
+  the order of the variants), each model decodes through its own lane ([`InVariant`]), and the
+  document lists one message per variant ([`IncomingMessageMetadata`]).
 
 ## Messages
 

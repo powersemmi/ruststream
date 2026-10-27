@@ -19,8 +19,9 @@
 //! settings), the
 //! slot vocabulary ([`OutSlot`], [`PublishedThrough`], [`OutMessages`] with the
 //! [`OutgoingMessageMetadata`] a dictionary reports, and [`OutEntry`], the bound a manual body
-//! declares its arena with), the state projection ([`FromRef`]) and the extractor binding
-//! ([`FromContext`]).
+//! declares its arena with), the message-set vocabulary ([`InMessages`] over [`SoloSet`], with
+//! [`InVariant`], [`IncomingMessageMetadata`] and [`HeaderDiscriminator`] a hand-written set
+//! names), the state projection ([`FromRef`]) and the extractor binding ([`FromContext`]).
 //!
 //! Brokers, codecs and the optional feature modules (`asyncapi`, `metrics`, `logging`, `otel`,
 //! `testing`) stay explicit imports.
@@ -103,11 +104,12 @@
 
 pub use crate::runtime::{
     App, AppInfo, Context, ContextKind, Ctx, DefaultSlot, Deserialized, FailurePolicies,
-    FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome, Headers, Input,
+    FailurePolicy, ForReply, ForSlot, FromContext, FromRef, Handle, HandlerOutcome,
+    HeaderDiscriminator, Headers, InMessages, InVariant, IncomingMessageMetadata, Input,
     MainRuntime, MapPublisher, Message, MessageWire, Names, Out, OutEntry, OutMessages,
     OutgoingMessageMetadata, Outs, PublishExt, PublishTransform, PublishedThrough, Reads, Reply,
     ReplyShape, Retry, Router, RouterDef, RunningApp, RustStream, Serialized, SerializedReply,
-    SerializedWire, Slot, SoloDeserialized, State, SubscriberSettings, WireBytes, Workers,
+    SerializedWire, Slot, SoloDeserialized, SoloSet, State, SubscriberSettings, WireBytes, Workers,
     subscriber,
 };
 // `OutgoingMessage` is absent: a service on this crate publishes through the builder, which
@@ -138,4 +140,6 @@ pub use crate::nonzero;
 // message type of the same name lives in `runtime`, so a service that writes a publish
 // transform imports that one explicitly.
 #[cfg(feature = "macros")]
-pub use crate::{Deserialized, FromRef, OutMessages, Outgoing, Serialized, app, subscriber};
+pub use crate::{
+    Deserialized, FromRef, InMessages, OutMessages, Outgoing, Serialized, app, subscriber,
+};

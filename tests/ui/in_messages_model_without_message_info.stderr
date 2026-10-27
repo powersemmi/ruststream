@@ -1,0 +1,12 @@
+error[E0277]: `OrderCancelled` cannot be a variant of the message set `OrderEvent`
+  --> tests/ui/in_messages_model_without_message_info.rs:19:5
+   |
+19 |     Cancelled(OrderCancelled),
+   |     ^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `InVariant<OrderEvent>` is not implemented for `OrderCancelled`
+  --> tests/ui/in_messages_model_without_message_info.rs:12:1
+   |
+12 | struct OrderCancelled {
+   | ^^^^^^^^^^^^^^^^^^^^^
+   = note: a variant wraps one message model: a type deriving `MessageInfo` that decodes through the codec of the mount (`serde::Deserialize`) or constructs itself from the payload bytes (`Deserialized`, owning what it constructs)

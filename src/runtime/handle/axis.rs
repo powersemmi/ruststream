@@ -13,10 +13,12 @@
 //! | `Message<H, P>` | one decoded message + typed headers | `&Message<H, P>` |
 //! | `F<'_>` where `F` is [`Deserialized`] | one payload, self-constructed | `&F<'_>` |
 //! | `T` on the carried lane | the value one delivery holds | `&T` |
+//! | `S` where `S` is an [`InMessages`](crate::runtime::InMessages) set | one decoded message, as the variant the set picks | `&S` |
 //! | `[T]` | a batch of decoded messages | `&[T]` |
 //! | `[Message<H, P>]` | a batch with typed headers per element | `&[Message<H, P>]` |
 //! | `[F<'_>]` where `F` is [`Deserialized`] | a batch of self-constructed payloads | `&[F<'_>]` |
 //! | `[T]` on the carried lane | the values one batch holds, as one slice | `&[T]` |
+//! | `[S]` where `S` is an `InMessages` set | a batch of decoded messages, each as its variant | `&[S]` |
 //!
 //! Every projection the machinery needs (the decode kind, the verdict family, the schema of the
 //! generated document) hangs off the lifetime-free [`Axis`] marker, so definitions can carry the
@@ -366,9 +368,23 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 #[derive(Debug)]
 pub struct SoloCarried<T>(PhantomData<T>);
 
+/// The single message-set input: `In = S` for an [`InMessages`](crate::runtime::InMessages)
+/// enum `S`.
+///
+/// The set's variants each wrap one model, and the set decodes the delivery as the variant its
+/// rule picks, through that model's own lane. `#[derive(InMessages)]` selects the axis for the
+/// enum, with `impl Input for OrderEvent { type Axis = SoloSet<OrderEvent>; }`.
+#[derive(Debug)]
+pub struct SoloSet<S>(PhantomData<S>);
+
 /// The decoded batch input: `In = [T]`.
 #[derive(Debug)]
 pub struct Batch<T>(PhantomData<T>);
+
+/// The message-set batch input: `In = [S]` for an [`InMessages`](crate::runtime::InMessages)
+/// enum `S`. See [`SoloSet`].
+#[derive(Debug)]
+pub struct BatchSet<S>(PhantomData<S>);
 
 /// The self-deserializing batch input: `In = [F<'_>]` for a [`Deserialized`] `F`. See
 /// [`SoloDeserialized`] for the parameter.
@@ -416,6 +432,10 @@ impl<F: Send + Sync + 'static> BatchedFrom for SoloDeserialized<F> {
     type Batch = BatchDeserialized<F>;
 }
 
+impl<S: Send + Sync + 'static> BatchedFrom for SoloSet<S> {
+    type Batch = BatchSet<S>;
+}
+
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedFrom for SoloPair<H, P> {
     type Batch = BatchPair<H, P>;
 }
@@ -447,6 +467,15 @@ impl<F: Send + Sync + 'static> Axis for SoloDeserialized<F> {
     type SlotForm = Out;
 }
 
+// A set is a typed input: it decodes with the codec of the mount into an owned value, so it
+// rides the decoded kind and mounts in the forms a decoded input does.
+impl<S: Send + Sync + 'static> Axis for SoloSet<S> {
+    type Family = OneByOne;
+    type Kind = Decoded<S>;
+    type EagerForm = Subscribing;
+    type SlotForm = Out;
+}
+
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for SoloPair<H, P> {
     type Family = OneByOne;
     type Kind = DecodedPair<H, P>;
@@ -475,6 +504,13 @@ impl<F: Send + Sync + 'static> Axis for BatchDeserialized<F> {
     type SlotForm = BatchOut;
 }
 
+impl<S: Send + Sync + 'static> Axis for BatchSet<S> {
+    type Family = Batched;
+    type Kind = Decoded<S>;
+    type EagerForm = forms::Batch;
+    type SlotForm = BatchOut;
+}
+
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> Axis for BatchPair<H, P> {
     type Family = Batched;
     type Kind = DecodedPair<H, P>;
@@ -492,6 +528,14 @@ impl<T: Clone + Send + Sync + 'static> Axis for BatchCarried<T> {
 impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Solo<T>> for Doc {
     fn payload_schema() -> Option<String> {
         Doc::schema()
+    }
+}
+
+// A message set has no payload schema of its own: each of its models carries one, and the
+// document lists them one by one. No documentation state demands anything of the set.
+impl<S: Send + Sync + 'static, Doc> AxisDocs<SoloSet<S>> for Doc {
+    fn payload_schema() -> Option<String> {
+        None
     }
 }
 
@@ -534,6 +578,12 @@ impl<T: Send + Sync + 'static, Doc: DocState<T>> AxisDocs<Batch<T>> for Doc {
     }
 }
 
+impl<S: Send + Sync + 'static, Doc> AxisDocs<BatchSet<S>> for Doc {
+    fn payload_schema() -> Option<String> {
+        None
+    }
+}
+
 impl<F, Doc> AxisDocs<BatchDeserialized<F>> for Doc
 where
     F: Send + Sync + 'static,
@@ -572,6 +622,7 @@ pub trait SoloAxis: Axis<Family = OneByOne> {}
 
 impl<T: Send + Sync + 'static> SoloAxis for Solo<T> {}
 impl<F: Send + Sync + 'static> SoloAxis for SoloDeserialized<F> {}
+impl<S: Send + Sync + 'static> SoloAxis for SoloSet<S> {}
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> SoloAxis for SoloPair<H, P> {}
 impl<T: Clone + Send + Sync + 'static> SoloAxis for SoloCarried<T> {}
 
@@ -581,5 +632,6 @@ pub trait BatchedAxis: Axis<Family = Batched> {}
 
 impl<T: Send + Sync + 'static> BatchedAxis for Batch<T> {}
 impl<F: Send + Sync + 'static> BatchedAxis for BatchDeserialized<F> {}
+impl<S: Send + Sync + 'static> BatchedAxis for BatchSet<S> {}
 impl<H: Send + Sync + 'static, P: Send + Sync + 'static> BatchedAxis for BatchPair<H, P> {}
 impl<T: Clone + Send + Sync + 'static> BatchedAxis for BatchCarried<T> {}

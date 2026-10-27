@@ -1,0 +1,5 @@
+error: this model is already in the set: a model appears once, so one variant receives it
+  --> tests/ui/in_messages_duplicate_model.rs:13:12
+   |
+13 |     Placed(OrderCreated),
+   |            ^^^^^^^^^^^^

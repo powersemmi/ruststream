@@ -58,6 +58,11 @@ required-features = ["testing", "macros", "memory", "json"]
 name = "protobuf"
 required-features = ["testing", "macros", "memory"]
 
+# Several message types on one subscription: a JSON model and a Protobuf one in one set.
+[[example]]
+name = "in_messages"
+required-features = ["testing", "macros", "memory", "json"]
+
 # The `manual_*` examples are the macro-free counterparts the guides show side by side with the
 # macro form. They deliberately do not require the `macros` feature: that is what proves the
 # hand-written path stands on its own.
@@ -72,6 +77,12 @@ required-features = ["memory", "json"]
 name = "manual_protobuf"
 path = "examples/manual/protobuf.rs"
 required-features = ["testing", "memory"]
+
+# The counterpart of `in_messages` with the set's impls written out.
+[[example]]
+name = "manual_in_messages"
+path = "examples/manual/in_messages.rs"
+required-features = ["testing", "memory", "json"]
 
 [[example]]
 name = "byte_lanes"

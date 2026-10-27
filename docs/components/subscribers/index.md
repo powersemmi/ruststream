@@ -12,6 +12,7 @@ import TabItem from '@theme/TabItem';
 
 The first parameter is the message: `&T` handles one message, `&[T]` a whole [batch](./batches.md).
 The runtime decodes the payload with the scope's codec before the body runs; a `serde` type is all the input needs.
+A subscription that carries several message types takes an enum that derives `InMessages`, one model per variant: the [message sets](./message-sets.md) page.
 A payload that does not decode never reaches the body: the decode [failure policy](./failure-policy.md) settles it, and drops it by default.
 An optional `&mut Context` comes second, and any further parameter is an extractor resolved before the body runs: the [context](./context/index.md) page covers both.
 What the body returns settles the delivery: [`HandlerOutcome`](api:ruststream::runtime::HandlerOutcome), `()` (ack), `Result<(), E>` (ack on `Ok`, drop on `Err`) or `Result<HandlerOutcome, E>`, as the [outcomes](./messages/handler-outcome.md) page shows.

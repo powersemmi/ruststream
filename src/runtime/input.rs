@@ -19,6 +19,9 @@ use serde::de::DeserializeOwned;
 
 use crate::codec::{Codec, CodecError};
 use crate::runtime::Message;
+use crate::runtime::handle::{Input, Solo, SoloSet};
+use crate::runtime::in_messages::InMessages;
+use crate::runtime::metadata::IncomingMessageMetadata;
 use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
@@ -61,8 +64,8 @@ pub trait InputKind: Send + Sync + 'static {
 /// same stage, under the same decode failure policy.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be decoded with the codec `{DecodeCodec}`",
-    note = "a typed input needs `serde::de::DeserializeOwned`; a `Deserialized` input decodes \
-            with any codec (it never calls one)",
+    note = "a typed input derives `serde::Deserialize` or `InMessages`; a `Deserialized` input \
+            decodes with any codec (it never calls one)",
     note = "a batch of values a broker's batches carry mounts in the plain batch form only, \
             with no reply and no `Out` slots"
 )]
@@ -82,6 +85,13 @@ pub trait DecodeWith<DecodeCodec>: InputKind {
     /// Returns [`CodecError`] when the payload or the header contract does not decode; the
     /// adapter applies the definition's decode failure policy.
     fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<Self::Owned, CodecError>;
+
+    /// The models of the input's message set, for the generated document: one per variant of
+    /// an `InMessages` enum, none for an input that is one message.
+    #[must_use]
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        Vec::new()
+    }
 }
 
 /// How one kind materializes from a delivery of the message type `M`, for the single-delivery
@@ -115,10 +125,54 @@ pub trait Materialize<Decoder, M>: InputKind {
     /// Lends the handler its view of what the delivery materialized into.
     fn view<'a>(held: &'a Self::Held<'_>, msg: &'a M) -> &'a Self::Target;
 
+    /// The models of the input's message set, for the generated document. See
+    /// [`DecodeWith::incoming`].
+    #[must_use]
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        Vec::new()
+    }
+
     /// Records the materialized value for the test harness, on the lane whose value never was
     /// bytes. The other kinds are recorded from the payload, so they record nothing here.
     #[cfg(feature = "testing")]
     fn record<C, S>(_held: &Self::Held<'_>, _ctx: &mut Context<'_, C, S>) {}
+}
+
+/// How one axis of the typed lane decodes a delivery into `T` with the codec of the mount:
+/// [`Solo<T>`] through the codec, for a `serde` type; [`SoloSet<T>`] through the set's own rule,
+/// for an [`InMessages`] enum. Machinery behind [`Decoded`]; never named in user code.
+#[doc(hidden)]
+pub trait TypedLane<T, DecodeCodec> {
+    /// Decodes one delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError`] when the delivery does not decode; the adapter applies the
+    /// definition's decode failure policy.
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError>;
+
+    /// The models of the type's message set, for the generated document: one per variant of an
+    /// `InMessages` enum, none for a type that is one message.
+    #[must_use]
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        Vec::new()
+    }
+}
+
+impl<T: DeserializeOwned, DecodeCodec: Codec> TypedLane<T, DecodeCodec> for Solo<T> {
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
+        codec.decode(msg.payload())
+    }
+}
+
+impl<T: InMessages, DecodeCodec: Codec> TypedLane<T, DecodeCodec> for SoloSet<T> {
+    fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
+        T::decode(codec, msg)
+    }
+
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        T::incoming()
+    }
 }
 
 /// What a mount hands the decode step of one kind, given the codec it resolved and the
@@ -150,20 +204,31 @@ impl<T: Send + Sync + 'static> InputKind for Decoded<T> {
     }
 }
 
-impl<DecodeCodec: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith<DecodeCodec>
-    for Decoded<T>
+// The typed lane decodes by the type's own axis: a `serde` type through the codec, a message
+// set through its rule. Both are `Input` impls the type carries, so the bound names what the
+// mount site sees.
+impl<DecodeCodec, T> DecodeWith<DecodeCodec> for Decoded<T>
+where
+    DecodeCodec: Codec,
+    T: Input + Send + Sync + 'static,
+    T::Axis: TypedLane<T, DecodeCodec>,
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
 
     fn decode<M: IncomingMessage>(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
-        codec.decode(msg.payload())
+        <T::Axis as TypedLane<T, DecodeCodec>>::decode(codec, msg)
+    }
+
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        <T::Axis as TypedLane<T, DecodeCodec>>::incoming()
     }
 }
 
 impl<DecodeCodec, T, M> Materialize<DecodeCodec, M> for Decoded<T>
 where
     DecodeCodec: Codec,
-    T: DeserializeOwned + Send + Sync + 'static,
+    T: Input + Send + Sync + 'static,
+    T::Axis: TypedLane<T, DecodeCodec>,
     M: IncomingMessage,
 {
     const CONTENT_TYPE: Option<&'static str> = Some(DecodeCodec::CONTENT_TYPE);
@@ -174,11 +239,15 @@ where
         M: 'm;
 
     fn materialize(codec: &DecodeCodec, msg: &M) -> Result<T, CodecError> {
-        codec.decode(msg.payload())
+        <T::Axis as TypedLane<T, DecodeCodec>>::decode(codec, msg)
     }
 
     fn view<'a>(held: &'a T, _msg: &'a M) -> &'a T {
         held
+    }
+
+    fn incoming() -> Vec<IncomingMessageMetadata> {
+        <T::Axis as TypedLane<T, DecodeCodec>>::incoming()
     }
 }
 

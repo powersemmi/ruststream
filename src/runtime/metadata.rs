@@ -190,6 +190,143 @@ impl OutgoingMessageMetadata {
     }
 }
 
+/// The header a message set reads its variant from, with the value one variant declares.
+///
+/// `#[in_messages(header = "event")]` on the set names the header and
+/// `#[in_messages(value = "created")]` on the variant its value. The generated document carries
+/// the pair as a `const` in the message's headers schema.
+///
+/// # Examples
+///
+/// ```
+/// use ruststream::runtime::HeaderDiscriminator;
+///
+/// let rule = HeaderDiscriminator::new("event", "created");
+/// assert_eq!((rule.header, rule.value), ("event", "created"));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct HeaderDiscriminator {
+    /// The header the set reads.
+    pub header: &'static str,
+    /// The value that names this variant.
+    pub value: &'static str,
+}
+
+impl HeaderDiscriminator {
+    /// Pairs the header a set reads with the value one of its variants declares.
+    #[must_use]
+    pub const fn new(header: &'static str, value: &'static str) -> Self {
+        Self { header, value }
+    }
+}
+
+/// One model of a message set a handler receives, as declared for the `AsyncAPI` document: the
+/// receiving counterpart of [`OutgoingMessageMetadata`].
+///
+/// `#[derive(InMessages)]` builds one per variant through [`new`](Self::new) plus the
+/// builder-style setters; the mount fills the media type in from its codec, and `build_spec`
+/// renders each entry as a message of the subscription's channel.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct IncomingMessageMetadata {
+    /// Type name of the model, as captured where the set is declared.
+    pub message_type: &'static str,
+    /// The model's [`Message`](crate::MessageInfo) name.
+    pub message_name: Option<&'static str>,
+    /// The model's [`Message`](crate::MessageInfo) description.
+    pub message_description: Option<&'static str>,
+    /// The model's serialized JSON Schema, when available (`asyncapi` feature).
+    pub payload_schema: Option<String>,
+    /// The serialized JSON Schema of the model's `#[message(headers(..))]` contract, when it
+    /// declares one.
+    pub headers_schema: Option<String>,
+    /// True when the model reads its own bytes ([`Deserialized`](crate::runtime::Deserialized)):
+    /// no codec decodes it, so the missing schema and media type are by design.
+    pub deserialized: bool,
+    /// The media type the codec of the mount decodes this model in; `None` for a model that
+    /// reads its own bytes.
+    pub content_type: Option<&'static str>,
+    /// The header value that names this model, when the set reads its variant from a header.
+    pub discriminator: Option<HeaderDiscriminator>,
+}
+
+impl IncomingMessageMetadata {
+    /// Constructs an entry for one model of a set.
+    #[must_use]
+    pub const fn new(message_type: &'static str) -> Self {
+        Self {
+            message_type,
+            message_name: None,
+            message_description: None,
+            payload_schema: None,
+            headers_schema: None,
+            deserialized: false,
+            content_type: None,
+            discriminator: None,
+        }
+    }
+
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) name.
+    #[must_use]
+    pub const fn with_message_name(mut self, name: Option<&'static str>) -> Self {
+        self.message_name = name;
+        self
+    }
+
+    /// Builder-style setter for the [`Message`](crate::MessageInfo) description.
+    #[must_use]
+    pub const fn with_message_description(mut self, description: Option<&'static str>) -> Self {
+        self.message_description = description;
+        self
+    }
+
+    /// Builder-style setter for the serialized payload schema.
+    #[must_use]
+    pub fn with_payload_schema(mut self, schema: Option<String>) -> Self {
+        self.payload_schema = schema;
+        self
+    }
+
+    /// Builder-style setter for the serialized headers schema.
+    #[must_use]
+    pub fn with_headers_schema(mut self, schema: Option<String>) -> Self {
+        self.headers_schema = schema;
+        self
+    }
+
+    /// Builder-style setter for the self-decoding marker (see
+    /// [`deserialized`](Self::deserialized)).
+    #[must_use]
+    pub const fn with_deserialized(mut self, deserialized: bool) -> Self {
+        self.deserialized = deserialized;
+        self
+    }
+
+    /// Builder-style setter for the header value that names this model.
+    #[must_use]
+    pub const fn with_discriminator(mut self, discriminator: HeaderDiscriminator) -> Self {
+        self.discriminator = Some(discriminator);
+        self
+    }
+
+    /// The copy of this model a retry or a dead-letter destination receives: the delivery, byte
+    /// for byte, so a model that reads its own bytes stays schema-free there too.
+    fn copied_to(
+        &self,
+        destination: Cow<'static, str>,
+        kind: OutgoingKind,
+    ) -> OutgoingMessageMetadata {
+        OutgoingMessageMetadata::new(destination, self.message_type)
+            .with_message_name(self.message_name)
+            .with_message_description(self.message_description)
+            .with_payload_schema(self.payload_schema.clone())
+            .with_headers_schema(self.headers_schema.clone())
+            .with_serialized(self.deserialized)
+            .with_kind(kind)
+    }
+}
+
 /// What one bound publish position says about itself, read off its policy at mount time.
 ///
 /// The three publish positions - a reply, an [`Out`](crate::runtime::Out) slot, the publisher a
@@ -298,6 +435,10 @@ pub struct HandlerMetadata {
     /// `reply("dest")` form, and every entry of an `Out` slot's `#[publishes(..)]`
     /// dictionary. Feeds the `AsyncAPI` `send` operations.
     pub outgoing: Vec<OutgoingMessageMetadata>,
+    /// The models of the input's message set (`#[derive(InMessages)]`), one per variant, in
+    /// the order of the variants. Empty for an input that is one message, which the fields above
+    /// describe. Feeds the messages of the `AsyncAPI` `receive` operation.
+    pub incoming: Vec<IncomingMessageMetadata>,
     /// True when the input rides the self-deserializing lane
     /// ([`Deserialized`](crate::runtime::Deserialized)): the payload has no serde model, so
     /// the missing schema is by design rather than a documentation gap.
@@ -340,6 +481,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            incoming: Vec::new(),
             deserialized: false,
             server: None,
             content_type: None,
@@ -365,6 +507,7 @@ impl HandlerMetadata {
             message_name: None,
             message_description: None,
             outgoing: Vec::new(),
+            incoming: Vec::new(),
             deserialized: false,
             server: None,
             content_type: None,
@@ -431,6 +574,8 @@ impl HandlerMetadata {
         Input: DecodeWith<DecodeCodec>,
     {
         self.content_type = <Input as DecodeWith<DecodeCodec>>::CONTENT_TYPE;
+        self.incoming = <Input as DecodeWith<DecodeCodec>>::incoming();
+        self.describe_incoming();
         self
     }
 
@@ -442,7 +587,17 @@ impl HandlerMetadata {
         Input: Materialize<Decoder, M>,
     {
         self.content_type = <Input as Materialize<Decoder, M>>::CONTENT_TYPE;
+        self.incoming = <Input as Materialize<Decoder, M>>::incoming();
+        self.describe_incoming();
         self
+    }
+
+    /// Writes the media type of the mount's codec onto the models of a message set that it
+    /// decodes; a model that reads its own bytes keeps none.
+    fn describe_incoming(&mut self) {
+        for entry in &mut self.incoming {
+            entry.content_type = (!entry.deserialized).then_some(self.content_type).flatten();
+        }
     }
 
     /// Writes what the reply position's policy says onto the entry the reply declared.
@@ -489,7 +644,7 @@ impl HandlerMetadata {
             ) {
                 let description = describe(entry.channel.as_ref());
                 description.apply(entry);
-                entry.content_type = content_type;
+                entry.content_type = (!entry.serialized).then_some(content_type).flatten();
             }
         }
     }
@@ -500,6 +655,16 @@ impl HandlerMetadata {
     /// Both destinations a retry can name come through here - where a spent delivery is
     /// dead-lettered, and where a deferred copy is published - so the two are documented alike.
     pub(crate) fn declare_copy(&mut self, destination: Cow<'static, str>, kind: OutgoingKind) {
+        // A set's copy carries whichever of its models the delivery was, so the destination lists
+        // every one of them.
+        if !self.incoming.is_empty() {
+            let copies = self
+                .incoming
+                .iter()
+                .map(|model| model.copied_to(destination.clone(), kind));
+            self.outgoing.extend(copies);
+            return;
+        }
         let entry = OutgoingMessageMetadata::new(destination, self.input_type)
             .with_payload_schema(self.payload_schema.clone())
             .with_headers_schema(self.headers_schema.clone())
@@ -594,6 +759,86 @@ mod tests {
         assert!(plain.description.is_none());
         assert!(plain.payload_schema.is_none());
         assert!(plain.headers_schema.is_none());
+    }
+
+    fn set_of_two() -> Vec<IncomingMessageMetadata> {
+        vec![
+            IncomingMessageMetadata::new("app::OrderCreated")
+                .with_message_name(Some("OrderCreated"))
+                .with_message_description(Some("An order was placed."))
+                .with_payload_schema(Some("{}".to_owned()))
+                .with_headers_schema(Some("{\"type\":\"object\"}".to_owned()))
+                .with_discriminator(HeaderDiscriminator::new("event", "created")),
+            IncomingMessageMetadata::new("app::OrderCancelled")
+                .with_message_name(Some("OrderCancelled"))
+                .with_deserialized(true),
+        ]
+    }
+
+    /// The codec of the mount names the media type of the models it decodes; a model that reads
+    /// its own bytes keeps none.
+    #[test]
+    fn the_mount_describes_the_models_a_codec_decodes() {
+        let mut meta = HandlerMetadata::raw("orders");
+        meta.content_type = Some("application/json");
+        meta.incoming = set_of_two();
+        meta.describe_incoming();
+
+        assert_eq!(meta.incoming[0].content_type, Some("application/json"));
+        assert_eq!(meta.incoming[1].content_type, None);
+        assert_eq!(
+            meta.incoming[0].discriminator,
+            Some(HeaderDiscriminator::new("event", "created"))
+        );
+    }
+
+    /// A copy of a set's delivery is whichever of its models arrived, so the destination lists
+    /// every model under its own name, and a model that reads its own bytes stays schema-free.
+    #[test]
+    fn a_copy_of_a_set_lists_every_model() {
+        let mut meta = HandlerMetadata::raw("orders");
+        meta.content_type = Some("application/json");
+        meta.incoming = set_of_two();
+        meta.declare_copy(Cow::Borrowed("orders.dlq"), OutgoingKind::DeadLetter);
+        meta.describe_copies(|_| PublishDescription::default());
+
+        let copies: Vec<_> = meta
+            .outgoing
+            .iter()
+            .map(|entry| {
+                (
+                    entry.channel.as_ref(),
+                    entry.message_name,
+                    entry.serialized,
+                    entry.content_type,
+                    entry.kind,
+                )
+            })
+            .collect();
+        assert_eq!(
+            copies,
+            vec![
+                (
+                    "orders.dlq",
+                    Some("OrderCreated"),
+                    false,
+                    Some("application/json"),
+                    OutgoingKind::DeadLetter
+                ),
+                (
+                    "orders.dlq",
+                    Some("OrderCancelled"),
+                    true,
+                    None,
+                    OutgoingKind::DeadLetter
+                ),
+            ]
+        );
+        assert_eq!(meta.outgoing[0].payload_schema.as_deref(), Some("{}"));
+        assert_eq!(
+            meta.outgoing[0].message_description,
+            Some("An order was placed.")
+        );
     }
 
     /// A hand-written definition states the media type of what it publishes the same way the

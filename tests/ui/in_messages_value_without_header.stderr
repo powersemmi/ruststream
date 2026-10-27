@@ -1,0 +1,5 @@
+error: `value` needs `#[in_messages(header = "..")]` on the enum, which names the header the value is read from
+  --> tests/ui/in_messages_value_without_header.rs:13:27
+   |
+13 |     #[in_messages(value = "created")]
+   |                           ^^^^^^^^^

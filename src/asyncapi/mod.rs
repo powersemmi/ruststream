@@ -33,6 +33,9 @@
 //! - [Headers][headers]: a header contract becomes the message's headers schema.
 //! - [Content][content]: each message names its codec's
 //!   [`CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE).
+//! - [Message sets][message-sets]: a subscription over an
+//!   [`InMessages`](crate::runtime::InMessages) set lists one message per variant, each with
+//!   its own format, and the header rule as a `const` in its headers schema.
 //! - [Retry][retry]: the attempt cap and the retry destinations as `x-ruststream-retry`.
 //!
 //! # Servers
@@ -78,6 +81,7 @@
 //! [parameters]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/channel-parameters/
 //! [headers]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/header-schemas/
 //! [content]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/content-type/
+//! [message-sets]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/message-sets/
 //! [retry]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/reports/retry-extension/
 //! [servers]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/
 //! [with-broker-labeled]: https://powersemmi.github.io/ruststream/latest/components/asyncapi/servers/with-broker-labeled/
@@ -97,7 +101,7 @@ use std::num::NonZeroU32;
 
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use tracing::warn;
 
 mod bindings;
@@ -107,7 +111,10 @@ pub use bindings::{Binding, BindingError, Bindings, PublishBindings, Subscriptio
 pub use viewer::{ViewerOptions, render_viewer_html};
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
-use crate::runtime::{App, HandlerMetadata, OutgoingKind, OutgoingMessageMetadata};
+use crate::runtime::{
+    App, HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
+    OutgoingMessageMetadata,
+};
 
 /// The specification version every generated document declares.
 const ASYNCAPI_VERSION: &str = "3.1.0";
@@ -835,43 +842,16 @@ fn add_receive(
     messages: &mut BTreeMap<String, MessageObject>,
 ) {
     let name = handler.name.as_ref();
-    let payload = handler
-        .payload_schema
-        .as_deref()
-        .and_then(|json| serde_json::from_str::<Value>(json).ok());
-    // A self-deserializing input is deliberately schema-free (its bytes are its own wire
-    // format); a typed model without a schema is a documentation gap worth flagging at
-    // generation time.
-    if payload.is_none() && !handler.deserialized && handler.input_type != "bytes" {
-        warn!(
-            target: "ruststream::asyncapi",
-            subscription = %name,
-            message_type = handler.input_type,
-            "message type has no JSON Schema; its AsyncAPI message carries no payload schema - \
-             derive schemars::JsonSchema on it",
-        );
-    }
-    let headers = handler
-        .headers_schema
-        .as_deref()
-        .and_then(|json| serde_json::from_str::<Value>(json).ok());
-    // The JsonSchema derive captures the type's own doc comment (and a schemars title /
-    // rename), so a documented payload type feeds the component without a Message impl.
-    let schema_str = |key: &str| {
-        payload
-            .as_ref()
-            .and_then(|schema| schema.get(key))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
+    // One message for an input that is one message; one per model of a message set.
+    let received: Vec<MessageContribution> = if handler.incoming.is_empty() {
+        vec![Received::of_handler(handler).contribution(handler)]
+    } else {
+        handler
+            .incoming
+            .iter()
+            .map(|model| Received::of_model(model).contribution(handler))
+            .collect()
     };
-    // A `Message` impl on the input type names the component; the schema title is next; the
-    // type name is the fallback.
-    let message_name = handler
-        .message_name
-        .as_ref()
-        .map(ToString::to_string)
-        .or_else(|| schema_str("title"))
-        .unwrap_or_else(|| message_name(handler.input_type));
 
     let channel = channels.entry(name.to_owned()).or_insert_with(|| Channel {
         address: Some(name.to_owned()),
@@ -886,19 +866,25 @@ fn add_receive(
     // A channel a publish created first carries no binding: the descriptor that reads it is what
     // describes it, and it may reach the channel second.
     channel.bindings.fill_from(&handler.bindings.channel);
-    channel.messages.insert(
-        message_name.clone(),
-        Reference::new(format!("#/components/messages/{message_name}")),
-    );
+    let mut refs = Vec::with_capacity(received.len());
+    for contribution in received {
+        let message_name = &contribution.name;
+        channel.messages.insert(
+            message_name.clone(),
+            Reference::new(format!("#/components/messages/{message_name}")),
+        );
+        refs.push(Reference::new(format!(
+            "#/channels/{name}/messages/{message_name}"
+        )));
+        merge_message(messages, contribution, name);
+    }
 
     operations.insert(
         receive_operation_id(operations, name),
         Operation {
             action: "receive".to_owned(),
             channel: Reference::new(format!("#/channels/{name}")),
-            messages: vec![Reference::new(format!(
-                "#/channels/{name}/messages/{message_name}"
-            ))],
+            messages: refs,
             description: handler.description.as_ref().map(ToString::to_string),
             reply,
             tags: tags.to_vec(),
@@ -906,30 +892,134 @@ fn add_receive(
             bindings: handler.bindings.operation.clone(),
         },
     );
+}
 
-    // Message::DESCRIPTION wins, then the type's own doc comment from the schema, then the
-    // handler doc (already on the operation) so plain types keep their description.
-    let message_description = handler
-        .message_description
-        .as_ref()
-        .map(ToString::to_string)
-        .or_else(|| schema_str("description"))
-        .or_else(|| handler.description.as_ref().map(ToString::to_string));
+/// What one received message is described by: the handler's own input, or one model of its
+/// message set. Both carry the same slices of metadata, so one routine renders either.
+struct Received<'a> {
+    message_type: &'a str,
+    payload_schema: Option<&'a str>,
+    headers_schema: Option<&'a str>,
+    message_name: Option<&'a str>,
+    message_description: Option<&'a str>,
+    content_type: Option<&'a str>,
+    deserialized: bool,
+    discriminator: Option<HeaderDiscriminator>,
+}
 
-    merge_message(
-        messages,
+impl<'a> Received<'a> {
+    fn of_handler(handler: &'a HandlerMetadata) -> Self {
+        Self {
+            message_type: handler.input_type,
+            payload_schema: handler.payload_schema.as_deref(),
+            headers_schema: handler.headers_schema.as_deref(),
+            message_name: handler.message_name.as_deref(),
+            message_description: handler.message_description.as_deref(),
+            content_type: handler.content_type,
+            deserialized: handler.deserialized,
+            discriminator: None,
+        }
+    }
+
+    fn of_model(model: &'a IncomingMessageMetadata) -> Self {
+        Self {
+            message_type: model.message_type,
+            payload_schema: model.payload_schema.as_deref(),
+            headers_schema: model.headers_schema.as_deref(),
+            message_name: model.message_name,
+            message_description: model.message_description,
+            content_type: model.content_type,
+            deserialized: model.deserialized,
+            discriminator: model.discriminator,
+        }
+    }
+
+    /// Renders the message as its contribution to the shared component.
+    fn contribution(&self, handler: &HandlerMetadata) -> MessageContribution {
+        let payload = self
+            .payload_schema
+            .and_then(|json| serde_json::from_str::<Value>(json).ok());
+        // A self-deserializing input is deliberately schema-free (its bytes are its own wire
+        // format); a typed model without a schema is a documentation gap worth flagging at
+        // generation time.
+        if payload.is_none() && !self.deserialized && self.message_type != "bytes" {
+            warn!(
+                target: "ruststream::asyncapi",
+                subscription = %handler.name,
+                message_type = self.message_type,
+                "message type has no JSON Schema; its AsyncAPI message carries no payload \
+                 schema - derive schemars::JsonSchema on it",
+            );
+        }
+        let headers = self
+            .headers_schema
+            .and_then(|json| serde_json::from_str::<Value>(json).ok());
+        // The header a set reads its variant from is part of the message's contract: the value
+        // that names this model rides its headers schema as a `const`.
+        let headers = match self.discriminator {
+            Some(rule) => Some(with_header_const(headers, rule)),
+            None => headers,
+        };
+        // The JsonSchema derive captures the type's own doc comment (and a schemars title /
+        // rename), so a documented payload type feeds the component without a Message impl.
+        let schema_str = |key: &str| {
+            payload
+                .as_ref()
+                .and_then(|schema| schema.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        // A `Message` impl on the input type names the component; the schema title is next; the
+        // type name is the fallback.
+        let name = self
+            .message_name
+            .map(str::to_owned)
+            .or_else(|| schema_str("title"))
+            .unwrap_or_else(|| message_name(self.message_type));
+        // Message::DESCRIPTION wins, then the type's own doc comment from the schema, then the
+        // handler doc (already on the operation) so plain types keep their description.
+        let description = self
+            .message_description
+            .map(str::to_owned)
+            .or_else(|| schema_str("description"))
+            .or_else(|| handler.description.as_ref().map(ToString::to_string));
         MessageContribution {
-            name: message_name,
+            name,
             title: schema_str("title"),
-            description: message_description,
-            content_type: handler.content_type.map(str::to_owned),
+            description,
+            content_type: self.content_type.map(str::to_owned),
             payload,
             headers,
-            schemaless: handler.deserialized,
+            schemaless: self.deserialized,
             bindings: handler.bindings.message.clone(),
-        },
-        name,
-    );
+        }
+    }
+}
+
+/// Adds the header a message set reads, with the value that names this model, to the model's
+/// headers schema as a required `const` property: the `AsyncAPI` counterpart of an `OpenAPI`
+/// discriminator mapping. A model without a header contract gets an object schema of that one
+/// property.
+fn with_header_const(headers: Option<Value>, rule: HeaderDiscriminator) -> Value {
+    let mut schema = match headers {
+        Some(Value::Object(schema)) => schema,
+        _ => Map::from_iter([("type".to_owned(), Value::String("object".to_owned()))]),
+    };
+    let mut properties = match schema.remove("properties") {
+        Some(Value::Object(properties)) => properties,
+        _ => Map::new(),
+    };
+    properties.insert(rule.header.to_owned(), json!({ "const": rule.value }));
+    schema.insert("properties".to_owned(), Value::Object(properties));
+    let mut required = match schema.remove("required") {
+        Some(Value::Array(required)) => required,
+        _ => Vec::new(),
+    };
+    if !required.iter().any(|name| name == rule.header) {
+        required.push(Value::String(rule.header.to_owned()));
+    }
+    schema.insert("required".to_owned(), Value::Array(required));
+    Value::Object(schema)
 }
 
 /// Renders what a registration declared about retrying as the `x-ruststream-retry` extension, or
@@ -1202,7 +1292,61 @@ fn sanitize_id(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    use crate::runtime::HeaderDiscriminator;
     use crate::{ApiKeyLocation, HttpApiKeyLocation, SecurityScheme};
+
+    use super::with_header_const;
+
+    /// A model with no header contract documents the header the set reads as the one property
+    /// of its headers schema.
+    #[test]
+    fn the_header_rule_makes_a_headers_schema_of_its_own() {
+        let schema = with_header_const(None, HeaderDiscriminator::new("event", "created"));
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": { "event": { "const": "created" } },
+                "required": ["event"],
+            })
+        );
+    }
+
+    /// A model with a header contract keeps it, and the rule's header joins its properties; a
+    /// header the contract already requires is listed once.
+    #[test]
+    fn the_header_rule_joins_an_existing_contract() {
+        let contract = json!({
+            "type": "object",
+            "properties": { "tenant": { "type": "string" }, "event": { "type": "string" } },
+            "required": ["tenant", "event"],
+        });
+        let schema =
+            with_header_const(Some(contract), HeaderDiscriminator::new("event", "created"));
+        assert_eq!(schema["properties"]["tenant"], json!({ "type": "string" }));
+        assert_eq!(schema["properties"]["event"], json!({ "const": "created" }));
+        assert_eq!(schema["required"], json!(["tenant", "event"]));
+    }
+
+    /// A contract whose `properties` or `required` is not the shape a schema gives them is
+    /// rewritten around the rule rather than trusted.
+    #[test]
+    fn the_header_rule_replaces_malformed_parts_of_a_contract() {
+        let odd = json!({ "type": "object", "properties": 7, "required": "event" });
+        let schema = with_header_const(Some(odd), HeaderDiscriminator::new("event", "created"));
+        assert_eq!(
+            schema["properties"],
+            json!({ "event": { "const": "created" } })
+        );
+        assert_eq!(schema["required"], json!(["event"]));
+        let scalar = with_header_const(
+            Some(json!(true)),
+            HeaderDiscriminator::new("event", "created"),
+        );
+        assert_eq!(scalar["type"], json!("object"));
+    }
 
     use super::security_scheme_object;
 

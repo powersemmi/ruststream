@@ -17,8 +17,8 @@ use crate::{Name, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Batch, BatchCarried, BatchDeserialized, BatchPair, BatchedAxis, Deserialized,
-    Input, Message, Solo, SoloAxis, SoloCarried, SoloDeserialized, SoloPair,
+    Axis, AxisDocs, Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, BatchedAxis,
+    Deserialized, Input, Message, Solo, SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
 use super::value::{HandleValue, Sealed};
 
@@ -86,6 +86,20 @@ pub(super) fn settle_solo(verdict: Result<(), HandlerOutcome>) -> HandlerOutcome
 impl<T, C, S, H> Handler<T, C, S> for SoloBody<Solo<T>, C, H>
 where
     T: Input<Axis = Solo<T>> + Send + Sync + 'static,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<T, (), (), C, S>,
+{
+    async fn handle(&self, msg: &T, ctx: &mut Context<'_, C, S>) -> HandlerOutcome {
+        settle_solo(self.body.handle(msg, &(), ctx).await)
+    }
+}
+
+// The set was decoded as the variant its rule picked before the body runs, so this cell only
+// runs and settles, like the decoded one.
+impl<T, C, S, H> Handler<T, C, S> for SoloBody<SoloSet<T>, C, H>
+where
+    T: Input<Axis = SoloSet<T>> + Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,
     H: Handle<T, (), (), C, S>,
@@ -265,6 +279,19 @@ where
 impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<Batch<T>, H>
 where
     [T]: Input<Axis = Batch<T>>,
+    T: Send + Sync + 'static,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[T], (), (), C, S>,
+{
+    async fn handle_slice(&self, batch: &[T], ctx: &mut Context<'_, C, S>) -> BatchResult {
+        run_batch(&self.body, &(), batch, ctx).await
+    }
+}
+
+impl<T, C, S, H> SliceHandler<T, C, S> for BatchBody<BatchSet<T>, H>
+where
+    [T]: Input<Axis = BatchSet<T>>,
     T: Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,

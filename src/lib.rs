@@ -73,8 +73,8 @@
 //! * `memory`: [`memory::MemoryBroker`], an in-process broker usable in applications, prototypes
 //!   and tests.
 //! * `macros`: the `#[subscriber]`, [`#[ruststream::app]`](macro@app),
-//!   [`#[derive(Outgoing)]`](macro@Outgoing) and [`#[derive(MessageInfo)]`](macro@MessageInfo)
-//!   macros.
+//!   [`#[derive(Outgoing)]`](macro@Outgoing), [`#[derive(MessageInfo)]`](macro@MessageInfo) and
+//!   [`#[derive(InMessages)]`](macro@InMessages) macros.
 //! * `asyncapi`: `AsyncAPI` document generation and the HTML viewer.
 //! * `metrics`: Prometheus metrics middleware and exporter.
 //! * `logging`: colored, `RUST_LOG`-driven console logging via `tracing-subscriber`
@@ -235,6 +235,16 @@ pub use ruststream_macros::OutSlot;
 #[cfg(feature = "macros")]
 pub use ruststream_macros::OutMessages;
 
+/// Derive macro for a declared set of message models a handler receives
+/// ([`InMessages`](runtime::InMessages)): an enum whose variants each wrap one model, used as
+/// the handler's input. Each variant decodes through its model's own path, the set picks the
+/// variant left to right, by a function or by a header, and the generated document lists one
+/// message per variant.
+///
+/// Available with the `macros` feature.
+#[cfg(feature = "macros")]
+pub use ruststream_macros::InMessages;
+
 /// Derive macro for a self-deserializing input type
 /// ([`Deserialized`](runtime::Deserialized)): a newtype or single-field struct over `&'a [u8]`
 /// gains the construction and the [`Input`](runtime::Input) spelling; the batch spelling
@@ -290,6 +300,13 @@ pub mod __private {
     #[cfg(feature = "asyncapi")]
     use crate::asyncapi;
     use crate::runtime::Serialized;
+
+    /// The decode errors `#[derive(InMessages)]` returns when a set picks no variant.
+    pub mod in_messages {
+        pub use crate::runtime::{
+            every_variant_failed, header_missing, header_unknown, no_variant_chosen,
+        };
+    }
 
     /// A type-carrying probe the macro reads a payload schema off.
     ///

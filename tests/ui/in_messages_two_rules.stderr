@@ -1,0 +1,5 @@
+error: `discriminate` and `header` together: a set picks its variant by one rule
+  --> tests/ui/in_messages_two_rules.rs:15:48
+   |
+15 | #[in_messages(discriminate = by_kind, header = "event")]
+   |                                                ^^^^^^^
