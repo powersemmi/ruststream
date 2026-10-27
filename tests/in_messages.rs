@@ -777,6 +777,171 @@ mod document {
         );
     }
 
+    /// Where an order came from, as the subscription's contract names it.
+    mod routing {
+        #[derive(serde::Deserialize, schemars::JsonSchema)]
+        pub(super) enum Source {
+            Web,
+            Store,
+        }
+    }
+
+    /// Who ships an order, as the model's own contract names it: the same type name as the
+    /// subscription's, with other values.
+    mod shipping {
+        #[derive(serde::Deserialize, schemars::JsonSchema)]
+        pub(super) enum Source {
+            Warehouse,
+            Courier,
+        }
+    }
+
+    /// How the customer is told.
+    #[derive(Deserialize, schemars::JsonSchema)]
+    enum Channel {
+        Email,
+        Sms,
+    }
+
+    /// The subscription's contract: every delivery names its origin and its channel.
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct Routing {
+        origin: routing::Source,
+        channel: Channel,
+    }
+
+    /// The contract of a dispatched order: who ships it.
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct Shipping {
+        source: shipping::Source,
+    }
+
+    /// An order was handed to a carrier.
+    #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, MessageInfo)]
+    #[message(headers(Shipping))]
+    struct OrderDispatched {
+        id: u64,
+    }
+
+    #[derive(InMessages)]
+    #[in_messages(header = "event")]
+    enum DispatchEvent {
+        #[in_messages(value = "dispatched")]
+        Dispatched(OrderDispatched),
+        #[in_messages(value = "created")]
+        Created(OrderCreated),
+    }
+
+    /// Records dispatches with their routing.
+    #[subscriber("doc.dispatch")]
+    async fn record_dispatch(
+        event: &DispatchEvent,
+        Headers(routing): Headers<Routing>,
+    ) -> HandlerOutcome {
+        let _ = (&routing.origin, &routing.channel);
+        match event {
+            DispatchEvent::Dispatched(dispatched) => tracing::info!(dispatched.id, "dispatched"),
+            DispatchEvent::Created(created) => tracing::info!(created.id, "created"),
+        }
+        HandlerOutcome::ack()
+    }
+
+    /// Every `$ref` inside `schema`, in document order.
+    fn refs(schema: &serde_json::Value) -> Vec<String> {
+        let mut found = Vec::new();
+        match schema {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "$ref" {
+                        if let Some(target) = value.as_str() {
+                            found.push(target.to_owned());
+                        }
+                    } else {
+                        found.extend(refs(value));
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    found.extend(refs(item));
+                }
+            }
+            _ => {}
+        }
+        found
+    }
+
+    /// Asserts every `$ref` of `schema` names a definition the schema itself carries.
+    fn assert_refs_resolve(name: &str, schema: &serde_json::Value) {
+        let targets = refs(schema);
+        assert!(
+            !targets.is_empty(),
+            "{name}: the contract references its enums"
+        );
+        for target in targets {
+            let key = target
+                .strip_prefix("#/definitions/")
+                .unwrap_or_else(|| panic!("{name}: `{target}` is not a local definition"));
+            assert!(
+                schema["definitions"].get(key).is_some(),
+                "{name}: `{target}` names no definition of the schema: {schema}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_joined_contracts_keep_their_definitions() {
+        // The model's contract reads what its definition declares.
+        let Shipping { source } = serde_json::from_value(json!({ "source": "Courier" }))
+            .expect("a carrier the contract names");
+        assert!(matches!(source, shipping::Source::Courier));
+
+        let app =
+            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(record_dispatch);
+            });
+        let spec = build_spec(&app);
+
+        for name in ["OrderDispatched", "OrderCreated"] {
+            let headers = spec.components.messages[name]
+                .headers
+                .as_ref()
+                .expect("a headers schema");
+            assert_refs_resolve(name, headers);
+            assert_eq!(
+                headers["definitions"]["Channel"]["enum"],
+                json!(["Email", "Sms"]),
+                "{name}"
+            );
+        }
+        let dispatched = spec.components.messages["OrderDispatched"]
+            .headers
+            .as_ref()
+            .expect("a headers schema");
+        // The model's definition keeps its name; the subscription's namesake takes the next
+        // free number, and the property that reads it follows.
+        assert_eq!(
+            dispatched["definitions"]["Source"]["enum"],
+            json!(["Warehouse", "Courier"])
+        );
+        assert_eq!(
+            dispatched["definitions"]["Source_2"]["enum"],
+            json!(["Web", "Store"])
+        );
+        assert_eq!(
+            dispatched["properties"]["source"]["$ref"],
+            "#/definitions/Source"
+        );
+        assert_eq!(
+            dispatched["properties"]["origin"]["$ref"],
+            "#/definitions/Source_2"
+        );
+        assert_eq!(
+            dispatched["properties"]["channel"]["$ref"],
+            "#/definitions/Channel"
+        );
+    }
+
     #[test]
     fn the_header_rule_is_a_const_in_each_headers_schema() {
         let spec = build_spec(&app());
