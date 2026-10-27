@@ -90,7 +90,7 @@ pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 pub(crate) use handler::HandlerResult;
-pub use in_messages::{InMessages, InVariant, MessageDeclaration};
+pub use in_messages::{InMessages, InVariant, MessageDeclaration, VariantOf};
 #[doc(hidden)]
 pub use in_messages::{
     VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,

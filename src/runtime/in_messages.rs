@@ -303,6 +303,14 @@ where
     }
 }
 
+/// The membership `#[derive(InMessages)]` writes for every variant's model:
+/// `impl VariantOf<Set> for Model {}`.
+///
+/// A model named by two variants, through an alias or not, is two impls of this trait for one
+/// type, which the compiler rejects as the conflict it is. The derive's own check on the spelling
+/// of the type reports the plain case with a message of its own.
+pub trait VariantOf<Set> {}
+
 /// What a typed input declares to the generated document: one message ([`MessageInfo`]) or a
 /// set of them ([`InMessages`]).
 ///

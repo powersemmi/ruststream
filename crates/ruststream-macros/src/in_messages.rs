@@ -71,6 +71,14 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let kinds = models
         .iter()
         .map(|model| Ident::new(&model.ident().to_string(), Span::call_site()));
+    // One membership impl per variant, spanned at it: a model named twice, through an alias
+    // the spelling check cannot see through, is two impls of one trait for one type.
+    let memberships = models.iter().map(|model| {
+        let ty = model.ty;
+        quote_spanned! {model.variant.span()=>
+            impl ::ruststream::runtime::VariantOf<#name> for #ty {}
+        }
+    });
     let decode = decode_body(name, &name_str, &kind, &rule, &models);
     let entries = models.iter().map(|model| entry(name, &rule, model));
 
@@ -93,6 +101,8 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #declaration
+
+        #(#memberships)*
 
         impl ::ruststream::runtime::InMessages for #name {
             type Kind = #kind;
@@ -475,6 +485,9 @@ mod tests {
         let expanded = expand(&input).expect("a plain set expands").to_string();
         assert!(expanded.contains("enum OrderEventKind"));
         assert!(expanded.contains("every_variant_failed"));
+        // One membership impl per variant: a model named twice, through an alias or not, is
+        // two impls of one trait, which the compiler rejects.
+        assert_eq!(expanded.matches("VariantOf < OrderEvent >").count(), 2);
     }
 
     #[test]
