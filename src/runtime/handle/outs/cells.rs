@@ -16,8 +16,8 @@ use super::arena::{EntryMarkers, Outs};
 use super::entry::Slot;
 use crate::runtime::handle::Handle;
 use crate::runtime::handle::axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
-    SoloCarried, SoloDeserialized, SoloPair, SoloSet,
+    Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
+    SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
 use crate::runtime::handle::eager::{construct, run_batch, settle_solo};
 use crate::runtime::handle::value::{HandleValue, Sealed};
@@ -287,6 +287,27 @@ impl<T, C, S, H, Doc, E> BatchInjectCall<S>
 where
     Self: BatchInjectDef<Input = <Batch<T> as Axis>::Kind, Injections = Outs<E>, Context = C>,
     [T]: Input<Axis = Batch<T>>,
+    T: Send + Sync + 'static,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[T], (), Outs<E>, C, S>,
+    E: Send + Sync,
+{
+    async fn call(
+        &self,
+        batch: &[T],
+        injections: &Outs<E>,
+        ctx: &mut Context<'_, C, S>,
+    ) -> BatchResult {
+        run_batch(&self.0.body, injections, batch, ctx).await
+    }
+}
+
+impl<T, C, S, H, Doc, E> BatchInjectCall<S>
+    for Sealed<HandleValue<BatchSet<T>, (), Outs<E>, C, H, Doc>>
+where
+    Self: BatchInjectDef<Input = <BatchSet<T> as Axis>::Kind, Injections = Outs<E>, Context = C>,
+    [T]: Input<Axis = BatchSet<T>>,
     T: Send + Sync + 'static,
     C: Send + Sync,
     S: Send + Sync,

@@ -199,6 +199,67 @@ mod left_to_right {
     }
 }
 
+/// A batch of a set mounts with an `Out` slot and no reply, like a batch of one model.
+mod batch_slots {
+    use super::*;
+
+    #[derive(InMessages)]
+    enum OrderEvent {
+        Created(OrderCreated),
+        Cancelled(OrderCancelled),
+    }
+
+    /// Each element of the batch leaves through the slot as what it was.
+    #[subscriber("bslot.orders")]
+    async fn on_batch(events: &[OrderEvent], Out(out): Out<impl Publisher>) -> HandlerOutcome {
+        for event in events {
+            let seen = match event {
+                OrderEvent::Created(created) => Seen::of("created", created.id),
+                OrderEvent::Cancelled(cancelled) => Seen::of("cancelled", cancelled.id),
+            };
+            if out.message(&seen).to("bslot.seen").publish().await.is_err() {
+                return HandlerOutcome::retry();
+            }
+        }
+        HandlerOutcome::ack()
+    }
+
+    #[tokio::test]
+    async fn a_batch_of_a_set_publishes_through_its_slot() -> Result<(), Box<dyn Error>> {
+        let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
+        let publisher = broker.publisher();
+        publisher
+            .message(&Wire(serde_json::to_vec(&OrderCreated { id: 15 })?))
+            .to("bslot.orders")
+            .publish()
+            .await?;
+        publisher
+            .message(&cancelled_bytes(16))
+            .to("bslot.orders")
+            .publish()
+            .await?;
+        let app = RustStream::new(AppInfo::new("bslot", "0.1.0")).with_broker(broker, |b| {
+            b.include(
+                on_batch
+                    .batch(nonzero!(2))
+                    .start_at(MemoryPosition::start()),
+            )
+            .out(DefaultSlot, Publish)
+            .build();
+        });
+        let tb = TestApp::start(app).await?;
+        tb.settle().await?;
+
+        let broker = tb.broker::<MemoryBroker<Retaining>>();
+        broker.subscriber("bslot.orders").assert_batch_sizes(&[2]);
+        assert_eq!(
+            broker.published::<Seen>("bslot.seen").decoded(),
+            vec![Seen::of("created", 15), Seen::of("cancelled", 16)]
+        );
+        Ok(())
+    }
+}
+
 mod discriminated {
     use super::*;
 
