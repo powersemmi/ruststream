@@ -21,7 +21,7 @@ help: the trait `PublishedThrough<Events>` is implemented for `Progress`
 22 | #[derive(OutSlot)]
    |          ^^^^^^^
 note: required by a bound in `Slot::<M, W, E, Pipe, Body>::message`
-  --> src/runtime/handle/outs.rs
+  --> src/runtime/handle/outs/entry.rs
    |
    |     pub fn message<'a, T, Index>(
    |            ------- required by a bound in this associated function
