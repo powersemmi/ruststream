@@ -259,6 +259,12 @@ pub(super) fn add_outgoing(
         .headers_schema
         .as_deref()
         .and_then(|json| serde_json::from_str::<Value>(json).ok());
+    // A copy of a model of a message set carries the rule that named it, as the receive side
+    // documents it, so the shared component sees one contract from both sides.
+    let headers = match outgoing.discriminator {
+        Some(rule) => Some(with_header_const(headers, rule)),
+        None => headers,
+    };
     let title = payload
         .as_ref()
         .and_then(|schema| schema.get("title"))

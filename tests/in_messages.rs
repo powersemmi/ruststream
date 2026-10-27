@@ -670,6 +670,113 @@ mod document {
         );
     }
 
+    /// The tenant every delivery of the subscription names, read by the handler.
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct Tenant {
+        tenant: String,
+    }
+
+    /// Records every order event of a tenant.
+    #[subscriber("doc.tenant")]
+    async fn record_tenant(event: &OrderEvent, Headers(tenant): Headers<Tenant>) -> HandlerOutcome {
+        match event {
+            OrderEvent::Created(created) => tracing::info!(created.id, tenant.tenant, "created"),
+            OrderEvent::Cancelled(cancelled) => {
+                tracing::info!(cancelled.id, tenant.tenant, "cancelled");
+            }
+        }
+        HandlerOutcome::ack()
+    }
+
+    #[test]
+    fn the_handler_headers_join_each_variant() {
+        let app =
+            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(record_tenant);
+            });
+        let spec = build_spec(&app);
+
+        for name in ["OrderCreated", "OrderCancelled"] {
+            let headers = spec.components.messages[name]
+                .headers
+                .as_ref()
+                .expect("the handler's contract documents each variant");
+            assert_eq!(
+                headers["properties"]["tenant"],
+                json!({ "type": "string" }),
+                "{name}"
+            );
+            assert!(
+                headers["properties"]["event"].get("const").is_some(),
+                "{name}"
+            );
+            let required = headers["required"].as_array().expect("required list");
+            assert!(required.contains(&json!("tenant")) && required.contains(&json!("event")));
+        }
+    }
+
+    /// An order was returned, under the tenant that returned it.
+    #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, MessageInfo)]
+    #[message(headers(Tenant))]
+    struct OrderReturned {
+        id: u64,
+    }
+
+    #[derive(InMessages)]
+    #[in_messages(header = "event")]
+    enum ReturnEvent {
+        #[in_messages(value = "returned")]
+        Returned(OrderReturned),
+        #[in_messages(value = "created")]
+        Created(OrderCreated),
+    }
+
+    /// Records returns, and gives a delivery up after two attempts.
+    #[subscriber("doc.returns")]
+    async fn record_returns(event: &ReturnEvent) -> HandlerOutcome {
+        match event {
+            ReturnEvent::Returned(returned) => tracing::info!(returned.id, "returned"),
+            ReturnEvent::Created(created) => tracing::info!(created.id, "created"),
+        }
+        HandlerOutcome::ack()
+    }
+
+    #[test]
+    fn a_copy_of_a_header_selected_model_keeps_its_contract() {
+        let captured = Captured::default();
+        let _installed = captured.install();
+        let app =
+            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+                b.include(record_returns)
+                    .max_attempts(nonzero!(2))
+                    .dead_letter("doc.returns.dlq");
+            });
+        let spec = build_spec(&app);
+
+        let returned = spec.components.messages["OrderReturned"]
+            .headers
+            .as_ref()
+            .expect("the model's contract and the header rule");
+        assert_eq!(
+            returned["properties"]["event"],
+            json!({ "const": "returned" })
+        );
+        assert_eq!(
+            returned["properties"]["tenant"],
+            json!({ "type": "string" })
+        );
+        assert!(
+            spec.channels["doc.returns.dlq"]
+                .messages
+                .contains_key("OrderReturned")
+        );
+        let log = captured.text();
+        assert!(
+            !log.contains("conflicting headers schemas"),
+            "the copy carries the same contract as the receive side: {log}"
+        );
+    }
+
     #[test]
     fn the_header_rule_is_a_const_in_each_headers_schema() {
         let spec = build_spec(&app());

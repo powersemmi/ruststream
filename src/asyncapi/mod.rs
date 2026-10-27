@@ -106,7 +106,7 @@ mod spec;
 mod viewer;
 
 pub use bindings::{Binding, BindingError, Bindings, PublishBindings, SubscriptionBindings};
-pub(crate) use messages::schema_json;
+pub(crate) use messages::{join_headers, schema_json};
 pub use spec::{
     Channel, Components, Info, MessageObject, Operation, OperationReply, Parameter, Reference,
     ReplyAddress, RetryExtension, Server, Spec,

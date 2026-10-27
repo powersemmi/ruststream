@@ -3,7 +3,7 @@
 use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::{PublishBindings, SubscriptionBindings};
+use crate::asyncapi::{PublishBindings, SubscriptionBindings, join_headers};
 use crate::runtime::input::{DecodeWith, Materialize};
 use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
@@ -93,6 +93,9 @@ pub struct OutgoingMessageMetadata {
     /// where a transform on the reply position names the destination. The document then reports
     /// the channel with `address: null` and puts the expression in the operation's reply.
     pub reply_address_location: Option<&'static str>,
+    /// The header value that names this message, when it is a model of a message set that reads
+    /// its variant from a header: the copy of a delivery carries the same rule as the delivery.
+    pub discriminator: Option<HeaderDiscriminator>,
     /// What the publish policy bound on this position adds to the generated document at each
     /// level. Empty unless the broker's policy fills it in.
     #[cfg(feature = "asyncapi")]
@@ -115,9 +118,18 @@ impl OutgoingMessageMetadata {
             kind: OutgoingKind::SlotEntry,
             content_type: None,
             reply_address_location: None,
+            discriminator: None,
             #[cfg(feature = "asyncapi")]
             bindings: PublishBindings::default(),
         }
+    }
+
+    /// Builder-style setter for the header value that names this message (see
+    /// [`discriminator`](Self::discriminator)).
+    #[must_use]
+    pub const fn with_discriminator(mut self, discriminator: HeaderDiscriminator) -> Self {
+        self.discriminator = Some(discriminator);
+        self
     }
 
     /// Builder-style setter for what this entry is to its registration (see
@@ -317,13 +329,17 @@ impl IncomingMessageMetadata {
         destination: Cow<'static, str>,
         kind: OutgoingKind,
     ) -> OutgoingMessageMetadata {
-        OutgoingMessageMetadata::new(destination, self.message_type)
+        let copy = OutgoingMessageMetadata::new(destination, self.message_type)
             .with_message_name(self.message_name)
             .with_message_description(self.message_description)
             .with_payload_schema(self.payload_schema.clone())
             .with_headers_schema(self.headers_schema.clone())
             .with_serialized(self.deserialized)
-            .with_kind(kind)
+            .with_kind(kind);
+        match self.discriminator {
+            Some(rule) => copy.with_discriminator(rule),
+            None => copy,
+        }
     }
 }
 
@@ -592,11 +608,17 @@ impl HandlerMetadata {
         self
     }
 
-    /// Writes the media type of the mount's codec onto the models of a message set that it
-    /// decodes; a model that reads its own bytes keeps none.
+    /// Writes what the mount knows onto the models of a message set: the media type of its codec
+    /// for the models it decodes (a model that reads its own bytes keeps none), and the header
+    /// contract of the subscription (a `Headers<T>` parameter), which every model's message
+    /// carries next to its own.
     fn describe_incoming(&mut self) {
         for entry in &mut self.incoming {
             entry.content_type = (!entry.deserialized).then_some(self.content_type).flatten();
+            #[cfg(feature = "asyncapi")]
+            if let Some(shared) = self.headers_schema.as_deref() {
+                entry.headers_schema = join_headers(shared, entry.headers_schema.as_deref());
+            }
         }
     }
 
@@ -839,6 +861,30 @@ mod tests {
             meta.outgoing[0].message_description,
             Some("An order was placed.")
         );
+        // The copy of a header-selected model carries the rule the receive side documents.
+        assert_eq!(
+            meta.outgoing[0].discriminator,
+            Some(HeaderDiscriminator::new("event", "created"))
+        );
+        assert_eq!(meta.outgoing[1].discriminator, None);
+    }
+
+    /// The subscription's own header contract (a `Headers<T>` parameter) reaches every model of
+    /// a set, joined with the model's contract where it has one.
+    #[cfg(feature = "asyncapi")]
+    #[test]
+    fn the_mount_joins_the_subscription_headers_into_each_model() {
+        let mut meta = HandlerMetadata::raw("orders")
+            .with_headers_schema("{\"type\":\"object\",\"properties\":{\"tenant\":{\"type\":\"string\"}},\"required\":[\"tenant\"]}");
+        meta.incoming = set_of_two();
+        meta.describe_incoming();
+
+        let own: serde_json::Value =
+            serde_json::from_str(meta.incoming[0].headers_schema.as_deref().unwrap()).unwrap();
+        assert_eq!(own["properties"]["tenant"]["type"], "string");
+        let none: serde_json::Value =
+            serde_json::from_str(meta.incoming[1].headers_schema.as_deref().unwrap()).unwrap();
+        assert_eq!(none["required"], serde_json::json!(["tenant"]));
     }
 
     /// A hand-written definition states the media type of what it publishes the same way the

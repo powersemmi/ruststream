@@ -34,6 +34,52 @@ pub(super) fn message_name(type_name: &str) -> String {
         .to_owned()
 }
 
+/// Joins the subscription's header contract (`shared`, what a `Headers<T>` parameter reads on
+/// every delivery) with one model's own contract (`own`), for a model of a message set: the
+/// properties of both, the model's winning where the two name one header, and the union of what
+/// each requires. A contract that is not an object schema is left out.
+pub(crate) fn join_headers(shared: &str, own: Option<&str>) -> Option<String> {
+    let parse = |json: &str| match serde_json::from_str::<Value>(json) {
+        Ok(Value::Object(schema)) => Some(schema),
+        _ => None,
+    };
+    let joined = match (parse(shared), own.and_then(parse)) {
+        (Some(shared), Some(own)) => join_objects(&shared, own),
+        (Some(shared), None) => shared,
+        (None, Some(own)) => own,
+        (None, None) => return None,
+    };
+    serde_json::to_string(&Value::Object(joined)).ok()
+}
+
+/// `own` laid over `shared`: every property of both, `own`'s where they overlap, and the
+/// required names of both, each once.
+fn join_objects(shared: &Map<String, Value>, mut own: Map<String, Value>) -> Map<String, Value> {
+    let mut properties = match shared.get("properties") {
+        Some(Value::Object(properties)) => properties.clone(),
+        _ => Map::new(),
+    };
+    if let Some(Value::Object(theirs)) = own.remove("properties") {
+        properties.extend(theirs);
+    }
+    let mut required = match shared.get("required") {
+        Some(Value::Array(required)) => required.clone(),
+        _ => Vec::new(),
+    };
+    if let Some(Value::Array(theirs)) = own.remove("required") {
+        for name in theirs {
+            if !required.contains(&name) {
+                required.push(name);
+            }
+        }
+    }
+    own.entry("type".to_owned())
+        .or_insert_with(|| Value::String("object".to_owned()));
+    own.insert("properties".to_owned(), Value::Object(properties));
+    own.insert("required".to_owned(), Value::Array(required));
+    own
+}
+
 /// Adds the header a message set reads, with the value that names this model, to the model's
 /// headers schema as a required `const` property: the `AsyncAPI` counterpart of an `OpenAPI`
 /// discriminator mapping. A model without a header contract gets an object schema of that one
@@ -142,7 +188,41 @@ mod tests {
 
     use crate::runtime::HeaderDiscriminator;
 
-    use super::with_header_const;
+    use super::{join_headers, with_header_const};
+
+    /// A model without a contract of its own takes the subscription's; with one, the two join,
+    /// the model's winning on a header both name, and each required name listed once.
+    #[test]
+    fn the_subscription_contract_joins_the_models() {
+        let shared = r#"{"type":"object","properties":{"tenant":{"type":"string"},"event":{"type":"string"}},"required":["tenant","event"]}"#;
+        let alone: serde_json::Value =
+            serde_json::from_str(&join_headers(shared, None).expect("the shared contract"))
+                .unwrap();
+        assert_eq!(alone["properties"]["tenant"], json!({ "type": "string" }));
+
+        let own =
+            r#"{"type":"object","properties":{"event":{"enum":["created"]}},"required":["event"]}"#;
+        let joined: serde_json::Value =
+            serde_json::from_str(&join_headers(shared, Some(own)).expect("the joined contract"))
+                .unwrap();
+        assert_eq!(joined["properties"]["tenant"], json!({ "type": "string" }));
+        assert_eq!(
+            joined["properties"]["event"],
+            json!({ "enum": ["created"] })
+        );
+        assert_eq!(joined["required"], json!(["tenant", "event"]));
+    }
+
+    /// A contract that is not an object schema contributes nothing.
+    #[test]
+    fn a_contract_that_is_no_object_is_left_out() {
+        let own = r#"{"type":"object","properties":{"event":{"type":"string"}}}"#;
+        let kept: serde_json::Value =
+            serde_json::from_str(&join_headers("true", Some(own)).expect("the own contract"))
+                .unwrap();
+        assert_eq!(kept["properties"]["event"], json!({ "type": "string" }));
+        assert_eq!(join_headers("not json", None), None);
+    }
 
     /// A model with no header contract documents the header the set reads as the one property
     /// of its headers schema.
