@@ -1,0 +1,7 @@
+error[E0119]: conflicting implementations of trait `VariantOf<OrderEvent>` for type `OrderCreated`
+  --> tests/ui/in_messages_duplicate_alias.rs:15:5
+   |
+14 |     Created(OrderCreated),
+   |     ------- first implementation here
+15 |     Placed(Placed),
+   |     ^^^^^^ conflicting implementation for `OrderCreated`

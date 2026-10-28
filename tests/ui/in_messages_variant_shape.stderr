@@ -1,0 +1,5 @@
+error: an InMessages variant wraps exactly one message model: `Variant(Model)`
+  --> tests/ui/in_messages_variant_shape.rs:13:5
+   |
+13 |     Closed,
+   |     ^^^^^^

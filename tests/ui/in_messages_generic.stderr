@@ -1,0 +1,5 @@
+error: an InMessages set takes no generic parameters
+ --> tests/ui/in_messages_generic.rs:5:16
+  |
+5 | enum OrderEvent<T> {
+  |                ^^^

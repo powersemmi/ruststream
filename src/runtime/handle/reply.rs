@@ -15,8 +15,8 @@ use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
 use super::axis::{
-    Axis, AxisDocs, Batch, BatchPair, BatchedAxis, Deserialized, Input, Message, Solo, SoloAxis,
-    SoloCarried, SoloDeserialized, SoloPair,
+    Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
+    SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
 use super::docs::DocState;
 use super::eager::construct;
@@ -480,6 +480,27 @@ where
 }
 
 impl<T, R, C, S, H, Doc, Dest> PublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<SoloSet<T>, R, (), C, H, Doc>, Dest>>
+where
+    Self:
+        PublishingDef<Input = <SoloSet<T> as Axis>::Kind, Injections = (), Reply = R, Context = C>,
+    T: Input<Axis = SoloSet<T>> + Send + Sync + 'static,
+    R: ReplyShape,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<T, R, (), C, S>,
+{
+    async fn call(
+        &self,
+        input: &T,
+        _injections: &(),
+        ctx: &mut Context<'_, C, S>,
+    ) -> Result<R, HandlerOutcome> {
+        self.0.value.body.handle(input, &(), ctx).await
+    }
+}
+
+impl<T, R, C, S, H, Doc, Dest> PublishingCall<S>
     for Sealed<ReplyValue<HandleValue<SoloCarried<T>, R, (), C, H, Doc>, Dest>>
 where
     Self: PublishingDef<
@@ -666,6 +687,33 @@ where
             Reply = R,
         >,
     [T]: Input<Axis = Batch<T>>,
+    T: Send + Sync + 'static,
+    R: ReplyShape,
+    C: Send + Sync,
+    S: Send + Sync,
+    H: Handle<[T], Vec<R>, (), C, S>,
+{
+    async fn call(
+        &self,
+        batch: &[T],
+        _injections: &(),
+        ctx: &mut Context<'_, C, S>,
+    ) -> Result<Vec<R>, BatchResult> {
+        let verdict = self.0.value.body.handle(batch, &(), ctx).await;
+        batch_reply_verdict(verdict, batch.len(), ctx.name())
+    }
+}
+
+impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
+    for Sealed<ReplyValue<HandleValue<BatchSet<T>, Vec<R>, (), C, H, Doc>, Dest>>
+where
+    Self: BatchPublishingDef<
+            Input = <BatchSet<T> as Axis>::Kind,
+            Injections = (),
+            Context = C,
+            Reply = R,
+        >,
+    [T]: Input<Axis = BatchSet<T>>,
     T: Send + Sync + 'static,
     R: ReplyShape,
     C: Send + Sync,

@@ -1,0 +1,5 @@
+error: the set reads its variant from the `event` header: `#[in_messages(value = "..")]` names this variant's value
+  --> tests/ui/in_messages_header_without_value.rs:20:5
+   |
+20 |     Cancelled(OrderCancelled),
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^

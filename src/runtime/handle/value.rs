@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
 
-use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, Input};
+use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
 use crate::runtime::router::IncludeDef;
@@ -307,6 +307,8 @@ impl<V> fmt::Debug for Sealed<V> {
 impl<T, R, O, C, H, Doc> CapsBatches for HandleValue<Batch<T>, R, O, C, H, Doc> {}
 
 impl<F, R, O, C, H, Doc> CapsBatches for HandleValue<BatchDeserialized<F>, R, O, C, H, Doc> {}
+
+impl<S, R, O, C, H, Doc> CapsBatches for HandleValue<BatchSet<S>, R, O, C, H, Doc> {}
 
 impl<Hd, P, R, O, C, H, Doc> CapsBatches for HandleValue<BatchPair<Hd, P>, R, O, C, H, Doc> {}
 

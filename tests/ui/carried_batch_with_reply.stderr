@@ -5,14 +5,17 @@ error[E0277]: `runtime::input::Carried<Row>` cannot be decoded with the codec `r
    |           ^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `runtime::input::DecodeWith<runtime::input::Lend<MemorySource, ConnectedMemoryBroker>>` is not implemented for `runtime::input::Carried<Row>`
-   = note: a typed input needs `serde::de::DeserializeOwned`; a `Deserialized` input decodes with any codec (it never calls one)
+   = note: a typed input derives `serde::Deserialize` or `InMessages`; a `Deserialized` input decodes with any codec (it never calls one)
    = note: a batch of values a broker's batches carry mounts in the plain batch form only, with no reply and no `Out` slots
 help: the following other types implement trait `runtime::input::DecodeWith<DecodeCodec>`
   --> src/runtime/input.rs
    |
-   | / impl<DecodeCodec: Codec, T: DeserializeOwned + Send + Sync + 'static> DecodeWith<DecodeCodec>
-   | |     for Decoded<T>
-   | |__________________^ `runtime::input::Decoded<T>`
+   | / impl<DecodeCodec, T> DecodeWith<DecodeCodec> for Decoded<T>
+   | | where
+   | |     DecodeCodec: Codec,
+   | |     T: Input + Send + Sync + 'static,
+   | |     T::Axis: TypedLane<T, DecodeCodec>,
+   | |_______________________________________^ `runtime::input::Decoded<T>`
 ...
    |   impl<DecodeCodec, F: Send + Sync + 'static> DecodeWith<DecodeCodec> for Provided<F> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Provided<F>`
@@ -33,46 +36,13 @@ error[E0277]: the trait bound `Sealed<ReplyValue<HandleValue<BatchCarried<Row>, 
    |           ^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `runtime::batch_publishing::BatchPublishingCall<()>` is not implemented for `Sealed<ReplyValue<HandleValue<BatchCarried<Row>, Vec<Seen>, (), (), handle, ruststream::runtime::Probed>, ResolvedDest>>`
-help: the following other types implement trait `runtime::batch_publishing::BatchPublishingCall<S>`
-  --> src/runtime/handle/reply.rs
-   |
-   | / impl<T, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-   | |     for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, (), C, H, Doc>, Dest>>
-   | | where
-   | |     Self: BatchPublishingDef<
-...  |
-   | |     S: Send + Sync,
-   | |     H: Handle<[T], Vec<R>, (), C, S>,
-   | |_____________________________________^ `Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<T>, Vec<R>, (), C, H, Doc>, Dest>>`
-...
-   | / impl<Hd, P, R, C, S, H, Doc, Dest> BatchPublishingCall<S>
-   | |     for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
-   | | where
-   | |     Self: BatchPublishingDef<
-...  |
-   | |     S: Send + Sync,
-   | |     H: Handle<[Message<Hd, P>], Vec<R>, (), C, S>,
-   | |__________________________________________________^ `Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>`
-   |
-  ::: src/runtime/handle/reply_slots.rs
-   |
-   | / impl<T, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-   | |     for Sealed<ReplyValue<HandleValue<Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
-   | | where
-   | |     Self: BatchPublishingDef<
-...  |
-   | |     S: Send + Sync,
-   | |     H: Handle<[T], Vec<R>, Outs<E>, C, S>,
-   | |__________________________________________^ `Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>`
-...
-   | / impl<Hd, P, R, E, C, S, H, Doc, Dest> BatchPublishingCall<S>
-   | |     for Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
-   | | where
-   | |     Self: BatchPublishingDef<
-...  |
-   | |     S: Send + Sync,
-   | |     H: Handle<[Message<Hd, P>], Vec<R>, Outs<E>, C, S>,
-   | |_______________________________________________________^ `Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>`
+   = help: the following other types implement trait `runtime::batch_publishing::BatchPublishingCall<S>`:
+             Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, (), C, H, Doc>, Dest>>
+             Sealed<ReplyValue<HandleValue<BatchPair<Hd, P>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+             Sealed<ReplyValue<HandleValue<BatchSet<T>, Vec<R>, (), C, H, Doc>, Dest>>
+             Sealed<ReplyValue<HandleValue<BatchSet<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
+             Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<T>, Vec<R>, (), C, H, Doc>, Dest>>
+             Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<T>, Vec<R>, Outs<E>, C, H, Doc>, Dest>>
    = note: required for `SubscriberBuilder<Sealed<ReplyValue<HandleValue<BatchCarried<Row>, Vec<Seen>, (), (), handle, ruststream::runtime::Probed>, ResolvedDest>>, MemorySource, (Open, Open, Open, Fixed)>` to implement `runtime::batch_publishing::BatchPublishingCall<()>`
    = note: required for `runtime::router::routes_publish::BatchPublishingRoute<MemorySource, SubscriberBuilder<Sealed<ReplyValue<HandleValue<BatchCarried<Row>, Vec<Seen>, (), (), handle, ruststream::runtime::Probed>, ResolvedDest>>, MemorySource, (Open, Open, Open, Fixed)>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ReplyWiring<MemoryPublish>, ((),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(runtime::router::routes_publish::BatchPublishingRoute<MemorySource, SubscriberBuilder<Sealed<ReplyValue<HandleValue<BatchCarried<Row>, Vec<Seen>, (), (), handle, ruststream::runtime::Probed>, ResolvedDest>>, MemorySource, (Open, Open, Open, Fixed)>, runtime::input::Lend<MemorySource, ConnectedMemoryBroker>, ReplyWiring<MemoryPublish>, ((),)>, ())` to implement `RouterDef<MemoryBroker>`

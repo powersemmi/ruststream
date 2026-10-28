@@ -12,6 +12,7 @@ mod extract;
 mod failure;
 mod handle;
 mod handler;
+mod in_messages;
 mod inject;
 mod input;
 mod lifecycle;
@@ -72,9 +73,9 @@ pub use handle::{
     probed_reply_def,
 };
 pub use handle::{
-    BatchDeserialized, Deserialized, Documentable, Documented, EncodedReply, Handle, Input,
-    IntoSource, Message, OutEntry, Outs, ReplyShape, Serialized, SerializedReply, Slot,
-    SoloDeserialized, Undocumented, ValueBuilder, Verdict, subscriber,
+    BatchDeserialized, BatchSet, Deserialized, Documentable, Documented, EncodedReply, Handle,
+    Input, IntoSource, Message, OutEntry, Outs, ReplyShape, Serialized, SerializedReply, Slot,
+    SoloDeserialized, SoloSet, Undocumented, ValueBuilder, Verdict, subscriber,
 };
 #[doc(hidden)]
 pub use handle::{
@@ -89,16 +90,24 @@ pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 pub(crate) use handler::HandlerResult;
+pub use in_messages::{InMessages, InVariant, MessageDeclaration, VariantOf};
+#[doc(hidden)]
+pub use in_messages::{
+    VariantLane, every_variant_failed, header_missing, header_unknown, no_variant_chosen,
+};
 pub use inject::Out;
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[doc(hidden)]
-pub use input::Provided;
+pub use input::{Provided, TypedLane};
 #[doc(hidden)]
 pub use lifecycle::ConnectedSlot;
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::{BoxError, BoxFuture, ConnectedLifecycle, InProcessConnect};
-pub use metadata::{HandlerMetadata, OutgoingKind, OutgoingMessageMetadata};
+pub use metadata::{
+    HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
+    OutgoingMessageMetadata,
+};
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
 #[cfg(feature = "poll-diagnostics")]
 pub use poll_diagnostics::{PollDiagnostics, PollReport};

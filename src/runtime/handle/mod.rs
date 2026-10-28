@@ -68,7 +68,9 @@ pub use axis::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,
     SoloCarried, SoloPair,
 };
-pub use axis::{BatchDeserialized, Deserialized, Input, Message, SoloDeserialized};
+pub use axis::{
+    BatchDeserialized, BatchSet, Deserialized, Input, Message, SoloDeserialized, SoloSet,
+};
 #[doc(hidden)]
 pub use docs::{DocState, Docs, Probed, ProbedDocs};
 pub use docs::{Documentable, Documented, Undocumented};

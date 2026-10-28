@@ -7,6 +7,7 @@
 
 mod expand;
 mod from_ref;
+mod in_messages;
 mod lanes;
 mod outgoing;
 mod parse;
@@ -28,8 +29,10 @@ use parse::{SubscriberArgs, derive_generics, doc_description};
 /// handler - one message (`&T`) or a whole batch of them (`&[T]`) - is read off the signature,
 /// which is the only place it was ever really written. Which lane a type rides is the type's
 /// own business: a `serde` type decodes through the scope codec, a `#[derive(Deserialized)]`
-/// type constructs itself from the payload bytes, and a reply encodes through the reply codec
-/// unless its type is `#[derive(Serialized)]`, in which case its bytes leave as they are.
+/// type constructs itself from the payload bytes, a `#[derive(InMessages)]` enum decodes as the
+/// variant its rule picks (each variant through its own model's lane), and a reply encodes
+/// through the reply codec unless its type is `#[derive(Serialized)]`, in which case its bytes
+/// leave as they are.
 ///
 /// ```ignore
 /// /// Processes incoming orders.
@@ -743,6 +746,74 @@ pub fn derive_out_messages(item: TokenStream) -> TokenStream {
         }
     }
     .into()
+}
+
+/// Derives a declared set of message models a handler receives (`InMessages` in the core crate)
+/// from an enum whose variants each wrap one model, and the kind enum a discriminator names.
+///
+/// The enum is the handler's input (`&OrderEvent`), the receiving counterpart of
+/// [`OutMessages`](derive.OutMessages.html). Each variant decodes through its model's own path:
+/// the codec of the mount for a `serde::Deserialize` model, `Deserialized` for one that reads
+/// its own bytes (a `prost` message). The generated document lists every model as a message of
+/// the subscription, each with its own name, description, headers and content type.
+///
+/// The rule that picks the variant of one delivery:
+///
+/// * nothing: the variants are tried in their order, and the first that decodes wins; every
+///   variant failing is a decode error carrying each variant's error.
+/// * `#[in_messages(discriminate = path)]`: the named function reads the delivery (its headers
+///   and raw payload) and returns `Option<OrderEventKind>`; the variant it names decodes once,
+///   and `None` is a decode error naming the set.
+/// * `#[in_messages(header = "event")]` with `#[in_messages(value = "..")]` on every variant:
+///   the header's value names the variant, the document carries the header with its `const`
+///   value in each message's headers schema, and a missing header or an unknown value is a
+///   decode error naming the header and the value seen.
+///
+/// Every variant wraps exactly one model, each model derives `MessageInfo`, a model appears
+/// once, the enum takes no generic parameters, and the enum derives no `MessageInfo` of its
+/// own: a set is not a message.
+///
+/// ```ignore
+/// #[derive(InMessages)]
+/// #[in_messages(header = "event")]
+/// enum OrderEvent {
+///     #[in_messages(value = "created")]
+///     Created(OrderCreated),
+///     #[in_messages(value = "cancelled")]
+///     Cancelled(OrderCancelled),
+/// }
+///
+/// #[subscriber("orders")]
+/// async fn on_event(event: &OrderEvent) -> HandlerOutcome {
+///     match event {
+///         OrderEvent::Created(created) => { /* .. */ }
+///         OrderEvent::Cancelled(cancelled) => { /* .. */ }
+///     }
+///     HandlerOutcome::ack()
+/// }
+///
+/// // The rule as a function, for what an attribute cannot state (a schema id, a payload field).
+/// #[derive(InMessages)]
+/// #[in_messages(discriminate = by_event_header)]
+/// enum OrderUpdate {
+///     Created(OrderCreated),
+///     Cancelled(OrderCancelled),
+/// }
+///
+/// fn by_event_header(message: &impl IncomingMessage) -> Option<OrderUpdateKind> {
+///     match message.headers().get("event")? {
+///         b"created" => Some(OrderUpdateKind::Created),
+///         b"cancelled" => Some(OrderUpdateKind::Cancelled),
+///         _ => None,
+///     }
+/// }
+/// ```
+#[proc_macro_derive(InMessages, attributes(in_messages))]
+pub fn derive_in_messages(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    in_messages::expand(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives a self-deserializing input type (`Deserialized` in the core crate): `Deserialize`

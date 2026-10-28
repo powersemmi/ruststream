@@ -1,0 +1,5 @@
+error: InMessages is derived on an enum whose variants each wrap one message model
+  --> tests/ui/in_messages_not_an_enum.rs:11:8
+   |
+11 | struct OrderEvent(OrderCreated);
+   |        ^^^^^^^^^^

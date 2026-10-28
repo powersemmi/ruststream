@@ -11,7 +11,7 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: src/runtime/handle/outs.rs
+  ::: src/runtime/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
