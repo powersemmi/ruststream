@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "allocation-counter",
  "anyhow",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "proc-macro2",
  "quote",
