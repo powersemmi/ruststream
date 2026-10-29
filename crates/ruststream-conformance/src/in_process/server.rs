@@ -140,23 +140,7 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
             .map_err(|err| err.to_string());
         // A refused first publish still leaves the subscription and the later message to check:
         // the subscription must open and receive what is published once it is there.
-        let refused_before = match (transport, before, server_refused.as_deref()) {
-            (Transport::Server, Err(reason), _) => {
-                server_refused = Some(reason);
-                true
-            }
-            (Transport::InProcess, Ok(()), Some(reason)) => panic!(
-                "backlog_matches_server: the server refused a publish to a name no subscription \
-                 had opened ({reason}), and the in-process transport accepted it; a test passes \
-                 where production fails"
-            ),
-            (Transport::InProcess, Err(_), Some(_)) => true,
-            (Transport::InProcess, Err(reason), None) => panic!(
-                "backlog_matches_server in process: a publish to {subject:?} was refused \
-                 ({reason}), and the server accepted it; a test fails where production succeeds"
-            ),
-            (_, Ok(()), _) => false,
-        };
+        let refused_before = refused_before(transport, before, &mut server_refused, &subject);
         let publish = async |payload: &[u8]| {
             publisher
                 .publish(OutgoingMessage::new(subject.as_str(), payload), None)
@@ -177,39 +161,85 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
             });
         publish(b"after-subscribe").await;
 
-        {
-            let mut stream = pin!(subscriber.stream());
-            let first = next_on(&mut stream, transport, "backlog_matches_server").await;
-            let expected: &[u8] = match declared {
-                Backlog::Delivered if !refused_before => b"before-subscribe",
-                _ => b"after-subscribe",
-            };
-            assert_eq!(
-                first.payload(),
-                expected,
-                "backlog_matches_server {transport}: {}, so a subscription opened after a publish \
-                 must first receive {:?}",
-                if refused_before {
-                    "the publish before the subscription opened was refused".to_owned()
-                } else {
-                    format!("the in-process transport declares `Backlog::{declared:?}`")
-                },
-                String::from_utf8_lossy(expected),
-            );
-            settle_ack(first).await;
-            if expected == b"before-subscribe" {
-                let second = next_on(&mut stream, transport, "backlog_matches_server").await;
-                assert_eq!(
-                    second.payload(),
-                    b"after-subscribe",
-                    "backlog_matches_server {transport}: the message published after the \
-                     subscription opened comes next",
-                );
-                settle_ack(second).await;
-            }
-        }
+        read_backlog(
+            &mut pin!(subscriber.stream()),
+            transport,
+            declared,
+            refused_before,
+        )
+        .await;
         drop(subscriber);
         connected.shutdown().await.expect("shutdown failed");
+    }
+}
+
+/// Whether the publish before the subscription opened was refused, held to what the server did:
+/// `server_refused` records the server's refusal, and the in-process transport must refuse
+/// exactly where the server refused.
+fn refused_before(
+    transport: Transport,
+    before: Result<(), String>,
+    server_refused: &mut Option<String>,
+    subject: &str,
+) -> bool {
+    match (transport, before, server_refused.as_deref()) {
+        (Transport::Server, Err(reason), _) => {
+            *server_refused = Some(reason);
+            true
+        }
+        (Transport::InProcess, Ok(()), Some(reason)) => panic!(
+            "backlog_matches_server: the server refused a publish to a name no subscription \
+             had opened ({reason}), and the in-process transport accepted it; a test passes \
+             where production fails"
+        ),
+        (Transport::InProcess, Err(_), Some(_)) => true,
+        (Transport::InProcess, Err(reason), None) => panic!(
+            "backlog_matches_server in process: a publish to {subject:?} was refused \
+             ({reason}), and the server accepted it; a test fails where production succeeds"
+        ),
+        (_, Ok(()), _) => false,
+    }
+}
+
+/// Reads what a subscription opened after the first publish receives: the earlier message first
+/// where the transport keeps a backlog and the publish was taken, then the later one.
+async fn read_backlog<S, M, E>(
+    stream: &mut S,
+    transport: Transport,
+    declared: Backlog,
+    refused_before: bool,
+) where
+    S: Stream<Item = Result<M, E>> + Unpin,
+    M: IncomingMessage,
+    E: fmt::Debug,
+{
+    let first = next_on(stream, transport, "backlog_matches_server").await;
+    let expected: &[u8] = match declared {
+        Backlog::Delivered if !refused_before => b"before-subscribe",
+        _ => b"after-subscribe",
+    };
+    assert_eq!(
+        first.payload(),
+        expected,
+        "backlog_matches_server {transport}: {}, so a subscription opened after a publish \
+         must first receive {:?}",
+        if refused_before {
+            "the publish before the subscription opened was refused".to_owned()
+        } else {
+            format!("the in-process transport declares `Backlog::{declared:?}`")
+        },
+        String::from_utf8_lossy(expected),
+    );
+    settle_ack(first).await;
+    if expected == b"before-subscribe" {
+        let second = next_on(stream, transport, "backlog_matches_server").await;
+        assert_eq!(
+            second.payload(),
+            b"after-subscribe",
+            "backlog_matches_server {transport}: the message published after the \
+             subscription opened comes next",
+        );
+        settle_ack(second).await;
     }
 }
 
@@ -432,49 +462,7 @@ where
 {
     match refusal {
         Refusal::PayloadOver { name, limit } => {
-            let mut subscriber = Subscribe::subscribe(connected, name).await.unwrap_or_else(
-                |err| {
-                    panic!(
-                        "refuses_like_the_server {transport}: subscribing to {name:?} failed: {err}"
-                    )
-                },
-            );
-            let publisher = make_publisher(connected);
-            let at_limit = vec![b'x'; *limit];
-            if let Err(err) = publisher
-                .publish(
-                    OutgoingMessage::new(name.as_str(), at_limit.as_slice()),
-                    None,
-                )
-                .await
-            {
-                panic!(
-                    "refuses_like_the_server {transport}: a payload of exactly {limit} bytes to \
-                     {name:?} was refused: {err}"
-                );
-            }
-            let over = vec![b'x'; limit + 1];
-            let refused = publisher
-                .publish(OutgoingMessage::new(name.as_str(), over.as_slice()), None)
-                .await
-                .is_err();
-            let mut stream = pin!(subscriber.stream());
-            let delivered = next_on(&mut stream, transport, "refuses_like_the_server").await;
-            assert_eq!(
-                delivered.payload().len(),
-                *limit,
-                "refuses_like_the_server {transport}: the payload of exactly the limit must be \
-                 delivered first",
-            );
-            settle_ack(delivered).await;
-            if refused {
-                assert!(
-                    timeout(transport.quiet(), stream.next()).await.is_err(),
-                    "refuses_like_the_server {transport}: the payload over the limit was refused, \
-                     and delivered anyway",
-                );
-            }
-            refused
+            probe_payload_over(connected, name, *limit, transport, make_publisher).await
         }
         Refusal::Publish { name } => make_publisher(connected)
             .publish(
@@ -497,4 +485,58 @@ where
             refused
         }
     }
+}
+
+/// Runs a payload-size probe on `connected`: a payload of exactly `limit` bytes to `name` is
+/// delivered, and one byte more is refused, answering whether it was.
+async fn probe_payload_over<C, Pub, MkPub>(
+    connected: &C,
+    name: &str,
+    limit: usize,
+    transport: Transport,
+    make_publisher: &MkPub,
+) -> bool
+where
+    C: Subscribe,
+    Pub: Publisher,
+    MkPub: Fn(&C) -> Pub + Sync,
+{
+    let mut subscriber = Subscribe::subscribe(connected, name)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("refuses_like_the_server {transport}: subscribing to {name:?} failed: {err}")
+        });
+    let publisher = make_publisher(connected);
+    let at_limit = vec![b'x'; limit];
+    if let Err(err) = publisher
+        .publish(OutgoingMessage::new(name, at_limit.as_slice()), None)
+        .await
+    {
+        panic!(
+            "refuses_like_the_server {transport}: a payload of exactly {limit} bytes to \
+             {name:?} was refused: {err}"
+        );
+    }
+    let over = vec![b'x'; limit + 1];
+    let refused = publisher
+        .publish(OutgoingMessage::new(name, over.as_slice()), None)
+        .await
+        .is_err();
+    let mut stream = pin!(subscriber.stream());
+    let delivered = next_on(&mut stream, transport, "refuses_like_the_server").await;
+    assert_eq!(
+        delivered.payload().len(),
+        limit,
+        "refuses_like_the_server {transport}: the payload of exactly the limit must be \
+         delivered first",
+    );
+    settle_ack(delivered).await;
+    if refused {
+        assert!(
+            timeout(transport.quiet(), stream.next()).await.is_err(),
+            "refuses_like_the_server {transport}: the payload over the limit was refused, \
+             and delivered anyway",
+        );
+    }
+    refused
 }
