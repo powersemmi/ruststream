@@ -345,8 +345,8 @@ mod poll {
         Bucket, Gauge, Histogram, LabelPair, Metric, MetricFamily, MetricType,
     };
 
+    use ruststream_runtime::BUCKET_BOUNDS_NS;
     use ruststream_runtime::PollDiagnostics;
-    use ruststream_runtime::poll_diagnostics::BUCKET_BOUNDS_NS;
 
     const DURATION: &str = "ruststream_handler_poll_duration_seconds";
     const DURATION_HELP: &str = "Time a handler spent in one sampled poll, by name.";

@@ -13,12 +13,12 @@ use ruststream_runtime::codec::{Codec, DefaultCodec};
 use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
 use ruststream_runtime::{Shutdown, message_of};
 
-use ruststream_runtime::testing::attribution::{attribute, split_record};
-use ruststream_runtime::testing::coordinator::Coordinator;
-use ruststream_runtime::testing::hooks::PublishTarget;
+use ruststream_runtime::testing::Coordinator;
+use ruststream_runtime::testing::PublishTarget;
 use ruststream_runtime::testing::{
     LivePublish, PublishedAssertions, SubscriberAssertions, TestError, TestableBroker,
 };
+use ruststream_runtime::testing::{attribute, split_record};
 
 use super::harness::{BrokerEntry, Mode};
 

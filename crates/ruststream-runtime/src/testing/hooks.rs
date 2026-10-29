@@ -97,7 +97,12 @@ impl Within {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PublishTarget {
     /// The destination `name` on the broker registered at `scope_id`.
-    Channel { scope_id: usize, name: String },
+    Channel {
+        /// The scope of the broker the destination is on.
+        scope_id: usize,
+        /// The destination's name.
+        name: String,
+    },
     /// The `Out` slot named this.
     Slot(&'static str),
 }

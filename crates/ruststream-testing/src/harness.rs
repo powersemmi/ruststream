@@ -28,7 +28,7 @@ use ruststream_runtime::{
     Starter, Teardown, TestParts, message_of,
 };
 
-use ruststream_runtime::testing::coordinator::{Coordinator, LiveSubscription};
+use ruststream_runtime::testing::{Coordinator, LiveSubscription};
 use ruststream_runtime::testing::{
     LivePublish, PublishedAssertions, TestError, TestableBroker, TestableRegistration, live_publish,
 };

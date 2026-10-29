@@ -44,8 +44,7 @@ mod main_runtime;
 mod metadata;
 mod middleware;
 #[cfg(feature = "poll-diagnostics")]
-#[doc(hidden)]
-pub mod poll_diagnostics;
+pub(crate) mod poll_diagnostics;
 mod publish;
 mod publishing;
 mod redelivery;
@@ -142,6 +141,9 @@ pub use metadata::{
     OutgoingMessageMetadata,
 };
 pub use middleware::{BlanketLayer, HandlerExt, Identity, Layer, Stack, layers};
+#[cfg(feature = "poll-diagnostics")]
+#[doc(hidden)]
+pub use poll_diagnostics::{BUCKET_BOUNDS_NS, PollStats};
 #[cfg(feature = "poll-diagnostics")]
 pub use poll_diagnostics::{PollDiagnostics, PollReport};
 // The reply wiring a mount site's chain builds, the live sinks it pairs into, and the step traits

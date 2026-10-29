@@ -51,11 +51,11 @@ use ruststream_runtime::IntoSource;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Backlog;
 #[cfg(feature = "testing")]
+use ruststream_runtime::testing::Coordinator;
+#[cfg(feature = "testing")]
 use ruststream_runtime::testing::InProcess;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::TestableBroker;
-#[cfg(feature = "testing")]
-use ruststream_runtime::testing::coordinator::Coordinator;
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};

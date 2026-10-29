@@ -35,7 +35,7 @@ use ruststream_core::{
     TransactionalPublisher,
 };
 #[cfg(feature = "testing")]
-use ruststream_runtime::testing::coordinator::Coordinator;
+use ruststream_runtime::testing::Coordinator;
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
 pub const PARTITION_KEY_HEADER: &str = "partition-key";
