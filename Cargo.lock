@@ -1212,7 +1212,6 @@ dependencies = [
  "axum",
  "bytes",
  "bytes-utils",
- "clap",
  "divan",
  "futures",
  "gungraun",
@@ -1223,6 +1222,7 @@ dependencies = [
  "prost",
  "rmp-serde",
  "ruststream-asyncapi",
+ "ruststream-cli",
  "ruststream-core",
  "ruststream-example-suite",
  "ruststream-macros",
@@ -1233,7 +1233,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "serde_norway",
  "thiserror",
  "tokio",
  "tokio-util",
@@ -1255,6 +1254,23 @@ dependencies = [
  "serde_norway",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ruststream-cli"
+version = "0.7.6"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ruststream",
+ "ruststream-asyncapi",
+ "ruststream-observability",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

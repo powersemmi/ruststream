@@ -1,0 +1,47 @@
+[package]
+name = "ruststream-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The command-line entry point of RustStream services and the `ruststream` tool; services use it through `ruststream`."
+keywords = ["messaging", "cli", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "command-line-utilities"]
+readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# The `asyncapi gen` subcommand of a service.
+asyncapi = ["dep:ruststream-asyncapi", "dep:serde_json", "dep:serde_norway"]
+# The console logger a service's entry point installs.
+logging = ["dep:ruststream-observability", "ruststream-observability/logging"]
+# The `ruststream` tool's driver, which the facade's binary runs.
+tool = ["dep:clap", "dep:anyhow"]
+
+[dependencies]
+ruststream-runtime.workspace = true
+ruststream-asyncapi = { workspace = true, optional = true }
+ruststream-observability = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio.workspace = true
+serde_json = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_norway = "0.9"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a service's code, so they import the facade; the unit tests reach the
+# in-memory broker through it. A path dependency without a version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json"] }
+
+[lints]
+workspace = true

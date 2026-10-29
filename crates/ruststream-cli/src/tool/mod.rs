@@ -9,8 +9,6 @@
 //! Scaffolding a new project is `cargo generate` against a template: the in-memory starter lives
 //! in this repo under `templates/memory`, and brokers own theirs.
 
-#![forbid(unsafe_code)]
-
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -66,7 +64,12 @@ enum AsyncApiCommand {
     },
 }
 
-fn main() -> Result<()> {
+/// Parses the command line and runs the subcommand it names.
+///
+/// # Errors
+///
+/// Returns the error of the `cargo` invocation the subcommand runs.
+pub fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Run {
             manifest_path,
