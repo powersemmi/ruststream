@@ -78,7 +78,7 @@ pub trait Field<Src: ?Sized> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::ContextField;
 /// use ruststream::prelude::*;

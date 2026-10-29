@@ -247,7 +247,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///

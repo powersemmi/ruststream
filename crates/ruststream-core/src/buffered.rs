@@ -40,7 +40,7 @@ const DEFAULT_MAX_WAIT: Duration = Duration::from_millis(10);
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::time::Duration;
 ///

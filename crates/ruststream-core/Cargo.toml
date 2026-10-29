@@ -33,6 +33,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 serde_json = "1"
+tracing.workspace = true
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 # The doc examples are a service's code, so they import the facade; a path dependency without a
 # version is dropped on publish.

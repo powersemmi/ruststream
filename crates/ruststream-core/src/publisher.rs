@@ -377,7 +377,6 @@ pub trait Publisher: Send + Sync {
     /// A priority the policy defaults and a call site adjusts:
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros"))]
     /// # mod demo {
     /// use ruststream::memory::{ConnectedMemoryBroker, MemoryError, MemoryPublish, MemoryPublisher};
     /// use ruststream::runtime::{PublishBuilder, PublishExt, PublishSink};
@@ -530,7 +529,6 @@ pub trait Publisher: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;
@@ -609,7 +607,6 @@ pub trait Publisher: Send + Sync {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros"))]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::{MemoryBroker, MemoryPublish};
 /// use ruststream::runtime::PublishExt;
@@ -867,7 +864,7 @@ impl PairError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};

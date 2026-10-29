@@ -209,7 +209,7 @@ pub trait Broker: Send + Sync + Sized {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::{Deserialize, Serialize};

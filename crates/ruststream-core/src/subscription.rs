@@ -110,7 +110,7 @@ pub(crate) mod copy_path {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::time::Duration;
 ///
@@ -155,7 +155,7 @@ impl CopyPath for AddressedCopies {}
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::time::Duration;
 ///
@@ -749,7 +749,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "asyncapi", feature = "memory"))]
+    /// # #[cfg(feature = "asyncapi")]
     /// # fn demo() -> Result<(), ruststream::asyncapi::BindingError> {
     /// use ruststream::asyncapi::{Binding, Bindings};
     /// use ruststream::memory::MemoryBroker;
@@ -893,7 +893,6 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 /// use ruststream::memory::{MemoryBroker, MemorySource};
 /// use ruststream::{Broker, RedeliveryAddress, RedeliveryAddressed};
@@ -1136,7 +1135,7 @@ impl FromName for Name {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -1165,9 +1164,9 @@ impl FromName for Name {
 /// A definition mounted without a name does not compile:
 ///
 /// ```compile_fail
-/// # #[cfg(not(all(feature = "macros", feature = "memory", feature = "json")))]
+/// # #[cfg(not(feature = "json"))]
 /// # compile_error!("the example needs the macros, memory and json features");
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -1286,7 +1285,7 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -1344,7 +1343,7 @@ impl<S, P> StartAt<S, P> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///
