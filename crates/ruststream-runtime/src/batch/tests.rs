@@ -8,7 +8,7 @@ use futures::StreamExt;
 use tokio::{task, time};
 use tokio_util::task::TaskTracker;
 
-use super::super::dispatch::RETRY_COUNT_HEADER;
+use super::super::dispatch::{Delivery, RETRY_COUNT_HEADER};
 use super::super::input::Decoded;
 use super::super::shutdown::Shutdown;
 use super::*;
