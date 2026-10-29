@@ -487,52 +487,79 @@ impl Coordinator {
     /// redelivery due to it by now.
     fn owed(&self, subscriptions: &[LiveSubscription], routing: Routing<'_>) -> Option<Unsettled> {
         let now = Instant::now();
+        let mut expected = self.routed_publishes(subscriptions, routing);
+        self.add_due_redeliveries(subscriptions, now, &mut expected);
+        self.first_unsettled(subscriptions, expected)
+    }
+
+    /// How many recorded publishes each subscription is owed, in `subscriptions` order: a publish
+    /// counts for the subscriptions of its own broker that the broker's routing delivers it to.
+    fn routed_publishes(
+        &self,
+        subscriptions: &[LiveSubscription],
+        routing: Routing<'_>,
+    ) -> Vec<usize> {
         let mut expected = vec![0; subscriptions.len()];
-        {
-            let published = self
-                .inner
-                .published
-                .lock()
-                .expect("coordinator published mutex poisoned");
-            for publish in published.iter() {
-                // A publish is its own broker's: only that broker's subscriptions, and among them
-                // only those its routing delivers to, owe it.
-                let on: Vec<usize> = (0..subscriptions.len())
-                    .filter(|&index| subscriptions[index].scope_id == publish.scope_id)
-                    .collect();
-                if on.is_empty() {
-                    continue;
-                }
-                let names: Vec<&str> = on
-                    .iter()
-                    .map(|&index| subscriptions[index].name.as_str())
-                    .collect();
-                for position in routing(publish.scope_id, publish.entry.message().name(), &names) {
-                    if let Some(&index) = on.get(position) {
-                        expected[index] += 1;
-                    }
+        let published = self
+            .inner
+            .published
+            .lock()
+            .expect("coordinator published mutex poisoned");
+        for publish in published.iter() {
+            // A publish is its own broker's: only that broker's subscriptions, and among them
+            // only those its routing delivers to, owe it.
+            let on: Vec<usize> = (0..subscriptions.len())
+                .filter(|&index| subscriptions[index].scope_id == publish.scope_id)
+                .collect();
+            if on.is_empty() {
+                continue;
+            }
+            let names: Vec<&str> = on
+                .iter()
+                .map(|&index| subscriptions[index].name.as_str())
+                .collect();
+            for position in routing(publish.scope_id, publish.entry.message().name(), &names) {
+                if let Some(&index) = on.get(position) {
+                    expected[index] += 1;
                 }
             }
         }
-        {
-            let redeliveries = self
-                .inner
-                .redeliveries
-                .lock()
-                .expect("coordinator redeliveries mutex poisoned");
-            for (index, subscription) in subscriptions.iter().enumerate() {
-                expected[index] += redeliveries
-                    .iter()
-                    .filter(|due| due.subscription == subscription.id && due.due <= now)
-                    .count();
-            }
+        drop(published);
+        expected
+    }
+
+    /// Adds to `expected` every redelivery due to each subscription by `now`.
+    fn add_due_redeliveries(
+        &self,
+        subscriptions: &[LiveSubscription],
+        now: Instant,
+        expected: &mut [usize],
+    ) {
+        let redeliveries = self
+            .inner
+            .redeliveries
+            .lock()
+            .expect("coordinator redeliveries mutex poisoned");
+        for (index, subscription) in subscriptions.iter().enumerate() {
+            expected[index] += redeliveries
+                .iter()
+                .filter(|due| due.subscription == subscription.id && due.due <= now)
+                .count();
         }
+    }
+
+    /// The first subscription that has handled fewer deliveries than `expected` says it is owed.
+    fn first_unsettled(
+        &self,
+        subscriptions: &[LiveSubscription],
+        expected: Vec<usize>,
+    ) -> Option<Unsettled> {
         let records = self
             .inner
             .records
             .lock()
             .expect("coordinator records mutex poisoned");
-        let owed = subscriptions
+        subscriptions
             .iter()
             .zip(expected)
             .find_map(|(subscription, expected)| {
@@ -548,9 +575,7 @@ impl Coordinator {
                     handled,
                     expected,
                 })
-            });
-        drop(records);
-        owed
+            })
     }
 
     /// Waits until every subscription in `subscriptions` has handled what it is owed and no
