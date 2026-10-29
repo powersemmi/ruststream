@@ -16,7 +16,6 @@ use crate::testkit::log_capture;
 use crate::AckError;
 use crate::SubscriptionEnd;
 use crate::failure::FailurePolicies;
-use crate::handler::HandlerOutcome;
 
 #[derive(Debug, thiserror::Error)]
 #[error("subscriber stream failed")]

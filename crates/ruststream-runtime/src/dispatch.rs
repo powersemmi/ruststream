@@ -2,6 +2,7 @@
 //! until shutdown is signalled or the stream ends. [`RustStream`](super::RustStream) owns the
 //! task spawning.
 
+use std::any::Any;
 use std::future::poll_fn;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
@@ -22,14 +23,16 @@ use crate::{BatchSubscriber, HeaderMap, IncomingMessage, Subscriber};
 use super::batch::{BatchHandler, TakenBatch};
 use super::context::{Context, FromDelivery};
 use super::failure::{DispatchFailure, FailurePolicy, panic_reason};
-use super::handler::Handler;
 #[cfg(doc)]
 use super::handler::HandlerResult;
+use super::handler::{Handler, HandlerOutcome};
 use super::shutdown::Shutdown;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
-    Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
+    Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
 };
+#[cfg(feature = "testing")]
+use crate::testing::hooks::DueCall;
 pub(crate) use delivery::{Delivery, Slot};
 pub(crate) use settle::settle_outcome;
 pub(crate) use threads::StartThreadError;
@@ -296,19 +299,7 @@ where
     C: crate::BuildContext<S::Message> + Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    // Before the harness maps the placement away: the declaration is what the warning advises.
-    #[cfg(feature = "poll-diagnostics")]
-    if matches!(workers.placement, Placement::Threads) {
-        delivery.poll.on_dedicated_threads();
-    }
-    // The harness drives every subscription on the test's own runtime, so a timer the handler
-    // arms is one `advance` reaches; it does not reproduce the thread topology.
-    #[cfg(feature = "testing")]
-    let workers = if delivery.hooks.coordinator().is_some() {
-        workers.on_runtime()
-    } else {
-        workers
-    };
+    let workers = placed(workers, &delivery);
     if workers.is_sequential() {
         return Ok(spawn_dispatch(
             subscriber, handler, shutdown, name, state, delivery, failure,
@@ -322,6 +313,27 @@ where
     Ok(pool::spawn_dispatch_pool(
         subscriber, handler, shutdown, name, state, delivery, failure, workers,
     ))
+}
+
+/// The policy a subscription's loop runs under: the declared one, except under the harness.
+// Without either feature the delivery has nothing to say about the placement.
+#[cfg_attr(
+    not(any(feature = "poll-diagnostics", feature = "testing")),
+    allow(unused_variables)
+)]
+fn placed<C>(workers: Workers, delivery: &Delivery<C>) -> Workers {
+    // Before the harness maps the placement away: the declaration is what the warning advises.
+    #[cfg(feature = "poll-diagnostics")]
+    if matches!(workers.placement, Placement::Threads) {
+        delivery.poll.on_dedicated_threads();
+    }
+    // The harness drives every subscription on the test's own runtime, so a timer the handler
+    // arms is one `advance` reaches; it does not reproduce the thread topology.
+    #[cfg(feature = "testing")]
+    if delivery.hooks.coordinator().is_some() {
+        return workers.on_runtime();
+    }
+    workers
 }
 
 /// Starts the dedicated threads of a `threads(n)` subscription and spawns its loop on the app's
@@ -415,7 +427,7 @@ fn log_worker_exit<Done>(joined: Result<Done, JoinError>) -> Option<Done> {
 /// `by_key` on batch forms), so a keyed policy degrades to the plain pool.
 #[allow(clippy::too_many_arguments)] // See spawn_dispatch_workers.
 pub(crate) fn spawn_batch_dispatch<S, H, C, St>(
-    mut subscriber: S,
+    subscriber: S,
     handler: Arc<H>,
     shutdown: Shutdown,
     name: Arc<str>,
@@ -433,118 +445,147 @@ where
     C: Send + Sync + 'static,
     St: Send + Sync + 'static,
 {
-    // See `spawn_dispatch_workers`: the declaration is what the warning advises, and the harness
-    // runs every subscription on the test's runtime.
-    #[cfg(feature = "poll-diagnostics")]
-    if matches!(workers.placement, Placement::Threads) {
-        delivery.poll.on_dedicated_threads();
-    }
-    #[cfg(feature = "testing")]
-    let workers = if delivery.hooks.coordinator().is_some() {
-        workers.on_runtime()
-    } else {
-        workers
-    };
+    let workers = placed(workers, &delivery);
     if matches!(workers.placement, Placement::Threads) {
         return spawn_batch_threads(
             subscriber, handler, shutdown, name, state, delivery, failure, workers, batch_size,
         );
     }
+    let shared = pool::Shared {
+        handler,
+        name,
+        state,
+        delivery,
+        failure,
+    };
     let consuming = shutdown.consuming();
     Ok(tokio::spawn(async move {
         let _consuming = consuming;
-        // The registration's own batch size, straight to the broker: whatever comes back is the
-        // batch the handler sees.
-        let mut stream = std::pin::pin!(subscriber.batches(batch_size));
-        let mut cancelled = std::pin::pin!(shutdown.cancelled());
-        let mut tasks = JoinSet::new();
-        // One decode buffer for the whole loop: the sequential path lends the same one to every
-        // batch, so the slice a handler reads is allocated once for the subscription. The encode
-        // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
-        // others and cannot share these, so it takes a pair of its own from `spare`, where the
-        // pool keeps what finished workers handed back.
-        let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
-        let mut encode = BytesMut::new();
-        let mut spare = Vec::new();
-        loop {
-            if shutdown.is_cancelled() {
+        batch_loop(subscriber, &shared, &shutdown, workers, batch_size).await;
+    }))
+}
+
+/// The loop of a batch subscription on the app's runtime: one batch at a time where the policy
+/// is sequential, up to `workers.count` at once on a pool of workers otherwise.
+async fn batch_loop<S, H, C, St>(
+    mut subscriber: S,
+    shared: &pool::Shared<H, St, C>,
+    shutdown: &Shutdown,
+    workers: Workers,
+    batch_size: NonZeroUsize,
+) where
+    S: BatchSubscriber + Send + 'static,
+    S::Message: Send + 'static,
+    S::Batch: 'static,
+    H: BatchHandler<S::Batch, C, St> + 'static,
+    C: Send + Sync + 'static,
+    St: Send + Sync + 'static,
+{
+    // The registration's own batch size, straight to the broker: whatever comes back is the
+    // batch the handler sees.
+    let mut stream = std::pin::pin!(subscriber.batches(batch_size));
+    let mut cancelled = std::pin::pin!(shutdown.cancelled());
+    let mut tasks = JoinSet::new();
+    // One decode buffer for the whole loop: the sequential path lends the same one to every
+    // batch, so the slice a handler reads is allocated once for the subscription. The encode
+    // buffer beside it is the same bargain on the way out. A pooled batch runs beside the
+    // others and cannot share these, so it takes a pair of its own from `spare`, where the
+    // pool keeps what finished workers handed back.
+    let mut scratch = <H as BatchHandler<S::Batch, C, St>>::Scratch::default();
+    let mut encode = BytesMut::new();
+    let mut spare = Vec::new();
+    loop {
+        if shutdown.is_cancelled() {
+            break;
+        }
+        if tasks.len() >= workers.count.get() {
+            // The pool is full: reap a finished worker before polling for more.
+            match reap(&mut tasks, cancelled.as_mut()).await {
+                Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
+                // A full pool holds a worker, so `Ended` is shutdown's twin here: either
+                // way the drain below joins whatever is still running.
+                Turn::Ended | Turn::Shutdown => break,
+            }
+            continue;
+        }
+        // The stream first, the token only where the stream has nothing: see `turn_into`, whose
+        // wait this is.
+        let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
+            Poll::Ready(None) => Poll::Ready(Turn::Ended),
+            Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
+        })
+        .await;
+        match pulled {
+            Turn::Delivery(Ok(batch)) if workers.is_sequential() => {
+                // Turbofish: the adapter handlers are generic over the batch context, so the
+                // spawn's own parameter names it.
+                run_batch::<_, _, C, _>(
+                    &*shared.handler,
+                    batch,
+                    &mut scratch,
+                    &mut encode,
+                    &shared.name,
+                    &shared.state,
+                    &shared.delivery,
+                    &shared.failure,
+                )
+                .await;
+            }
+            Turn::Delivery(Ok(batch)) => {
+                let buffers = spare.pop().unwrap_or_default();
+                tasks.spawn(pooled_batch::<_, _, C, _>(shared, batch, buffers));
+            }
+            Turn::Delivery(Err(err)) => {
+                error!(
+                    target: "ruststream::dispatch",
+                    error = %err,
+                    "subscriber stream error",
+                );
+            }
+            Turn::Ended => {
+                shutdown.stream_ended(&shared.name);
                 break;
             }
-            if tasks.len() >= workers.count.get() {
-                // The pool is full: reap a finished worker before polling for more.
-                match reap(&mut tasks, cancelled.as_mut()).await {
-                    Turn::Delivery(joined) => spare.extend(log_worker_exit(joined)),
-                    // A full pool holds a worker, so `Ended` is shutdown's twin here: either
-                    // way the drain below joins whatever is still running.
-                    Turn::Ended | Turn::Shutdown => break,
-                }
-                continue;
-            }
-            // The stream first, the token only where the stream has nothing: see `turn_into`, whose
-            // wait this is.
-            let pulled = poll_fn(|cx| match stream.as_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => Poll::Ready(Turn::Delivery(item)),
-                Poll::Ready(None) => Poll::Ready(Turn::Ended),
-                Poll::Pending => cancelled.as_mut().poll(cx).map(|()| Turn::Shutdown),
-            })
-            .await;
-            match pulled {
-                Turn::Delivery(Ok(batch)) => {
-                    if workers.is_sequential() {
-                        // Turbofish: the adapter handlers are generic over the batch context,
-                        // so the spawn's own parameter names it.
-                        run_batch::<_, _, C, _>(
-                            &*handler,
-                            batch,
-                            &mut scratch,
-                            &mut encode,
-                            &name,
-                            &state,
-                            &delivery,
-                            &failure,
-                        )
-                        .await;
-                    } else {
-                        let handler = Arc::clone(&handler);
-                        let name = Arc::clone(&name);
-                        let state = Arc::clone(&state);
-                        let delivery = Arc::clone(&delivery);
-                        let failure = failure.clone();
-                        let (mut scratch, mut encode) = spare.pop().unwrap_or_default();
-                        tasks.spawn(async move {
-                            run_batch::<_, _, C, _>(
-                                &*handler,
-                                batch,
-                                &mut scratch,
-                                &mut encode,
-                                &name,
-                                &state,
-                                &delivery,
-                                &failure,
-                            )
-                            .await;
-                            (scratch, encode)
-                        });
-                    }
-                }
-                Turn::Delivery(Err(err)) => {
-                    error!(
-                        target: "ruststream::dispatch",
-                        error = %err,
-                        "subscriber stream error",
-                    );
-                }
-                Turn::Ended => {
-                    shutdown.stream_ended(&name);
-                    break;
-                }
-                Turn::Shutdown => break,
-            }
+            Turn::Shutdown => break,
         }
-        while let Some(joined) = tasks.join_next().await {
-            log_worker_exit(joined);
-        }
-    }))
+    }
+    while let Some(joined) = tasks.join_next().await {
+        log_worker_exit(joined);
+    }
+}
+
+/// One batch of a pooled subscription, run on a worker of its own with the buffers it was lent,
+/// which it hands back for the next batch.
+fn pooled_batch<H, Batch, C, St>(
+    shared: &pool::Shared<H, St, C>,
+    batch: Batch,
+    (mut scratch, mut encode): (H::Scratch, BytesMut),
+) -> impl Future<Output = (H::Scratch, BytesMut)> + use<H, Batch, C, St>
+where
+    H: BatchHandler<Batch, C, St>,
+    C: Send + Sync + 'static,
+    St: Send + Sync,
+{
+    let handler = Arc::clone(&shared.handler);
+    let name = Arc::clone(&shared.name);
+    let state = Arc::clone(&shared.state);
+    let delivery = Arc::clone(&shared.delivery);
+    let failure = shared.failure.clone();
+    async move {
+        run_batch::<_, _, C, _>(
+            &*handler,
+            batch,
+            &mut scratch,
+            &mut encode,
+            &name,
+            &state,
+            &delivery,
+            &failure,
+        )
+        .await;
+        (scratch, encode)
+    }
 }
 
 /// The batch counterpart of [`spawn_dispatch_threads`]: each thread takes whole batches off its
@@ -678,33 +719,10 @@ async fn dispatch<H, M, C, St>(
         .await;
         #[cfg(feature = "testing")]
         let panicked = result.is_err();
-        // Resolve into a `HandlerOutcome` regardless of whether the handler panicked. `None`
-        // means a fail-fast panic tore the service down and left the message unsettled (a broker
-        // with redelivery hands it back after the restart).
+        // Resolve into a `HandlerOutcome` regardless of whether the handler panicked.
         let settle = match result {
             Ok(s) => Some(s),
-            Err(payload) => {
-                let reason = panic_reason(payload.as_ref());
-                error!(
-                    target: "ruststream::dispatch",
-                    subscription = %name,
-                    panic = %reason,
-                    "handler panicked",
-                );
-                match failure.policies.panic {
-                    FailurePolicy::FailFast => {
-                        failure
-                            .shutdown
-                            .signal(name, &format!("handler panicked: {reason}"));
-                        None
-                    }
-                    other => Some(
-                        other
-                            .settlement()
-                            .map_or_else(super::handler::HandlerOutcome::drop, Into::into),
-                    ),
-                }
-            }
+            Err(payload) => outcome_after_panic(payload.as_ref(), name, failure),
         };
         // Drain the matching post-settle hooks BEFORE settling: `ctx` borrows `msg`'s headers, and
         // settling consumes `msg`. The drained futures own their captures. A fail-fast (no
@@ -722,18 +740,19 @@ async fn dispatch<H, M, C, St>(
         // `msg` and dropping `ctx` clears the decode flag.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = delivery.hooks.coordinator() {
-            due_calls = coordinator.record(Record {
-                scope_id: delivery.scope_id,
-                subscription: delivery.subscription,
-                name: name.to_owned(),
-                deliveries: vec![Delivered {
-                    raw: Bytes::copy_from_slice(msg.payload()),
-                    value: ctx.take_carried(),
-                    settle: settle.as_ref().map(super::handler::HandlerOutcome::outcome),
-                }],
+            let deliveries = vec![Delivered {
+                raw: Bytes::copy_from_slice(msg.payload()),
+                value: ctx.take_carried(),
+                settle: settle.as_ref().map(HandlerOutcome::outcome),
+            }];
+            due_calls = record_call(
+                coordinator,
+                delivery,
+                name,
+                deliveries,
                 panicked,
-                decode_failed: ctx.took_decode_failed(),
-            });
+                ctx.took_decode_failed(),
+            );
         }
         (settle, continuations)
     };
@@ -768,6 +787,58 @@ async fn dispatch<H, M, C, St>(
         coordinator.run_calls(due_calls).await;
         coordinator.consumed();
     }
+}
+
+/// What a delivery whose handler panicked settles by: the panic policy's settlement, or `None`
+/// where a fail-fast panic tore the service down and left the delivery unsettled (a broker with
+/// redelivery hands it back after the restart).
+#[inline]
+fn outcome_after_panic(
+    payload: &(dyn Any + Send),
+    name: &str,
+    failure: &DispatchFailure,
+) -> Option<HandlerOutcome> {
+    let reason = panic_reason(payload);
+    error!(
+        target: "ruststream::dispatch",
+        subscription = %name,
+        panic = %reason,
+        "handler panicked",
+    );
+    match failure.policies.panic {
+        FailurePolicy::FailFast => {
+            failure
+                .shutdown
+                .signal(name, &format!("handler panicked: {reason}"));
+            None
+        }
+        other => Some(
+            other
+                .settlement()
+                .map_or_else(HandlerOutcome::drop, Into::into),
+        ),
+    }
+}
+
+/// Records one call of this subscription with the harness, and hands back the hooks a test
+/// registered on it, which the call now owes.
+#[cfg(feature = "testing")]
+fn record_call<C>(
+    coordinator: &Coordinator,
+    delivery: &Delivery<C>,
+    name: &str,
+    deliveries: Vec<Delivered>,
+    panicked: bool,
+    decode_failed: bool,
+) -> Option<DueCall> {
+    coordinator.record(Record {
+        scope_id: delivery.scope_id,
+        subscription: delivery.subscription,
+        name: name.to_owned(),
+        deliveries,
+        panicked,
+        decode_failed,
+    })
 }
 
 /// Runs one batch through its handler under panic protection. The handler owns and settles the
@@ -860,14 +931,14 @@ async fn run_batch<H, Batch, C, St>(
             );
             #[cfg(feature = "testing")]
             if let (Some(coordinator), Some(deliveries)) = (&watcher, unsettled) {
-                due_calls.extend(coordinator.record(Record {
-                    scope_id: delivery.scope_id,
-                    subscription: delivery.subscription,
-                    name: name.to_owned(),
+                due_calls.extend(record_call(
+                    coordinator,
+                    delivery,
+                    name,
                     deliveries,
-                    panicked: true,
-                    decode_failed: false,
-                }));
+                    true,
+                    false,
+                ));
             }
             if failure.policies.panic == FailurePolicy::FailFast {
                 failure
