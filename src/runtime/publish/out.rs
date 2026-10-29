@@ -26,7 +26,7 @@ use super::{
     PublishTransform, PublishTransformIdentity, PublishTransformStack, Reads, SlotContext,
 };
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 use crate::runtime::lifecycle::BoxError;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;

@@ -13,7 +13,7 @@
 use std::{borrow::Cow, fmt, future::ready, marker::PhantomData, num::NonZeroU32};
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 use crate::{ConnectedBroker, DeclareRetryError, Seekable, Seeker, Subscribe, Subscriber};
 
 /// Who publishes the copies a subscription's retries are made of, and who names where they go.

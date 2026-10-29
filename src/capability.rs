@@ -10,7 +10,7 @@ use std::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 use futures::Stream;
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 
 use crate::subscription::copy_path::Sealed as CopyPathDeclares;
 use crate::{

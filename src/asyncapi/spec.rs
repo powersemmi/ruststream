@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
 
-use super::bindings::Bindings;
+use crate::bindings::Bindings;
 
 /// The specification version every generated document declares.
 pub(super) const ASYNCAPI_VERSION: &str = "3.1.0";

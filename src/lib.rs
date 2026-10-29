@@ -105,6 +105,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "asyncapi")]
+mod bindings;
 mod broker;
 mod buffered;
 mod capability;
@@ -300,9 +302,9 @@ pub mod otel;
 pub mod __private {
     use core::marker::PhantomData;
 
-    #[cfg(feature = "asyncapi")]
-    use crate::asyncapi;
     use crate::runtime::Serialized;
+    #[cfg(feature = "asyncapi")]
+    use crate::runtime::schema_json;
 
     /// The decode errors `#[derive(InMessages)]` returns when a set picks no variant.
     pub mod in_messages {
@@ -353,7 +355,7 @@ pub mod __private {
         /// Returns the serialized JSON Schema for `T` (inherent; preferred over the trait fallback).
         #[must_use]
         pub fn schema_json(&self) -> Option<String> {
-            asyncapi::schema_json::<T>()
+            schema_json::<T>()
         }
     }
 
@@ -448,7 +450,7 @@ pub mod __private {
     #[cfg(feature = "asyncapi")]
     impl<H: schemars::JsonSchema> ContractSchema for crate::WithHeaders<H> {
         fn schema_json() -> Option<String> {
-            asyncapi::schema_json::<H>()
+            schema_json::<H>()
         }
     }
 

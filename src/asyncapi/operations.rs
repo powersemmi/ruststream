@@ -14,11 +14,11 @@ use crate::runtime::{
     OutgoingMessageMetadata,
 };
 
-use super::bindings::Bindings;
 use super::messages::{MessageContribution, merge_message, message_name, with_header_const};
 use super::spec::{
     Channel, MessageObject, Operation, OperationReply, Parameter, Reference, RetryExtension,
 };
+use crate::bindings::Bindings;
 
 /// Adds one registered subscriber to the document: its channel entry, its `receive` operation,
 /// and its message component (with the payload and headers schemas the handler declared).

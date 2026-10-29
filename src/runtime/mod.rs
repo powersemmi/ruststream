@@ -27,6 +27,10 @@ mod publishing;
 mod redelivery;
 mod retry;
 mod router;
+#[cfg(feature = "asyncapi")]
+mod schema_doc;
+#[cfg(feature = "asyncapi")]
+pub(crate) use schema_doc::{join_headers, schema_json};
 mod settings;
 mod shutdown;
 mod slot;

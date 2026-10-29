@@ -15,7 +15,7 @@ use super::{
     PublishTransformIdentity, PublishTransformStack, Transactional, TypedPublisher, UnnamedCodec,
 };
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 use crate::{ConnectedBroker, PairError, PublishPolicy, TransactionalPublisher};
 
 /// The publish policy of a byte-for-byte reply, as the mount chain carries it.
@@ -433,7 +433,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{RawReplyWiring, ReplyWiring, TransactionalReply};
-    use crate::asyncapi::{Binding, Bindings};
+    use crate::bindings::{Binding, Bindings};
     use crate::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
     use crate::runtime::publish::{Names, NarrowToUse};
     use crate::{PairError, PublishPolicy};

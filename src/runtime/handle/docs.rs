@@ -8,9 +8,9 @@
 
 use std::borrow::Cow;
 
-#[cfg(feature = "asyncapi")]
-use crate::asyncapi;
 use crate::runtime::metadata::OutgoingMessageMetadata;
+#[cfg(feature = "asyncapi")]
+use crate::runtime::schema_json;
 
 /// The documentation state a definition starts in: its message types' schemas are reported in
 /// the generated document, and mounting demands they are derivable.
@@ -50,7 +50,7 @@ pub trait Documentable {
 #[cfg(feature = "asyncapi")]
 impl<T: schemars::JsonSchema + ?Sized> Documentable for T {
     fn schema_json() -> Option<String> {
-        asyncapi::schema_json::<T>()
+        schema_json::<T>()
     }
 }
 

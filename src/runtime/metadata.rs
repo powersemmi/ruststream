@@ -3,8 +3,9 @@
 use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::{PublishBindings, SubscriptionBindings, join_headers};
+use crate::bindings::{PublishBindings, SubscriptionBindings};
 use crate::runtime::input::{DecodeWith, Materialize};
+use crate::runtime::join_headers;
 use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.

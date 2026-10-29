@@ -7,7 +7,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 use crate::codec::{Codec, CodecError};
 use crate::outgoing::{Outgoing, OutgoingName};
 use crate::wire::Serialized;

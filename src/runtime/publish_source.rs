@@ -13,7 +13,7 @@ use std::fmt;
 use std::sync::Mutex;
 
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::Bindings;
+use crate::bindings::Bindings;
 use crate::runtime::lifecycle::ConnectedSlot;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::pairs_against;
