@@ -941,6 +941,16 @@ allowed_external_types = [
     # Re-exported from the crate root so `#[subscriber]` and friends resolve without a second
     # dependency; the macro crate ships in lockstep with an exact pin.
     "ruststream_macros::*",
+    # The crates the facade is made of: they ship in lockstep with it, pinned exactly, and every
+    # item they hold is re-exported here under its documented path.
+    "ruststream_core::*",
+    "ruststream_runtime::*",
+    "ruststream_memory::*",
+    "ruststream_asyncapi::*",
+    "ruststream_observability::*",
+    "ruststream_testing::*",
+    "ruststream_cli::*",
+    "ruststream_conformance::*",
     # The message contract itself: a payload is whatever serde can carry, and the codecs are
     # generic over it. `serde_core` is where serde 1.0.229 moved the traits.
     "serde::*",
@@ -986,7 +996,6 @@ default = ["json"]
 memory = ["dep:ruststream-memory"]
 conformance = ["testing", "dep:ruststream-conformance"]
 json = [
-    "dep:serde_json",
     "ruststream-core/json",
     "ruststream-runtime/json",
     "ruststream-testing?/json",
@@ -1034,13 +1043,7 @@ ruststream-cli.workspace = true
 ruststream-conformance = { workspace = true, optional = true }
 bytes.workspace = true
 bytes-utils.workspace = true
-futures.workspace = true
-serde.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
 ruststream-macros = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
@@ -1124,6 +1127,9 @@ harness = false
 required-features = ["memory", "json", "macros"]
 
 [dev-dependencies]
+futures = "0.3"
+thiserror = "2"
+tracing = "0.1.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Registrations on the manual path are documented by default, so an example's message types
