@@ -649,31 +649,7 @@ where
     // Taken before the loop: the settle below awaits, and a borrow of `ctx` held across it would
     // demand `Context: Sync` (see the signature's note).
     let delivery = ctx.delivery();
-    values.clear();
-    values.reserve(batch.len());
-    // (index into `batch`, its settlement). Empty while every element decodes, and an empty
-    // `Vec` holds no buffer: a batch that decodes whole is handed on exactly as it was
-    // delivered, so the accepted deliveries cost nothing to carry.
-    let mut rejected: Vec<(usize, HandlerResult)> = Vec::new();
-    for (index, msg) in batch.iter().enumerate() {
-        if let Some(outcome) = reported(msg, Input::input_label(), decode, ctx) {
-            rejected.push((index, outcome));
-            continue;
-        }
-        match Input::decode(codec, msg) {
-            Ok(value) => values.push(value),
-            Err(err) => {
-                warn!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    message_type = Input::input_label(),
-                    error = %err,
-                    "codec decode failed",
-                );
-                rejected.push((index, rejection(&err, "batch decode failed", decode, ctx)));
-            }
-        }
-    }
+    let rejected = decode_elements::<_, Input, _, _, _>(&batch, values, codec, decode, ctx);
     // Only batches that reach a handler count: a fully-rejected batch is short-circuited by the
     // callers and would skew the size distribution with zeros.
     #[cfg(feature = "otel")]
@@ -703,6 +679,48 @@ where
         accepted.push(msg);
     }
     accepted
+}
+
+/// The decoding half of [`decode_batch`]: fills `values` with what decodes, and returns each
+/// element that does not as its index into `batch` and its settlement, in order.
+#[inline]
+fn decode_elements<M, Input, DecodeCodec, C, S>(
+    batch: &[M],
+    values: &mut Vec<Input::Owned>,
+    codec: &DecodeCodec,
+    decode: FailurePolicy,
+    ctx: &Context<'_, C, S>,
+) -> Vec<(usize, HandlerResult)>
+where
+    M: IncomingMessage,
+    Input: DecodeWith<DecodeCodec>,
+{
+    values.clear();
+    values.reserve(batch.len());
+    // Empty while every element decodes, and an empty `Vec` holds no buffer: a batch that decodes
+    // whole is handed on exactly as it was delivered, so the accepted deliveries cost nothing to
+    // carry.
+    let mut rejected = Vec::new();
+    for (index, msg) in batch.iter().enumerate() {
+        if let Some(outcome) = reported(msg, Input::input_label(), decode, ctx) {
+            rejected.push((index, outcome));
+            continue;
+        }
+        match Input::decode(codec, msg) {
+            Ok(value) => values.push(value),
+            Err(err) => {
+                warn!(
+                    target: "ruststream::dispatch",
+                    subscription = %ctx.subscription(),
+                    message_type = Input::input_label(),
+                    error = %err,
+                    "codec decode failed",
+                );
+                rejected.push((index, rejection(&err, "batch decode failed", decode, ctx)));
+            }
+        }
+    }
+    rejected
 }
 
 /// The settlement of a batch element its broker reports as undecodable
