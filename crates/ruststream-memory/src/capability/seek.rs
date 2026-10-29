@@ -13,6 +13,7 @@ use std::{
 
 use futures::task::AtomicWaker;
 
+use crate::log::NameLog;
 use crate::{
     Bus, LogMode, MemoryDelivery, MemoryError, MemoryMessage, MemorySubscriber, Retaining,
     SubscriptionShared, log,
@@ -46,6 +47,28 @@ impl SeekControl {
     /// delivery enqueued after a seek also observes that seek's watermark.
     pub(crate) fn watermark(&self) -> usize {
         self.watermark.load(Ordering::Acquire)
+    }
+
+    /// Records a reposition to `target` for the subscriber's next poll, and reports whether one
+    /// was already pending.
+    fn request(&self, target: usize) -> bool {
+        // Watermark first (Release, paired with the Acquire load in the delivery filter), then
+        // the pending target: a poll that takes the target must see its watermark.
+        self.watermark.store(target, Ordering::Release);
+        self.pending
+            .lock()
+            .expect("memory broker mutex poisoned")
+            .replace(target)
+            .is_some()
+    }
+
+    /// Takes the reposition a seeker recorded, if one is pending.
+    #[inline]
+    fn take(&self) -> Option<usize> {
+        self.pending
+            .lock()
+            .expect("memory broker mutex poisoned")
+            .take()
     }
 }
 
@@ -252,32 +275,11 @@ impl Seeker for MemorySeeker {
             .name(&self.subscription.name)
             .map_or((0, 0), |name| (name.first_seq(), name.next_seq()));
         drop(log);
-        let target = match to {
-            MemoryPosition::Start => oldest,
-            MemoryPosition::End => tip,
-            // Past the tip is a position the name has not reached yet: the subscription waits
-            // there rather than failing, and the next publish opens it.
-            MemoryPosition::Sequence(n) if n >= oldest => n.min(tip),
-            MemoryPosition::Sequence(n) => {
-                return ready(Err(MemoryError::PositionEvicted {
-                    requested: n,
-                    oldest,
-                }));
-            }
+        let target = match to.resolve(oldest, tip) {
+            Ok(target) => target,
+            Err(evicted) => return ready(Err(evicted)),
         };
-        // Watermark first (Release, paired with the Acquire load in the delivery filter), then
-        // the pending target: a poll that takes the target must see its watermark.
-        self.subscription
-            .seek
-            .watermark
-            .store(target, Ordering::Release);
-        let replaced = self
-            .subscription
-            .seek
-            .pending
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .replace(target);
+        let replaced = self.subscription.seek.request(target);
         drop(bus);
         // Under the harness, hold the reaction open from the moment the reposition is recorded
         // until the stream applies it: the replay it will enqueue is not counted yet, and a
@@ -285,15 +287,34 @@ impl Seeker for MemorySeeker {
         // One token per pending reposition, released when the subscription applies it: a second
         // seek before the first is applied replaces the target and owes nothing more.
         #[cfg(feature = "testing")]
-        if replaced.is_none()
-            && let Some(coordinator) = self.subscription.state.coordinator()
-        {
+        if !replaced && let Some(coordinator) = self.subscription.state.coordinator() {
             coordinator.enqueued();
         }
         #[cfg(not(feature = "testing"))]
         let _ = replaced;
         self.subscription.seek.waker.wake();
         ready(Ok(()))
+    }
+}
+
+impl MemoryPosition {
+    /// The absolute log position this one names in a log holding `oldest` up to `tip`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryError::PositionEvicted`] for a sequence below `oldest`.
+    fn resolve(self, oldest: usize, tip: usize) -> Result<usize, MemoryError> {
+        match self {
+            Self::Start => Ok(oldest),
+            Self::End => Ok(tip),
+            // Past the tip is a position the name has not reached yet: the subscription waits
+            // there rather than failing, and the next publish opens it.
+            Self::Sequence(n) if n >= oldest => Ok(n.min(tip)),
+            Self::Sequence(n) => Err(MemoryError::PositionEvicted {
+                requested: n,
+                oldest,
+            }),
+        }
     }
 }
 
@@ -313,14 +334,13 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         }
         // Take the target in its own statement so the pending guard is released before the
         // bus lock is acquired; `Seeker::seek` nests the locks in the other direction.
-        let pending = self
-            .subscription
-            .seek
-            .pending
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .take();
+        let pending = self.subscription.seek.take();
         let Some(target) = pending else { return };
+        self.replay_from(target);
+    }
+
+    /// Swaps what is queued for the retained log from `target` on, under both bus locks.
+    fn replay_from(&mut self, target: usize) {
         #[cfg(feature = "testing")]
         let coordinator = self.coordinator();
         // The seek counted itself in flight when it recorded this target; the token goes back
@@ -367,24 +387,32 @@ impl<Log: LogMode> MemorySubscriber<Log> {
         }
 
         if let Some(retained) = retained {
-            for (seq, entry) in retained.replay_from(target) {
-                let delivery = MemoryDelivery {
-                    // The block the fanout built, name and payload and headers together: a
-                    // replayed delivery is one reference count, not a rebuilt message.
-                    shared: entry.shared(),
-                    seq,
-                    // A replay is a fresh delivery of what the log holds, not a redelivery of
-                    // the copy a handler saw, so its count starts where a fanout's does.
-                    deliveries: NonZeroU64::MIN,
-                };
-                // The send cannot fail: this subscriber holds both ends of its own channel.
-                let _ = self.subscription.requeue.send(delivery);
-            }
+            self.subscription.requeue_replay(retained, target);
         }
         drop(log);
         drop(bus);
         #[cfg(feature = "testing")]
         drop(seek_token);
+    }
+}
+
+impl SubscriptionShared {
+    /// Enqueues the retained messages from `target` on to this subscription, each as a fresh
+    /// delivery.
+    fn requeue_replay(&self, retained: &NameLog, target: usize) {
+        for (seq, entry) in retained.replay_from(target) {
+            let delivery = MemoryDelivery {
+                // The block the fanout built, name and payload and headers together: a
+                // replayed delivery is one reference count, not a rebuilt message.
+                shared: entry.shared(),
+                seq,
+                // A replay is a fresh delivery of what the log holds, not a redelivery of
+                // the copy a handler saw, so its count starts where a fanout's does.
+                deliveries: NonZeroU64::MIN,
+            };
+            // The send cannot fail: this subscriber holds both ends of its own channel.
+            let _ = self.requeue.send(delivery);
+        }
     }
 }
 
