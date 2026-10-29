@@ -322,7 +322,19 @@ pub(super) enum Mode {
 impl Mode {
     /// Waits for the reaction the harness can see to settle: the in-process transports' count
     /// reaching zero, or, live, every subscription having handled what it is owed.
+    ///
+    /// A panic a test's hook raised meanwhile is raised again here, in the test's own task.
     pub(super) async fn settle(
+        &self,
+        coordinator: &Coordinator,
+        brokers: &[BrokerEntry],
+    ) -> Result<(), TestError> {
+        let settled = self.reaction(coordinator, brokers).await;
+        coordinator.hooks().raise_failure();
+        settled
+    }
+
+    async fn reaction(
         &self,
         coordinator: &Coordinator,
         brokers: &[BrokerEntry],
@@ -887,10 +899,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// ```
     #[must_use]
     pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
-        PublishedAssertions::captured(
-            format!("Out slot `{}`", M::NAME),
-            self.coordinator.slot_published(M::NAME),
-        )
+        PublishedAssertions::captured(&self.coordinator, M::NAME)
     }
 
     /// The handle of `entry`. `typed` is how a live injection reaches it when the caller named the

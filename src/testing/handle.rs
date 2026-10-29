@@ -14,10 +14,11 @@ use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Lend, OutgoingMessage, RawMessage};
 
 use super::assertions::{PublishedAssertions, SubscriberAssertions};
-use super::attribution::{MessageOptions, PublishedEntry, attribute};
+use super::attribution::{attribute, split_record};
 use super::broker::{LivePublish, TestableBroker};
 use super::coordinator::Coordinator;
 use super::harness::{BrokerEntry, Mode, TestError};
+use super::hooks::PublishTarget;
 
 /// A handle to one broker in a [`TestApp`](super::TestApp): inject input and assert on its handlers and publishes.
 pub struct BrokerHandle<'a> {
@@ -134,7 +135,9 @@ impl PublishSink for InjectSink<'_> {
         }
         harness
             .coordinator
-            .record_published(*scope_id, recorded, started);
+            .record_published(*scope_id, recorded, started)
+            .run()
+            .await;
         harness
             .mode
             .settle(harness.coordinator, harness.brokers)
@@ -300,24 +303,21 @@ impl BrokerHandle<'_> {
     /// options the harness can name.
     #[must_use]
     pub fn published<T>(&self, name: &str) -> PublishedAssertions<T> {
-        let recorded = self.harness.coordinator.published(self.scope_id, name);
+        let coordinator = self.harness.coordinator;
+        let recorded = coordinator.published(self.scope_id, name);
         let (messages, options) = match self.transport {
             Transport::InProcess(testable) => {
                 let messages = testable.published(name);
                 let options = attribute(&messages, &recorded, testable.evicted(name));
                 (messages, options)
             }
-            Transport::Live { .. } => recorded
-                .into_iter()
-                .map(|entry| match entry {
-                    PublishedEntry::Test { message, .. } => (message, MessageOptions::Unrecorded),
-                    PublishedEntry::Runtime(publish) => {
-                        (publish.message, MessageOptions::Recorded(publish.options))
-                    }
-                })
-                .unzip(),
+            Transport::Live { .. } => split_record(recorded),
         };
-        PublishedAssertions::new(name.to_owned(), messages, options)
+        let target = PublishTarget::Channel {
+            scope_id: self.scope_id,
+            name: name.to_owned(),
+        };
+        PublishedAssertions::new(coordinator, target, name.to_owned(), messages, options)
     }
 }
 

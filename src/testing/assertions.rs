@@ -22,8 +22,10 @@ use crate::runtime::HandlerOutcome;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
+use super::attribution::split_record;
 use super::attribution::{MessageOptions, RecordedOptions};
-use super::coordinator::{Coordinator, Delivered, Outcome, Record, SlotRecord};
+use super::coordinator::{Coordinator, Delivered, Outcome, Record};
+use super::hooks::PublishTarget;
 
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
@@ -566,11 +568,86 @@ fn recorded<'a, T: 'static>(one: &'a Delivered, subscriber: &str) -> &'a T {
     })
 }
 
+impl SubscriberAssertions<'_> {
+    /// Runs `hook` each time this subscription's handler is called from now on: once per
+    /// delivery, or once per batch.
+    ///
+    /// The hook runs when the harness records the call, after the delivery settled. It is handed
+    /// this same handle, borrowed for the duration of the call, so it reads the record as it
+    /// stands at that moment, the new call included, with the assertions a test already uses
+    /// (`assert_called(n)`, `with(..)`, `settled(..)`). Several hooks on one subscription run in
+    /// the order they were registered; a call recorded before the registration does not run it.
+    /// Both [`TestApp::start`](super::TestApp::start) and
+    /// [`TestApp::start_live`](super::TestApp::start_live) run hooks.
+    ///
+    /// The harness awaits the hooks of a call before the publish that caused it returns, so a hook
+    /// that never completes hangs that publish; the test's own timeout is the guard. A hook runs
+    /// on a thread of its own inside the test's runtime, its clock included. A panic inside it, a
+    /// failed assertion included, is raised again from the publish, `settle` or `advance` that
+    /// drove the call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use std::sync::Arc;
+    /// use std::sync::atomic::{AtomicUsize, Ordering};
+    ///
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::testing::TestApp;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u32,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+    ///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
+    /// let tb = TestApp::start(app).await?;
+    ///
+    /// let calls = Arc::new(AtomicUsize::new(0));
+    /// let seen = Arc::clone(&calls);
+    /// tb.broker::<MemoryBroker>()
+    ///     .subscriber("orders")
+    ///     .on_call(async move |orders| {
+    ///         seen.fetch_add(1, Ordering::SeqCst);
+    ///         orders.settled(HandlerOutcome::ack());
+    ///     });
+    ///
+    /// tb.broker::<MemoryBroker>()
+    ///     .message(&Order { id: 7 })
+    ///     .publish()
+    ///     .await?;
+    /// assert_eq!(calls.load(Ordering::SeqCst), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_call<Hook>(self, hook: Hook)
+    where
+        Hook: AsyncFn(SubscriberAssertions<'_>) + Send + Sync + 'static,
+    {
+        self.coordinator
+            .hooks()
+            .on_call(self.scope_id, self.name, hook);
+    }
+}
+
 /// Assertions over what was published to one channel, read from the broker's publish log or from
 /// an `Out` slot's view. The type parameter `T` is the expected payload type for
 /// [`with`](Self::with).
 #[derive(Debug)]
 pub struct PublishedAssertions<T> {
+    coordinator: Coordinator,
+    target: PublishTarget,
     name: String,
     messages: Vec<RawMessage>,
     // One entry per message, aligned with `messages`: what the harness knows of the options that
@@ -583,11 +660,15 @@ impl<T> PublishedAssertions<T> {
     /// Assertions over a broker's publishes to one channel, with what the harness knows of each
     /// message's options.
     pub(crate) fn new(
+        coordinator: &Coordinator,
+        target: PublishTarget,
         name: String,
         messages: Vec<RawMessage>,
         options: Vec<MessageOptions>,
     ) -> Self {
         Self {
+            coordinator: coordinator.clone(),
+            target,
             name,
             messages,
             options,
@@ -596,13 +677,16 @@ impl<T> PublishedAssertions<T> {
     }
 
     /// Assertions over an `Out` slot's view, where every publish also carries the options.
-    pub(crate) fn captured(name: String, records: Vec<SlotRecord>) -> Self {
-        let (messages, options) = records
+    pub(crate) fn captured(coordinator: &Coordinator, slot: &'static str) -> Self {
+        let (messages, options) = coordinator
+            .slot_published(slot)
             .into_iter()
             .map(|record| (record.message, MessageOptions::Recorded(record.options)))
             .unzip();
         Self {
-            name,
+            coordinator: coordinator.clone(),
+            target: PublishTarget::Slot(slot),
+            name: format!("Out slot `{slot}`"),
             messages,
             options,
             _payload: PhantomData,
@@ -666,6 +750,8 @@ impl<T> PublishedAssertions<T> {
     #[must_use]
     pub fn decoded_as<U>(self) -> PublishedAssertions<U> {
         PublishedAssertions {
+            coordinator: self.coordinator,
+            target: self.target,
             name: self.name,
             messages: self.messages,
             options: self.options,
@@ -892,6 +978,101 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
     }
 }
 
+impl<T> PublishedAssertions<T> {
+    /// Assertions over the harness's record of `target` as it stands now: what a hook on it is
+    /// handed.
+    pub(crate) fn at(coordinator: &Coordinator, target: &PublishTarget) -> Self {
+        match target {
+            PublishTarget::Channel { scope_id, name } => {
+                let (messages, options) = split_record(coordinator.published(*scope_id, name));
+                Self::new(coordinator, target.clone(), name.clone(), messages, options)
+            }
+            PublishTarget::Slot(slot) => Self::captured(coordinator, slot),
+        }
+    }
+}
+
+impl<T: 'static> PublishedAssertions<T> {
+    /// Runs `hook` each time a message is published to this destination from now on, through
+    /// every path the harness records: the test's own publishes and every publish a publisher the
+    /// runtime paired makes (replies, `Out` slot publishes and requests, retry copies, dead
+    /// letters). On the view of an `Out` slot ([`TestApp::out`](super::TestApp::out)) it runs
+    /// for each publish through that slot.
+    ///
+    /// The hook is handed assertions over this destination as the harness's record stands at that
+    /// moment, the new publish included, with the surface a test already uses
+    /// (`assert_called(n)`, `with(..)`, `decoded()`). The record is the message as the framework
+    /// handed it to the broker, in both start modes. Several hooks on one destination run in the
+    /// order they were registered; a publish recorded before the registration does not run it.
+    ///
+    /// The harness awaits the hooks of a publish before the test's publish that caused it
+    /// returns, so a hook that never completes hangs that publish; the test's own timeout is the
+    /// guard. A hook runs on a thread of its own inside the test's runtime, its clock included. A
+    /// panic inside it, a failed assertion included, is raised again from the publish, `settle`
+    /// or `advance` that drove the event.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::testing::TestApp;
+    /// use serde::{Deserialize, Serialize};
+    /// use tokio::sync::mpsc;
+    ///
+    /// #[derive(Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "orders")]
+    /// struct Order {
+    ///     id: u32,
+    /// }
+    ///
+    /// #[derive(Debug, Outgoing, Serialize, Deserialize)]
+    /// #[outgoing(name = "confirmations")]
+    /// struct Confirmation {
+    ///     id: u32,
+    /// }
+    ///
+    /// #[subscriber("orders", reply)]
+    /// async fn confirm(order: &Order) -> Confirmation {
+    ///     Confirmation { id: order.id }
+    /// }
+    ///
+    /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///     b.include(confirm).out_reply(Publish);
+    /// });
+    /// let tb = TestApp::start(app).await?;
+    ///
+    /// let (audit, mut confirmed) = mpsc::channel(8);
+    /// tb.broker::<MemoryBroker>()
+    ///     .published::<Confirmation>("confirmations")
+    ///     .on_publish(async move |confirmations| {
+    ///         let last = confirmations.decoded().pop();
+    ///         let _ = audit.send(last).await;
+    ///     });
+    ///
+    /// tb.broker::<MemoryBroker>()
+    ///     .message(&Order { id: 7 })
+    ///     .publish()
+    ///     .await?;
+    /// let confirmation = confirmed.recv().await.flatten().ok_or("no confirmation")?;
+    /// assert_eq!(confirmation.id, 7);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_publish<Hook>(self, hook: Hook)
+    where
+        Hook: AsyncFn(Self) + Send + Sync + 'static,
+    {
+        let Self {
+            coordinator,
+            target,
+            ..
+        } = self;
+        coordinator.hooks().on_publish(target, hook);
+    }
+}
+
 #[cfg(all(test, feature = "json"))]
 mod tests {
     use super::*;
@@ -904,6 +1085,8 @@ mod tests {
 
     fn undecodable() -> PublishedAssertions<Order> {
         PublishedAssertions::new(
+            &Coordinator::new(1),
+            PublishTarget::Slot("orders"),
             "orders".to_owned(),
             vec![RawMessage::new("orders", b"not json".as_slice())],
             Vec::new(),
@@ -930,6 +1113,8 @@ mod tests {
     #[should_panic(expected = "without the \"x-app\" header")]
     fn a_missing_published_header_names_itself() {
         let bare = PublishedAssertions::<Order>::new(
+            &Coordinator::new(1),
+            PublishTarget::Slot("orders"),
             "orders".to_owned(),
             vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
             Vec::new(),
@@ -941,6 +1126,8 @@ mod tests {
     #[should_panic(expected = "was published to 1 times, expected 2")]
     fn a_wrong_published_count_reports_both_numbers() {
         let one = PublishedAssertions::<Order>::new(
+            &Coordinator::new(1),
+            PublishTarget::Slot("orders"),
             "orders".to_owned(),
             vec![RawMessage::new("orders", br#"{"id":7}"#.as_slice())],
             Vec::new(),

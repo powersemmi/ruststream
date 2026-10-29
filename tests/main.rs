@@ -93,6 +93,7 @@ mod subscriber_return_forms;
 mod subscriber_settings;
 mod testing_harness;
 mod testing_harness_edges;
+mod testing_hooks;
 mod testing_live;
 mod testing_shutdown_order;
 mod testing_startup_order;

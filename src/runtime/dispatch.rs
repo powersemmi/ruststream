@@ -1454,8 +1454,11 @@ async fn dispatch<H, M, C, St>(
             delivery.spawn_after(fut);
         }
     }
+    // The hooks a test registered on this subscription run once the call is settled, inside the
+    // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
+        coordinator.run_due_calls(delivery.subscription).await;
         coordinator.consumed();
     }
 }
@@ -1564,8 +1567,11 @@ async fn run_batch<H, Batch, C, St>(
             }
         }
     }
+    // The hooks a test registered on this subscription run once the call is settled, inside the
+    // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
+        coordinator.run_due_calls(delivery.subscription).await;
         coordinator.consumed();
     }
 }

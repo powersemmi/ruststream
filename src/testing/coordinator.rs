@@ -31,6 +31,7 @@ use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
 use super::attribution::{PublishedEntry, RecordedOptions, RuntimePublish, Span};
+use super::hooks::{DuePublish, Hooks, PublishTarget};
 
 tokio::task_local! {
     /// The harness driving the current dispatch task, so a slot publisher and the batch settle
@@ -123,19 +124,25 @@ impl HarnessScope {
 /// carried, against the harness driving the current dispatch task, if any. Called by the slot
 /// publisher wrapper on every publish; outside a harness-driven handler (production, or a test
 /// without a `TestApp`) it is a no-op.
+///
+/// Returns the hooks registered on the slot's view, for the slot publisher to run once the
+/// publish is through.
 pub(crate) fn record_slot_publish<Options, Payload>(
     slot: &'static str,
     msg: &OutgoingMessage<'_, Payload>,
     options: Option<&Options>,
-) where
+) -> DuePublish
+where
     Options: Clone + Send + Sync + 'static,
     Payload: AsRef<[u8]>,
 {
-    let _ = HARNESS.try_with(|scope| {
-        scope
-            .coordinator
-            .record_slot(slot, msg, RecordedOptions::capture(options));
-    });
+    HARNESS
+        .try_with(|scope| {
+            scope
+                .coordinator
+                .record_slot(slot, msg, RecordedOptions::capture(options))
+        })
+        .unwrap_or(DuePublish::NONE)
 }
 
 /// One message the app is handing a broker from a harness-driven task, with the broker's
@@ -178,11 +185,12 @@ impl PipelinePublish {
         )
     }
 
-    /// Records the captured message: the broker took it.
-    pub(crate) fn sent(self) {
+    /// Records the captured message, the broker took it, and runs the hooks registered on the
+    /// destination it went to.
+    pub(crate) async fn sent(self) {
         if let Some((coordinator, origin, mut publish)) = self.0 {
             publish.span.finished = coordinator.tick();
-            coordinator.record_sent(origin, publish);
+            coordinator.record_sent(origin, publish).run().await;
         }
     }
 }
@@ -447,6 +455,7 @@ struct Inner {
     /// to wait for once they fall due.
     redeliveries: Mutex<Vec<DueRedelivery>>,
     timers: Mutex<Vec<Timer>>,
+    hooks: Hooks,
 }
 
 /// One publish the harness saw, and the broker it went to: the one the test named, or the one
@@ -521,6 +530,7 @@ impl Coordinator {
                 brokers: Mutex::new(Vec::new()),
                 redeliveries: Mutex::new(Vec::new()),
                 timers: Mutex::new(Vec::new()),
+                hooks: Hooks::default(),
             }),
         }
     }
@@ -557,12 +567,23 @@ impl Coordinator {
     /// Records what a handler saw and how it settled. Called from `dispatch` before the message is
     /// settled, so the record is visible by the time the matching [`consumed`](Self::consumed)
     /// wakes [`drive`](Self::drive).
+    ///
+    /// The hooks registered on the subscription's handle are noted with it, to run once the
+    /// dispatch settled the call ([`run_due_calls`](Self::run_due_calls)).
     pub(crate) fn record(&self, record: Record) {
+        self.inner
+            .hooks
+            .called(record.subscription, record.scope_id, &record.name);
         self.inner
             .records
             .lock()
             .expect("coordinator records mutex poisoned")
             .push(record);
+    }
+
+    /// The hooks a test registered on this run's handles.
+    pub(crate) fn hooks(&self) -> &Hooks {
+        &self.inner.hooks
     }
 
     /// Schedules a delayed redelivery (`nack_after` / `retry_after`): after `delay`, `redeliver`
@@ -707,8 +728,14 @@ impl Coordinator {
     }
 
     /// Records one publish the test made onto the broker registered at `scope_id`, started at
-    /// `started` on the harness's clock: the broker took it.
-    pub(crate) fn record_published(&self, scope_id: usize, message: RawMessage, started: u64) {
+    /// `started` on the harness's clock: the broker took it. Returns the hooks registered on its
+    /// destination.
+    pub(crate) fn record_published(
+        &self,
+        scope_id: usize,
+        message: RawMessage,
+        started: u64,
+    ) -> DuePublish {
         let span = Span {
             started,
             finished: self.tick(),
@@ -716,16 +743,22 @@ impl Coordinator {
         self.push_published(Published {
             scope_id,
             entry: PublishedEntry::Test { message, span },
-        });
+        })
     }
 
-    fn push_published(&self, published: Published) {
+    fn push_published(&self, published: Published) -> DuePublish {
+        let scope_id = published.scope_id;
+        let hooks = self.inner.hooks.published(self, || PublishTarget::Channel {
+            scope_id,
+            name: published.entry.message().name().to_owned(),
+        });
         self.inner
             .published
             .lock()
             .expect("coordinator published mutex poisoned")
             .push(published);
         self.inner.notify.notify_waiters();
+        hooks
     }
 
     /// The next reading of the harness's clock.
@@ -735,8 +768,8 @@ impl Coordinator {
 
     /// Records one publish the app handed a broker, on the broker its publisher was paired
     /// against. A publisher the runtime did not pair names no broker, and its publish is left out:
-    /// the harness neither waits for it nor lists it.
-    fn record_sent(&self, origin: Origin, publish: RuntimePublish) {
+    /// the harness neither waits for it nor lists it, and no hook runs for it.
+    fn record_sent(&self, origin: Origin, publish: RuntimePublish) -> DuePublish {
         let scope_id = origin.0.and_then(|address| {
             self.inner
                 .brokers
@@ -746,12 +779,12 @@ impl Coordinator {
                 .find(|(known, _)| *known == address)
                 .map(|(_, scope_id)| *scope_id)
         });
-        if let Some(scope_id) = scope_id {
+        scope_id.map_or(DuePublish::NONE, |scope_id| {
             self.push_published(Published {
                 scope_id,
                 entry: PublishedEntry::Runtime(publish),
-            });
-        }
+            })
+        })
     }
 
     /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
@@ -896,13 +929,14 @@ impl Coordinator {
         }
     }
 
-    /// Records one publish made through the `Out` slot named `slot`.
+    /// Records one publish made through the `Out` slot named `slot`, and returns the hooks
+    /// registered on the slot's view.
     pub(crate) fn record_slot<Payload: AsRef<[u8]>>(
         &self,
         slot: &'static str,
         msg: &OutgoingMessage<'_, Payload>,
         options: RecordedOptions,
-    ) {
+    ) -> DuePublish {
         let message = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
             .with_headers(msg.headers().clone());
         self.inner
@@ -914,6 +948,9 @@ impl Coordinator {
                 message,
                 options,
             });
+        self.inner
+            .hooks
+            .published(self, || PublishTarget::Slot(slot))
     }
 
     /// Every publish made through the `Out` slot named `slot`, in publish order.
@@ -1057,7 +1094,7 @@ mod tests {
             Some(HarnessScope::new(coordinator.clone(), consuming, 0)),
             publishing_to(origin, async {
                 let msg: OutgoingMessage<'_> = OutgoingMessage::new(name, b"{}".as_slice());
-                PipelinePublish::capture::<_, ()>(&msg, None).sent();
+                PipelinePublish::capture::<_, ()>(&msg, None).sent().await;
             }),
         )
         .await;
@@ -1173,7 +1210,7 @@ mod tests {
         let subscriptions = mounted(&[(0, "orders")]);
         in_harness_scope(Some(HarnessScope::new(coordinator.clone(), 0, 0)), async {
             let msg: OutgoingMessage<'_> = OutgoingMessage::new("orders", b"{}".as_slice());
-            PipelinePublish::capture::<_, ()>(&msg, None).sent();
+            PipelinePublish::capture::<_, ()>(&msg, None).sent().await;
         })
         .await;
         assert!(coordinator.owed(&subscriptions, &routing).is_none());

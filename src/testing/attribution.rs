@@ -196,6 +196,23 @@ pub(crate) fn attribute(
     pair_by_payload(log, &candidates)
 }
 
+/// The harness's record of one destination as the `published` assertions read it: every message
+/// in publish order, with the options the runtime published it with. A message the test
+/// published itself has none.
+pub(crate) fn split_record(
+    recorded: Vec<PublishedEntry>,
+) -> (Vec<RawMessage>, Vec<MessageOptions>) {
+    recorded
+        .into_iter()
+        .map(|entry| match entry {
+            PublishedEntry::Test { message, .. } => (message, MessageOptions::Unrecorded),
+            PublishedEntry::Runtime(publish) => {
+                (publish.message, MessageOptions::Recorded(publish.options))
+            }
+        })
+        .unzip()
+}
+
 /// Pairs each message of `log` with the `records` of its payload; see [`attribute`].
 fn pair_by_payload(log: &[RawMessage], records: &[&PublishedEntry]) -> Vec<MessageOptions> {
     let mut attributed = vec![MessageOptions::Unrecorded; log.len()];

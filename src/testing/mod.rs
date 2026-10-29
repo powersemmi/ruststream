@@ -12,6 +12,8 @@ pub(crate) mod coordinator;
 mod handle;
 #[cfg(feature = "testing")]
 mod harness;
+#[cfg(feature = "testing")]
+mod hooks;
 
 #[cfg(feature = "testing")]
 pub use assertions::{PublishedAssertions, SubscriberAssertions};
