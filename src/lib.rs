@@ -105,10 +105,6 @@
 
 #![forbid(unsafe_code)]
 
-// The contract's own modules, under the names the layers above it reach them by.
-#[cfg(feature = "asyncapi")]
-use ruststream_core::bindings;
-
 pub mod prelude;
 pub mod testing;
 

@@ -8,8 +8,8 @@ use serde_json::{Map, Value, json};
 use tracing::warn;
 
 use super::spec::MessageObject;
-use crate::bindings::Bindings;
-use crate::runtime::HeaderDiscriminator;
+use ruststream_core::bindings::Bindings;
+use ruststream_runtime::HeaderDiscriminator;
 
 /// Takes the final path segment of a type name as the message name (`a::b::Order` -> `Order`).
 pub(super) fn message_name(type_name: &str) -> String {
@@ -126,7 +126,7 @@ pub(super) fn merge_message(
 mod tests {
     use serde_json::json;
 
-    use crate::runtime::HeaderDiscriminator;
+    use ruststream_runtime::HeaderDiscriminator;
 
     use super::with_header_const;
 

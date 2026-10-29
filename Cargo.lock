@@ -1223,6 +1223,7 @@ dependencies = [
  "prometheus",
  "prost",
  "rmp-serde",
+ "ruststream-asyncapi",
  "ruststream-core",
  "ruststream-example-suite",
  "ruststream-macros",
@@ -1239,6 +1240,21 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "trybuild",
+]
+
+[[package]]
+name = "ruststream-asyncapi"
+version = "0.7.6"
+dependencies = [
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

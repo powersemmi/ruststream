@@ -3,6 +3,7 @@ members = [
     "crates/ruststream-core",
     "crates/ruststream-runtime",
     "crates/ruststream-memory",
+    "crates/ruststream-asyncapi",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
 ]
@@ -60,6 +61,7 @@ ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros" }
 ruststream-core = { version = "=0.7.6", path = "crates/ruststream-core" }
 ruststream-runtime = { version = "=0.7.6", path = "crates/ruststream-runtime" }
 ruststream-memory = { version = "=0.7.6", path = "crates/ruststream-memory" }
+ruststream-asyncapi = { version = "=0.7.6", path = "crates/ruststream-asyncapi" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -983,6 +985,7 @@ asyncapi = [
     "json",
     "dep:schemars",
     "dep:serde_norway",
+    "dep:ruststream-asyncapi",
     "ruststream-core/asyncapi",
     "ruststream-runtime/asyncapi",
 ]
@@ -1010,6 +1013,7 @@ otel = [
 ruststream-core.workspace = true
 ruststream-runtime.workspace = true
 ruststream-memory = { workspace = true, optional = true }
+ruststream-asyncapi = { workspace = true, optional = true }
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true

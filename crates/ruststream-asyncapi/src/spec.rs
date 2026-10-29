@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{AppId, Contact, ExternalDocs, License, Tag};
+use ruststream_core::{AppId, Contact, ExternalDocs, License, Tag};
 
-use crate::bindings::Bindings;
+use ruststream_core::bindings::Bindings;
 
 /// The specification version every generated document declares.
 pub(super) const ASYNCAPI_VERSION: &str = "3.1.0";
@@ -20,7 +20,7 @@ pub struct Spec {
     /// The `AsyncAPI` specification version (always `"3.1.0"`).
     pub asyncapi: String,
     /// The service's own identifier, when it declared one
-    /// ([`AppInfo::id`](method@crate::runtime::AppInfo::id)).
+    /// ([`AppInfo::id`](method@ruststream_runtime::AppInfo::id)).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<AppId>,
     /// Service metadata.
@@ -53,7 +53,6 @@ impl Spec {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "asyncapi", feature = "macros", feature = "memory", feature = "json"))]
     /// # mod demo {
     /// use ruststream::asyncapi::build_spec;
     /// use ruststream::memory::prelude::*;
@@ -96,9 +95,9 @@ impl Spec {
     }
 
     /// The message components carrying no payload schema, excluding the deliberately
-    /// schema-free ones (a [`Deserialized`](crate::runtime::Deserialized) input, a
-    /// [`Serialized`](crate::runtime::Serialized) reply - their bytes are their own wire
-    /// format): the models that would document better with a [`schemars::JsonSchema`] derive.
+    /// schema-free ones (a [`Deserialized`](ruststream_runtime::Deserialized) input, a
+    /// [`Serialized`](ruststream_runtime::Serialized) reply - their bytes are their own wire
+    /// format): the models that would document better with a [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html) derive.
     ///
     /// [`build_spec`](super::build_spec) logs a `WARN` per gap when the document is generated; this accessor makes
     /// the same list assertable, so a service can gate schema coverage in its test suite.
@@ -106,7 +105,6 @@ impl Spec {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
     /// # mod demo {
     /// use ruststream::asyncapi::build_spec;
     /// use ruststream::memory::prelude::*;
@@ -181,7 +179,7 @@ pub struct Server {
     pub description: Option<String>,
     /// References into `components.securitySchemes` describing how clients authenticate. Empty
     /// (and absent from the document) unless the service author attached schemes with
-    /// [`ServerSpec::security`](method@crate::ServerSpec::security).
+    /// [`ServerSpec::security`](method@ruststream_core::ServerSpec::security).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub security: Vec<Reference>,
     /// What the broker says about this server in its own protocol's vocabulary.
@@ -238,11 +236,11 @@ pub struct Channel {
     /// The servers this channel exists on, as references into the document's `servers` map.
     ///
     /// Filled from the label the registration's broker was registered under
-    /// ([`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled)), and from the
+    /// ([`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled)), and from the
     /// single server of a one-broker document. Empty where neither applies, which per the
     /// specification means the channel is available on every server: that is the honest answer
     /// when the registration named no broker, and it is also the limit of what the core can say
-    /// about a publish that leaves through a [`Bound`](crate::runtime::Bound) token, since such a
+    /// about a publish that leaves through a [`Bound`](ruststream_runtime::Bound) token, since such a
     /// publish reaches the token's own broker rather than the registration's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub servers: Vec<Reference>,
@@ -314,7 +312,7 @@ pub struct OperationReply {
 /// address object.
 ///
 /// Filled from the publish policy's
-/// [`reply_address_location`](crate::PublishPolicy::reply_address_location), which a broker
+/// [`reply_address_location`](ruststream_core::PublishPolicy::reply_address_location), which a broker
 /// answers with the header carrying the address (`$message.header#/reply-to`).
 ///
 /// # Examples
@@ -416,7 +414,7 @@ pub struct MessageObject {
     #[serde(rename = "contentType", skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
     /// The JSON Schema of the payload, when the message type implements
-    /// [`schemars::JsonSchema`]. Absent for raw-bytes handlers and types without a schema.
+    /// [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html). Absent for raw-bytes handlers and types without a schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
     /// The JSON Schema of the application headers, when the handler declares a typed header
@@ -425,8 +423,8 @@ pub struct MessageObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<Value>,
     /// True when the message rides a self-carrying lane
-    /// ([`Deserialized`](crate::runtime::Deserialized) input /
-    /// [`Serialized`](crate::runtime::Serialized) reply): the bytes are their own wire format,
+    /// ([`Deserialized`](ruststream_runtime::Deserialized) input /
+    /// [`Serialized`](ruststream_runtime::Serialized) reply): the bytes are their own wire format,
     /// so the missing payload schema is by design. Generation bookkeeping, not part of the
     /// rendered document.
     #[serde(skip)]

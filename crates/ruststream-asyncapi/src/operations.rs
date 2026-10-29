@@ -8,8 +8,8 @@ use std::num::NonZeroU32;
 use serde_json::Value;
 use tracing::warn;
 
-use crate::Tag;
-use crate::runtime::{
+use ruststream_core::Tag;
+use ruststream_runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
 };
@@ -18,7 +18,7 @@ use super::messages::{MessageContribution, merge_message, message_name, with_hea
 use super::spec::{
     Channel, MessageObject, Operation, OperationReply, Parameter, Reference, RetryExtension,
 };
-use crate::bindings::Bindings;
+use ruststream_core::bindings::Bindings;
 
 /// Adds one registered subscriber to the document: its channel entry, its `receive` operation,
 /// and its message component (with the payload and headers schemas the handler declared).
