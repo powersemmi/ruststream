@@ -111,8 +111,10 @@ mod capability;
 mod describe;
 mod error;
 mod field;
+mod form;
 mod headers;
 mod message;
+mod outgoing;
 pub mod prelude;
 mod publisher;
 mod schema;
@@ -122,6 +124,7 @@ pub mod testing;
 #[cfg(test)]
 mod testkit;
 mod typed_headers;
+mod wire;
 
 /// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
 #[cfg(feature = "testing")]

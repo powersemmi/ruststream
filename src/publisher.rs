@@ -9,7 +9,8 @@ use thiserror::Error;
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi::Bindings;
 use crate::codec::{Codec, CodecError};
-use crate::runtime::{Outgoing, OutgoingName, Serialized};
+use crate::outgoing::{Outgoing, OutgoingName};
+use crate::wire::Serialized;
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
 
 /// How a transport consumes the payload of a publish: [`Lend`] where it reads the bytes,

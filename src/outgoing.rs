@@ -1,0 +1,500 @@
+//! The outgoing message the publish path carries: a destination, a payload and the headers.
+
+use std::borrow::Cow;
+use std::fmt::{self, Display, Formatter};
+use std::hash::{Hash, Hasher};
+use std::mem;
+use std::ops::Deref;
+
+use bytes::BytesMut;
+use bytes_utils::Str;
+
+use crate::HeaderMap;
+
+/// A mutable outgoing message flowing through the publish pipeline.
+///
+/// The [`name`](Self::name) is an [`OutgoingName`], which carries a destination from any of the
+/// three places one comes from without copying it: the macro reply path borrows a string literal
+/// (`reply_name(&self) -> &str`), a computed name moves in owned, and a name read off the
+/// delivery being answered arrives as the delivery's own buffer. The payload behaves the same
+/// way: codec output moves in whole, a rebuilt message carries the buffer it was handed or lends
+/// the bytes it was lent, and the first [`payload_mut`](Self::payload_mut) or
+/// [`set_payload`](Self::set_payload) is what makes the buffer this message's own. Middleware may
+/// change the name, transform the payload, and enrich the [`headers`](Self::headers_mut) before
+/// the message is sent.
+#[derive(Debug, Clone)]
+pub struct Outgoing<'a> {
+    name: OutgoingName<'a>,
+    payload: Payload<'a>,
+    headers: HeaderMap,
+}
+
+/// The destination of an [`Outgoing`]: a borrow, an owned string, or a shared buffer.
+///
+/// Each form is a place a name comes from, and none of them copies it. A literal at a mount site
+/// borrows for the length of the publish call. A name built per delivery moves in owned. A name
+/// the delivery already carries - the queue an AMQP request named in its `reply-to` header, a
+/// `ROUTER` peer identity - arrives as the buffer it was read from, through
+/// [`HeaderMap::get_shared`] and [`Str`], so a transform that answers where the request asked
+/// allocates nothing.
+///
+/// Every one of those forms converts, so [`Outgoing::set_name`] takes the name as the call site
+/// has it.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # mod demo {
+/// use ruststream::memory::prelude::*;
+/// use ruststream::runtime::{Outgoing, OutgoingName, PublishContext};
+/// use serde::{Deserialize, Serialize};
+///
+/// /// Each tenant reads its answers from a queue of its own. The name is built per delivery and
+/// /// moves in owned; a name the request carried would arrive as its own buffer instead.
+/// struct PerTenant;
+///
+/// impl<C, Options> PublishTransform<ForReply<C>, Options> for PerTenant {
+///     type Destination = Names;
+///
+///     fn apply(
+///         &self,
+///         out: &mut Outgoing<'_>,
+///         _options: &mut Option<Options>,
+///         cx: &PublishContext<'_, C>,
+///     ) {
+///         if let Some(tenant) = cx.headers().get_str("x-tenant") {
+///             out.set_name(OutgoingName::from(format!("answers.{tenant}")));
+///         }
+///     }
+/// }
+///
+/// #[derive(Deserialize)]
+/// struct Request {
+///     id: u64,
+/// }
+///
+/// #[derive(Serialize, Outgoing)]
+/// struct Answer {
+///     id: u64,
+/// }
+///
+/// #[subscriber("requests", reply("answers"))]
+/// async fn answer(request: &Request) -> Answer {
+///     Answer { id: request.id }
+/// }
+///
+/// fn app() -> RustStream {
+///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+///         b.include(answer).out_reply(Publish).transform(PerTenant);
+///     })
+/// }
+/// # }
+/// # fn main() {}
+/// ```
+#[derive(Debug, Clone)]
+pub enum OutgoingName<'a> {
+    /// A name valid as long as the publish call is: a literal, or a slice of something the caller
+    /// keeps alive.
+    Borrowed(&'a str),
+    /// A name built for this message.
+    Owned(String),
+    /// A name sharing a buffer with whatever produced it, counted by reference.
+    Shared(Str),
+}
+
+impl OutgoingName<'_> {
+    /// The name as a string slice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::{Bytes, Str};
+    /// use ruststream::runtime::OutgoingName;
+    ///
+    /// assert_eq!(OutgoingName::from("orders").as_str(), "orders");
+    ///
+    /// // The form a transform builds reads the same: the bytes are checked once, not copied.
+    /// let shared = OutgoingName::from(Str::try_from(Bytes::from_static(b"orders"))?);
+    /// assert_eq!(shared.as_str(), "orders");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(name) => name,
+            Self::Owned(name) => name,
+            Self::Shared(name) => name,
+        }
+    }
+}
+
+impl Deref for OutgoingName<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for OutgoingName<'_> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Display for OutgoingName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// The three forms are three ways to hold one name, so equality and hashing read the name and
+// never the form it came in.
+impl PartialEq for OutgoingName<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for OutgoingName<'_> {}
+
+impl Hash for OutgoingName<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl<'a> From<&'a str> for OutgoingName<'a> {
+    fn from(name: &'a str) -> Self {
+        Self::Borrowed(name)
+    }
+}
+
+impl From<String> for OutgoingName<'_> {
+    fn from(name: String) -> Self {
+        Self::Owned(name)
+    }
+}
+
+impl From<Str> for OutgoingName<'_> {
+    fn from(name: Str) -> Self {
+        Self::Shared(name)
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for OutgoingName<'a> {
+    fn from(name: Cow<'a, str>) -> Self {
+        match name {
+            Cow::Borrowed(name) => Self::Borrowed(name),
+            Cow::Owned(name) => Self::Owned(name),
+        }
+    }
+}
+
+/// An [`Outgoing`] payload: the bytes as they arrived, until something writes to them.
+///
+/// The [`Cow`] of the payload position, over the three places the bytes can be. A publish whose
+/// stages only read it - which every transform that stamps a header or a setting does - travels
+/// on the buffer that is already there, and the copy happens where a stage actually asks to
+/// write.
+#[derive(Debug, Clone)]
+pub(crate) enum Payload<'a> {
+    /// The caller's bytes, valid as long as the message is.
+    Lent(&'a [u8]),
+    /// A buffer of this message's own: codec output, or the copy a write asked for.
+    Owned(BytesMut),
+}
+
+impl Payload<'_> {
+    /// The bytes, wherever they live.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Lent(bytes) => bytes,
+            Self::Owned(buf) => buf,
+        }
+    }
+
+    /// The buffer, making it this message's own on the first call.
+    fn to_mut(&mut self) -> &mut BytesMut {
+        if let Self::Lent(bytes) = *self {
+            *self = Self::Owned(BytesMut::from(bytes));
+        }
+        match self {
+            Self::Owned(buf) => buf,
+            // The branch above leaves nothing lent, which the borrow checker cannot carry across
+            // this match; `Cow::to_mut` in the standard library is written the same way.
+            Self::Lent(_) => unreachable!(),
+        }
+    }
+}
+
+impl<'a> Outgoing<'a> {
+    /// Creates an outgoing message with no headers.
+    ///
+    /// Pass a `&str` (a borrowed destination, the no-allocation case), a `String` (a computed
+    /// owned one) or a [`Str`] (a buffer something else already holds) for `name`; pass a
+    /// [`BytesMut`] (codec output moves in) or a `&[u8]` for the payload.
+    #[must_use]
+    pub fn new(name: impl Into<OutgoingName<'a>>, payload: impl Into<BytesMut>) -> Self {
+        Self {
+            name: name.into(),
+            payload: Payload::Owned(payload.into()),
+            headers: HeaderMap::new(),
+        }
+    }
+
+    /// The same over a payload in the form it arrived in: what a publish stage rebuilding a
+    /// message starts from, so a message nothing writes to is never copied and a buffer an
+    /// earlier stage handed over is not downgraded to a borrow here.
+    #[inline]
+    pub(crate) fn rebuilding(
+        name: impl Into<OutgoingName<'a>>,
+        payload: Payload<'a>,
+        headers: HeaderMap,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            payload,
+            headers,
+        }
+    }
+
+    /// The destination name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Sets the destination name.
+    ///
+    /// A literal or a borrow costs nothing, a computed `String` moves in, and a [`Str`] read off
+    /// the delivery shares its buffer rather than copying out of it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use ruststream::runtime::{Outgoing, PublishContext};
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// /// Sends each answer to the inbox its request named, or to a per-tenant queue when it named
+    /// /// none: the header's buffer moves in shared, the computed name moves in owned.
+    /// struct ToInbox;
+    ///
+    /// impl<C, Options> PublishTransform<ForReply<C>, Options> for ToInbox {
+    ///     type Destination = Names;
+    ///
+    ///     fn apply(
+    ///         &self,
+    ///         out: &mut Outgoing<'_>,
+    ///         _options: &mut Option<Options>,
+    ///         cx: &PublishContext<'_, C>,
+    ///     ) {
+    ///         if let Some(inbox) = cx
+    ///             .headers()
+    ///             .get_shared("reply-to")
+    ///             .and_then(|v| Str::try_from(v).ok())
+    ///         {
+    ///             out.set_name(inbox);
+    ///         } else if let Some(tenant) = cx.headers().get_str("x-tenant") {
+    ///             out.set_name(format!("answers.{tenant}"));
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Request {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// struct Answer {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("requests", reply("answers"))]
+    /// async fn answer(request: &Request) -> Answer {
+    ///     Answer { id: request.id }
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(
+    ///         MemoryBroker::new(),
+    ///         |b| {
+    ///             b.include(answer).out_reply(Publish).transform(ToInbox);
+    ///         },
+    ///     )
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn set_name(&mut self, name: impl Into<OutgoingName<'a>>) {
+        self.name = name.into();
+    }
+
+    /// The payload bytes.
+    #[must_use]
+    pub fn payload(&self) -> &[u8] {
+        self.payload.as_slice()
+    }
+
+    /// The payload bytes, mutably (for envelope wrapping).
+    ///
+    /// A message that is still lending the bytes it was built from copies them here, once.
+    pub fn payload_mut(&mut self) -> &mut BytesMut {
+        self.payload.to_mut()
+    }
+
+    /// Replaces the payload.
+    pub fn set_payload(&mut self, payload: impl Into<BytesMut>) {
+        self.payload = Payload::Owned(payload.into());
+    }
+
+    /// The payload as a buffer of its own, taken out for a message that leaves to a transport
+    /// which keeps it.
+    ///
+    /// The buffer the stages wrote moves into the outgoing message instead of being lent to it;
+    /// bytes the pipeline only carried are copied here, because the transport keeps what it is
+    /// handed. The `Outgoing` is dead at that point - the terminal holds the only borrow of it
+    /// for the rest of the publish - so what it is left holding is never read again.
+    #[inline]
+    pub(crate) fn take_payload(&mut self) -> BytesMut {
+        match mem::replace(&mut self.payload, Payload::Lent(&[])) {
+            Payload::Lent(bytes) => BytesMut::from(bytes),
+            Payload::Owned(buf) => buf,
+        }
+    }
+
+    /// The outgoing headers.
+    #[must_use]
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    /// The outgoing headers, mutably.
+    pub fn headers_mut(&mut self) -> &mut HeaderMap {
+        &mut self.headers
+    }
+
+    /// The name, the payload and the header map, taken apart.
+    ///
+    /// What a stage that owns its message calls on the way out: whatever the transforms wrote
+    /// moves on rather than being copied on, and the spent value is not held across the send.
+    #[inline]
+    pub(crate) fn into_parts(self) -> (OutgoingName<'a>, Payload<'a>, HeaderMap) {
+        (self.name, self.payload, self.headers)
+    }
+
+    /// The headers, taken out for the message that leaves.
+    ///
+    /// The terminal calls this beside [`take_payload`](Self::take_payload) and for the same
+    /// reason: the map the transforms filled moves into the outgoing message instead of being
+    /// cloned into it, and what the dead `Outgoing` is left holding is never read again.
+    #[inline]
+    pub(crate) fn take_headers(&mut self) -> HeaderMap {
+        mem::take(&mut self.headers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::collections::HashSet;
+
+    use bytes::BytesMut;
+    use bytes_utils::Str;
+
+    use super::{Outgoing, OutgoingName, Payload};
+    use crate::{HeaderMap, Lend, PayloadForm};
+
+    #[test]
+    fn borrowed_name_is_not_owned() {
+        // The macro-reply hot path passes a string literal: it must stay borrowed (no alloc),
+        // which is the whole point of the three forms.
+        let out = Outgoing::new("orders.created", b"payload".as_slice());
+        assert!(matches!(out.name, OutgoingName::Borrowed(_)));
+        assert_eq!(out.name(), "orders.created");
+        assert_eq!(out.payload(), b"payload");
+    }
+
+    #[test]
+    fn owned_name_moves_in() {
+        let computed = format!("orders.{}", 42);
+        let out = Outgoing::new(computed, BytesMut::from(&b"x"[..]));
+        assert!(matches!(out.name, OutgoingName::Owned(_)));
+        assert_eq!(out.name(), "orders.42");
+    }
+
+    #[test]
+    fn a_shared_name_keeps_the_buffer_it_was_read_from() {
+        // What a transform naming a destination off the delivery hands over: the header's own
+        // buffer, so the name costs a reference count and no copy.
+        let mut headers = HeaderMap::new();
+        headers.insert("reply-to", "replies.inbox");
+        let shared = Str::try_from(headers.get_shared("reply-to").expect("the header is there"))
+            .expect("the address is UTF-8");
+
+        let mut out = Outgoing::new("answers", b"{}".as_slice());
+        out.set_name(shared);
+        assert!(matches!(out.name, OutgoingName::Shared(_)));
+        assert_eq!(out.name(), "replies.inbox");
+    }
+
+    #[test]
+    fn the_three_name_forms_read_as_one_name() {
+        let borrowed = OutgoingName::from("replies.inbox");
+        let owned = OutgoingName::from("replies.inbox".to_owned());
+        let shared = OutgoingName::from(Str::from_static("replies.inbox"));
+
+        assert_eq!(borrowed, owned);
+        assert_eq!(owned, shared);
+        assert_eq!(shared.as_str(), "replies.inbox");
+        assert_eq!(borrowed.to_string(), "replies.inbox");
+        assert_eq!(AsRef::<str>::as_ref(&owned), "replies.inbox");
+
+        let mut names = HashSet::new();
+        names.insert(borrowed);
+        names.insert(owned);
+        names.insert(shared);
+        assert_eq!(names.len(), 1, "the form a name came in is not part of it");
+
+        let from_cow = OutgoingName::from(Cow::Owned("orders.42".to_owned()));
+        assert!(matches!(from_cow, OutgoingName::Owned(_)));
+        assert!(matches!(
+            OutgoingName::from(Cow::Borrowed("orders")),
+            OutgoingName::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn payload_mutates_in_place() {
+        let mut out = Outgoing::new("t", BytesMut::from(&b"body"[..]));
+        out.payload_mut().extend_from_slice(b"!");
+        assert_eq!(out.payload(), b"body!");
+
+        out.set_payload(b"fresh".as_slice());
+        assert_eq!(out.payload(), b"fresh");
+    }
+
+    #[test]
+    fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
+        // What a publish stage rebuilding a message starts from: a transform that stamps a header
+        // reads the payload and never copies it, and the copy happens at the first write.
+        let body = b"body".to_vec();
+        let mut out = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
+        assert!(matches!(out.payload, Payload::Lent(_)));
+        assert_eq!(out.payload(), b"body");
+
+        out.payload_mut().extend_from_slice(b"!");
+        assert!(matches!(out.payload, Payload::Owned(_)));
+        assert_eq!(out.payload(), b"body!");
+        assert_eq!(body, b"body", "the bytes it was lent are left as they were");
+
+        out.set_payload(b"fresh".as_slice());
+        assert_eq!(out.payload(), b"fresh");
+    }
+}

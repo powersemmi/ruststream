@@ -10,8 +10,9 @@ use std::marker::PhantomData;
 use bytes::BytesMut;
 use serde::Serialize;
 
-use super::{Outgoing, OutgoingName, Payload, Serialized, WireBytes};
 use crate::codec::{Codec, CodecError};
+use crate::outgoing::{Outgoing, OutgoingName, Payload};
+use crate::wire::{Serialized, WireBytes};
 use crate::{HeaderMap, Lend, OutgoingMessage, PayloadForm, Take};
 
 /// The destination as the message that leaves reads it, kept in the spent stage's own slot
@@ -189,5 +190,51 @@ impl PayloadForm for Take {
             Payload::Owned(buf) => buf,
         };
         OutgoingMessage::assembled(kept(name, spent), payload, headers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use crate::outgoing::Outgoing;
+    use crate::{HeaderMap, Lend, PayloadForm, Take};
+
+    #[test]
+    fn the_terminal_hands_the_message_over_in_the_publisher_s_form() {
+        // What a taking broker is handed: the buffer the pipeline wrote, as it wrote it.
+        let mut produced = Outgoing::new("t", BytesMut::from(&b"body"[..]));
+        let wrote_at = produced.payload().as_ptr() as usize;
+        let taken = <Take as PayloadForm>::leaving(&mut produced);
+        assert_eq!(
+            taken.payload().as_ptr() as usize,
+            wrote_at,
+            "the buffer moves into the message rather than being copied into it",
+        );
+
+        // A rebuilt message carries that buffer through untouched, so a slot's transforms do not
+        // cost the broker its hand-over.
+        let mut rebuilt = <Take as PayloadForm>::rebuilt(
+            "t".into(),
+            BytesMut::from(&b"body"[..]),
+            HeaderMap::new(),
+        );
+        let carried_at = rebuilt.payload().as_ptr() as usize;
+        assert_eq!(
+            <Take as PayloadForm>::leaving(&mut rebuilt)
+                .payload()
+                .as_ptr() as usize,
+            carried_at,
+        );
+
+        // What a reading broker is handed: the bytes where the pipeline left them, whether it was
+        // lent them or wrote them itself.
+        let body = b"body".to_vec();
+        let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
+        assert_eq!(
+            <Lend as PayloadForm>::leaving(&mut lent).payload().as_ptr() as usize,
+            body.as_ptr() as usize,
+            "bytes the pipeline was lent are lent on, with nothing copied on the way",
+        );
     }
 }

@@ -1,6 +1,7 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
 #[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
+use std::fmt;
 use std::sync::Arc;
 
 #[cfg(all(feature = "memory", feature = "json"))]
@@ -10,7 +11,6 @@ use crate::Publisher;
 #[cfg(all(feature = "memory", feature = "json"))]
 use crate::codec::Codec;
 
-use std::collections::HashSet;
 #[cfg(all(feature = "json", feature = "logging"))]
 use std::convert::Infallible;
 #[cfg(all(feature = "json", feature = "logging"))]
@@ -26,6 +26,7 @@ use tracing::subscriber;
 use tracing::subscriber::DefaultGuard;
 
 use super::*;
+use crate::{BytesMut, HeaderMap};
 use crate::{Lend, PayloadForm, Take};
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
@@ -287,128 +288,6 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
         .expect("memory subscriber never errors");
     assert_eq!(msg.payload(), b"5", "the static tail must still send");
     msg.ack().await.expect("ack failed");
-}
-
-#[test]
-fn borrowed_name_is_not_owned() {
-    // The macro-reply hot path passes a string literal: it must stay borrowed (no alloc),
-    // which is the whole point of the three forms.
-    let out = Outgoing::new("orders.created", b"payload".as_slice());
-    assert!(matches!(out.name, OutgoingName::Borrowed(_)));
-    assert_eq!(out.name(), "orders.created");
-    assert_eq!(out.payload(), b"payload");
-}
-
-#[test]
-fn owned_name_moves_in() {
-    let computed = format!("orders.{}", 42);
-    let out = Outgoing::new(computed, BytesMut::from(&b"x"[..]));
-    assert!(matches!(out.name, OutgoingName::Owned(_)));
-    assert_eq!(out.name(), "orders.42");
-}
-
-#[test]
-fn a_shared_name_keeps_the_buffer_it_was_read_from() {
-    // What a transform naming a destination off the delivery hands over: the header's own
-    // buffer, so the name costs a reference count and no copy.
-    let mut headers = HeaderMap::new();
-    headers.insert("reply-to", "replies.inbox");
-    let shared = Str::try_from(headers.get_shared("reply-to").expect("the header is there"))
-        .expect("the address is UTF-8");
-
-    let mut out = Outgoing::new("answers", b"{}".as_slice());
-    out.set_name(shared);
-    assert!(matches!(out.name, OutgoingName::Shared(_)));
-    assert_eq!(out.name(), "replies.inbox");
-}
-
-#[test]
-fn the_three_name_forms_read_as_one_name() {
-    let borrowed = OutgoingName::from("replies.inbox");
-    let owned = OutgoingName::from("replies.inbox".to_owned());
-    let shared = OutgoingName::from(Str::from_static("replies.inbox"));
-
-    assert_eq!(borrowed, owned);
-    assert_eq!(owned, shared);
-    assert_eq!(shared.as_str(), "replies.inbox");
-    assert_eq!(borrowed.to_string(), "replies.inbox");
-    assert_eq!(AsRef::<str>::as_ref(&owned), "replies.inbox");
-
-    let mut names = HashSet::new();
-    names.insert(borrowed);
-    names.insert(owned);
-    names.insert(shared);
-    assert_eq!(names.len(), 1, "the form a name came in is not part of it");
-
-    let from_cow = OutgoingName::from(Cow::Owned("orders.42".to_owned()));
-    assert!(matches!(from_cow, OutgoingName::Owned(_)));
-    assert!(matches!(
-        OutgoingName::from(Cow::Borrowed("orders")),
-        OutgoingName::Borrowed(_)
-    ));
-}
-
-#[test]
-fn payload_mutates_in_place() {
-    let mut out = Outgoing::new("t", BytesMut::from(&b"body"[..]));
-    out.payload_mut().extend_from_slice(b"!");
-    assert_eq!(out.payload(), b"body!");
-
-    out.set_payload(b"fresh".as_slice());
-    assert_eq!(out.payload(), b"fresh");
-}
-
-#[test]
-fn a_lent_payload_is_copied_where_something_writes_and_nowhere_else() {
-    // What a publish stage rebuilding a message starts from: a transform that stamps a header
-    // reads the payload and never copies it, and the copy happens at the first write.
-    let body = b"body".to_vec();
-    let mut out = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
-    assert!(matches!(out.payload, Payload::Lent(_)));
-    assert_eq!(out.payload(), b"body");
-
-    out.payload_mut().extend_from_slice(b"!");
-    assert!(matches!(out.payload, Payload::Owned(_)));
-    assert_eq!(out.payload(), b"body!");
-    assert_eq!(body, b"body", "the bytes it was lent are left as they were");
-
-    out.set_payload(b"fresh".as_slice());
-    assert_eq!(out.payload(), b"fresh");
-}
-
-#[test]
-fn the_terminal_hands_the_message_over_in_the_publisher_s_form() {
-    // What a taking broker is handed: the buffer the pipeline wrote, as it wrote it.
-    let mut produced = Outgoing::new("t", BytesMut::from(&b"body"[..]));
-    let wrote_at = produced.payload().as_ptr() as usize;
-    let taken = <Take as PayloadForm>::leaving(&mut produced);
-    assert_eq!(
-        taken.payload().as_ptr() as usize,
-        wrote_at,
-        "the buffer moves into the message rather than being copied into it",
-    );
-
-    // A rebuilt message carries that buffer through untouched, so a slot's transforms do not
-    // cost the broker its hand-over.
-    let mut rebuilt =
-        <Take as PayloadForm>::rebuilt("t".into(), BytesMut::from(&b"body"[..]), HeaderMap::new());
-    let carried_at = rebuilt.payload().as_ptr() as usize;
-    assert_eq!(
-        <Take as PayloadForm>::leaving(&mut rebuilt)
-            .payload()
-            .as_ptr() as usize,
-        carried_at,
-    );
-
-    // What a reading broker is handed: the bytes where the pipeline left them, whether it was
-    // lent them or wrote them itself.
-    let body = b"body".to_vec();
-    let mut lent = <Lend as PayloadForm>::rebuilt("t".into(), &body, HeaderMap::new());
-    assert_eq!(
-        <Lend as PayloadForm>::leaving(&mut lent).payload().as_ptr() as usize,
-        body.as_ptr() as usize,
-        "bytes the pipeline was lent are lent on, with nothing copied on the way",
-    );
 }
 
 /// Both cursors report where in the chain a middleware sits: the static one is opaque, the
