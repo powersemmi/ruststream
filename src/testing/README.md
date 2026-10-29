@@ -147,8 +147,8 @@ pub async fn every_order_is_confirmed_as_it_arrives() -> Result<(), Box<dyn Erro
 ```
 
 A hook gets the same handle it was registered on, borrowed for the call, so it reads the record as
-it stands at the event with the assertions a test already uses. The publish that caused the event
-returns once its hooks finished, and a failed assertion inside a hook fails that publish. Hooks run
+it stood at the event with the assertions a test already uses. The publish that caused the event
+returns once its hooks finished, and a failed assertion inside a hook fails that publish, or the shutdown or the end of a test that drove nothing further. Hooks run
 under [`TestApp::start`] and [`TestApp::start_live`] alike.
 
 # Against a running broker
