@@ -1229,6 +1229,7 @@ dependencies = [
  "ruststream-memory",
  "ruststream-observability",
  "ruststream-runtime",
+ "ruststream-testing",
  "schemars",
  "serde",
  "serde_json",
@@ -1351,6 +1352,21 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ruststream-testing"
+version = "0.7.6"
+dependencies = [
+ "inventory",
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

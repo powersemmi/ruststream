@@ -5,6 +5,7 @@ members = [
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
     "crates/ruststream-observability",
+    "crates/ruststream-testing",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
 ]
@@ -64,6 +65,7 @@ ruststream-runtime = { version = "=0.7.6", path = "crates/ruststream-runtime" }
 ruststream-memory = { version = "=0.7.6", path = "crates/ruststream-memory" }
 ruststream-asyncapi = { version = "=0.7.6", path = "crates/ruststream-asyncapi" }
 ruststream-observability = { version = "=0.7.6", path = "crates/ruststream-observability" }
+ruststream-testing = { version = "=0.7.6", path = "crates/ruststream-testing" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -979,9 +981,14 @@ allowed_external_types = [
 default = ["json"]
 memory = ["dep:ruststream-memory"]
 conformance = ["testing"]
-json = ["dep:serde_json", "ruststream-core/json", "ruststream-runtime/json"]
-msgpack = ["ruststream-runtime/msgpack"]
-cbor = ["ruststream-runtime/cbor"]
+json = [
+    "dep:serde_json",
+    "ruststream-core/json",
+    "ruststream-runtime/json",
+    "ruststream-testing?/json",
+]
+msgpack = ["ruststream-runtime/msgpack", "ruststream-testing?/msgpack"]
+cbor = ["ruststream-runtime/cbor", "ruststream-testing?/cbor"]
 macros = ["dep:ruststream-macros"]
 asyncapi = [
     "json",
@@ -1000,7 +1007,7 @@ poll-diagnostics = [
 ]
 testing = [
     "dep:inventory",
-    "tokio/test-util",
+    "dep:ruststream-testing",
     "ruststream-core/testing",
     "ruststream-runtime/testing",
     "ruststream-memory?/testing",
@@ -1013,13 +1020,13 @@ ruststream-runtime.workspace = true
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
+ruststream-testing = { workspace = true, optional = true }
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-util.workspace = true
 tracing.workspace = true
 ruststream-macros = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -1120,6 +1127,8 @@ tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "ti
 axum = "0.8"
 # The custom-codec examples build their codec over it.
 rmp-serde = "1"
+# The HTTP guide examples join the server's tasks with it.
+tokio-util = { version = "0.7.10", features = ["rt"] }
 # The metrics tests and examples read the registry the layers record into.
 prometheus = { version = "0.14", default-features = false }
 trybuild = "1"

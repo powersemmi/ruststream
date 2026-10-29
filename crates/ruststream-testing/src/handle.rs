@@ -6,11 +6,11 @@ use std::fmt;
 
 // The helpers that ENCODE stay gated on a codec feature, like the codec itself; the typed
 // builder entry points do not, because the value's own wire decides whether a codec is needed.
-use crate::OutgoingDestination;
+use ruststream_core::OutgoingDestination;
+use ruststream_core::{Lend, OutgoingMessage, RawMessage};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::codec::{Codec, DefaultCodec};
-use crate::runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
-use crate::{Lend, OutgoingMessage, RawMessage};
+use ruststream_runtime::codec::{Codec, DefaultCodec};
+use ruststream_runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
 use ruststream_runtime::{Shutdown, message_of};
 
 use ruststream_runtime::testing::attribution::{attribute, split_record};
@@ -149,7 +149,7 @@ impl PublishSink for InjectSink<'_> {
 
 impl<'a> BrokerHandle<'a> {
     /// Starts a typed injection of a `#[derive(Outgoing)]` value onto this broker, encoded with
-    /// [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
+    /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec) unless the call names one with
     /// `with_codec(..)`: `handle.message(&order).to("orders").publish().await?`.
     ///
     /// The same builder the service publishes through, sending onto the in-process transport as
@@ -159,7 +159,7 @@ impl<'a> BrokerHandle<'a> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
@@ -218,7 +218,7 @@ impl<'a> BrokerHandle<'a> {
 }
 
 impl BrokerHandle<'_> {
-    /// Publishes `value` (encoded with [`DefaultCodec`](crate::codec::DefaultCodec)) to `name`, then
+    /// Publishes `value` (encoded with [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec)) to `name`, then
     /// drives the resulting reaction to a standstill before returning.
     ///
     /// Use it for a `Serialize` type the test does not own: [`message`](Self::message) reads the
@@ -246,8 +246,8 @@ impl BrokerHandle<'_> {
 
     /// Like [`publish`](Self::publish), but with headers on the delivery: `headers` is a typed
     /// contract serialized into the header map (see
-    /// [`HeaderMap::insert_typed`](crate::HeaderMap::insert_typed)) - the input a
-    /// [`Headers`](crate::runtime::Headers) handler parses.
+    /// [`HeaderMap::insert_typed`](ruststream_core::HeaderMap::insert_typed)) - the input a
+    /// [`Headers`](ruststream_runtime::Headers) handler parses.
     ///
     /// Same reach as [`publish`](Self::publish): the builder's
     /// `message(&value).with_headers(&meta)` needs the value's type to declare a destination.

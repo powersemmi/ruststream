@@ -1,4 +1,4 @@
-//! The [`TestApp`] harness: drives a built [`RustStream`](crate::runtime::RustStream) application
+//! The [`TestApp`] harness: drives a built [`RustStream`](ruststream_runtime::RustStream) application
 //! and exposes per-broker assertions. In process, each broker of the app connects through its
 //! registered [`InProcess`] transition, which produces the production connected form with no I/O;
 //! live, each connects through its ordinary `connect`, against a running stand.
@@ -17,12 +17,12 @@ use tokio::time;
 use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 
-use crate::OutgoingDestination;
-use crate::runtime::{
+use ruststream_core::OutgoingDestination;
+use ruststream_core::{Broker, DefaultPublish, PublishPolicy, Publisher};
+use ruststream_runtime::{
     App, HeadersUnset, MessageBody, OutSlot, PublishBuilder, RustStreamError, SubscriptionEnd,
     UnnamedCodec,
 };
-use crate::{Broker, DefaultPublish, PublishPolicy, Publisher};
 use ruststream_runtime::{
     ConnectedEntry, ConnectedLifecycle, LifecycleHook, RegisteredBroker, Shutdown, ShutdownHooks,
     Starter, Teardown, TestParts, message_of,
@@ -130,7 +130,7 @@ impl TestBrokers<'_> {
 /// A test harness around the service's production app.
 ///
 /// Takes the app `main` builds, unchanged. [`start`](Self::start) connects each of its brokers
-/// through the broker's [`InProcess`](super::InProcess) transition instead of `connect`, so the
+/// through the broker's [`InProcess`](ruststream_runtime::testing::InProcess) transition instead of `connect`, so the
 /// same connected forms carry the routes with no server; [`start_live`](Self::start_live)
 /// connects them through `connect`, against a running stand. Either way the harness drives input
 /// through the broker, records what handlers saw and what the app published, and exposes
@@ -151,7 +151,7 @@ impl TestBrokers<'_> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "testing", feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
@@ -291,7 +291,7 @@ fn clock_is_paused() -> bool {
 impl<State: Send + Sync + 'static> TestApp<State> {
     /// Starts the harness in the service's own startup order: the app's real `on_startup`, then
     /// each broker's connect, then the subscriptions, then `after_startup`. Each broker connects
-    /// through its [`InProcess`](super::InProcess) transition, which performs no I/O; the rest of
+    /// through its [`InProcess`](ruststream_runtime::testing::InProcess) transition, which performs no I/O; the rest of
     /// startup is the production one, so an `on_startup` that fails leaves no broker connected.
     ///
     /// # Errors
@@ -301,7 +301,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// to connect in process, or [`TestError::Subscribe`] if a subscription fails to open.
     ///
     /// The app's publish pipeline is whatever it was built with: an app-wide
-    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) is already baked into the mounted routes, so
+    /// [`publish_layer`](ruststream_runtime::RustStream::publish_layer) is already baked into the mounted routes, so
     /// the harness drives the same stack production would.
     ///
     /// # Examples
@@ -310,7 +310,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// downstream publishes, any cross-broker cascade. Then the test asserts.
     ///
     /// ```
-    /// # #[cfg(all(feature = "testing", feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::testing::TestApp;
@@ -367,16 +367,14 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///     Ok(())
     /// }
     /// # }
-    /// # #[cfg(all(feature = "testing", feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// #     tokio::runtime::Builder::new_multi_thread()
     /// #         .enable_all()
     /// #         .build()?
     /// #         .block_on(demo::confirms_valid_orders())
     /// # }
-    /// # #[cfg(not(all(
-    /// #     feature = "testing", feature = "macros", feature = "memory", feature = "json"
-    /// # )))]
+    /// # #[cfg(not(feature = "json"))]
     /// # fn main() {}
     /// ```
     pub async fn start<A>(app: A) -> Result<Self, TestError>
@@ -446,8 +444,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// A publish, a settle and an advance then wait until every subscription has handled each
     /// recorded publish its broker delivers to it, and every redelivery that fell due, and no
     /// handler is running. Which subscriptions a publish reaches is the broker's own routing, which
-    /// the broker answers through [`TestableBroker::routes`](super::TestableBroker::routes): an
-    /// equal name for [`MemoryBroker`](crate::memory::MemoryBroker), every matching subscription
+    /// the broker answers through [`TestableBroker::routes`](ruststream_runtime::testing::TestableBroker::routes): an
+    /// equal name for [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html), every matching subscription
     /// for a broker that fans out, the one it picks for a broker that picks one. A subscription of
     /// another broker never owes it. Each subscription counts what it handled itself, so two
     /// subscriptions reporting one name (two subscriptions on one topic) each owe the publish. The
@@ -459,8 +457,8 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// A publisher the service uses itself is outside this record: one kept in its state, one an
     /// `after_startup` hook is handed or pairs, one from
-    /// [`Bound::live`](crate::runtime::Bound::live) or
-    /// [`RunningApp::publisher`](crate::runtime::RunningApp::publisher), and one a broker crate
+    /// [`Bound::live`](ruststream_runtime::Bound::live) or
+    /// [`RunningApp::publisher`](ruststream_runtime::RunningApp::publisher), and one a broker crate
     /// builds outside the runtime's pairing. The harness neither waits for its publishes nor lists
     /// them; a test sends its own input through `tb.broker::<B>().message(..)`.
     ///
@@ -477,7 +475,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "testing", feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
@@ -527,7 +525,6 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "testing", feature = "memory"))]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use std::time::Duration;
     ///
@@ -736,7 +733,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     }
 
     /// Addresses the broker registered under `label` (see
-    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled)).
+    /// [`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled)).
     ///
     /// # Panics
     ///
@@ -751,7 +748,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         self.handle(entry, None)
     }
 
-    /// Asserts on what was published through the [`Out`](crate::runtime::Out) slot marked `M`:
+    /// Asserts on what was published through the [`Out`](ruststream_runtime::Out) slot marked `M`:
     /// exactly the messages the handler sent through that injected publisher, with their
     /// destinations and headers, across all brokers.
     ///
@@ -766,7 +763,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, Out, RustStream};
@@ -884,7 +881,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{AppInfo, HandlerOutcome, RustStream};
@@ -989,7 +986,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         }
     }
 
-    /// The result the real [`run`](crate::runtime::RustStream::run) would return: `Ok` while the
+    /// The result the real [`run`](ruststream_runtime::RustStream::run) would return: `Ok` while the
     /// service is healthy, or [`RustStreamError::Dispatch`] once a fail-fast failure tore it down.
     ///
     /// # Errors
@@ -1027,7 +1024,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         );
     }
 
-    /// Shuts the harness down the way [`RunningApp::shutdown`](crate::runtime::RunningApp::shutdown)
+    /// Shuts the harness down the way [`RunningApp::shutdown`](ruststream_runtime::RunningApp::shutdown)
     /// shuts the service down: the `on_shutdown` hooks, then the dispatch loops, the in-flight
     /// handlers and post-settle continuations (bounded by the app's shutdown timeout), the brokers
     /// in reverse registration order, and the `after_shutdown` hooks last. A failing shutdown hook
