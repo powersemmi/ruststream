@@ -5,61 +5,43 @@
 //! [`ruststream::memory`](https://docs.rs/ruststream/latest/ruststream/memory/), whose overview
 //! teaches it.
 
+mod broker;
 mod capability;
 mod log;
 mod pattern;
+mod subscriber;
 
-use capability::SeekControl;
+pub use broker::{
+    ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish,
+    MemoryPublisher, MemoryRequest,
+};
 pub use capability::{
     MemoryBatchContext, MemoryContext, MemoryPosition, MemoryRequester, MemorySeeker,
     MemoryTransaction, PARTITION_KEY_HEADER, Position, RequestError, SeekHandle,
 };
 use log::LogState;
-#[cfg(feature = "testing")]
-use log::NameLog;
 pub use log::{Discarding, LogMode, Retaining, Retention};
 pub use pattern::{MemoryPattern, PatternError, Routing};
-use pattern::{Pattern, PatternGroup, PatternReach, has_wildcard};
+use pattern::{Pattern, PatternGroup, PatternReach};
+use subscriber::SubscriptionShared;
+pub use subscriber::{MemoryMessage, MemorySource, MemorySubscriber};
 
+#[cfg(feature = "testing")]
+use std::sync::OnceLock;
 use std::{
-    borrow::Cow,
     collections::HashMap,
-    convert::Infallible,
-    fmt,
-    future::ready,
-    marker::PhantomData,
-    mem,
     num::NonZeroU64,
     sync::{
-        Arc, Mutex, MutexGuard, OnceLock, PoisonError,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    task::Poll,
-    time::Duration,
 };
 
 use bytes::Bytes;
-use futures::future::lazy;
-use futures::{Stream, stream};
-use ruststream_core::{
-    AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
-    FromName, HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher,
-    RawMessage, RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe, Subscriber,
-    SubscriptionSource, Take,
-};
-use ruststream_runtime::IntoSource;
-#[cfg(feature = "testing")]
-use ruststream_runtime::testing::Backlog;
+use ruststream_core::{BytesMut, HeaderMap, OutgoingMessage};
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::Coordinator;
-#[cfg(feature = "testing")]
-use ruststream_runtime::testing::InProcess;
-#[cfg(feature = "testing")]
-use ruststream_runtime::testing::TestableBroker;
-use thiserror::Error;
-use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
-use tokio::time::sleep;
 
 type Sender = mpsc::UnboundedSender<MemoryDelivery>;
 
@@ -534,1179 +516,240 @@ impl MemoryState {
     }
 }
 
-/// An in-memory reference broker. Cheap to clone.
-///
-/// The type parameter is the broker's log mode, and it decides what a subscription can do.
-/// [`new`](Self::new) builds the default, [`Discarding`] form: nothing is kept, memory does not
-/// grow with the message count, and there is no [`Seekable`](ruststream_core::Seekable) implementation to
-/// reposition a subscription with. [`retaining`](Self::retaining) builds the [`Retaining`] form,
-/// which keeps the newest messages of every name within its [`Retention`] bound and replays them
-/// on demand.
-///
-/// Every subscription of a name receives a copy of every message published to that name after
-/// it opened, and the whole state lives in the process's memory. The capabilities are native to
-/// the bus: request and reply through
-/// [`MemoryRequester`], batch consumption on [`MemorySubscriber`], transactions on
-/// [`MemoryPublisher`], partition keys on [`MemoryMessage`], and repositioning through
-/// [`MemorySeeker`] over the per-name publish log.
-///
-/// A [`retry_after`](ruststream_runtime::HandlerOutcome::retry_after) outcome is the broker's own
-/// affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is
-/// republished. Every delivery carries the count of what the broker has handed that subscriber,
-/// the first delivery included, which [`MemoryMessage`] reports through
-/// [`IncomingMessage::redelivery_count`]. A
-/// registration's `max_attempts(..)` is therefore spent on these redeliveries, and the delivery
-/// that spends it goes to the `dead_letter(..)` destination, or is terminated where the
-/// registration named none.
-///
-/// # Examples
-///
-/// ```
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[subscriber("orders")]
-/// async fn accept(order: &Order) -> HandlerOutcome {
-///     tracing::info!(order.id, "accepted");
-///     HandlerOutcome::ack()
-/// }
-///
-/// #[subscriber("orders", start_at(MemoryPosition::start()))]
-/// async fn rebuild(order: &Order) -> HandlerOutcome {
-///     tracing::info!(order.id, "replayed");
-///     HandlerOutcome::ack()
-/// }
-///
-/// /// A service that only routes messages keeps none of them.
-/// fn router() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(accept);
-///     })
-/// }
-///
-/// /// A service that replays keeps the last 128 messages of every name.
-/// fn projection() -> RustStream {
-///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(128)));
-///     RustStream::new(AppInfo::new("projection", "0.1.0")).with_broker(broker, |b| {
-///         b.include(rebuild);
-///     })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-pub struct MemoryBroker<Log = Discarding> {
-    state: Arc<MemoryState>,
-    mode: PhantomData<Log>,
-}
-
-impl<Log> Clone for MemoryBroker<Log> {
-    fn clone(&self) -> Self {
-        Self {
-            state: Arc::clone(&self.state),
-            mode: PhantomData,
-        }
-    }
-}
-
-impl Default for MemoryBroker<Discarding> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MemoryBroker<Discarding> {
-    /// Creates a new empty broker that keeps no publish log. Equivalent to
-    /// [`MemoryBroker::default`].
-    ///
-    /// Nothing a subscriber has consumed stays in memory, so a long-running service on this
-    /// broker holds only what its subscribers have yet to read. Replay is not available: the
-    /// [`Seekable`](ruststream_core::Seekable) capability is implemented for a
-    /// [`retaining`](Self::retaining) broker's subscriptions alone.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(MemoryState::discarding()),
-            mode: PhantomData,
-        }
-    }
-}
-
-impl MemoryBroker<Retaining> {
-    /// Creates a broker keeping the newest messages of every name within `retention`.
-    ///
-    /// Its subscriptions are [`Seekable`](ruststream_core::Seekable): a seeker replays the retained
-    /// messages from any position that has not been evicted. The bound holds per name, so the
-    /// broker's footprint is the bound times the number of names it publishes under.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # mod demo {
-    /// use ruststream::memory::prelude::*;
-    /// use serde::Deserialize;
-    ///
-    /// #[derive(Deserialize)]
-    /// struct Entry {
-    ///     id: u64,
-    /// }
-    ///
-    /// /// Opens at the oldest retained message, so a restart rebuilds from what the broker kept.
-    /// #[subscriber("audit", start_at(MemoryPosition::start()))]
-    /// async fn rebuild(entry: &Entry) -> HandlerOutcome {
-    ///     tracing::info!(entry.id, "replayed");
-    ///     HandlerOutcome::ack()
-    /// }
-    ///
-    /// fn app() -> RustStream {
-    ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(8)));
-    ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(rebuild);
-    ///     })
-    /// }
-    /// # }
-    /// # fn main() {}
-    /// ```
-    #[must_use]
-    pub fn retaining(retention: Retention) -> Self {
-        Self {
-            state: Arc::new(MemoryState::retaining(retention)),
-            mode: PhantomData,
-        }
-    }
-}
-
-impl<Log: LogMode> MemoryBroker<Log> {
-    /// Sets how a publish is routed where pattern subscriptions match it: to every match
-    /// ([`Routing::EveryMatch`], the default) or to the most specific one
-    /// ([`Routing::MostSpecific`]).
-    ///
-    /// A clone of the broker is the same broker, so it routes by the same rule.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # mod demo {
-    /// use ruststream::memory::prelude::*;
-    /// # #[derive(serde::Deserialize)]
-    /// # struct Order { id: u64 }
-    ///
-    /// #[subscriber("orders.eu")]
-    /// async fn europe(order: &Order) -> HandlerOutcome {
-    ///     let _ = order.id;
-    ///     HandlerOutcome::ack()
-    /// }
-    ///
-    /// // Every region without a handler of its own.
-    /// #[subscriber(MemoryPattern::new("orders.*"))]
-    /// async fn elsewhere(order: &Order) -> HandlerOutcome {
-    ///     let _ = order.id;
-    ///     HandlerOutcome::ack()
-    /// }
-    ///
-    /// fn app() -> RustStream {
-    ///     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
-    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-    ///         b.include(europe);
-    ///         b.include(elsewhere);
-    ///     })
-    /// }
-    /// # }
-    /// # fn main() {}
-    /// ```
-    #[must_use]
-    pub fn routing(self, routing: Routing) -> Self {
-        self.state.set_routing(routing);
-        self
-    }
-
-    /// Opens a subscription to `name`. The returned subscriber starts receiving messages
-    /// published after this call; messages published earlier are not delivered, though a
-    /// retaining broker's [`Seekable`](ruststream_core::Seekable) capability can replay them from its
-    /// publish log.
-    ///
-    /// On a shut-down broker the registration is refused and the subscriber simply never
-    /// receives anything, matching this constructor's infallible signature; the
-    /// [`Subscribe`] path reports [`MemoryError::ShutDown`] instead. A name with a wildcard
-    /// token (`*` or `>`) is a pattern, which this constructor does not open: the subscriber's
-    /// stream ends at once, where the [`Subscribe`] path reports [`MemoryError::WildcardName`]
-    /// and [`MemoryPattern`] opens the pattern.
-    #[must_use]
-    pub fn subscribe(&self, name: impl Into<String>) -> MemorySubscriber<Log> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let name = name.into();
-        if has_wildcard(&name) {
-            rx.close();
-        } else {
-            let _ = self.state.register(&name, tx.clone());
-        }
-        MemorySubscriber::new(name, rx, tx, &self.state, None)
-    }
-
-    /// Returns a publisher bound to this broker.
-    #[must_use]
-    pub fn publisher(&self) -> MemoryPublisher {
-        MemoryPublisher {
-            state: Arc::clone(&self.state),
-            txn: Mutex::new(None),
-        }
-    }
-
-    /// Returns a request / reply-capable publisher bound to this broker.
-    ///
-    /// Unlike [`MemoryBroker::publisher`], which reports [`MemoryError`], a requester awaits a
-    /// correlated reply that may never arrive, so its operations report [`RequestError`]: the
-    /// shut-down case plus a reply timeout.
-    #[must_use]
-    pub fn requester(&self) -> MemoryRequester {
-        MemoryRequester::new(Arc::clone(&self.state))
-    }
-}
-
-impl<Log> fmt::Debug for MemoryBroker<Log> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemoryBroker").finish_non_exhaustive()
-    }
-}
-
-impl<Log: LogMode> Broker for MemoryBroker<Log> {
-    type Error = MemoryError;
-    type Connected = ConnectedMemoryBroker<Log>;
-
-    /// Connecting is free for an in-process bus. A shut-down bus (a clone lineage may have shut
-    /// the shared state down) is revived with a fresh, empty registration map, so the connected
-    /// form always starts live; a live bus keeps its registrations.
-    ///
-    /// The connected form keeps the runtime it was connected on, and a delayed redelivery's timer
-    /// runs there whichever thread settles the delivery.
-    ///
-    /// # Panics
-    ///
-    /// Panics when polled outside a Tokio runtime, the one thing it has to capture.
-    fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> {
-        // Run on the first poll, so the runtime captured is the one the connection runs on, not
-        // the one the future happened to be built on.
-        lazy(move |_| {
-            {
-                let mut bus = self
-                    .state
-                    .subscribers
-                    .lock()
-                    .expect("memory broker mutex poisoned");
-                if let Bus::ShutDown(routing) = *bus {
-                    *bus = Bus::Live(Registry::new(routing));
-                }
-            }
-            Ok(ConnectedMemoryBroker {
-                state: self.state,
-                runtime: Handle::current(),
-                mode: PhantomData,
-            })
-        })
-    }
-}
-
-/// The connected form of [`MemoryBroker`]: the typed witness that [`Broker::connect`] ran.
-///
-/// Cheap to clone: the in-memory bus is shared state by nature, so the connected form is a
-/// shareable handle on it, exactly like the unconnected broker. Subscriptions (the
-/// [`Subscribe`] capability, [`MemorySource`]) resolve against this form, and carry over the
-/// broker's log mode: only a [`Retaining`] one opens repositionable subscriptions.
-pub struct ConnectedMemoryBroker<Log = Discarding> {
-    state: Arc<MemoryState>,
-    /// The runtime `connect` ran on, which every task the broker starts runs on.
-    runtime: Handle,
-    mode: PhantomData<Log>,
-}
-
-impl<Log> Clone for ConnectedMemoryBroker<Log> {
-    fn clone(&self) -> Self {
-        Self {
-            state: Arc::clone(&self.state),
-            runtime: self.runtime.clone(),
-            mode: PhantomData,
-        }
-    }
-}
-
-impl<Log> fmt::Debug for ConnectedMemoryBroker<Log> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ConnectedMemoryBroker")
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Log: LogMode> ConnectedMemoryBroker<Log> {
-    /// Returns a publisher bound to this broker.
-    #[must_use]
-    pub fn publisher(&self) -> MemoryPublisher {
-        MemoryPublisher {
-            state: Arc::clone(&self.state),
-            txn: Mutex::new(None),
-        }
-    }
-
-    /// Returns a request / reply-capable publisher bound to this broker.
-    ///
-    /// See [`MemoryBroker::requester`] for why its operations report [`RequestError`] rather
-    /// than [`MemoryError`].
-    #[must_use]
-    pub fn requester(&self) -> MemoryRequester {
-        MemoryRequester::new(Arc::clone(&self.state))
-    }
-}
-
-impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
-    type Error = MemoryError;
-    type Closed = ClosedMemoryBroker;
-
-    /// Enters the terminal shut-down state: the bus itself flips to its `ShutDown` variant, so
-    /// every aliased handle that would touch it (a publisher's publish or transaction commit, a
-    /// request) errors with [`MemoryError::ShutDown`]. Consuming `self` makes any further use
-    /// of this handle a compile error; the returned witness reports how many subscriber
-    /// registrations the teardown dropped.
-    fn shutdown(self) -> impl Future<Output = Result<Self::Closed, Self::Error>> {
-        let dropped = {
-            let mut bus = self
-                .state
-                .subscribers
-                .lock()
-                .expect("memory broker mutex poisoned");
-            let routing = match &*bus {
-                Bus::Live(registry) => registry.routing,
-                Bus::ShutDown(routing) => *routing,
-            };
-            match mem::replace(&mut *bus, Bus::ShutDown(routing)) {
-                Bus::Live(registry) => registry.len(),
-                Bus::ShutDown(_) => 0,
-            }
-        };
-        ready(Ok(ClosedMemoryBroker {
-            subscribers_dropped: dropped,
-        }))
-    }
-}
-
-/// The publish policy of the in-memory broker: no options to carry, so it is a unit marker.
-///
-/// Pairs into a [`MemoryPublisher`] against a [`ConnectedMemoryBroker`], filling the same
-/// [`PublishPolicy`] position where a richer broker carries real options (an exchange, a queue
-/// timeout, a transactional id).
-///
-/// It adds nothing to the generated `AsyncAPI` document. The specification's protocol keys are a
-/// closed list and `memory` is not one of them, so there is no lawful binding to fill; an `x-`
-/// extension would describe a transport that never leaves the process.
-///
-/// # Examples
-///
-/// ```
-/// # mod demo {
-/// use ruststream::memory::MemoryPublish;
-/// use ruststream::memory::prelude::*;
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[derive(Serialize, Outgoing)]
-/// #[outgoing(name = "orders.confirmed")]
-/// struct Confirmed {
-///     id: u64,
-/// }
-///
-/// #[subscriber("orders", reply)]
-/// async fn confirm(order: &Order) -> Confirmed {
-///     Confirmed { id: order.id }
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         // The prelude also names this policy `Publish`.
-///         b.include(confirm).out_reply(MemoryPublish);
-///     })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[must_use]
-pub struct MemoryPublish;
-
-impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryPublish {
-    type Live = MemoryPublisher;
-
-    fn pair(
-        self,
-        connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.publisher()))
-    }
-}
-
-impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
-    type Policy = MemoryPublish;
-}
-
-/// The request / reply policy of the in-memory broker; pairs into a [`MemoryRequester`].
-///
-/// # Examples
-///
-/// ```
-/// # mod demo {
-/// use std::time::Duration;
-///
-/// use ruststream::OutgoingMessage;
-/// use ruststream::memory::prelude::*;
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[derive(Serialize)]
-/// struct Ask {
-///     id: u64,
-/// }
-///
-/// #[derive(Deserialize)]
-/// struct Quote {
-///     price: u64,
-/// }
-///
-/// #[derive(OutSlot)]
-/// struct Pricing;
-///
-/// #[subscriber("orders")]
-/// async fn price(order: &Order, Out(pricing): Out<impl RequestReply, Pricing>) -> HandlerOutcome {
-///     let Ok(ask) = serde_json::to_vec(&Ask { id: order.id }) else {
-///         return HandlerOutcome::drop();
-///     };
-///     // The reply comes back on an inbox the request names in its `reply-to` header.
-///     let request = OutgoingMessage::new("quotes.ask", ask.as_slice());
-///     let Ok(reply) = pricing.request(request, Duration::from_secs(2)).await else {
-///         return HandlerOutcome::retry();
-///     };
-///     match serde_json::from_slice::<Quote>(reply.payload()) {
-///         Ok(quote) => {
-///             tracing::info!(order.id, quote.price, "priced");
-///             HandlerOutcome::ack()
-///         }
-///         Err(_) => HandlerOutcome::drop(),
-///     }
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(price).out(Pricing, Request).build();
-///     })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[must_use]
-pub struct MemoryRequest;
-
-impl<Log: LogMode> PublishPolicy<ConnectedMemoryBroker<Log>> for MemoryRequest {
-    type Live = MemoryRequester;
-
-    fn pair(
-        self,
-        connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<Self::Live, PairError>> {
-        ready(Ok(connected.requester()))
-    }
-}
-
-/// The terminal witness returned by shutting down a [`ConnectedMemoryBroker`].
-///
-/// Has no publish or subscribe surface; it carries the teardown diagnostics as plain data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClosedMemoryBroker {
-    subscribers_dropped: usize,
-}
-
-impl ClosedMemoryBroker {
-    /// How many subscriber registrations were dropped when the bus shut down.
-    #[must_use]
-    pub fn subscribers_dropped(&self) -> usize {
-        self.subscribers_dropped
-    }
-}
-
-impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
-    /// The in-memory broker has no network address, so it describes itself as an in-process server
-    /// over the `"memory"` protocol. Registered with
-    /// [`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled), the label is its
-    /// stable identity, letting a service mount several memory brokers with disjoint routing and
-    /// address each one by name.
-    fn describe_server(&self) -> ServerSpec {
-        ServerSpec::in_process("memory")
-    }
-}
-
-// The bus is in-process by nature, so the transition the harness connects through is the ordinary
-// `connect`: the connected form a test drives is the one production gets.
-#[cfg(feature = "testing")]
-impl<Log: LogMode> InProcess for MemoryBroker<Log> {
-    fn connect_in_process(
-        self,
-    ) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send {
-        self.connect()
-    }
-}
-
-// The harness drives the connected form that transition produces, and run_suite scenarios
-// receive it too.
-#[cfg(feature = "testing")]
-impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
-    fn install_coordinator(&self, coordinator: Coordinator) {
-        self.state.install_coordinator(coordinator);
-    }
-
-    fn inject(&self, message: OutgoingMessage<'_>) {
-        let (name, payload, headers) = message.into_parts();
-        // Injecting into a shut-down bus is a harness bug (both run_suite and TestApp drive
-        // the bus strictly before shutdown), so fail loudly instead of losing the message.
-        self.state
-            .fanout(name, Bytes::copy_from_slice(payload), headers)
-            .expect("inject on a shut-down broker: drive the harness before shutdown");
-    }
-
-    /// What the broker holds under `name`: everything published there on a discarding broker
-    /// (which records for the length of a harness run), and the retained window on a retaining
-    /// one, so an assertion never claims more than the broker keeps.
-    fn published(&self, name: &str) -> Vec<RawMessage> {
-        self.state
-            .log
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .name(name)
-            .map(|log| log.messages(name))
-            .unwrap_or_default()
-    }
-
-    /// How many of the oldest messages under `name` a retaining broker's bound pushed out of its
-    /// log; zero on a discarding broker, whose log records without a bound for a harness run.
-    fn evicted(&self, name: &str) -> usize {
-        self.state
-            .log
-            .lock()
-            .expect("memory broker mutex poisoned")
-            .name(name)
-            .map_or(0, NameLog::first_seq)
-    }
-
-    /// The broker's own rule, read from the [`Routing`] it was built with: a name with a
-    /// wildcard token is a [`MemoryPattern`] subscription, every other one an exact name.
-    fn routes(&self, destination: &str, subscriptions: &[&str]) -> Vec<usize> {
-        self.state.routing().routes(destination, subscriptions)
-    }
-
-    /// A subscription receives what is published after it opens, on either log mode: a retaining
-    /// broker keeps its log for a seek to replay, not for a subscription to start from.
-    fn backlog(&self) -> Backlog {
-        Backlog::Missed
-    }
-}
-
-// One registration per log mode: the harness finds a broker by the type the app was built on,
-// and the two modes are two types.
-#[cfg(feature = "testing")]
-ruststream_runtime::register_testable_broker!(MemoryBroker<Discarding>);
-#[cfg(feature = "testing")]
-ruststream_runtime::register_testable_broker!(MemoryBroker<Retaining>);
-
-impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
-    type Subscriber = MemorySubscriber<Log>;
-    // One subject is both ends of the bus here, so a publish under the name a subscription reads
-    // reaches that subscription, and the name is the address.
-    type Copies = AddressedCopies;
-
-    /// A name with a wildcard token is refused with [`MemoryError::WildcardName`]: this form
-    /// reads one name, and [`MemoryPattern`] is the one that reads a pattern.
-    fn subscribe(&self, name: &str) -> impl Future<Output = Result<Self::Subscriber, Self::Error>> {
-        if has_wildcard(name) {
-            return ready(Err(MemoryError::WildcardName {
-                name: name.to_owned(),
-            }));
-        }
-        let (tx, rx) = mpsc::unbounded_channel();
-        let name = name.to_owned();
-        if let Err(err) = self.state.register(&name, tx.clone()) {
-            return ready(Err(err));
-        }
-        ready(Ok(MemorySubscriber::new(
-            name,
-            rx,
-            tx,
-            &self.state,
-            Some(self.runtime.clone()),
-        )))
-    }
-}
-
-/// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
-///
-/// The broker-owned counterpart to the generic [`Name`](ruststream_core::Name) source: it carries no extra
-/// configuration, the in-memory broker having none.
-/// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
-/// way a NATS service passes `SubscribeOptions`.
-///
-/// It reads one name, which is also where a retry copy goes. A name with a wildcard token (`*` or
-/// `>`) refuses to open with [`MemoryError::WildcardName`]; [`MemoryPattern`] reads a pattern.
-#[derive(Debug, Clone)]
-pub struct MemorySource {
-    name: String,
-}
-
-impl MemorySource {
-    /// Creates a source bound to `name`.
-    #[must_use]
-    pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
-    }
-}
-
-// The in-memory subscription needs nothing beyond a name, so it offers the name-only
-// constructor the `#[subscriber(MemorySource)]` form builds through.
-impl FromName for MemorySource {
-    fn from_name(name: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(name.into().into_owned())
-    }
-}
-
-impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
-    type Subscriber = MemorySubscriber<Log>;
-    // The bus moves nothing on its own, and one subject is both ends of it, so a copy goes back
-    // to the subject the subscription reads.
-    type Copies = AddressedCopies;
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn subscribe(
-        self,
-        connected: &ConnectedMemoryBroker<Log>,
-    ) -> Result<Self::Subscriber, MemoryError> {
-        Subscribe::subscribe(connected, &self.name).await
-    }
-}
-
-impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySource {
-    fn redelivery_address(
-        &self,
-        _connected: &ConnectedMemoryBroker<Log>,
-    ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
-        // One subject is both ends of the bus, and no lookup is needed to say so.
-        ready(Ok(RedeliveryAddress::new(self.name.clone())))
-    }
-}
-
-impl IntoSource for MemorySource {
-    type Source = Self;
-
-    fn into_source(self) -> Self {
-        self
-    }
-}
-
-impl IntoSource for MemoryPattern {
-    type Source = Self;
-
-    fn into_source(self) -> Self {
-        self
-    }
-}
-
-/// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
-/// delivery; consumers must call `ack` or `nack` on each.
-///
-/// Also consumable in batches through the [`BatchSubscriber`](ruststream_core::BatchSubscriber) capability,
-/// which caps each batch at the size it is asked for and allocates it at that size up front. A
-/// subscription of a [`Retaining`] broker is
-/// repositionable over its publish log through the [`Seekable`](ruststream_core::Seekable) capability: mint
-/// a [`MemorySeeker`] with [`seeker`](ruststream_core::Seekable::seeker) before opening the stream.
-pub struct MemorySubscriber<Log = Discarding> {
-    rx: mpsc::UnboundedReceiver<MemoryDelivery>,
-    /// What this subscription shares with every delivery it yields and every seeker minted off
-    /// it.
-    subscription: Arc<SubscriptionShared>,
-    mode: PhantomData<Log>,
-}
-
-/// One subscription's state that outlives a poll: its name, the bus, the channel a requeue goes
-/// back through, and the seek handoff.
-///
-/// A subscription allocates it once, and every delivery and every [`MemorySeeker`] holds it
-/// behind one reference count: a delivery takes one increment where a requeue sender and a
-/// seeker would take one each, and a seeker minted off a delivery is that same increment.
-struct SubscriptionShared {
-    /// The name the subscription reads, which a seek resolves against the publish log.
-    name: String,
-    /// Bus state, kept so a seek can read the publish log and check liveness.
-    state: Arc<MemoryState>,
-    /// The subscription's own channel: a requeue and a replay go back through it.
-    requeue: Sender,
-    /// The runtime a delayed redelivery's timer runs on: the one the broker connected on.
-    ///
-    /// Optional because [`MemoryBroker::subscribe`] opens a subscription without connecting, and
-    /// may run outside any runtime; such a subscription's timer runs on the settling caller's.
-    runtime: Option<Handle>,
-    /// The pending reposition, the stale-delivery watermark, and the waker that rouses a parked
-    /// stream.
-    seek: SeekControl,
-}
-
-impl<Log> MemorySubscriber<Log> {
-    /// The subscriber reading `rx`, whose registration on the bus is `requeue`'s twin.
-    fn new(
-        name: String,
-        rx: mpsc::UnboundedReceiver<MemoryDelivery>,
-        requeue: Sender,
-        state: &Arc<MemoryState>,
-        runtime: Option<Handle>,
-    ) -> Self {
-        Self {
-            rx,
-            subscription: Arc::new(SubscriptionShared {
-                name,
-                state: Arc::clone(state),
-                requeue,
-                runtime,
-                seek: SeekControl::default(),
-            }),
-            mode: PhantomData,
-        }
-    }
-
-    /// A clone of the broker's harness coordinator, threaded into each yielded message so a
-    /// requeue re-counts and a consumed delivery decrements. `None` outside a harness run.
-    ///
-    /// Read off the bus at stream time rather than captured at subscribe time: a subscriber built
-    /// before the app was handed to the harness would otherwise carry `None` forever and never
-    /// decrement what the bus counted in, hanging the quiescence wait.
-    #[cfg(feature = "testing")]
-    pub(crate) fn coordinator(&self) -> Option<Coordinator> {
-        self.subscription.state.coordinator()
-    }
-}
-
-#[cfg(feature = "testing")]
-impl<Log> Drop for MemorySubscriber<Log> {
-    /// What is still queued leaves with the subscription, so the harness stops counting it in
-    /// flight. A delivery handed back unsettled while the service tears down (a fail-fast panic)
-    /// lands here, and the reaction the test waits on is over once the subscription is gone.
-    fn drop(&mut self) {
-        let Some(coordinator) = self.coordinator() else {
-            return;
-        };
-        // Closed first, so a requeue racing the drop either lands before the drain or fails.
-        self.rx.close();
-        while self.rx.try_recv().is_ok() {
-            coordinator.consumed();
-        }
-    }
-}
-
-impl<Log> fmt::Debug for MemorySubscriber<Log> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemorySubscriber")
-            .field("name", &self.subscription.name)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
-    type Message = MemoryMessage<Log>;
-    type Error = Infallible;
-
-    fn stream(&mut self) -> impl Stream<Item = Result<Self::Message, Self::Error>> + Send + '_ {
-        #[cfg(feature = "testing")]
-        let coordinator = self.coordinator();
-        // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
-        // be called again after the returned stream is dropped (helpers re-enter it per call).
-        stream::poll_fn(move |cx| {
-            // Register before reading the pending seek: a seek landing between the read and the
-            // park then still finds a waker to rouse.
-            // Only a seeker wakes this waker, and a discarding subscription mints none.
-            if log::retains::<Log>() {
-                self.subscription.seek.waker.register(cx.waker());
-            }
-            self.apply_pending_seek();
-            loop {
-                match self.rx.poll_recv(cx) {
-                    // A stale pre-seek copy (a requeue that raced the seek): drop it, the replay
-                    // already covers everything from the watermark on.
-                    Poll::Ready(Some(delivery))
-                        if log::retains::<Log>()
-                            && delivery.seq < self.subscription.seek.watermark() =>
-                    {
-                        #[cfg(feature = "testing")]
-                        if let Some(coordinator) = &coordinator {
-                            coordinator.consumed();
-                        }
-                    }
-                    Poll::Ready(Some(delivery)) => {
-                        return Poll::Ready(Some(Ok(MemoryMessage {
-                            delivery: Some(delivery),
-                            subscription: Some(Arc::clone(&self.subscription)),
-                            #[cfg(feature = "testing")]
-                            coordinator: coordinator.clone(),
-                            mode: PhantomData,
-                        })));
-                    }
-                    Poll::Ready(None) => return Poll::Ready(None),
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
-        })
-    }
-}
-
-/// Publisher returned by [`MemoryBroker::publisher`]. Fanout copy to every subscriber of the
-/// target name at publish time.
-///
-/// Also implements [`TransactionalPublisher`](ruststream_core::TransactionalPublisher): while a
-/// transaction is active on this handle, publishes are buffered and fan out together on commit.
-pub struct MemoryPublisher {
-    state: Arc<MemoryState>,
-    // Active transaction buffer of this handle. `None` outside a transaction.
-    txn: Mutex<Option<Vec<MemoryOutbound>>>,
-}
-
-impl Clone for MemoryPublisher {
-    /// A clone is an independent handle on the same broker: it does not join (or carry over)
-    /// this handle's active transaction.
-    fn clone(&self) -> Self {
-        Self {
-            state: Arc::clone(&self.state),
-            txn: Mutex::new(None),
-        }
-    }
-}
-
-impl fmt::Debug for MemoryPublisher {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemoryPublisher").finish_non_exhaustive()
-    }
-}
-
-/// Error type of the in-memory broker: returned by [`MemoryPublisher`] and used as the error
-/// type of the [`Broker`] / [`ConnectedBroker`] lifecycle and the [`Subscribe`] capability.
-///
-/// The bus is in-process, so there is no transport to fail: operations against a live bus
-/// succeed, and a publish, subscription, or transaction commit through a handle aliasing a
-/// shut-down bus reports [`ShutDown`](MemoryError::ShutDown). The transaction variants cover
-/// misuse, which the [`TransactionalPublisher`](ruststream_core::TransactionalPublisher) contract requires
-/// to surface as errors rather than silent no-ops. The subscription variants refuse a name or a
-/// pattern when the subscription opens, so a service with a bad one does not start.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MemoryError {
-    /// `begin_transaction` was called while a transaction is already open on this handle.
-    #[error("a transaction is already open on this publisher handle")]
-    TransactionBusy,
-    /// `commit` or `abort` was called with no open transaction on this handle.
-    #[error("no transaction is open on this publisher handle")]
-    NoTransaction,
-    /// The operation (a publish, subscribe, transaction commit, or request) ran through a handle
-    /// aliasing a bus that was shut down ([`ConnectedBroker::shutdown`]) and not revived by a
-    /// sibling clone's [`Broker::connect`].
-    #[error("the memory broker is shut down")]
-    ShutDown,
-    /// A seek named a message the broker no longer keeps: the retention bound evicted it. The
-    /// oldest position still replayable is reported, so a caller that wants what is left seeks
-    /// to [`MemoryPosition::start`] instead.
-    #[error("position {requested} is no longer retained; the log starts at {oldest}")]
-    PositionEvicted {
-        /// The position the seek asked for.
-        requested: usize,
-        /// The oldest position the name still retains.
-        oldest: usize,
-    },
-    /// A [`MemoryPattern`] subscription named a pattern that does not parse.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::memory::{MemoryBroker, MemoryError, MemoryPattern, MemorySource};
-    /// use ruststream::{Broker, SubscriptionSource};
-    ///
-    /// let connected = MemoryBroker::new().connect().await?;
-    /// let refused = MemoryPattern::new("orders..eu").subscribe(&connected).await;
-    /// assert!(matches!(refused, Err(MemoryError::InvalidPattern { .. })));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[error("subscription pattern {pattern:?} is invalid: {reason}")]
-    InvalidPattern {
-        /// The pattern as the subscription wrote it.
-        pattern: String,
-        /// What is wrong with it.
-        reason: PatternError,
-    },
-    /// A subscription by name ([`MemorySource`] or a bare `#[subscriber("..")]`) named a pattern.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use ruststream::memory::{MemoryBroker, MemoryError, MemoryPattern, MemorySource};
-    /// use ruststream::{Broker, SubscriptionSource};
-    ///
-    /// let connected = MemoryBroker::new().connect().await?;
-    /// let refused = MemorySource::new("orders.*").subscribe(&connected).await;
-    /// assert!(matches!(refused, Err(MemoryError::WildcardName { .. })));
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[error(
-        "subscription {name:?} has a wildcard token and reads one name only; subscribe to a \
-         pattern with `MemoryPattern::new({name:?})`"
-    )]
-    WildcardName {
-        /// The name as the subscription wrote it.
-        name: String,
-    },
-}
-
-impl Publisher for MemoryPublisher {
-    // The bus keeps every message it is handed until the last subscriber has read it, so the
-    // publish hands the buffer over rather than lending it.
-    type Payload = Take;
-
-    type Error = MemoryError;
-    // The in-memory bus has no protocol field a message can differ in, so there is nothing to
-    // settle per message.
-    type Options = ();
-
-    fn publish(
-        &self,
-        msg: OutgoingMessage<'_, BytesMut>,
-        _options: Option<&Self::Options>,
-    ) -> impl Future<Output = Result<(), Self::Error>> {
-        {
-            let mut txn = self.txn.lock().expect("memory broker mutex poisoned");
-            if let Some(buffered) = txn.as_mut() {
-                // Buffering is local to this handle and never touches the bus; a commit against
-                // a shut-down bus is what reports the error. The name is copied here because the
-                // buffer outlives this call.
-                buffered.push(MemoryOutbound::from(msg));
-                return ready(Ok(()));
-            }
-        }
-        let (name, payload, headers) = msg.into_parts();
-        ready(self.state.fanout(name, payload.freeze(), headers))
-    }
-}
-
-/// A delivery yielded by [`MemorySubscriber::stream`].
-///
-/// Consumers call [`IncomingMessage::ack`] to confirm processing or
-/// [`IncomingMessage::nack`] to negatively acknowledge. `nack` with `requeue = true` pushes the
-/// delivery back to the same subscriber's queue; with `requeue = false` it is dropped.
-/// [`nack_after`](IncomingMessage::nack_after) pushes it back once the delay has elapsed, and at
-/// once for a zero delay. A delivery dropped without a settlement is pushed back too: only a
-/// settlement consumes it.
-pub struct MemoryMessage<Log = Discarding> {
-    delivery: Option<MemoryDelivery>,
-    /// The subscription this delivery came from, which a requeue goes back to and the seek
-    /// context builds off. `None` for a request-reply inbox message, which has no subscription
-    /// behind it: nothing reads the inbox once the request returns, so a requeue drops it.
-    subscription: Option<Arc<SubscriptionShared>>,
-    /// A clone of the broker's harness coordinator. When set, this delivery is counted in flight and
-    /// is decremented once when the message is consumed or dropped (see the `Drop` impl). `None`
-    /// outside a harness run and for request-reply inbox messages (which are not dispatch-driven).
-    #[cfg(feature = "testing")]
-    coordinator: Option<Coordinator>,
-    mode: PhantomData<Log>,
-}
-
-impl<Log> Drop for MemoryMessage<Log> {
-    /// Hands an unsettled delivery back to its subscription, the way a broker with
-    /// acknowledgement takes back what its consumer let go of: only a settlement consumes a
-    /// delivery. The redelivery counts as one more delivery, and it is a send on the
-    /// subscription's queue, so it runs on no runtime at all.
-    ///
-    /// Under the harness it also counts this delivery consumed exactly once: on ack, nack,
-    /// `into_raw`, or an unsettled drop. A requeue (`nack(true)`, `nack_after`, this drop)
-    /// re-enqueues a fresh delivery first, so the in-flight count stays balanced across
-    /// redelivery.
-    fn drop(&mut self) {
-        if let Some(delivery) = self.delivery.take() {
-            self.requeue_now(delivery.redelivered());
-        }
-        #[cfg(feature = "testing")]
-        if let Some(coordinator) = &self.coordinator {
-            coordinator.consumed();
-        }
-    }
-}
-
-impl<Log> fmt::Debug for MemoryMessage<Log> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemoryMessage")
-            .field("name", &self.delivery.as_ref().map(|d| &*d.shared.name))
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Log> MemoryMessage<Log> {
-    /// Returns the name the message was published to.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        self.delivery
-            .as_ref()
-            .map(|d| &*d.shared.name)
-            .unwrap_or_default()
-    }
-
-    /// Converts the delivery into a broker-agnostic [`RawMessage`]. Consumes the handle without
-    /// acknowledging; useful only for assertions that do not care about ack state.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the delivery has already been moved out (only possible if internal invariants
-    /// were violated; not reachable through the public API).
-    #[must_use]
-    pub fn into_raw(mut self) -> RawMessage {
-        let delivery = self.delivery.take().expect("delivery already consumed");
-        // Cold path (test assertions): the name, the payload and the headers are copied out of
-        // the shared block here, not on the fanout.
-        RawMessage::new(&*delivery.shared.name, delivery.shared.payload.clone())
-            .with_headers(delivery.shared.headers.clone())
-    }
-}
-
-impl<Log> MemoryMessage<Log> {
-    /// Puts `delivery` back on its subscription's queue now.
-    fn requeue_now(&self, delivery: MemoryDelivery) {
-        // An inbox reply has no subscription to come back to; see `subscription`.
-        let Some(subscription) = &self.subscription else {
-            return;
-        };
-        let sent = subscription.requeue.send(delivery);
-        // The requeue bypasses `fanout`, so count the re-enqueue here to balance this message's
-        // `Drop` decrement. The redelivered copy is consumed (and decremented) in turn.
-        #[cfg(feature = "testing")]
-        if sent.is_ok()
-            && let Some(coordinator) = &self.coordinator
-        {
-            coordinator.enqueued();
-        }
-        // The subscriber may be gone by now; a dropped receiver is not an error.
-        #[cfg(not(feature = "testing"))]
-        let _ = sent;
-    }
-}
-
-impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
-    fn payload(&self) -> &[u8] {
-        self.delivery
-            .as_ref()
-            .map(|d| d.shared.payload.as_ref())
-            .unwrap_or_default()
-    }
-
-    fn partition_key(&self) -> Option<&[u8]> {
-        ruststream_core::Partitioned::partition_key(self)
-    }
-
-    fn headers(&self) -> &HeaderMap {
-        static EMPTY: OnceLock<HeaderMap> = OnceLock::new();
-        self.delivery
-            .as_ref()
-            .map_or_else(|| EMPTY.get_or_init(HeaderMap::new), |d| &d.shared.headers)
-    }
-
-    /// This broker counts what it delivers, so a registration's `max_attempts(..)` is spent on
-    /// its own requeues and delayed redeliveries rather than only on the copies the runtime
-    /// publishes. The first delivery of a message answers one.
-    fn redelivery_count(&self) -> Option<u64> {
-        self.delivery.as_ref().map(|d| d.deliveries.get())
-    }
-
-    fn ack(mut self) -> impl Future<Output = Result<(), AckError>> {
-        self.delivery.take();
-        ready(Ok(()))
-    }
-
-    fn nack(mut self, requeue: bool) -> impl Future<Output = Result<(), AckError>> {
-        let delivery = self.delivery.take().expect("delivery already consumed");
-        if requeue {
-            self.requeue_now(delivery.redelivered());
-        }
-        ready(Ok(()))
-    }
-
-    fn supports_nack_after(&self) -> bool {
-        true
-    }
-
-    /// Native delayed redelivery: the message returns to the same subscriber's queue once
-    /// `delay` has elapsed and counts as one more delivery. A zero delay returns it at once, as
-    /// `nack(true)` does, so under `TestApp` it arrives without an `advance`.
-    fn nack_after(mut self, delay: Duration) -> impl Future<Output = Result<(), AckError>> {
-        let delivery = self
-            .delivery
-            .take()
-            .expect("delivery already consumed")
-            .redelivered();
-        // A zero delay is a requeue that counts as a redelivery: a timer task for it would cost a
-        // task allocation and two scheduler turns to reach the same place in the queue.
-        if delay.is_zero() {
-            self.requeue_now(delivery);
-            return ready(Ok(()));
-        }
-        // Taken rather than cloned: the message is consumed here, so its count moves to the
-        // redelivery. An inbox reply has no subscription to come back to; see `subscription`.
-        let Some(subscription) = self.subscription.take() else {
-            return ready(Ok(()));
-        };
-        // The timer holds the requeue sender, not the subscription: the subscription holds the
-        // bus and its publish log, which a redelivery an hour away must not keep alive once the
-        // broker and the subscriber are gone.
-        let back = subscription.requeue.clone();
-        // Under the harness, register the redelivery with the coordinator so the in-flight count is
-        // re-balanced when it fires and a test can drive it with `TestApp::advance`. The immediate
-        // settlement (`NackAfter`) was already recorded; the redelivery is off the synchronous
-        // reaction `drive` waits on.
-        #[cfg(feature = "testing")]
-        if let Some(coordinator) = self.coordinator.clone() {
-            drop(subscription);
-            let counter = coordinator.clone();
-            coordinator.schedule_redelivery(delay, move || {
-                if back.send(delivery).is_ok() {
-                    counter.enqueued();
-                }
-            });
-            return ready(Ok(()));
-        }
-        let redeliver = async move {
-            sleep(delay).await;
-            // The subscriber may be gone by then; a dropped receiver is not an error.
-            let _ = back.send(delivery);
-        };
-        // On the runtime the broker connected on, not the settling caller's: a handler on a
-        // dedicated thread settles from a runtime that may stop before the delay runs out.
-        match &subscription.runtime {
-            Some(runtime) => drop(runtime.spawn(redeliver)),
-            None => drop(tokio::spawn(redeliver)),
-        }
-        ready(Ok(()))
-    }
-}
-
 #[cfg(test)]
-mod tests;
+mod tests {
+    use futures::{FutureExt, StreamExt};
+    use ruststream_core::{
+        Broker, ConnectedBroker, IncomingMessage, Publisher, Subscribe, Subscriber,
+        SubscriptionSource,
+    };
+
+    use super::*;
+
+    /// What the default broker keeps: nothing. A service publishing forever on it grows only by
+    /// what its subscribers have yet to read.
+    #[tokio::test]
+    async fn a_discarding_broker_records_nothing_it_publishes() {
+        let broker = MemoryBroker::new();
+        let publisher = broker.publisher();
+        for i in 0..100u8 {
+            publisher
+                .publish(OutgoingMessage::new("orders", &[i]), None)
+                .await
+                .unwrap();
+        }
+
+        assert!(!broker.state.recording.load(Ordering::Acquire));
+        assert!(broker.state.log.lock().unwrap().name("orders").is_none());
+    }
+
+    /// The bound holds per name: the newest messages stay, the oldest are evicted, and the
+    /// positions of what is left do not shift.
+    #[tokio::test]
+    async fn a_retaining_broker_evicts_past_its_message_bound() {
+        let broker = MemoryBroker::retaining(Retention::Messages(ruststream_core::nonzero!(2)));
+        let publisher = broker.publisher();
+        for i in 0..5u8 {
+            publisher
+                .publish(OutgoingMessage::new("orders", &[i]), None)
+                .await
+                .unwrap();
+        }
+
+        let log = broker.state.log.lock().unwrap();
+        let retained = log.name("orders").expect("the name was published to");
+        let first_seq = retained.first_seq();
+        let next_seq = retained.next_seq();
+        let payloads: Vec<Vec<u8>> = retained
+            .messages("orders")
+            .iter()
+            .map(|msg| msg.payload().to_vec())
+            .collect();
+        drop(log);
+
+        assert_eq!(first_seq, 3, "the first three are evicted");
+        assert_eq!(next_seq, 5, "positions stay absolute");
+        assert_eq!(payloads, [vec![3], vec![4]]);
+    }
+
+    /// A payload wider than the byte bound is kept alone rather than dropped on arrival: the
+    /// message a publish just produced must be readable back.
+    #[tokio::test]
+    async fn a_byte_bound_keeps_the_newest_message_whatever_its_size() {
+        let broker = MemoryBroker::retaining(Retention::Bytes(ruststream_core::nonzero!(4)));
+        let publisher = broker.publisher();
+        publisher
+            .publish(OutgoingMessage::new("frames", &[0u8; 64]), None)
+            .await
+            .unwrap();
+
+        let retained = {
+            let log = broker.state.log.lock().unwrap();
+            log.name("frames")
+                .expect("the name was published to")
+                .messages("frames")
+        };
+        assert_eq!(retained.len(), 1);
+    }
+
+    /// The payload of each name's log, oldest first, as the retention bound left it.
+    fn retained(broker: &MemoryBroker<Retaining>, name: &str) -> Vec<Vec<u8>> {
+        let log = broker.state.log.lock().unwrap();
+        log.name(name)
+            .expect("the name was published to")
+            .messages(name)
+            .iter()
+            .map(|msg| msg.payload().to_vec())
+            .collect()
+    }
+
+    /// A byte bound evicts the oldest messages until what is left fits, whatever their count.
+    #[tokio::test]
+    async fn a_byte_bound_evicts_the_oldest_past_its_budget() {
+        let broker = MemoryBroker::retaining(Retention::Bytes(ruststream_core::nonzero!(4)));
+        let publisher = broker.publisher();
+        for i in 0..3u8 {
+            publisher
+                .publish(OutgoingMessage::new("frames", &[i, i]), None)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(retained(&broker, "frames"), [vec![1, 1], vec![2, 2]]);
+    }
+
+    /// Under both bounds at once the first one reached evicts: many small messages meet the count,
+    /// a few wide ones meet the bytes.
+    #[tokio::test]
+    async fn a_combined_bound_evicts_at_whichever_bound_is_reached_first() {
+        let broker = MemoryBroker::retaining(Retention::MessagesAndBytes {
+            messages: ruststream_core::nonzero!(2),
+            bytes: ruststream_core::nonzero!(4),
+        });
+        let publisher = broker.publisher();
+        for i in 0..3u8 {
+            publisher
+                .publish(OutgoingMessage::new("small", &[i]), None)
+                .await
+                .unwrap();
+        }
+        for i in 0..2u8 {
+            publisher
+                .publish(OutgoingMessage::new("wide", &[i; 3]), None)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(retained(&broker, "small"), [vec![1], vec![2]]);
+        assert_eq!(retained(&broker, "wide"), [vec![1; 3]]);
+    }
+
+    /// One name per subscription rather than one per delivery: the fanout stamps the delivery with
+    /// the very handle the registration holds, which is what keeps the name off the allocator.
+    #[tokio::test]
+    async fn a_delivery_carries_the_name_the_registry_holds() {
+        let broker = MemoryBroker::new();
+        let mut subscriber = broker.subscribe("orders");
+        broker
+            .publisher()
+            .publish(OutgoingMessage::new("orders", b"body"), None)
+            .await
+            .unwrap();
+
+        let mut stream = std::pin::pin!(subscriber.stream());
+        let delivered = stream.next().await.unwrap().unwrap();
+        let stamped = &delivered
+            .delivery
+            .as_ref()
+            .expect("the delivery is still held")
+            .shared
+            .name;
+
+        let bus = broker.state.subscribers.lock().unwrap();
+        let Bus::Live(registry) = &*bus else {
+            panic!("the bus is live");
+        };
+        let (registered, _) = registry
+            .names
+            .get_key_value("orders")
+            .expect("the subscription is registered");
+        let registered = Arc::clone(registered);
+        drop(bus);
+
+        assert!(Arc::ptr_eq(&registered, stamped));
+    }
+
+    /// Under `MostSpecific` a subscription that has gone takes nothing: an exact name or a more
+    /// specific pattern whose subscribers were all dropped leaves the publish to the next match that
+    /// still reads.
+    #[tokio::test]
+    async fn most_specific_skips_subscriptions_that_have_gone() {
+        let connected = MemoryBroker::new()
+            .routing(Routing::MostSpecific)
+            .connect()
+            .await
+            .unwrap();
+        let exact = connected.subscribe("orders.eu.created").await.unwrap();
+        let specific = MemoryPattern::new("orders.eu.*")
+            .subscribe(&connected)
+            .await
+            .unwrap();
+        let mut general = MemoryPattern::new("orders.>")
+            .subscribe(&connected)
+            .await
+            .unwrap();
+        drop(exact);
+        drop(specific);
+
+        connected
+            .publisher()
+            .publish(OutgoingMessage::new("orders.eu.created", b"body"), None)
+            .await
+            .unwrap();
+        let mut stream = std::pin::pin!(general.stream());
+        assert_eq!(
+            stream
+                .next()
+                .now_or_never()
+                .flatten()
+                .unwrap()
+                .unwrap()
+                .name(),
+            "orders.eu.created"
+        );
+    }
+
+    /// A pattern subscription reads every name it matches, stamped with the name it was published
+    /// to, and a shut-down bus keeps the routing rule for its revival.
+    #[tokio::test]
+    async fn a_pattern_reads_every_match_and_the_rule_survives_shutdown() {
+        let broker = MemoryBroker::new().routing(Routing::MostSpecific);
+        let connected = broker.clone().connect().await.unwrap();
+        let mut pattern = MemoryPattern::new("orders.>")
+            .subscribe(&connected)
+            .await
+            .unwrap();
+        let publisher = connected.publisher();
+        for name in ["orders.eu", "orders.eu.created", "invoices.eu"] {
+            publisher
+                .publish(OutgoingMessage::new(name, b"body"), None)
+                .await
+                .unwrap();
+        }
+        {
+            let mut stream = std::pin::pin!(pattern.stream());
+            for expected in ["orders.eu", "orders.eu.created"] {
+                let delivery = stream.next().await.unwrap().unwrap();
+                assert_eq!(delivery.name(), expected);
+                // Settled, because a delivery dropped unsettled comes back.
+                delivery.ack().await.unwrap();
+            }
+            assert!(stream.next().now_or_never().is_none());
+        }
+
+        let closed = connected.shutdown().await.unwrap();
+        assert_eq!(closed.subscribers_dropped(), 1);
+        let revived = broker.connect().await.unwrap();
+        assert_eq!(revived.state.routing(), Routing::MostSpecific);
+    }
+}
