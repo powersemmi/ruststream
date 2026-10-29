@@ -16,6 +16,8 @@ enum Rule {
     LeftToRight,
     /// The named function reads the delivery and returns the kind to decode.
     Discriminate(ExprPath),
+    /// The named type reads the decode codec and the delivery and returns the kind to decode.
+    DiscriminateWithCodec(ExprPath),
     /// The named header carries one declared value per variant.
     Header(LitStr),
 }
@@ -88,6 +90,50 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl ::ruststream::runtime::MessageDeclaration for #name {}
     };
 
+    // A codec-discriminated set decodes only under the codecs its discriminator accepts, so its
+    // decode is written per codec and the set implements the codec-parameterized trait alone.
+    let set_impl = if let Rule::DiscriminateWithCodec(discriminator) = &rule {
+        quote! {
+            impl<__RsCodec> ::ruststream::runtime::DecodeSet<__RsCodec> for #name
+            where
+                __RsCodec: ::ruststream::codec::Codec,
+                #discriminator: ::ruststream::runtime::CodecDiscriminator<#kind, __RsCodec>,
+            {
+                fn decode<__RsMsg: ::ruststream::IncomingMessage>(
+                    codec: &__RsCodec,
+                    msg: &__RsMsg,
+                ) -> ::core::result::Result<Self, ::ruststream::codec::CodecError> {
+                    #decode
+                }
+
+                fn incoming() -> ::std::vec::Vec<::ruststream::runtime::IncomingMessageMetadata> {
+                    ::std::vec![#(#entries),*]
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl ::ruststream::runtime::InMessages for #name {
+                type Kind = #kind;
+
+                fn decode<__RsCodec, __RsMsg>(
+                    codec: &__RsCodec,
+                    msg: &__RsMsg,
+                ) -> ::core::result::Result<Self, ::ruststream::codec::CodecError>
+                where
+                    __RsCodec: ::ruststream::codec::Codec,
+                    __RsMsg: ::ruststream::IncomingMessage,
+                {
+                    #decode
+                }
+
+                fn incoming() -> ::std::vec::Vec<::ruststream::runtime::IncomingMessageMetadata> {
+                    ::std::vec![#(#entries),*]
+                }
+            }
+        }
+    };
+
     Ok(quote! {
         #[doc = #kind_doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,24 +150,7 @@ pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
         #(#memberships)*
 
-        impl ::ruststream::runtime::InMessages for #name {
-            type Kind = #kind;
-
-            fn decode<__RsCodec, __RsMsg>(
-                codec: &__RsCodec,
-                msg: &__RsMsg,
-            ) -> ::core::result::Result<Self, ::ruststream::codec::CodecError>
-            where
-                __RsCodec: ::ruststream::codec::Codec,
-                __RsMsg: ::ruststream::IncomingMessage,
-            {
-                #decode
-            }
-
-            fn incoming() -> ::std::vec::Vec<::ruststream::runtime::IncomingMessageMetadata> {
-                ::std::vec![#(#entries),*]
-            }
-        }
+        #set_impl
     })
 }
 
@@ -164,19 +193,16 @@ fn decode_body(
             }
         }
         Rule::Discriminate(path) => {
-            let arms = models.iter().map(|model| {
-                let (ident, decode) = (model.ident(), decode_arm(name, model));
-                quote!(::core::option::Option::Some(#kind::#ident) => #decode,)
-            });
-            quote! {
-                let payload = ::ruststream::IncomingMessage::payload(msg);
-                match #path(msg) {
-                    #(#arms)*
-                    ::core::option::Option::None => {
-                        ::core::result::Result::Err(#errors::no_variant_chosen(#name_str))
-                    }
-                }
-            }
+            discriminated(name, name_str, kind, models, &quote!(#path(msg)))
+        }
+        Rule::DiscriminateWithCodec(discriminator) => {
+            let chosen = quote! {
+                <#discriminator as ::ruststream::runtime::CodecDiscriminator<
+                    #kind,
+                    __RsCodec,
+                >>::kind(codec, msg)
+            };
+            discriminated(name, name_str, kind, models, &chosen)
         }
         Rule::Header(header) => {
             let arms = models.iter().map(|model| {
@@ -205,6 +231,30 @@ fn decode_body(
                         &[#(#values),*],
                     )),
                 }
+            }
+        }
+    }
+}
+
+/// The decode of a set whose discriminator returns the kind: `chosen` is the call that asks it.
+fn discriminated(
+    name: &Ident,
+    name_str: &LitStr,
+    kind: &Ident,
+    models: &[Model<'_>],
+    chosen: &TokenStream2,
+) -> TokenStream2 {
+    let errors = quote!(::ruststream::__private::in_messages);
+    let arms = models.iter().map(|model| {
+        let (ident, decode) = (model.ident(), decode_arm(name, model));
+        quote!(::core::option::Option::Some(#kind::#ident) => #decode,)
+    });
+    quote! {
+        let payload = ::ruststream::IncomingMessage::payload(msg);
+        match #chosen {
+            #(#arms)*
+            ::core::option::Option::None => {
+                ::core::result::Result::Err(#errors::no_variant_chosen(#name_str))
             }
         }
     }
@@ -250,6 +300,7 @@ fn entry(name: &Ident, rule: &Rule, model: &Model<'_>) -> TokenStream2 {
 /// Reads every `#[in_messages(..)]` on the enum into the set's rule.
 fn parse_rule(attrs: &[Attribute]) -> syn::Result<Rule> {
     let mut discriminate: Option<ExprPath> = None;
+    let mut with_codec: Option<ExprPath> = None;
     let mut header: Option<LitStr> = None;
     for attr in attrs
         .iter()
@@ -261,7 +312,7 @@ fn parse_rule(attrs: &[Attribute]) -> syn::Result<Rule> {
                 return Err(syn::Error::new_spanned(
                     &meta,
                     "every #[in_messages(..)] parameter is `key = value`: `discriminate = \
-                     by_event_header`, `header = \"event\"`",
+                     by_event_header`, `discriminate_with_codec = ByRecord`, `header = \"event\"`",
                 ));
             };
             if pair.path.is_ident("discriminate") {
@@ -276,6 +327,21 @@ fn parse_rule(attrs: &[Attribute]) -> syn::Result<Rule> {
                     return Err(syn::Error::new_spanned(
                         &meta,
                         "duplicate `discriminate`: a set picks its variant by one rule",
+                    ));
+                }
+            } else if pair.path.is_ident("discriminate_with_codec") {
+                let Expr::Path(path) = &pair.value else {
+                    return Err(syn::Error::new_spanned(
+                        &pair.value,
+                        "`discriminate_with_codec` names a type implementing `CodecDiscriminator`, \
+                         which reads the codec and the delivery: `discriminate_with_codec = \
+                         ByRecord`",
+                    ));
+                };
+                if with_codec.replace(path.clone()).is_some() {
+                    return Err(syn::Error::new_spanned(
+                        &meta,
+                        "duplicate `discriminate_with_codec`: a set picks its variant by one rule",
                     ));
                 }
             } else if pair.path.is_ident("header") {
@@ -295,19 +361,30 @@ fn parse_rule(attrs: &[Attribute]) -> syn::Result<Rule> {
             } else {
                 return Err(syn::Error::new_spanned(
                     &pair.path,
-                    "unknown #[in_messages(..)] parameter: expected `discriminate` or `header`",
+                    "unknown #[in_messages(..)] parameter: expected `discriminate`, \
+                     `discriminate_with_codec` or `header`",
                 ));
             }
         }
     }
-    match (discriminate, header) {
-        (Some(_), Some(header)) => Err(syn::Error::new(
+    match (discriminate, with_codec, header) {
+        (Some(_), Some(discriminator), _) => Err(syn::Error::new_spanned(
+            discriminator,
+            "`discriminate` and `discriminate_with_codec` together: a set picks its variant by \
+             one rule",
+        )),
+        (Some(_), None, Some(header)) => Err(syn::Error::new(
             header.span(),
             "`discriminate` and `header` together: a set picks its variant by one rule",
         )),
-        (Some(path), None) => Ok(Rule::Discriminate(path)),
-        (None, Some(header)) => Ok(Rule::Header(header)),
-        (None, None) => Ok(Rule::LeftToRight),
+        (None, Some(_), Some(header)) => Err(syn::Error::new(
+            header.span(),
+            "`discriminate_with_codec` and `header` together: a set picks its variant by one rule",
+        )),
+        (Some(path), None, None) => Ok(Rule::Discriminate(path)),
+        (None, Some(discriminator), None) => Ok(Rule::DiscriminateWithCodec(discriminator)),
+        (None, None, Some(header)) => Ok(Rule::Header(header)),
+        (None, None, None) => Ok(Rule::LeftToRight),
     }
 }
 
@@ -510,6 +587,32 @@ mod tests {
     }
 
     #[test]
+    fn the_codec_rule_names_a_discriminator_type() {
+        let input: DeriveInput = syn::parse_quote!(
+            #[in_messages(discriminate_with_codec = registry::ByRecord)]
+            enum OrderEvent {
+                Created(OrderCreated),
+            }
+        );
+        assert!(matches!(
+            parse_rule(&input.attrs),
+            Ok(Rule::DiscriminateWithCodec(_))
+        ));
+        let expanded = expand(&input)
+            .expect("a codec-discriminated set expands")
+            .to_string();
+        assert!(expanded.contains(
+            "registry :: ByRecord : :: ruststream :: runtime :: CodecDiscriminator < \
+             OrderEventKind , __RsCodec >"
+        ));
+        assert!(expanded.contains("no_variant_chosen"));
+        // Its decode is written per codec, so the set implements only the codec-parameterized
+        // trait.
+        assert!(!expanded.contains("runtime :: InMessages for"));
+        assert!(expanded.contains("DecodeSet < __RsCodec > for OrderEvent"));
+    }
+
+    #[test]
     fn the_header_rule_reads_one_value_per_variant() {
         let input: DeriveInput = syn::parse_quote!(
             #[in_messages(header = "event")]
@@ -552,6 +655,30 @@ mod tests {
             }
         );
         assert!(rejection(&input).contains("`discriminate` and `header` together"));
+    }
+
+    #[test]
+    fn the_codec_rule_excludes_the_other_two() {
+        let with_function: DeriveInput = syn::parse_quote!(
+            #[in_messages(discriminate = pick, discriminate_with_codec = ByRecord)]
+            enum OrderEvent {
+                Created(OrderCreated),
+            }
+        );
+        assert!(
+            rejection(&with_function)
+                .contains("`discriminate` and `discriminate_with_codec` together")
+        );
+        let with_header: DeriveInput = syn::parse_quote!(
+            #[in_messages(discriminate_with_codec = ByRecord, header = "event")]
+            enum OrderEvent {
+                #[in_messages(value = "created")]
+                Created(OrderCreated),
+            }
+        );
+        assert!(
+            rejection(&with_header).contains("`discriminate_with_codec` and `header` together")
+        );
     }
 
     #[test]
@@ -683,6 +810,13 @@ mod tests {
             }
         );
         assert!(rejection(&not_a_path).contains("`discriminate` names a function"));
+        let not_a_type: DeriveInput = syn::parse_quote!(
+            #[in_messages(discriminate_with_codec = "ByRecord")]
+            enum OrderEvent {
+                Created(OrderCreated),
+            }
+        );
+        assert!(rejection(&not_a_type).contains("`discriminate_with_codec` names a type"));
         let not_a_literal: DeriveInput = syn::parse_quote!(
             #[in_messages(header = EVENT)]
             enum OrderEvent {
@@ -718,6 +852,14 @@ mod tests {
             }
         );
         assert!(rejection(&twice).contains("duplicate `discriminate`"));
+        let twice: DeriveInput = syn::parse_quote!(
+            #[in_messages(discriminate_with_codec = ByRecord)]
+            #[in_messages(discriminate_with_codec = ByRecord)]
+            enum OrderEvent {
+                Created(OrderCreated),
+            }
+        );
+        assert!(rejection(&twice).contains("duplicate `discriminate_with_codec`"));
         let twice: DeriveInput = syn::parse_quote!(
             #[in_messages(header = "event")]
             enum OrderEvent {
