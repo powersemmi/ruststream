@@ -1,9 +1,9 @@
 {
   "schema": 2,
   "crate": "ruststream",
-  "crate_version": "0.7.0",
-  "core_version": "0.7.0",
-  "measured_at": "2026-10-06",
+  "crate_version": "0.7.6",
+  "core_version": "0.7.6",
+  "measured_at": "2026-10-29",
   "environment": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
     "architecture": "x86_64 (x86-64-v4)",
@@ -11,7 +11,7 @@
     "cores": "12 physical, 24 logical",
     "memory": "62.4 GiB",
     "memory_speed": "4800 MT/s, 6000 MT/s, DDR5",
-    "os": "Linux 7.2.9-x64v3-xanmod1-1",
+    "os": "Linux 7.3.0-3-moloko",
     "rustc": "1.99.0",
     "valgrind": "3.25.1",
     "profile": "bench, inheriting release (opt-level = 3, lto = fat, codegen-units = 16, debug = line-tables-only)",
@@ -23,11 +23,11 @@
       "name": "consume, JSON decode into a small struct",
       "messages": 1000,
       "framework": {
-        "instructions": 1673.0,
+        "instructions": 1678.3,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15079,
+        "instructions": 15792,
         "allocations": 26
       },
       "gated": true
@@ -36,11 +36,11 @@
       "name": "consume, JSON decode of a 1 KB body",
       "messages": 1000,
       "framework": {
-        "instructions": 17402.8,
+        "instructions": 17285.2,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 30936,
+        "instructions": 31514,
         "allocations": 26
       },
       "gated": true
@@ -49,11 +49,11 @@
       "name": "consume on the byte lane, no codec",
       "messages": 1000,
       "framework": {
-        "instructions": 826.0,
+        "instructions": 832.3,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 14192,
+        "instructions": 14897,
         "allocations": 26
       },
       "gated": true
@@ -62,11 +62,11 @@
       "name": "consume through a pool of four workers",
       "messages": 1000,
       "framework": {
-        "instructions": 3092.1,
+        "instructions": 3119.3,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 27005,
+        "instructions": 28081,
         "allocations": 43
       },
       "gated": true
@@ -75,11 +75,11 @@
       "name": "consume on four dedicated threads",
       "messages": 1000,
       "framework": {
-        "instructions": 457.1,
+        "instructions": 463.4,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 55119,
+        "instructions": 56693,
         "allocations": 133
       },
       "gated": true
@@ -88,11 +88,11 @@
       "name": "consume through a middleware stack of one",
       "messages": 1000,
       "framework": {
-        "instructions": 1723.0,
+        "instructions": 1750.3,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15205,
+        "instructions": 16076,
         "allocations": 26
       },
       "gated": true
@@ -101,11 +101,11 @@
       "name": "consume through a middleware stack of four",
       "messages": 1000,
       "framework": {
-        "instructions": 1768.0,
+        "instructions": 1777.3,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 15252,
+        "instructions": 16103,
         "allocations": 26
       },
       "gated": true
@@ -114,11 +114,11 @@
       "name": "consume in batches of 64",
       "messages": 1000,
       "framework": {
-        "instructions": 1529.5,
+        "instructions": 1522.7,
         "allocations": 0.016
       },
       "cold": {
-        "instructions": 16432,
+        "instructions": 17447,
         "allocations": 29
       },
       "gated": true
@@ -127,11 +127,11 @@
       "name": "reply, encoded to a declared destination",
       "messages": 1000,
       "framework": {
-        "instructions": 2641.0,
+        "instructions": 2646.3,
         "allocations": 2.0
       },
       "cold": {
-        "instructions": 16787,
+        "instructions": 17773,
         "allocations": 29
       },
       "gated": true
@@ -140,11 +140,11 @@
       "name": "reply to a transport that reads the payload",
       "messages": 1000,
       "framework": {
-        "instructions": 2106.0,
+        "instructions": 2126.4,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 16294,
+        "instructions": 16991,
         "allocations": 29
       },
       "gated": true
@@ -153,11 +153,11 @@
       "name": "publish through an Out slot with one transform",
       "messages": 1000,
       "framework": {
-        "instructions": 3768.0,
+        "instructions": 3739.4,
         "allocations": 6.0
       },
       "cold": {
-        "instructions": 18540,
+        "instructions": 19247,
         "allocations": 33
       },
       "gated": true
@@ -166,11 +166,11 @@
       "name": "publish with a typed header contract",
       "messages": 1000,
       "framework": {
-        "instructions": 3632.0,
+        "instructions": 3633.3,
         "allocations": 5.0
       },
       "cold": {
-        "instructions": 17990,
+        "instructions": 18614,
         "allocations": 32
       },
       "gated": true
@@ -179,11 +179,11 @@
       "name": "read a typed header contract, then publish",
       "messages": 1000,
       "framework": {
-        "instructions": 4004.9,
+        "instructions": 3985.3,
         "allocations": 2.0
       },
       "cold": {
-        "instructions": 17762,
+        "instructions": 18550,
         "allocations": 29
       },
       "gated": true
@@ -192,11 +192,11 @@
       "name": "request and reply, one round trip",
       "messages": 1000,
       "framework": {
-        "instructions": 9361.6,
+        "instructions": 9358.0,
         "allocations": 13.0
       },
       "cold": {
-        "instructions": 23358,
+        "instructions": 23935,
         "allocations": 39
       },
       "gated": true
@@ -205,11 +205,11 @@
       "name": "a delivery that asks to be redelivered, natively by the broker",
       "messages": 1000,
       "framework": {
-        "instructions": 3157.7,
+        "instructions": 3165.5,
         "allocations": 0.0
       },
       "cold": {
-        "instructions": 16662,
+        "instructions": 17239,
         "allocations": 26
       },
       "gated": false,

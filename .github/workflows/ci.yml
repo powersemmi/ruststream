@@ -55,6 +55,7 @@ jobs:
               - 'rust-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
+              - 'external-types.toml'
               - '.github/workflows/ci.yml'
             dist:
               - 'src/**'
@@ -170,11 +171,17 @@ jobs:
             -- -D warnings
           cargo check --locked --benches --no-default-features --features memory,macros,json
 
-      # Allow-list in Cargo.toml. Every entry makes a version bump of that dependency breaking
-      # for every broker crate downstream, so a new leak is added deliberately or not at all.
+      # Allow-list in external-types.toml, one for every published crate: the facade shows the
+      # crates behind it only as re-exports, so each is checked where its items are defined.
+      # Every entry makes a version bump of that dependency breaking for every broker crate
+      # downstream, so a new leak is added deliberately or not at all.
       - name: cargo check-external-types
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
-        run: cargo +nightly-2026-03-20 check-external-types --all-features
+        run: |
+          for manifest in Cargo.toml crates/ruststream-{core,runtime,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+            cargo +nightly-2026-03-20 check-external-types --all-features \
+              --manifest-path "$manifest" --config external-types.toml
+          done
 
       # Every published package in one invocation: packaging strips the path from the lockstep
       # dependencies between them, and between a version bump and the release those versions are
