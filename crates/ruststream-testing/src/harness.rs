@@ -34,7 +34,7 @@ use ruststream_runtime::testing::{
 };
 
 use super::handle::{BrokerHandle, Harness, InjectSink, Target, Transport};
-use super::hooks::{HookFailures, Within};
+use ruststream_runtime::testing::{HookFailures, Within};
 
 /// The default cap on dispatched deliveries before [`TestApp::publish`] gives up driving a reaction
 /// to quiescence. Guards against a non-terminating requeue loop.

@@ -13,12 +13,12 @@
 
 use std::any::Any;
 use std::fmt;
+use std::mem;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use std::{fmt, mem};
 
 use bytes::Bytes;
 use tokio::sync::Notify;

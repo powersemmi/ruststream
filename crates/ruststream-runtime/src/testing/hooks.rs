@@ -75,11 +75,11 @@ where
 /// How much of a record a handle reads: the entries recorded up to an event, the event's own
 /// included, so a hook reads the record as it stood at its event whatever came after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Within(usize);
+pub struct Within(usize);
 
 impl Within {
     /// The whole record, as it stands whenever it is read.
-    pub(crate) const ALL: Self = Self(usize::MAX);
+    pub const ALL: Self = Self(usize::MAX);
 
     /// The first `len` entries of the record.
     pub(crate) const fn first(len: usize) -> Self {
@@ -374,20 +374,23 @@ where
 /// The harness's hold on the failures of its hooks, for the ends of a test that drive nothing
 /// further: a shutdown raises what it holds once the handlers are done, and a harness dropped
 /// without one raises it as it goes.
-pub(crate) struct HookFailures(Coordinator);
+#[derive(Debug)]
+pub struct HookFailures(Coordinator);
 
 impl HookFailures {
-    pub(crate) const fn new(coordinator: Coordinator) -> Self {
+    /// The hold on the failures of the hooks `coordinator` runs.
+    #[must_use]
+    pub const fn new(coordinator: Coordinator) -> Self {
         Self(coordinator)
     }
 
     /// Stops the hooks still running and waits until they are gone.
-    pub(crate) async fn stop(&self) {
+    pub async fn stop(&self) {
         self.0.hooks().stop().await;
     }
 
     /// Raises the failure a hook left, if any.
-    pub(crate) fn raise(self) {
+    pub fn raise(self) {
         self.0.hooks().raise_failure();
     }
 }

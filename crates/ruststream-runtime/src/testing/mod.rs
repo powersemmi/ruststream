@@ -39,4 +39,4 @@ pub use coordinator::{Coordinator, Outcome};
 pub use error::TestError;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
-pub use hooks::PublishTarget;
+pub use hooks::{HookFailures, PublishTarget, Within};
