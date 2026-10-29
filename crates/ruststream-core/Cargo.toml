@@ -10,6 +10,7 @@ authors.workspace = true
 description = "The broker contract of the RustStream messaging framework; services and broker crates use it through `ruststream`."
 keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
 categories = ["asynchronous", "network-programming"]
+readme = "../../README.md"
 
 [package.metadata.docs.rs]
 all-features = true

@@ -111,7 +111,7 @@ impl MessageHeaders for String {
 ///
 /// See [`MessageHeaders`]; `#[message(headers(H))]` on a `#[derive(MessageInfo)]` type declares
 /// this contract. `H` is serialized into the header map on the typed publish path and lifted
-/// into the message's `AsyncAPI` headers schema when it implements [`schemars::JsonSchema`].
+/// into the message's `AsyncAPI` headers schema when it implements [`schemars::JsonSchema`](https://docs.rs/schemars/latest/schemars/trait.JsonSchema.html).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct WithHeaders<H>(PhantomData<fn() -> H>);
 

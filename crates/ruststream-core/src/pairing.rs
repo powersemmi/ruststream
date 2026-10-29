@@ -12,9 +12,11 @@ tokio::task_local! {
     static PAIRING: Cell<Origin>;
 }
 
-/// The broker a publisher the runtime paired publishes to: the connected broker it was paired
-/// against, whatever scope holds it. A handler on one broker holding a `Bound` token for another
-/// publishes to the other, and its publishes are that broker's.
+/// The broker a publisher the runtime paired publishes to.
+///
+/// It is the connected broker the publisher was paired against, whatever scope holds it. A handler
+/// on one broker holding a `Bound` token for another publishes to the other, and its publishes are
+/// that broker's.
 ///
 /// Known by the connected form's address, which the harness maps to the broker's registration.
 /// A publisher the runtime did not pair (one the service builds or keeps itself) carries none.
@@ -23,11 +25,13 @@ pub struct Origin(Option<usize>);
 
 impl Origin {
     /// The connected broker at `connected`.
+    #[must_use]
     pub fn of<C: ?Sized>(connected: &C) -> Self {
         Self(Some(ptr::from_ref(connected).cast::<()>() as usize))
     }
 
     /// The connected broker's address, or `None` for a publisher the runtime did not pair.
+    #[must_use]
     pub const fn address(self) -> Option<usize> {
         self.0
     }
