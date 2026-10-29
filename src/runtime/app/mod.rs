@@ -28,9 +28,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::task::{JoinError, JoinHandle};
 
-use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
 use crate::runtime::lifecycle::{BoxError, BoxFuture};
 use crate::runtime::shutdown::Shutdown;
+use crate::{AppId, Contact, ExternalDocs, License, Tag};
 
 /// A registration deferred until [`RustStream::run`]: given the app's shutdown signal, it opens
 /// the subscription (after the broker is connected) and spawns the dispatch task. The broker,

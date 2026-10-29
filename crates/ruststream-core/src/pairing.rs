@@ -19,23 +19,23 @@ tokio::task_local! {
 /// Known by the connected form's address, which the harness maps to the broker's registration.
 /// A publisher the runtime did not pair (one the service builds or keeps itself) carries none.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Origin(Option<usize>);
+pub struct Origin(Option<usize>);
 
 impl Origin {
     /// The connected broker at `connected`.
-    pub(crate) fn of<C: ?Sized>(connected: &C) -> Self {
+    pub fn of<C: ?Sized>(connected: &C) -> Self {
         Self(Some(ptr::from_ref(connected).cast::<()>() as usize))
     }
 
     /// The connected broker's address, or `None` for a publisher the runtime did not pair.
-    pub(crate) const fn address(self) -> Option<usize> {
+    pub const fn address(self) -> Option<usize> {
         self.0
     }
 }
 
 /// Runs the pairing `pairing` against `connected`, and reports the broker the paired publisher
 /// publishes to.
-pub(crate) fn paired<C: ?Sized, F: Future>(
+pub fn paired<C: ?Sized, F: Future>(
     connected: &C,
     pairing: F,
 ) -> impl Future<Output = (F::Output, Origin)> {
@@ -47,6 +47,6 @@ pub(crate) fn paired<C: ?Sized, F: Future>(
 
 /// Notes, inside a pairing, that the policy pairs against `connected` instead of the broker it
 /// was handed: what a `Bound` token does.
-pub(crate) fn pairs_against<C: ?Sized>(connected: &C) {
+pub fn pairs_against<C: ?Sized>(connected: &C) {
     let _ = PAIRING.try_with(|origin| origin.set(Origin::of(connected)));
 }

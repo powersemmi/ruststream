@@ -335,7 +335,8 @@ impl HeaderMap {
     /// The publish builder's merge: a sink's base map takes the call site's map on top of it, key
     /// by key. Keys arrive already normalized (every insertion path lowercases them), so the
     /// entries move straight across.
-    pub(crate) fn overwrite_with(&mut self, other: Self) {
+    #[doc(hidden)]
+    pub fn overwrite_with(&mut self, other: Self) {
         // Nothing to keep means nothing to merge: the map moves in whole.
         if self.is_empty() {
             *self = other;

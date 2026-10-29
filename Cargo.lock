@@ -1227,6 +1227,7 @@ dependencies = [
  "quanta",
  "rmp-serde",
  "rtrb",
+ "ruststream-core",
  "ruststream-example-suite",
  "ruststream-macros",
  "schemars",
@@ -1240,6 +1241,20 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "trybuild",
+]
+
+[[package]]
+name = "ruststream-core"
+version = "0.7.6"
+dependencies = [
+ "bytes",
+ "bytes-utils",
+ "futures",
+ "ruststream",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

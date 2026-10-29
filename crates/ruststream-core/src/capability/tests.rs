@@ -146,3 +146,55 @@ fn http_api_key_locations_map_to_document_values() {
     assert_eq!(HttpApiKeyLocation::Header.as_api(), "header");
     assert_eq!(HttpApiKeyLocation::Cookie.as_api(), "cookie");
 }
+
+#[cfg(all(feature = "asyncapi", feature = "json"))]
+#[test]
+fn every_scheme_kind_renders_its_document_object() {
+    let cases = [
+        (
+            SecurityScheme::user_password(),
+            json!({ "type": "userPassword" }),
+        ),
+        (
+            SecurityScheme::api_key(ApiKeyLocation::Password),
+            json!({ "type": "apiKey", "in": "password" }),
+        ),
+        (SecurityScheme::x509(), json!({ "type": "X509" })),
+        (SecurityScheme::plain(), json!({ "type": "plain" })),
+        (
+            SecurityScheme::scram_sha256(),
+            json!({ "type": "scramSha256" }),
+        ),
+        (
+            SecurityScheme::scram_sha512(),
+            json!({ "type": "scramSha512" }),
+        ),
+        (SecurityScheme::gssapi(), json!({ "type": "gssapi" })),
+        (
+            SecurityScheme::http("bearer"),
+            json!({ "type": "http", "scheme": "bearer" }),
+        ),
+        (
+            SecurityScheme::http_api_key("X-Api-Key", HttpApiKeyLocation::Header),
+            json!({ "type": "httpApiKey", "name": "X-Api-Key", "in": "header" }),
+        ),
+        (
+            SecurityScheme::open_id_connect("https://idp.example.com/.well-known"),
+            json!({
+                "type": "openIdConnect",
+                "openIdConnectUrl": "https://idp.example.com/.well-known",
+            }),
+        ),
+        (
+            SecurityScheme::oauth2(json!({ "clientCredentials": {} })),
+            json!({ "type": "oauth2", "flows": { "clientCredentials": {} } }),
+        ),
+        (
+            SecurityScheme::custom(json!({ "type": "symmetricEncryption" })),
+            json!({ "type": "symmetricEncryption" }),
+        ),
+    ];
+    for (scheme, expected) in cases {
+        assert_eq!(scheme.document_object(), expected);
+    }
+}

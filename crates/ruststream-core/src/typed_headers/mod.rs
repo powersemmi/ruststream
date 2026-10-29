@@ -151,7 +151,8 @@ impl HeaderMap {
     /// # }
     /// # fn main() {}
     /// ```
-    pub(crate) fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
+    #[doc(hidden)]
+    pub fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
         T::deserialize(de::HeadersDeserializer::new(self))
     }
 

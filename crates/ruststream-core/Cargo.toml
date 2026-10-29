@@ -1,0 +1,42 @@
+[package]
+name = "ruststream-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "The broker contract of the RustStream messaging framework; services and broker crates use it through `ruststream`."
+keywords = ["messaging", "async", "broker", "pubsub", "ruststream"]
+categories = ["asynchronous", "network-programming"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# `SecurityScheme::oauth2` and `SecurityScheme::custom` take a JSON value.
+json = ["dep:serde_json"]
+# The `*_bindings` methods of the contract and the binding types they return.
+asyncapi = ["dep:serde_json"]
+# The hook a `Bound` token pairs through, which the test harness reads.
+testing = []
+
+[dependencies]
+bytes.workspace = true
+bytes-utils.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+# The doc examples are a service's code, so they import the facade; a path dependency without a
+# version is dropped on publish.
+ruststream = { path = "../..", features = ["macros", "memory", "json", "asyncapi", "testing"] }
+
+[lints]
+workspace = true

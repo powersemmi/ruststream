@@ -5,6 +5,7 @@ use std::{any::type_name, borrow::Cow, marker::PhantomData};
 #[cfg(feature = "asyncapi")]
 use crate::bindings::{PublishBindings, SubscriptionBindings};
 use crate::runtime::input::{DecodeWith, Materialize};
+#[cfg(feature = "asyncapi")]
 use crate::runtime::join_headers;
 use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
@@ -394,11 +395,11 @@ impl PublishDescription {
             reply_address_location: names_destination
                 .then(|| policy.reply_address_location())
                 .flatten(),
-            bindings: PublishBindings {
-                channel: policy.channel_bindings(channel),
-                operation: policy.operation_bindings(channel),
-                message: policy.message_bindings(channel),
-            },
+            bindings: PublishBindings::new(
+                policy.channel_bindings(channel),
+                policy.operation_bindings(channel),
+                policy.message_bindings(channel),
+            ),
         };
         description
     }
@@ -710,11 +711,11 @@ impl HandlerMetadata {
         let this = self;
         #[cfg(feature = "asyncapi")]
         let this = Self {
-            bindings: SubscriptionBindings {
-                channel: source.channel_bindings(),
-                operation: source.operation_bindings(),
-                message: source.message_bindings(),
-            },
+            bindings: SubscriptionBindings::new(
+                source.channel_bindings(),
+                source.operation_bindings(),
+                source.message_bindings(),
+            ),
             ..self
         };
         this

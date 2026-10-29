@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::describe::{AppId, Contact, ExternalDocs, License, Tag};
+use crate::{AppId, Contact, ExternalDocs, License, Tag};
 
 use crate::bindings::Bindings;
 

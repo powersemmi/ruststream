@@ -137,7 +137,8 @@ impl Contact {
     /// True when nothing was filled in, so the document leaves the object out.
     #[cfg(feature = "asyncapi")]
     #[must_use]
-    pub(crate) const fn is_empty(&self) -> bool {
+    #[doc(hidden)]
+    pub const fn is_empty(&self) -> bool {
         self.name.is_none() && self.url.is_none() && self.email.is_none()
     }
 }

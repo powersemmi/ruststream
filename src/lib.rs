@@ -105,31 +105,17 @@
 
 #![forbid(unsafe_code)]
 
-mod bindable;
+// The contract's own modules, under the names the layers above it reach them by.
 #[cfg(feature = "asyncapi")]
-mod bindings;
-mod broker;
-mod buffered;
-mod capability;
-mod describe;
-mod error;
-mod field;
-mod form;
-mod headers;
-mod message;
-mod outgoing;
+use ruststream_core::bindings;
 #[cfg(feature = "testing")]
-mod pairing;
+use ruststream_core::pairing;
+use ruststream_core::{bindable, outgoing, wire};
+
 pub mod prelude;
-mod publisher;
-mod schema;
-mod subscriber;
-mod subscription;
 pub mod testing;
 #[cfg(test)]
 mod testkit;
-mod typed_headers;
-mod wire;
 
 /// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
 #[cfg(feature = "testing")]
@@ -159,31 +145,33 @@ pub use bytes::Bytes;
 /// nothing at all; `String` moves in without a copy; `&str` copies once.
 pub use bytes_utils::Str;
 
-pub use broker::{Broker, Connected, ConnectedBroker};
-pub use buffered::{Buffered, BufferedSubscriber};
-pub use capability::{
+pub use ruststream_core::HeaderMap;
+pub use ruststream_core::Subscriber;
+pub use ruststream_core::{AckError, DeclareRetryError};
+pub use ruststream_core::{
+    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
+    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
+};
+pub use ruststream_core::{
     ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
     OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
     ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
-pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
-pub use error::{AckError, DeclareRetryError};
-pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
-pub use headers::HeaderMap;
-pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
-pub use publisher::{
-    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
-};
-pub use schema::{
+pub use ruststream_core::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
+pub use ruststream_core::{Broker, Connected, ConnectedBroker};
+pub use ruststream_core::{Buffered, BufferedSubscriber};
+pub use ruststream_core::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
+pub use ruststream_core::{
     CallerName, DestinationForm, FixedName, HeadersContract, MessageHeaders, MessageInfo,
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
-pub use subscriber::Subscriber;
-pub use subscription::{
-    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
+pub use ruststream_core::{
+    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
 };
-pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
+pub use ruststream_core::{DeserializeHeadersError, SerializeHeadersError};
+pub use ruststream_core::{IncomingMessage, OutgoingMessage, RawMessage};
+
+pub use ruststream_core::nonzero;
 
 pub mod codec;
 
@@ -470,56 +458,4 @@ pub mod __private {
             <T::Contract as ContractSchema>::schema_json()
         }
     }
-}
-
-/// Builds a [`NonZero`](core::num::NonZero) integer from a literal, rejecting zero at compile
-/// time.
-///
-/// The expansion is an inline `const` block, so `nonzero!(0)` fails the build instead of
-/// panicking at runtime, and the `NonZero` width is inferred from the call site - the same
-/// literal works for a batch size (`NonZeroUsize`) and any other `NonZero` parameter.
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
-/// # mod demo {
-/// use ruststream::memory::prelude::*;
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Order {
-///     id: u64,
-/// }
-///
-/// #[subscriber("orders")]
-/// async fn settle(orders: &[Order]) -> HandlerOutcome {
-///     tracing::info!(count = orders.len(), "settled a batch");
-///     HandlerOutcome::ack()
-/// }
-///
-/// fn app() -> RustStream {
-///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(settle.batch(nonzero!(128)).workers(nonzero!(4)));
-///     })
-/// }
-/// # }
-/// # fn main() {}
-/// ```
-///
-/// Zero does not compile:
-///
-/// ```compile_fail
-/// let _: core::num::NonZeroUsize = ruststream::nonzero!(0);
-/// ```
-#[macro_export]
-macro_rules! nonzero {
-    ($value:expr) => {
-        const {
-            match ::core::num::NonZero::new($value) {
-                ::core::option::Option::Some(value) => value,
-                ::core::option::Option::None => panic!("nonzero!(..) requires a non-zero value"),
-            }
-        }
-    };
 }

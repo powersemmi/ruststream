@@ -1,7 +1,8 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
-#[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
+#[cfg(all(feature = "json", feature = "logging"))]
 use std::fmt;
+#[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
 use std::sync::Arc;
 
 #[cfg(all(feature = "memory", feature = "json"))]
@@ -26,8 +27,11 @@ use tracing::subscriber;
 use tracing::subscriber::DefaultGuard;
 
 use super::*;
-use crate::{BytesMut, HeaderMap};
-use crate::{Lend, PayloadForm, Take};
+use crate::HeaderMap;
+#[cfg(all(feature = "memory", feature = "json"))]
+use crate::Take;
+#[cfg(feature = "json")]
+use crate::{BytesMut, Lend, PayloadForm};
 
 /// Fixtures the in-memory broker cannot express: a value the codec cannot encode, a
 /// transactional publisher rigged to fail one step of the protocol, and a policy that

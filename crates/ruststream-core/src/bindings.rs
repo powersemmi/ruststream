@@ -410,7 +410,8 @@ impl Bindings {
     /// One message component is shared by every registration that carries the type, so two
     /// descriptors may each contribute to it. First one wins per protocol, the way a conflicting
     /// headers schema does.
-    pub(crate) fn fill_from(&mut self, other: &Self) {
+    #[doc(hidden)]
+    pub fn fill_from(&mut self, other: &Self) {
         for (key, body) in &other.0 {
             self.0.entry(key).or_insert_with(|| body.clone());
         }
@@ -507,6 +508,19 @@ pub struct SubscriptionBindings {
     pub message: Bindings,
 }
 
+impl SubscriptionBindings {
+    /// The bindings of the three objects, as the runtime records them for one registration.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(channel: Bindings, operation: Bindings, message: Bindings) -> Self {
+        Self {
+            channel,
+            operation,
+            message,
+        }
+    }
+}
+
 /// What one publish position contributes to the document, one set per level.
 ///
 /// Assembled by the runtime at mount time from the [`PublishPolicy`](crate::PublishPolicy) bound
@@ -538,6 +552,19 @@ pub struct PublishBindings {
     pub operation: Bindings,
     /// What it says about the messages that leave through it.
     pub message: Bindings,
+}
+
+impl PublishBindings {
+    /// The bindings of the three objects, as the runtime records them for one registration.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(channel: Bindings, operation: Bindings, message: Bindings) -> Self {
+        Self {
+            channel,
+            operation,
+            message,
+        }
+    }
 }
 
 /// Why a value is not a [`Binding`].

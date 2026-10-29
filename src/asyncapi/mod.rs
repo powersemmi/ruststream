@@ -111,7 +111,7 @@ pub use spec::{
 };
 pub use viewer::{ViewerOptions, render_viewer_html};
 
-use crate::describe::Tag;
+use crate::Tag;
 use crate::runtime::{App, OutgoingKind};
 
 use operations::{add_outgoing, add_receive, send_operation_id};

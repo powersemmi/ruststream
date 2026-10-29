@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/ruststream-macros", "crates/ruststream-example-suite"]
+members = [
+    "crates/ruststream-core",
+    "crates/ruststream-macros",
+    "crates/ruststream-example-suite",
+]
 # `templates/` holds cargo-generate scaffolds (rendered by `cargo generate`, not built here): their
 # sources carry `{{project-name}}` placeholders that are not valid Rust/TOML until rendered, so they
 # must stay out of the workspace. `exclude` alone is not enough: cargo's git-source package
@@ -50,6 +54,8 @@ pin-project-lite = "0.2"
 # release for release (a loose range let a partial `cargo update` pair a new core with an old
 # macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
 ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros" }
+# The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
+ruststream-core = { version = "=0.7.6", path = "crates/ruststream-core" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -965,16 +971,16 @@ allowed_external_types = [
 default = ["json"]
 memory = []
 conformance = ["testing"]
-json = ["dep:serde_json"]
+json = ["dep:serde_json", "ruststream-core/json"]
 msgpack = ["dep:rmp-serde"]
 cbor = ["dep:ciborium"]
 macros = ["dep:ruststream-macros"]
-asyncapi = ["json", "dep:schemars", "dep:serde_norway"]
+asyncapi = ["json", "dep:schemars", "dep:serde_norway", "ruststream-core/asyncapi"]
 metrics = ["dep:prometheus"]
 logging = ["dep:tracing-subscriber"]
 cli = ["dep:clap", "dep:anyhow"]
 poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
-testing = ["dep:inventory", "tokio/test-util"]
+testing = ["dep:inventory", "tokio/test-util", "ruststream-core/testing"]
 otel = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
@@ -984,6 +990,7 @@ otel = [
 ]
 
 [dependencies]
+ruststream-core.workspace = true
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true

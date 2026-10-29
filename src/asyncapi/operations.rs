@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 use serde_json::Value;
 use tracing::warn;
 
-use crate::describe::Tag;
+use crate::Tag;
 use crate::runtime::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,

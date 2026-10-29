@@ -253,10 +253,8 @@ where
 }
 
 /// Pairs `source` against the broker in `slot`. The runtime's own pairing entry for tokens.
-pub(crate) async fn pair_bound<B2, S>(
-    slot: &ConnectedSlot<B2>,
-    source: S,
-) -> Result<S::Live, PairError>
+#[doc(hidden)]
+pub async fn pair_bound<B2, S>(slot: &ConnectedSlot<B2>, source: S) -> Result<S::Live, PairError>
 where
     B2: Broker + 'static,
     S: PublishPolicy<Connected<B2>>,

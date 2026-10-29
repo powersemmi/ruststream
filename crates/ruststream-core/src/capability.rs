@@ -9,6 +9,11 @@ use std::{error::Error as StdError, num::NonZeroUsize, time::Duration};
 
 use futures::Stream;
 
+#[cfg(any(feature = "asyncapi", feature = "json"))]
+use serde_json::Value;
+#[cfg(feature = "asyncapi")]
+use serde_json::json;
+
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
 
@@ -986,6 +991,46 @@ impl HttpApiKeyLocation {
 }
 
 impl SecurityScheme {
+    /// The scheme as its `AsyncAPI` security scheme object, as the generated document renders
+    /// it.
+    #[cfg(feature = "asyncapi")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn document_object(&self) -> Value {
+        use SecuritySchemeKind as Kind;
+
+        // Raw payloads round-trip through the string the constructor serialized, so parsing them
+        // back cannot fail; Null is the unreachable fallback, not an error path.
+        let parse = |raw: &str| serde_json::from_str::<Value>(raw).unwrap_or(Value::Null);
+        let mut object = match &self.kind {
+            Kind::UserPassword => json!({ "type": "userPassword" }),
+            Kind::ApiKey { location } => {
+                json!({ "type": "apiKey", "in": location.as_api() })
+            }
+            Kind::X509 => json!({ "type": "X509" }),
+            Kind::Plain => json!({ "type": "plain" }),
+            Kind::ScramSha256 => json!({ "type": "scramSha256" }),
+            Kind::ScramSha512 => json!({ "type": "scramSha512" }),
+            Kind::Gssapi => json!({ "type": "gssapi" }),
+            Kind::Http { scheme } => json!({ "type": "http", "scheme": scheme }),
+            Kind::HttpApiKey { name, location } => json!({
+                "type": "httpApiKey",
+                "name": name,
+                "in": location.as_api(),
+            }),
+            Kind::OpenIdConnect { url } => json!({
+                "type": "openIdConnect",
+                "openIdConnectUrl": url,
+            }),
+            Kind::Oauth2 { flows } => json!({ "type": "oauth2", "flows": parse(flows) }),
+            Kind::Custom { object } => parse(object),
+        };
+        if let (Some(description), Some(fields)) = (&self.description, object.as_object_mut()) {
+            fields.insert("description".to_owned(), Value::String(description.clone()));
+        }
+        object
+    }
+
     fn of(kind: SecuritySchemeKind) -> Self {
         Self {
             kind,
@@ -1221,7 +1266,7 @@ impl SecurityScheme {
     #[must_use]
     // The value is serialized on the spot; by-value keeps the `oauth2(json!(..))` call shape.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn oauth2(flows: serde_json::Value) -> Self {
+    pub fn oauth2(flows: Value) -> Self {
         Self::of(SecuritySchemeKind::Oauth2 {
             flows: flows.to_string(),
         })
@@ -1248,7 +1293,7 @@ impl SecurityScheme {
     #[must_use]
     // The value is serialized on the spot; by-value keeps the `custom(json!(..))` call shape.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn custom(object: serde_json::Value) -> Self {
+    pub fn custom(object: Value) -> Self {
         Self::of(SecuritySchemeKind::Custom {
             object: object.to_string(),
         })

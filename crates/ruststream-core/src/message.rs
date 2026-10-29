@@ -221,7 +221,8 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     /// drops the empty map it started from; the publish path assembles enough messages per
     /// delivery for that to be worth avoiding.
     #[inline]
-    pub(crate) fn assembled(name: &'a str, payload: Payload, headers: HeaderMap) -> Self {
+    #[doc(hidden)]
+    pub fn assembled(name: &'a str, payload: Payload, headers: HeaderMap) -> Self {
         Self {
             name,
             payload,
