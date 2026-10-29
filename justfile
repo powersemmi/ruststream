@@ -72,12 +72,14 @@ test:
     cargo check --no-default-features --features testing,memory,json --examples
     cargo test --no-default-features --features testing,memory,json --test examples
     cargo test --no-default-features --features testing,memory,json --example manual_app_running
-    # Plain `cargo test`: every target needing a non-default feature has to gate itself.
-    cargo test --workspace
+    # Plain `cargo test`: every target needing a non-default feature has to gate itself. The
+    # facade alone, since the crates behind it build their doc examples against the facade with
+    # the features those examples name, which a workspace run would turn on for the facade too.
+    cargo test -p ruststream
     # Both feature edges, because an all-features run hides a doc example that names a
     # feature-gated item without gating itself.
-    cargo test --workspace --doc
-    cargo test --workspace --doc --no-default-features
+    cargo test -p ruststream --doc
+    cargo test -p ruststream --doc --no-default-features
 
 # What a change costs per message: instructions and allocations through valgrind, then wall-clock
 # times printed for reference, then the document the benchmarks page publishes.

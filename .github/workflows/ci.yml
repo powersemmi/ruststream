@@ -82,6 +82,7 @@ jobs:
             templates:
               - 'templates/**'
               - 'src/**'
+              - 'crates/**'
               - 'Cargo.toml'
               - '.github/workflows/ci.yml'
 
@@ -175,15 +176,19 @@ jobs:
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: cargo +nightly-2026-03-20 check-external-types --all-features
 
-      # Both packages in one invocation: packaging strips the path from the lockstep
-      # `ruststream-macros` dependency, and between a version bump and the release that version
-      # is not on crates.io yet, so packaging ruststream alone cannot resolve it.
+      # Every published package in one invocation: packaging strips the path from the lockstep
+      # dependencies between them, and between a version bump and the release those versions are
+      # not on crates.io yet, so packaging one alone cannot resolve the others.
       # CARGO_HTTP_MULTIPLEXING=false works around HTTP2 framing failures on the runners.
       - name: cargo publish dry-run (no upload)
         if: "!cancelled() && env.DIST_CHANGED == 'true'"
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
-        run: cargo publish --locked --dry-run -p ruststream-macros -p ruststream --all-features
+        run: |
+          cargo publish --locked --dry-run --all-features -p ruststream-macros -p ruststream-core \
+            -p ruststream-runtime -p ruststream-memory -p ruststream-asyncapi \
+            -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
+            -p ruststream-cli -p ruststream
 
       # The dry-run verifies each package by building it under `target/package/<crate>`, whose
       # inner trees the cache action cannot read as cargo profiles either (same annotation as
@@ -452,20 +457,24 @@ jobs:
       # Plain `cargo test`, the first command a contributor runs. Every target that needs a
       # non-default feature gates itself (a crate-level `cfg` or `required-features`), and only
       # this run notices one that does not: the legs above all pick their features explicitly.
+      # It tests the facade alone: the crates behind it build their doc examples against the
+      # facade with the features those examples name, and a workspace run would turn those
+      # features on for the facade's own targets too.
       - name: cargo test (default features)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo test --locked --workspace --no-fail-fast
+        run: cargo test --locked -p ruststream --no-fail-fast
 
       # All-features hides a doc example that names a feature-gated item without gating itself.
-      # Both ends of the range catch it.
+      # Both ends of the range catch it, on the facade alone for the reason the default-features
+      # run gives.
       - name: cargo test --doc (feature edges)
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
           cargo test --locked --workspace --doc --all-features
-          cargo test --locked --workspace --doc
-          cargo test --locked --workspace --doc --no-default-features
+          cargo test --locked -p ruststream --doc
+          cargo test --locked -p ruststream --doc --no-default-features
 
       # The crate-root missing_docs deny covers item docs; this gate catches what rustc
       # cannot: broken intra-doc links and redundant targets only rustdoc resolves.
