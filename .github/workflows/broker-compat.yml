@@ -92,6 +92,17 @@ jobs:
         run: |
           sed -i 's#^ruststream = { version = "[^"]*"#ruststream = { path = "../core"#' broker/Cargo.toml
           grep '^ruststream = ' broker/Cargo.toml
+          # A member built on another broker crate (a benchmark or an example over a second
+          # transport) takes that crate from crates.io, which asks for the core from there too.
+          # The patch sends it to the same checkout, so the graph holds one core; the lock drops
+          # the registry copy it pinned.
+          mkdir -p broker/.cargo
+          printf '[patch.crates-io]\nruststream = { path = "%s/core" }\n' "$GITHUB_WORKSPACE" \
+            >> broker/.cargo/config.toml
+          cd broker
+          if grep -A2 '^name = "ruststream"$' Cargo.lock | grep -q '^source = "registry+'; then
+            cargo update -p 'registry+https://github.com/rust-lang/crates.io-index#ruststream'
+          fi
 
       - name: Build the broker against the core
         id: check
