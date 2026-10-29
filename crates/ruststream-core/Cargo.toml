@@ -19,7 +19,7 @@ all-features = true
 # `SecurityScheme::oauth2` and `SecurityScheme::custom` take a JSON value.
 json = ["dep:serde_json"]
 # The `*_bindings` methods of the contract and the binding types they return.
-asyncapi = ["dep:serde_json"]
+asyncapi = ["json"]
 # The hook a `Bound` token pairs through, which the test harness reads.
 testing = []
 
