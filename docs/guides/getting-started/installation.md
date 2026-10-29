@@ -4,8 +4,9 @@ description: "Add the ruststream crate, choose its cargo features and codec, and
 
 # Installation
 
-RustStream ships as a single crate, `ruststream`, whose surface is enabled by additive cargo
-features. Add it to your `Cargo.toml`:
+A service depends on one crate, `ruststream`, whose surface is enabled by additive cargo features.
+It re-exports the crates RustStream is built from, so a service never names them. Add it to your
+`Cargo.toml`:
 
 ```toml
 [dependencies]

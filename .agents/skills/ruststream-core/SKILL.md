@@ -1,14 +1,18 @@
 ---
 name: ruststream-core
-description: "Use when changing the RustStream core repository itself (powersemmi/ruststream: `src/`, `crates/ruststream-macros`, `tests/`, `examples/`, the site), as a contributor: public items, errors, features, doctests, compile-fail snapshots, conformance suites, the local gates and the pull request."
+description: "Use when changing the RustStream core repository itself (powersemmi/ruststream: the crates under `crates/`, the `ruststream` facade in `src/`, `tests/`, `examples/`, the site), as a contributor: public items, errors, features, doctests, compile-fail snapshots, conformance suites, the local gates and the pull request."
 ---
 
 # Contributing to the RustStream core
 
-The core is one published crate, `ruststream`, plus the proc-macro crate
-`crates/ruststream-macros`, released in lockstep. It is broker-agnostic, 100% safe Rust
-(`#![forbid(unsafe_code)]`), and its surface sits behind strictly additive cargo features. The
-environment, the gates and the pull request flow are in `CONTRIBUTING.md`; read it first.
+The core is a workspace of crates under `crates/`, released in lockstep: `ruststream-core` (the
+contract), `ruststream-runtime`, `ruststream-memory`, `ruststream-asyncapi`,
+`ruststream-observability`, `ruststream-testing`, `ruststream-conformance`, `ruststream-cli` and
+the proc-macro crate `ruststream-macros`. `ruststream`, at the root, is the facade that re-exports
+them under the public paths; services and broker crates depend on it alone. The core is
+broker-agnostic, 100% safe Rust (`#![forbid(unsafe_code)]`), and its surface sits behind strictly
+additive cargo features. The environment, the gates and the pull request flow are in
+`CONTRIBUTING.md`; read it first.
 
 ## A public item, the way the crate writes it
 
@@ -52,7 +56,12 @@ impl Subject {
 
 ## Rules
 
-- **Visibility.** Default to `pub(crate)`; `pub` is what `lib.rs` re-exports. The crate denies
+- **Layering.** A crate depends only on the crates below it, and `ruststream-core` on no other
+  crate of the family; the compiler holds this. A new public item is re-exported by the facade at
+  its public path. A module overview lives in the facade, and a doc link that leaves its crate
+  points at the facade's page on docs.rs. A doc example imports the facade.
+- **Visibility.** Default to `pub(crate)`; `pub` is what the crate root re-exports. An item another
+  crate of the workspace needs and a service does not is `#[doc(hidden)] pub`. The crate denies
   `missing_docs`: every public item has a one-line summary, and every one outside `#[doc(hidden)]`
   a compiling `# Examples` doctest that shows the item used where a caller uses it (a handler, a
   mount chain, a broker author's impl), with `?` rather than `unwrap()`. A fallible function has

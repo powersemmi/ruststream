@@ -1,8 +1,10 @@
 # Contributing to RustStream
 
-RustStream is the core crate in this repository plus thirteen broker crates, each in a repository
-of its own. This page covers the environment, the checks a change passes before review, and how a
-core change is tested on the broker crates.
+RustStream is the core in this repository plus thirteen broker crates, each in a repository of its
+own. The core is a workspace of crates under `crates/`, released together, behind the `ruststream`
+facade at the root; the broker crates and every service depend on the facade alone. This page
+covers the environment, the checks a change passes before review, and how a core change is tested
+on the broker crates.
 
 ## Repositories
 
