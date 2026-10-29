@@ -236,6 +236,58 @@ struct FaultyPublisher {
     deferred: Deferred,
 }
 
+impl FaultyPublisher {
+    /// Publishes through a connection attached on first use, which a shut-down bus revives.
+    async fn publish_reconnecting(
+        &self,
+        name: &str,
+        payload: &Bytes,
+        headers: HeaderMap,
+    ) -> Result<(), MemoryError> {
+        let publisher = if let Some(publisher) = self.lazy.get() {
+            publisher
+        } else {
+            // Connecting a clone of a shut-down bus revives it: the lazy attach reaches
+            // a connection of its own.
+            let attached = self.bus.clone().connect().await?;
+            self.lazy.get_or_init(|| attached.publisher())
+        };
+        publisher
+            .publish(
+                OutgoingMessage::new(name, payload).with_headers(headers),
+                None,
+            )
+            .await
+    }
+
+    /// Publishes through a socket the first caller attaches on its own runtime.
+    async fn publish_on_socket(
+        &self,
+        name: String,
+        payload: Bytes,
+        headers: HeaderMap,
+    ) -> Result<(), MemoryError> {
+        let (socket, first) = {
+            let mut socket = self.socket.lock().expect("poisoned");
+            let first = socket.is_none();
+            let sender = socket.get_or_insert_with(|| attach_socket(self.connected.publisher()));
+            let sender = sender.clone();
+            drop(socket);
+            (sender, first)
+        };
+        if first {
+            let (attached, handshake) = oneshot::channel();
+            let _ = socket.send((name, payload, headers, Some(attached)));
+            let _ = handshake.await;
+        } else if socket.send((name, payload, headers, None)).is_err()
+            && self.fault == Fault::AttachesOnFirstCallerAndFails
+        {
+            return Err(MemoryError::ShutDown);
+        }
+        Ok(())
+    }
+}
+
 impl Publisher for FaultyPublisher {
     type Payload = Lend;
     type Error = MemoryError;
@@ -261,42 +313,9 @@ impl Publisher for FaultyPublisher {
                     )
                     .await
             }
-            Fault::UntouchedReconnects => {
-                let publisher = if let Some(publisher) = self.lazy.get() {
-                    publisher
-                } else {
-                    // Connecting a clone of a shut-down bus revives it: the lazy attach reaches
-                    // a connection of its own.
-                    let attached = self.bus.clone().connect().await?;
-                    self.lazy.get_or_init(|| attached.publisher())
-                };
-                publisher
-                    .publish(
-                        OutgoingMessage::new(&name, &payload).with_headers(headers),
-                        None,
-                    )
-                    .await
-            }
+            Fault::UntouchedReconnects => self.publish_reconnecting(&name, &payload, headers).await,
             Fault::AttachesOnFirstCaller | Fault::AttachesOnFirstCallerAndFails => {
-                let (socket, first) = {
-                    let mut socket = self.socket.lock().expect("poisoned");
-                    let first = socket.is_none();
-                    let sender =
-                        socket.get_or_insert_with(|| attach_socket(self.connected.publisher()));
-                    let sender = sender.clone();
-                    drop(socket);
-                    (sender, first)
-                };
-                if first {
-                    let (attached, handshake) = oneshot::channel();
-                    let _ = socket.send((name, payload, headers, Some(attached)));
-                    let _ = handshake.await;
-                } else if socket.send((name, payload, headers, None)).is_err()
-                    && self.fault == Fault::AttachesOnFirstCallerAndFails
-                {
-                    return Err(MemoryError::ShutDown);
-                }
-                Ok(())
+                self.publish_on_socket(name, payload, headers).await
             }
             Fault::DefersPublishes => {
                 if self.closed.load(Ordering::SeqCst) {
