@@ -240,47 +240,81 @@ async fn one_name_two_subscriptions<C: TestableBroker + Subscribe>(connected: C)
     subscribers.extend(third.map(|third| (other.as_str(), third)));
     let names: Vec<&str> = subscribers.iter().map(|(name, _)| *name).collect();
 
-    // Published the way a service publishes, which is what `routes` answers for.
-    let registration = registration_of(&connected);
+    let routed = publish_shared(&connected, &name, &names).await;
+    let owed: usize = routed.iter().map(Vec::len).sum();
+    let received = receive_shared(&mut subscribers, owed).await;
+    assert_received_as_routed(&routed, &received, &name, &names);
+
+    assert!(
+        quiescent(&coordinator),
+        "one_name_two_subscriptions: every delivery was settled, yet the coordinator still counts \
+         one in flight; each delivery is counted once by `enqueued` and released once by \
+         `consumed`",
+    );
+    drop(subscribers);
+    connected.shutdown().await.expect("shutdown failed");
+}
+
+/// Publishes the two-subscription scenario's messages to `name` the way a service publishes,
+/// which is what `routes` answers for, and returns the subscriptions each one is owed to.
+async fn publish_shared<C>(connected: &C, name: &str, names: &[&str]) -> Vec<Vec<usize>>
+where
+    C: TestableBroker + 'static,
+{
+    let registration = registration_of(connected);
     let mut routed = Vec::new();
     for message in 0..SHARED {
-        let answer = connected.routes(&name, &names);
+        let answer = connected.routes(name, names);
         let taken = publish_as_service(
-            &connected,
+            connected,
             registration,
-            OutgoingMessage::new(name.as_str(), message.to_be_bytes().as_slice()),
+            OutgoingMessage::new(name, message.to_be_bytes().as_slice()),
         )
         .await;
         // A refused publish reaches nobody, whatever `routes` would answer for one the broker
         // took; the harness asks `routes` only about publishes that were taken.
         routed.push(if taken { answer } else { Vec::new() });
     }
+    routed
+}
 
-    let owed: usize = routed.iter().map(Vec::len).sum();
-    let received = {
-        let mut merged = stream::select_all(subscribers.iter_mut().enumerate().map(
-            |(position, (_, subscriber))| {
-                Box::pin(subscriber.stream().map(move |item| (position, item)))
-            },
-        ));
-        let mut received = Vec::new();
-        while received.len() < owed {
-            match timeout(DELIVERY_TIMEOUT, merged.next()).await {
-                Ok(Some(delivery)) => received.push(read_shared(delivery).await),
-                // Every stream ended, or nothing more arrived: what arrived is compared with what
-                // was owed below, which names the difference.
-                Ok(None) | Err(_) => break,
-            }
+/// Reads and settles what the subscriptions receive: the `owed` deliveries, then whatever else
+/// arrives before the subscriptions fall quiet.
+async fn receive_shared<Sub: Subscriber>(
+    subscribers: &mut [(&str, Sub)],
+    owed: usize,
+) -> Vec<Received> {
+    let mut merged = stream::select_all(subscribers.iter_mut().enumerate().map(
+        |(position, (_, subscriber))| {
+            Box::pin(subscriber.stream().map(move |item| (position, item)))
+        },
+    ));
+    let mut received = Vec::new();
+    while received.len() < owed {
+        match timeout(DELIVERY_TIMEOUT, merged.next()).await {
+            Ok(Some(delivery)) => received.push(read_shared(delivery).await),
+            // Every stream ended, or nothing more arrived: what arrived is compared with what
+            // was owed, which names the difference.
+            Ok(None) | Err(_) => break,
         }
-        while let Ok(Some(delivery)) = timeout(QUIET, merged.next()).await {
-            received.push(read_shared(delivery).await);
-        }
-        received
-    };
+    }
+    while let Ok(Some(delivery)) = timeout(QUIET, merged.next()).await {
+        received.push(read_shared(delivery).await);
+    }
+    received
+}
 
-    // Compared per subscription, not per name: a live TestApp waits on the very subscriptions the
-    // answer names, so a delivery to the other one of the same name leaves it waiting.
-    for (message, answer) in (0..SHARED).zip(&routed) {
+/// Each message reached exactly the subscriptions `routes` answered for it, once each.
+///
+/// Compared per subscription, not per name: a live `TestApp` waits on the very subscriptions the
+/// answer names, so a delivery to the other one of the same name leaves it waiting.
+fn assert_received_as_routed(
+    routed: &[Vec<usize>],
+    received: &[Received],
+    name: &str,
+    names: &[&str],
+) {
+    for (message, answer) in (0..SHARED).zip(routed) {
         let mut expected = answer.clone();
         expected.sort_unstable();
         let mut delivered: Vec<usize> = received
@@ -296,15 +330,6 @@ async fn one_name_two_subscriptions<C: TestableBroker + Subscribe>(connected: C)
              TestApp waits on that answer",
         );
     }
-
-    assert!(
-        quiescent(&coordinator),
-        "one_name_two_subscriptions: every delivery was settled, yet the coordinator still counts \
-         one in flight; each delivery is counted once by `enqueued` and released once by \
-         `consumed`",
-    );
-    drop(subscribers);
-    connected.shutdown().await.expect("shutdown failed");
 }
 
 /// Reads one delivery of the two-subscription scenario and settles it.
@@ -384,76 +409,119 @@ where
         );
 
         inject(b"injected");
-        assert!(
-            !quiescent(&coordinator),
-            "counts: a message injected into a subscription must be counted in flight \
-             (`Coordinator::enqueued`) before `inject` returns; TestApp would stop waiting before \
-             the handler ran",
-        );
-        let msg = expect_next(&mut stream, "counts injected").await;
-        assert!(
-            !quiescent(&coordinator),
-            "counts: a delivery in the handler's hands must stay counted until it is settled",
-        );
-        settle_ack(msg).await;
-        assert!(
-            quiescent(&coordinator),
-            "counts: an acked delivery must be released exactly once (`Coordinator::consumed`, \
-             from its `Drop`)",
-        );
-
+        injected_counts(&coordinator, &mut stream).await;
         if let Some(registration) = registration {
-            let reaches = !connected.routes(&name, &[name.as_str()]).is_empty();
-            let taken = publish_as_service(
-                &connected,
-                Some(registration),
-                OutgoingMessage::new(name.as_str(), b"own".as_slice()),
-            )
-            .await;
-            if taken && reaches {
-                assert!(
-                    !quiescent(&coordinator),
-                    "counts: a message the broker's own publisher sent must be counted in flight \
-                     by the time the publish returns; a handler's publish is followed by its \
-                     settlement, and TestApp would stop waiting in between",
-                );
-                settle_ack(expect_next(&mut stream, "counts own publish").await).await;
-            }
-            assert!(
-                quiescent(&coordinator),
-                "counts: a delivery of the broker's own publish must be released exactly once, \
-                 and a publish that reaches no subscription must not be counted",
-            );
+            own_publish_counts(&connected, registration, &coordinator, &mut stream, &name).await;
         }
-
-        // Where the broker routes by name, a publish to another one reaches no subscription; a
-        // transport that routes by connection (a bound queue socket) delivers it all the same.
-        let unread = unique_subject("conformance.unread");
-        let reaches = !connected.routes(&unread, &[name.as_str()]).is_empty();
-        let taken = publish_as_service(
-            &connected,
-            registration_of(&connected),
-            OutgoingMessage::new(unread.as_str(), b"unread".as_slice()),
-        )
-        .await;
-        if taken && reaches {
-            assert!(
-                !quiescent(&coordinator),
-                "counts: `routes` says the subscription receives a publish to {unread:?}, so it \
-                 must be counted in flight",
-            );
-            settle_ack(expect_next(&mut stream, "counts routed elsewhere").await).await;
-        }
-        assert!(
-            quiescent(&coordinator),
-            "counts: a publish no subscription receives must not be counted in flight; TestApp \
-             would wait for a handler that never runs",
-        );
+        unread_publish_counts(&connected, &coordinator, &mut stream, &name).await;
 
         settlement_counts(&coordinator, &mut stream, inject).await;
     }
     drop(subscriber);
     connected.shutdown().await.expect("shutdown failed");
+}
+
+/// An injected message is counted in flight before `inject` returns, stays counted while the
+/// handler holds it, and is released once by its acknowledgement.
+async fn injected_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
+where
+    M: IncomingMessage,
+    E: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+{
+    assert!(
+        !quiescent(coordinator),
+        "counts: a message injected into a subscription must be counted in flight \
+         (`Coordinator::enqueued`) before `inject` returns; TestApp would stop waiting before \
+         the handler ran",
+    );
+    let msg = expect_next(stream, "counts injected").await;
+    assert!(
+        !quiescent(coordinator),
+        "counts: a delivery in the handler's hands must stay counted until it is settled",
+    );
+    settle_ack(msg).await;
+    assert!(
+        quiescent(coordinator),
+        "counts: an acked delivery must be released exactly once (`Coordinator::consumed`, \
+         from its `Drop`)",
+    );
+}
+
+/// A message the broker's own publisher sent to `name` is counted in flight by the time the
+/// publish returns, and released once.
+async fn own_publish_counts<C, M, E, S>(
+    connected: &C,
+    registration: &TestableRegistration,
+    coordinator: &Coordinator,
+    stream: &mut S,
+    name: &str,
+) where
+    C: TestableBroker + 'static,
+    M: IncomingMessage,
+    E: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+{
+    let reaches = !connected.routes(name, &[name]).is_empty();
+    let taken = publish_as_service(
+        connected,
+        Some(registration),
+        OutgoingMessage::new(name, b"own".as_slice()),
+    )
+    .await;
+    if taken && reaches {
+        assert!(
+            !quiescent(coordinator),
+            "counts: a message the broker's own publisher sent must be counted in flight \
+             by the time the publish returns; a handler's publish is followed by its \
+             settlement, and TestApp would stop waiting in between",
+        );
+        settle_ack(expect_next(stream, "counts own publish").await).await;
+    }
+    assert!(
+        quiescent(coordinator),
+        "counts: a delivery of the broker's own publish must be released exactly once, \
+         and a publish that reaches no subscription must not be counted",
+    );
+}
+
+/// A publish to another name than the subscription's `name` is counted only where `routes` says
+/// the subscription receives it.
+///
+/// Where the broker routes by name, a publish to another one reaches no subscription; a
+/// transport that routes by connection (a bound queue socket) delivers it all the same.
+async fn unread_publish_counts<C, M, E, S>(
+    connected: &C,
+    coordinator: &Coordinator,
+    stream: &mut S,
+    name: &str,
+) where
+    C: TestableBroker + 'static,
+    M: IncomingMessage,
+    E: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+{
+    let unread = unique_subject("conformance.unread");
+    let reaches = !connected.routes(&unread, &[name]).is_empty();
+    let taken = publish_as_service(
+        connected,
+        registration_of(connected),
+        OutgoingMessage::new(unread.as_str(), b"unread".as_slice()),
+    )
+    .await;
+    if taken && reaches {
+        assert!(
+            !quiescent(coordinator),
+            "counts: `routes` says the subscription receives a publish to {unread:?}, so it \
+             must be counted in flight",
+        );
+        settle_ack(expect_next(stream, "counts routed elsewhere").await).await;
+    }
+    assert!(
+        quiescent(coordinator),
+        "counts: a publish no subscription receives must not be counted in flight; TestApp \
+         would wait for a handler that never runs",
+    );
 }
 
 /// Each settlement releases the delivery once, and each redelivery is counted again.
@@ -469,38 +537,10 @@ async fn settlement_counts<M, E, S>(
     let coordinator = coordinator.clone();
     {
         inject(b"dropped");
-        let msg = expect_next(stream, "counts nack(false)").await;
-        match msg.nack(false).await {
-            Ok(()) | Err(AckError::Unsupported) => {}
-            Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
-        }
-        assert!(
-            quiescent(&coordinator),
-            "counts: a delivery nacked without requeue must be released exactly once",
-        );
-        expect_no_more(stream, "counts nack(false)").await;
+        dropped_counts(&coordinator, stream).await;
 
         inject(b"requeued");
-        let msg = expect_next(stream, "counts nack(true)").await;
-        match msg.nack(true).await {
-            Ok(()) => {
-                assert!(
-                    !quiescent(&coordinator),
-                    "counts: a requeued message must be counted in flight again before `nack` \
-                     returns; TestApp would stop waiting before the redelivery was handled",
-                );
-                settle_ack(expect_next(stream, "counts requeued").await).await;
-                assert!(
-                    quiescent(&coordinator),
-                    "counts: an acked redelivery must be released exactly once",
-                );
-            }
-            Err(AckError::Unsupported) => assert!(
-                quiescent(&coordinator),
-                "counts: a delivery whose requeue is unsupported must still be released",
-            ),
-            Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
-        }
+        requeued_counts(&coordinator, stream).await;
 
         inject(b"delayed");
         let msg = expect_next(stream, "counts nack_after").await;
@@ -522,6 +562,55 @@ async fn settlement_counts<M, E, S>(
                  it redelivers",
             );
         }
+    }
+}
+
+/// A delivery nacked without requeue is released once and does not come back.
+async fn dropped_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
+where
+    M: IncomingMessage,
+    E: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+{
+    let msg = expect_next(stream, "counts nack(false)").await;
+    match msg.nack(false).await {
+        Ok(()) | Err(AckError::Unsupported) => {}
+        Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
+    }
+    assert!(
+        quiescent(coordinator),
+        "counts: a delivery nacked without requeue must be released exactly once",
+    );
+    expect_no_more(stream, "counts nack(false)").await;
+}
+
+/// A requeued delivery is counted again before `nack` returns, and its redelivery is released
+/// once; a transport with no requeue still releases the delivery.
+async fn requeued_counts<M, E, S>(coordinator: &Coordinator, stream: &mut S)
+where
+    M: IncomingMessage,
+    E: fmt::Debug,
+    S: Stream<Item = Result<M, E>> + Unpin,
+{
+    let msg = expect_next(stream, "counts nack(true)").await;
+    match msg.nack(true).await {
+        Ok(()) => {
+            assert!(
+                !quiescent(coordinator),
+                "counts: a requeued message must be counted in flight again before `nack` \
+                 returns; TestApp would stop waiting before the redelivery was handled",
+            );
+            settle_ack(expect_next(stream, "counts requeued").await).await;
+            assert!(
+                quiescent(coordinator),
+                "counts: an acked redelivery must be released exactly once",
+            );
+        }
+        Err(AckError::Unsupported) => assert!(
+            quiescent(coordinator),
+            "counts: a delivery whose requeue is unsupported must still be released",
+        ),
+        Err(other) => panic!("nack must succeed or be unsupported, got: {other:?}"),
     }
 }
 
