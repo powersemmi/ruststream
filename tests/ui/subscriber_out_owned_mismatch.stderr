@@ -17,7 +17,7 @@ help: the following other types implement trait `OwnedTransactions`
    | |     for Slot<M, W, E, Pipe, Body>
    | |_________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: crates/ruststream-memory/src/capability.rs
+  ::: crates/ruststream-memory/src/capability/transaction.rs
    |
    |   impl OwnedTransactions for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`

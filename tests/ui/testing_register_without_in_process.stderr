@@ -11,7 +11,7 @@ help: the trait `InProcess` is not implemented for `Networked`
    | ^^^^^^^^^^^^^^^^
    = note: a broker crate implements `InProcess` under its `testing` feature: a service enables that feature in `[dev-dependencies]`, a broker author implements the trait there
 help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
-  --> crates/ruststream-memory/src/lib.rs
+  --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -36,7 +36,7 @@ help: the trait `DefaultPublish` is not implemented for `ConnectedNetworked`
 10 | struct ConnectedNetworked;
    | ^^^^^^^^^^^^^^^^^^^^^^^^^
 help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
-  --> crates/ruststream-memory/src/lib.rs
+  --> crates/ruststream-memory/src/broker.rs
    |
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

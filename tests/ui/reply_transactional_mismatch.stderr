@@ -17,7 +17,7 @@ help: the following other types implement trait `TransactionalPublisher`
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
    | |________________________________________________________^ `Slot<M, W, E, Pipe, Body>`
    |
-  ::: crates/ruststream-memory/src/capability.rs
+  ::: crates/ruststream-memory/src/capability/transaction.rs
    |
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`

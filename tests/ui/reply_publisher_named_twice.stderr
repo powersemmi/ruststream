@@ -9,7 +9,7 @@ error[E0277]: this registration has no unbound publish position marked `Reply`
    = help: the trait `ruststream::runtime::OutPosition<ruststream::runtime::PublishMount, MemoryBroker, (ruststream::runtime::WithSource<ReplyWiring<MemoryPublish>>, ()), _, _>` is not implemented for `Reply`
    = note: `.out(marker, policy)` binds one position: `Reply` for the value a `reply("dest")` handler returns, an `Out` slot's own marker for a slot, `Retry` for the deferred `retry_after` copy. Check the marker, that the handler declares it, and that it was not bound twice
 help: the trait `ruststream::runtime::OutPosition<Mount, B, Attach, Policy, ruststream::runtime::ReplyLast>` is conditionally implemented for `Reply`
-  --> crates/ruststream-runtime/src/slot.rs
+  --> crates/ruststream-runtime/src/slot/position.rs
    |
    | / impl<Mount, B, Attach, Policy> OutPosition<Mount, B, Attach, Policy, ReplyLast> for Reply
    | | where

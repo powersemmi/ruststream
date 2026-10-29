@@ -13,12 +13,12 @@ help: the following other types implement trait `SubscriptionSource<C>`
    | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemoryPattern {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPattern` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
    |
-  ::: crates/ruststream-memory/src/lib.rs
+  ::: crates/ruststream-memory/src/subscriber.rs
    |
    | impl<Log: LogMode> SubscriptionSource<ConnectedMemoryBroker<Log>> for MemorySource {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySource` implements `SubscriptionSource<ConnectedMemoryBroker<Log>>`
    |
-  ::: crates/ruststream-core/src/subscription.rs
+  ::: crates/ruststream-core/src/subscription/sources.rs
    |
    | impl<C: Subscribe> SubscriptionSource<C> for Name {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Name` implements `SubscriptionSource<C>`
