@@ -25,7 +25,7 @@ use std::fmt::Debug;
 use super::attribution::split_record;
 use super::attribution::{MessageOptions, RecordedOptions};
 use super::coordinator::{Coordinator, Delivered, Outcome, Record};
-use super::hooks::PublishTarget;
+use super::hooks::{PublishTarget, Within};
 
 /// Assertions over the deliveries one subscriber received, recorded by the harness.
 ///
@@ -40,20 +40,34 @@ pub struct SubscriberAssertions<'a> {
     coordinator: &'a Coordinator,
     scope_id: usize,
     name: String,
+    within: Within,
 }
 
 impl<'a> SubscriberAssertions<'a> {
-    pub(crate) fn new(coordinator: &'a Coordinator, scope_id: usize, name: String) -> Self {
+    pub(crate) const fn new(coordinator: &'a Coordinator, scope_id: usize, name: String) -> Self {
+        Self::within(coordinator, scope_id, name, Within::ALL)
+    }
+
+    /// Assertions over the calls recorded up to `within`: what a hook reads, the record as it
+    /// stood at its call.
+    pub(crate) const fn within(
+        coordinator: &'a Coordinator,
+        scope_id: usize,
+        name: String,
+        within: Within,
+    ) -> Self {
         Self {
             coordinator,
             scope_id,
             name,
+            within,
         }
     }
 
     /// Runs `f` over the recorded deliveries to this subscriber, in delivery order.
     fn with_records<R>(&self, f: impl FnOnce(&[&Record]) -> R) -> R {
-        self.coordinator.with_records(self.scope_id, &self.name, f)
+        self.coordinator
+            .with_records(self.scope_id, &self.name, self.within, f)
     }
 
     /// Runs `f` over the most recent recorded call, panicking if there were none.
@@ -574,7 +588,8 @@ impl SubscriberAssertions<'_> {
     ///
     /// The hook runs when the harness records the call, after the delivery settled. It is handed
     /// this same handle, borrowed for the duration of the call, so it reads the record as it
-    /// stands at that moment, the new call included, with the assertions a test already uses
+    /// stood at that call, the call included and the calls recorded after it left out, with the
+    /// assertions a test already uses
     /// (`assert_called(n)`, `with(..)`, `settled(..)`). Several hooks on one subscription run in
     /// the order they were registered; a call recorded before the registration does not run it.
     /// Both [`TestApp::start`](super::TestApp::start) and
@@ -584,7 +599,8 @@ impl SubscriberAssertions<'_> {
     /// that never completes hangs that publish; the test's own timeout is the guard. A hook runs
     /// on a thread of its own inside the test's runtime, its clock included. A panic inside it, a
     /// failed assertion included, is raised again from the publish, `settle` or `advance` that
-    /// drove the call.
+    /// drove the call, or else from [`TestApp::shutdown`](super::TestApp::shutdown) or the
+    /// harness being dropped.
     ///
     /// # Examples
     ///
@@ -677,9 +693,9 @@ impl<T> PublishedAssertions<T> {
     }
 
     /// Assertions over an `Out` slot's view, where every publish also carries the options.
-    pub(crate) fn captured(coordinator: &Coordinator, slot: &'static str) -> Self {
+    pub(crate) fn captured(coordinator: &Coordinator, slot: &'static str, within: Within) -> Self {
         let (messages, options) = coordinator
-            .slot_published(slot)
+            .slot_published(slot, within)
             .into_iter()
             .map(|record| (record.message, MessageOptions::Recorded(record.options)))
             .unzip();
@@ -979,15 +995,16 @@ impl<T: DeserializeOwned> PublishedAssertions<T> {
 }
 
 impl<T> PublishedAssertions<T> {
-    /// Assertions over the harness's record of `target` as it stands now: what a hook on it is
-    /// handed.
-    pub(crate) fn at(coordinator: &Coordinator, target: &PublishTarget) -> Self {
+    /// Assertions over the harness's record of `target` up to `within`: what a hook on it is
+    /// handed, the record as it stood at its publish.
+    pub(crate) fn at(coordinator: &Coordinator, target: &PublishTarget, within: Within) -> Self {
         match target {
             PublishTarget::Channel { scope_id, name } => {
-                let (messages, options) = split_record(coordinator.published(*scope_id, name));
+                let recorded = coordinator.published_within(*scope_id, name, within);
+                let (messages, options) = split_record(recorded);
                 Self::new(coordinator, target.clone(), name.clone(), messages, options)
             }
-            PublishTarget::Slot(slot) => Self::captured(coordinator, slot),
+            PublishTarget::Slot(slot) => Self::captured(coordinator, slot, within),
         }
     }
 }
@@ -999,8 +1016,9 @@ impl<T: 'static> PublishedAssertions<T> {
     /// letters). On the view of an `Out` slot ([`TestApp::out`](super::TestApp::out)) it runs
     /// for each publish through that slot.
     ///
-    /// The hook is handed assertions over this destination as the harness's record stands at that
-    /// moment, the new publish included, with the surface a test already uses
+    /// The hook is handed assertions over this destination as the harness's record stood at that
+    /// publish, the publish included and the ones recorded after it left out, with the surface a
+    /// test already uses
     /// (`assert_called(n)`, `with(..)`, `decoded()`). The record is the message as the framework
     /// handed it to the broker, in both start modes. Several hooks on one destination run in the
     /// order they were registered; a publish recorded before the registration does not run it.
@@ -1009,7 +1027,8 @@ impl<T: 'static> PublishedAssertions<T> {
     /// returns, so a hook that never completes hangs that publish; the test's own timeout is the
     /// guard. A hook runs on a thread of its own inside the test's runtime, its clock included. A
     /// panic inside it, a failed assertion included, is raised again from the publish, `settle`
-    /// or `advance` that drove the event.
+    /// or `advance` that drove the event, or else from
+    /// [`TestApp::shutdown`](super::TestApp::shutdown) or the harness being dropped.
     ///
     /// # Examples
     ///

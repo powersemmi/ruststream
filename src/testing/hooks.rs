@@ -22,7 +22,7 @@ use super::coordinator::Coordinator;
 type HookFuture<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
 
 /// An `on_call` hook with its closure type erased.
-trait CallHook: Send + Sync {
+pub(crate) trait CallHook: Send + Sync {
     fn call<'a>(&'a self, handle: SubscriberAssertions<'a>) -> HookFuture<'a>;
 }
 
@@ -38,7 +38,12 @@ where
 /// An `on_publish` hook with its closure and payload types erased: it builds the handle it is
 /// handed, so the registry needs neither.
 trait PublishHook: Send + Sync {
-    fn call<'a>(&'a self, coordinator: &Coordinator, target: &PublishTarget) -> HookFuture<'a>;
+    fn call<'a>(
+        &'a self,
+        coordinator: &Coordinator,
+        target: &PublishTarget,
+        within: Within,
+    ) -> HookFuture<'a>;
 }
 
 /// An `on_publish` hook over `PublishedAssertions<Payload>`.
@@ -51,8 +56,37 @@ impl<Payload, Hook> PublishHook for TypedPublishHook<Payload, Hook>
 where
     Hook: AsyncFn(PublishedAssertions<Payload>) + Send + Sync,
 {
-    fn call<'a>(&'a self, coordinator: &Coordinator, target: &PublishTarget) -> HookFuture<'a> {
-        Box::pin((self.hook)(PublishedAssertions::at(coordinator, target)))
+    fn call<'a>(
+        &'a self,
+        coordinator: &Coordinator,
+        target: &PublishTarget,
+        within: Within,
+    ) -> HookFuture<'a> {
+        Box::pin((self.hook)(PublishedAssertions::at(
+            coordinator,
+            target,
+            within,
+        )))
+    }
+}
+
+/// How much of a record a handle reads: the entries recorded up to an event, the event's own
+/// included, so a hook reads the record as it stood at its event whatever came after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Within(usize);
+
+impl Within {
+    /// The whole record, as it stands whenever it is read.
+    pub(crate) const ALL: Self = Self(usize::MAX);
+
+    /// The first `len` entries of the record.
+    pub(crate) const fn first(len: usize) -> Self {
+        Self(len)
+    }
+
+    /// How many entries from the start of the record this reads.
+    pub(crate) const fn len(self) -> usize {
+        self.0
     }
 }
 
@@ -73,8 +107,6 @@ pub(crate) struct Hooks {
     registered: AtomicBool,
     calls: Mutex<Vec<OnCall>>,
     publishes: Mutex<Vec<OnPublish>>,
-    /// Calls recorded with hooks to run, held until the dispatch that made the call settled it.
-    due_calls: Mutex<Vec<DueCall>>,
     /// The first panic a hook raised, held for the test's task to raise again.
     failed: Mutex<Option<Box<dyn Any + Send>>>,
 }
@@ -93,11 +125,12 @@ struct OnPublish {
 }
 
 /// One recorded call and the hooks it runs: those registered on its handle when it was recorded.
-struct DueCall {
-    /// The subscription of the app the call came through, whose dispatch runs the hooks.
-    subscription: usize,
+/// The dispatch that made the call holds it, and runs it once it settled the call.
+#[must_use]
+pub(crate) struct DueCall {
     scope_id: usize,
     name: String,
+    within: Within,
     hooks: Vec<Arc<dyn CallHook>>,
 }
 
@@ -109,6 +142,7 @@ pub(crate) struct DuePublish(Option<PublishRun>);
 struct PublishRun {
     coordinator: Coordinator,
     target: PublishTarget,
+    within: Within,
     hooks: Vec<Arc<dyn PublishHook>>,
 }
 
@@ -148,25 +182,22 @@ impl Hooks {
         self.registered.store(true, Ordering::SeqCst);
     }
 
-    /// Notes a call just recorded on the subscription numbered `subscription`, if any hook is
-    /// registered on its handle; [`Coordinator::run_due_calls`] runs them.
-    pub(crate) fn called(&self, subscription: usize, scope_id: usize, name: &str) {
+    /// The hooks registered on the calls of the subscription `name` of the broker at
+    /// `scope_id`, or `None` when there are none.
+    pub(crate) fn on_calls_of(
+        &self,
+        scope_id: usize,
+        name: &str,
+    ) -> Option<Vec<Arc<dyn CallHook>>> {
         if !self.registered.load(Ordering::SeqCst) {
-            return;
+            return None;
         }
         let hooks: Vec<_> = lock(&self.calls)
             .iter()
             .filter(|on| on.scope_id == scope_id && on.name == name)
             .map(|on| Arc::clone(&on.hook))
             .collect();
-        if !hooks.is_empty() {
-            lock(&self.due_calls).push(DueCall {
-                subscription,
-                scope_id,
-                name: name.to_owned(),
-                hooks,
-            });
-        }
+        (!hooks.is_empty()).then_some(hooks)
     }
 
     /// The hooks a publish just recorded runs: those registered on `target`, the record it went
@@ -176,6 +207,7 @@ impl Hooks {
         &self,
         coordinator: &Coordinator,
         target: impl FnOnce() -> PublishTarget,
+        within: Within,
     ) -> DuePublish {
         if !self.registered.load(Ordering::SeqCst) {
             return DuePublish::NONE;
@@ -189,22 +221,9 @@ impl Hooks {
         DuePublish((!hooks.is_empty()).then(|| PublishRun {
             coordinator: coordinator.clone(),
             target,
+            within,
             hooks,
         }))
-    }
-
-    /// Takes the calls of the subscription numbered `subscription` whose hooks are still to run.
-    fn take_due_calls(&self, subscription: usize) -> Vec<DueCall> {
-        if !self.registered.load(Ordering::SeqCst) {
-            return Vec::new();
-        }
-        let mut due = lock(&self.due_calls);
-        let (taken, kept) = due
-            .drain(..)
-            .partition(|call| call.subscription == subscription);
-        *due = kept;
-        drop(due);
-        taken
     }
 
     /// Raises again, in the caller's task, the first panic a hook raised.
@@ -216,18 +235,35 @@ impl Hooks {
     }
 }
 
+impl DueCall {
+    /// The call recorded at `scope_id` and `name`, which `hooks` answer, read up to `within`.
+    pub(crate) const fn new(
+        scope_id: usize,
+        name: String,
+        within: Within,
+        hooks: Vec<Arc<dyn CallHook>>,
+    ) -> Self {
+        Self {
+            scope_id,
+            name,
+            within,
+            hooks,
+        }
+    }
+}
+
 impl Coordinator {
-    /// Runs the hooks of the calls the subscription numbered `subscription` recorded, once the
-    /// dispatch that made them has settled them.
-    pub(crate) async fn run_due_calls(&self, subscription: usize) {
-        for call in self.hooks().take_due_calls(subscription) {
+    /// Runs the hooks of `calls`, which the caller's dispatch recorded and has settled.
+    pub(crate) async fn run_calls(&self, calls: impl IntoIterator<Item = DueCall>) {
+        for call in calls {
             on_hook_thread(self, move |coordinator| {
                 Box::pin(async move {
                     for hook in &call.hooks {
-                        let handle = SubscriberAssertions::new(
+                        let handle = SubscriberAssertions::within(
                             coordinator,
                             call.scope_id,
                             call.name.clone(),
+                            call.within,
                         );
                         hook.call(handle).await;
                     }
@@ -244,6 +280,7 @@ impl DuePublish {
         let Some(PublishRun {
             coordinator,
             target,
+            within,
             hooks,
         }) = self.0
         else {
@@ -252,7 +289,7 @@ impl DuePublish {
         on_hook_thread(&coordinator, move |coordinator| {
             Box::pin(async move {
                 for hook in &hooks {
-                    hook.call(coordinator, &target).await;
+                    hook.call(coordinator, &target, within).await;
                 }
             })
         })
@@ -280,6 +317,33 @@ where
     });
     if let Ok(Err(payload)) = finished.await {
         lock(&coordinator.hooks().failed).get_or_insert(payload);
+    }
+}
+
+/// The harness's hold on the failures of its hooks, for the ends of a test that drive nothing
+/// further: a shutdown raises what it holds once the handlers are done, and a harness dropped
+/// without one raises it as it goes.
+pub(crate) struct HookFailures(Coordinator);
+
+impl HookFailures {
+    pub(crate) const fn new(coordinator: Coordinator) -> Self {
+        Self(coordinator)
+    }
+
+    /// Raises the failure a hook left, if any.
+    pub(crate) fn raise(self) {
+        self.0.hooks().raise_failure();
+    }
+}
+
+// Why a destructor that panics: a test that ends by dropping the harness has no other place left
+// where a hook's failed assertion can fail it, and passing a test whose check failed is the
+// defect. It raises only a failure that is pending and only when no panic is unwinding already.
+impl Drop for HookFailures {
+    fn drop(&mut self) {
+        if !thread::panicking() {
+            self.0.hooks().raise_failure();
+        }
     }
 }
 

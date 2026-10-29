@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use std::{fmt, ptr};
+use std::{fmt, mem, ptr};
 
 use bytes::Bytes;
 use tokio::sync::Notify;
@@ -31,7 +31,7 @@ use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
 use super::attribution::{PublishedEntry, RecordedOptions, RuntimePublish, Span};
-use super::hooks::{DuePublish, Hooks, PublishTarget};
+use super::hooks::{DueCall, DuePublish, Hooks, PublishTarget, Within};
 
 tokio::task_local! {
     /// The harness driving the current dispatch task, so a slot publisher and the batch settle
@@ -99,11 +99,13 @@ fn publishing() -> Origin {
 
 /// The harness a dispatch task runs under: which coordinator records it, which broker's
 /// registration the delivery belongs to, and which subscription of the app it came through.
-#[derive(Clone)]
 pub(crate) struct HarnessScope {
     coordinator: Coordinator,
     scope_id: usize,
     subscription: usize,
+    /// The calls this dispatch recorded from inside the handler (a batch records its call where
+    /// it settles), with the hooks they owe, for the dispatch to run once it is done.
+    calls: Mutex<Vec<DueCall>>,
 }
 
 impl HarnessScope {
@@ -116,6 +118,7 @@ impl HarnessScope {
             coordinator,
             scope_id,
             subscription,
+            calls: Mutex::new(Vec::new()),
         }
     }
 }
@@ -207,7 +210,7 @@ fn raw_of<Payload: AsRef<[u8]>>(msg: &OutgoingMessage<'_, Payload>) -> RawMessag
 /// carry one.
 pub(crate) fn record_batch(name: &str, deliveries: Vec<Delivered>) {
     let _ = HARNESS.try_with(|scope| {
-        scope.coordinator.record(Record {
+        let due = scope.coordinator.record(Record {
             scope_id: scope.scope_id,
             subscription: scope.subscription,
             name: name.to_owned(),
@@ -215,6 +218,13 @@ pub(crate) fn record_batch(name: &str, deliveries: Vec<Delivered>) {
             panicked: false,
             decode_failed: false,
         });
+        if let Some(due) = due {
+            scope
+                .calls
+                .lock()
+                .expect("harness scope calls mutex poisoned")
+                .push(due);
+        }
     });
 }
 
@@ -253,6 +263,32 @@ pub(crate) async fn in_harness_scope<F: Future>(scope: Option<HarnessScope>, fut
     match scope {
         Some(scope) => HARNESS.scope(scope, fut).await,
         None => fut.await,
+    }
+}
+
+/// Like [`in_harness_scope`], and hands back the calls `fut` recorded with hooks still to run.
+pub(crate) async fn calls_in_harness_scope<F: Future>(
+    scope: Option<HarnessScope>,
+    fut: F,
+) -> (F::Output, Vec<DueCall>) {
+    match scope {
+        Some(scope) => {
+            HARNESS
+                .scope(scope, async move {
+                    let output = fut.await;
+                    let calls = HARNESS.with(|scope| {
+                        mem::take(
+                            &mut *scope
+                                .calls
+                                .lock()
+                                .expect("harness scope calls mutex poisoned"),
+                        )
+                    });
+                    (output, calls)
+                })
+                .await
+        }
+        None => (fut.await, Vec::new()),
     }
 }
 
@@ -570,15 +606,20 @@ impl Coordinator {
     ///
     /// The hooks registered on the subscription's handle are noted with it, to run once the
     /// dispatch settled the call ([`run_due_calls`](Self::run_due_calls)).
-    pub(crate) fn record(&self, record: Record) {
-        self.inner
-            .hooks
-            .called(record.subscription, record.scope_id, &record.name);
-        self.inner
+    ///
+    /// Returns the call's hooks, read up to this call, for the dispatch to run once it settled it.
+    pub(crate) fn record(&self, record: Record) -> Option<DueCall> {
+        let hooks = self.inner.hooks.on_calls_of(record.scope_id, &record.name);
+        let call = hooks.map(|hooks| (record.scope_id, record.name.clone(), hooks));
+        let mut records = self
+            .inner
             .records
             .lock()
-            .expect("coordinator records mutex poisoned")
-            .push(record);
+            .expect("coordinator records mutex poisoned");
+        records.push(record);
+        let within = Within::first(records.len());
+        drop(records);
+        call.map(|(scope_id, name, hooks)| DueCall::new(scope_id, name, within, hooks))
     }
 
     /// The hooks a test registered on this run's handles.
@@ -748,15 +789,23 @@ impl Coordinator {
 
     fn push_published(&self, published: Published) -> DuePublish {
         let scope_id = published.scope_id;
-        let hooks = self.inner.hooks.published(self, || PublishTarget::Channel {
-            scope_id,
-            name: published.entry.message().name().to_owned(),
-        });
-        self.inner
+        let mut record = self
+            .inner
             .published
             .lock()
-            .expect("coordinator published mutex poisoned")
-            .push(published);
+            .expect("coordinator published mutex poisoned");
+        record.push(published);
+        let within = Within::first(record.len());
+        let entry = &record.last().expect("just recorded").entry;
+        let hooks = self.inner.hooks.published(
+            self,
+            || PublishTarget::Channel {
+                scope_id,
+                name: entry.message().name().to_owned(),
+            },
+            within,
+        );
+        drop(record);
         self.inner.notify.notify_waiters();
         hooks
     }
@@ -790,11 +839,22 @@ impl Coordinator {
     /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
     /// publish order.
     pub(crate) fn published(&self, scope_id: usize, name: &str) -> Vec<PublishedEntry> {
+        self.published_within(scope_id, name, Within::ALL)
+    }
+
+    /// Like [`published`](Self::published), over the publishes recorded up to `within`.
+    pub(crate) fn published_within(
+        &self,
+        scope_id: usize,
+        name: &str,
+        within: Within,
+    ) -> Vec<PublishedEntry> {
         self.inner
             .published
             .lock()
             .expect("coordinator published mutex poisoned")
             .iter()
+            .take(within.len())
             .filter(|published| {
                 published.scope_id == scope_id && published.entry.message().name() == name
             })
@@ -939,39 +999,45 @@ impl Coordinator {
     ) -> DuePublish {
         let message = RawMessage::new(msg.name().to_owned(), msg.payload().to_vec())
             .with_headers(msg.headers().clone());
-        self.inner
-            .slot_records
-            .lock()
-            .expect("coordinator slot records mutex poisoned")
-            .push(SlotRecord {
+        let within = {
+            let mut records = self
+                .inner
+                .slot_records
+                .lock()
+                .expect("coordinator slot records mutex poisoned");
+            records.push(SlotRecord {
                 slot,
                 message,
                 options,
             });
+            Within::first(records.len())
+        };
         self.inner
             .hooks
-            .published(self, || PublishTarget::Slot(slot))
+            .published(self, || PublishTarget::Slot(slot), within)
     }
 
-    /// Every publish made through the `Out` slot named `slot`, in publish order.
-    pub(crate) fn slot_published(&self, slot: &str) -> Vec<SlotRecord> {
+    /// Every publish made through the `Out` slot named `slot` up to `within`, in publish order.
+    pub(crate) fn slot_published(&self, slot: &str, within: Within) -> Vec<SlotRecord> {
         self.inner
             .slot_records
             .lock()
             .expect("coordinator slot records mutex poisoned")
             .iter()
+            .take(within.len())
             .filter(|record| record.slot == slot)
             .cloned()
             .collect()
     }
 
-    /// Runs `f` over every record matching `scope_id` and `name`, in delivery order.
+    /// Runs `f` over every record matching `scope_id` and `name` up to `within`, in delivery order.
     // The guard is held across `f` on purpose: `matching` borrows the records it owns.
     #[allow(clippy::significant_drop_tightening)]
     pub(crate) fn with_records<R>(
         &self,
         scope_id: usize,
         name: &str,
+        within: Within,
         f: impl FnOnce(&[&Record]) -> R,
     ) -> R {
         let guard = self
@@ -981,6 +1047,7 @@ impl Coordinator {
             .expect("coordinator records mutex poisoned");
         let matching: Vec<&Record> = guard
             .iter()
+            .take(within.len())
             .filter(|r| r.scope_id == scope_id && r.name == name)
             .collect();
         f(&matching)
