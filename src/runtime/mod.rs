@@ -22,7 +22,6 @@ mod middleware;
 #[cfg(feature = "poll-diagnostics")]
 pub(crate) mod poll_diagnostics;
 mod publish;
-mod publish_source;
 mod publishing;
 mod redelivery;
 mod retry;
@@ -103,9 +102,9 @@ pub use inject::Out;
 // Public and hidden: a hand-written low-level def (`SubscriberDef` / `BatchDef`) names its
 // input kind, and the self-deserializing one is how such a def opts onto the byte transport.
 #[doc(hidden)]
-pub use input::{Provided, TypedLane};
+pub use crate::bindable::ConnectedSlot;
 #[doc(hidden)]
-pub use lifecycle::ConnectedSlot;
+pub use input::{Provided, TypedLane};
 #[cfg(feature = "testing")]
 pub(crate) use lifecycle::{BoxError, BoxFuture, ConnectedLifecycle, InProcessConnect};
 pub use metadata::{
@@ -141,9 +140,9 @@ pub use publish::{
 };
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
+pub use crate::bindable::{Bindable, Bound, BrokerRegistration};
 #[cfg(feature = "testing")]
 pub(crate) use publish::message_of;
-pub use publish_source::{Bindable, Bound, BrokerRegistration};
 #[doc(hidden)]
 pub use redelivery::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,

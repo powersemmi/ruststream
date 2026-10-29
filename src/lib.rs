@@ -105,6 +105,7 @@
 
 #![forbid(unsafe_code)]
 
+mod bindable;
 #[cfg(feature = "asyncapi")]
 mod bindings;
 mod broker;
@@ -117,6 +118,8 @@ mod form;
 mod headers;
 mod message;
 mod outgoing;
+#[cfg(feature = "testing")]
+mod pairing;
 pub mod prelude;
 mod publisher;
 mod schema;

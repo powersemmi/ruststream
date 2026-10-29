@@ -12,13 +12,13 @@
 //!   completed dispatch decrements it.
 
 use std::any::Any;
-use std::cell::Cell;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use std::{fmt, mem, ptr};
+use std::{fmt, mem};
 
 use bytes::Bytes;
 use tokio::sync::Notify;
@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 use tokio::time::Instant;
 
+pub(crate) use crate::pairing::{Origin, paired};
 use crate::runtime::HandlerResult;
 use crate::{OutgoingMessage, RawMessage};
 
@@ -40,48 +41,9 @@ tokio::task_local! {
     /// attached.
     static HARNESS: HarnessScope;
 
-    /// Set around one pairing the runtime makes: the connected broker the policy pairs against.
-    /// The scope's broker unless a `Bound` token, which pairs against its own broker, says
-    /// otherwise.
-    static PAIRING: Cell<Origin>;
-
     /// Set around one publish through a publisher the runtime paired: the broker it was paired
     /// against, which is the broker the message goes to.
     static PUBLISHING: Origin;
-}
-
-/// The broker a publisher the runtime paired publishes to: the connected broker it was paired
-/// against, whatever scope holds it. A handler on one broker holding a `Bound` token for another
-/// publishes to the other, and its publishes are that broker's.
-///
-/// Known by the connected form's address, which the harness maps to the broker's registration.
-/// A publisher the runtime did not pair (one the service builds or keeps itself) carries none.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Origin(Option<usize>);
-
-impl Origin {
-    /// The connected broker at `connected`.
-    fn of<C: ?Sized>(connected: &C) -> Self {
-        Self(Some(ptr::from_ref(connected).cast::<()>() as usize))
-    }
-}
-
-/// Runs the pairing `pairing` against `connected`, and reports the broker the paired publisher
-/// publishes to.
-pub(crate) fn paired<C: ?Sized, F: Future>(
-    connected: &C,
-    pairing: F,
-) -> impl Future<Output = (F::Output, Origin)> {
-    PAIRING.scope(Cell::new(Origin::of(connected)), async move {
-        let live = pairing.await;
-        (live, PAIRING.with(Cell::get))
-    })
-}
-
-/// Notes, inside a pairing, that the policy pairs against `connected` instead of the broker it
-/// was handed: what a `Bound` token does.
-pub(crate) fn pairs_against<C: ?Sized>(connected: &C) {
-    let _ = PAIRING.try_with(|origin| origin.set(Origin::of(connected)));
 }
 
 /// Runs `publish` as a publish to the broker `origin` names.
@@ -756,7 +718,7 @@ impl Coordinator {
             .enumerate()
             .filter_map(|(scope_id, connected)| {
                 Origin::of::<dyn Any + Send + Sync>(connected)
-                    .0
+                    .address()
                     .map(|address| (address, scope_id))
             })
             .collect();
@@ -819,7 +781,7 @@ impl Coordinator {
     /// against. A publisher the runtime did not pair names no broker, and its publish is left out:
     /// the harness neither waits for it nor lists it, and no hook runs for it.
     fn record_sent(&self, origin: Origin, publish: RuntimePublish) -> DuePublish {
-        let scope_id = origin.0.and_then(|address| {
+        let scope_id = origin.address().and_then(|address| {
             self.inner
                 .brokers
                 .lock()

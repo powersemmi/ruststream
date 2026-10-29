@@ -2,7 +2,7 @@
 
 use std::error::Error as StdError;
 
-use crate::runtime::Bindable;
+use crate::bindable::Bindable;
 
 /// An unconnected broker: configuration captured, no I/O performed yet.
 ///

@@ -280,8 +280,9 @@ pub enum RustStreamError {
 pub(super) mod lifecycle_hooks {
     use std::{error::Error as StdError, sync::Arc};
 
-    use crate::runtime::lifecycle::{BoxError, ConnectedSlot};
-    use crate::runtime::publish_source::pair_bound;
+    use crate::bindable::ConnectedSlot;
+    use crate::bindable::pair_bound;
+    use crate::runtime::lifecycle::BoxError;
     use crate::{Broker, Connected, PublishPolicy};
 
     use super::LifecycleHook;

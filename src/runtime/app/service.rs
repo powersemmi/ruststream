@@ -5,13 +5,14 @@ use std::{
     sync::Arc, time::Duration,
 };
 
+use crate::bindable::BrokerRegistration;
 use crate::codec::Codec;
-use crate::runtime::publish_source::BrokerRegistration;
 use crate::{Broker, DescribeServer, ServerSpec};
 
 use tokio_util::task::TaskTracker;
 
-use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle, ConnectedSlot};
+use crate::bindable::ConnectedSlot;
+use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{Identity, Stack};
 #[cfg(feature = "poll-diagnostics")]

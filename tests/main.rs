@@ -23,6 +23,7 @@ mod batch_router_coverage;
 mod batch_seek;
 mod batch_subscriber;
 mod batch_uniform_outcome;
+mod bindable;
 mod carried_lane;
 mod codec_free_lanes;
 mod codecs;

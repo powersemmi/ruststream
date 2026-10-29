@@ -5,9 +5,9 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 use crate::{Broker, Connected, Subscriber};
 
 use crate::PublishPolicy;
+use crate::bindable::ConnectedSlot;
 use crate::runtime::failure::FailurePolicies;
 use crate::runtime::handler::Handler;
-use crate::runtime::lifecycle::ConnectedSlot;
 use crate::runtime::metadata::HandlerMetadata;
 use crate::runtime::middleware::{BlanketLayer, Identity};
 use crate::runtime::publish::{PublishIdentity, PublishPipeline};

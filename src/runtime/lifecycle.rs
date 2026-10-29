@@ -11,13 +11,9 @@
 
 #[cfg(feature = "testing")]
 use std::any::{Any, TypeId};
-use std::{
-    any::type_name,
-    error::Error as StdError,
-    pin::Pin,
-    sync::{Arc, Mutex},
-};
+use std::{any::type_name, error::Error as StdError, pin::Pin, sync::Arc};
 
+use crate::bindable::ConnectedSlot;
 use crate::{Broker, ConnectedBroker};
 
 pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
@@ -30,14 +26,6 @@ pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[cfg(feature = "testing")]
 pub(crate) type InProcessConnect =
     fn(Box<dyn Any + Send>) -> BoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>>;
-
-/// The channel between the erased `connect` and the typed starters: `connect` stores the typed
-/// connected broker here, starters clone it out to open their subscriptions. The teardown takes
-/// the slot's reference back so the connected broker can be consumed by value. Public only
-/// because [`BrokerRegistration`](crate::runtime::BrokerRegistration) names it in a hidden
-/// method; never constructed by users.
-#[doc(hidden)]
-pub type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
 
 /// An unconnected broker, with its concrete type and error erased. Consuming `connect` yields
 /// the erased connected form.

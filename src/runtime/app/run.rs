@@ -11,8 +11,8 @@ use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
+use crate::bindable::Bound;
 use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::publish_source::Bound;
 use crate::runtime::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
 
