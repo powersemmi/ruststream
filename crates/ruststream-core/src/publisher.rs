@@ -3,12 +3,11 @@
 use std::error::Error as StdError;
 
 use bytes::BytesMut;
-use serde::Serialize;
 use thiserror::Error;
 
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
-use crate::codec::{Codec, CodecError};
+use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName};
 use crate::wire::Serialized;
 use crate::{ConnectedBroker, HeaderMap, OutgoingMessage};
@@ -102,14 +101,9 @@ pub trait PayloadForm: sealed::Sealed {
     ///
     /// Returns [`CodecError`] when the codec rejects the value.
     #[doc(hidden)]
-    fn encoded<'b, C, T>(
-        codec: &C,
-        value: &T,
-        buf: Self::Encode<'b>,
-    ) -> Result<Self::Form<'b>, CodecError>
+    fn encoded<'b, E>(encode: &E, buf: Self::Encode<'b>) -> Result<Self::Form<'b>, CodecError>
     where
-        C: Codec,
-        T: Serialize;
+        E: PayloadEncode;
 
     /// The bytes a [`Serialized`] value publishes, in this form: the ones it holds, or the ones
     /// it writes into the scratch.
@@ -157,6 +151,26 @@ pub trait PayloadForm: sealed::Sealed {
         out: Outgoing<'a>,
         spent: &'a mut Self::Spent,
     ) -> OutgoingMessage<'a, Self::Form<'a>>;
+}
+
+/// A value and the codec that encodes it, as the publish path hands them to
+/// [`PayloadForm::encoded`]: into the path's own buffer for a form that lends the payload, into a
+/// buffer of the codec's for one that hands it over.
+#[doc(hidden)]
+pub trait PayloadEncode {
+    /// Appends the encoded value to `buf`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError::Encode`] when the value does not encode.
+    fn encode_into(&self, buf: &mut BytesMut) -> Result<(), CodecError>;
+
+    /// Encodes the value into a buffer of its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CodecError::Encode`] when the value does not encode.
+    fn encode(&self) -> Result<BytesMut, CodecError>;
 }
 
 /// The declaration of a transport that reads the payload and keeps nothing: it is handed

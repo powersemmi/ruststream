@@ -8,7 +8,7 @@ use super::{
     BatchPublishTransform, BatchTransformIdentity, ForReply, Outgoing, PublishContext,
     PublishPipeline, PublishTransform, PublishTransformIdentity,
 };
-use crate::codec::Codec;
+use crate::codec::{Codec, Encoding};
 use crate::runtime::lifecycle::BoxError;
 use crate::{HeaderMap, PayloadForm, Publisher};
 
@@ -97,8 +97,9 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(BoxError::from)?;
+        let payload =
+            <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
+                .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         // A reply has no call site to adjust the broker's per-message settings, so the position
         // starts at the publish policy's own and only a transform fills it.
@@ -127,8 +128,9 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(BoxError::from)?;
+        let payload =
+            <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
+                .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         out.headers_mut()
             .insert_typed(headers)
@@ -158,8 +160,9 @@ impl<P: Publisher, C: Codec, PL, BL> TypedPublisher<P, C, PL, BL> {
         Cx: Sync,
         PP: PublishPipeline,
     {
-        let payload = <P::Payload as PayloadForm>::encoded(&self.codec, value, encode)
-            .map_err(BoxError::from)?;
+        let payload =
+            <P::Payload as PayloadForm>::encoded(&Encoding::new(&self.codec, value), encode)
+                .map_err(BoxError::from)?;
         let mut out = self.outgoing(name, payload);
         let mut options = None;
         self.batch_layers.apply(&mut out, &mut options, cx);

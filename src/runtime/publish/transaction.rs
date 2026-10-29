@@ -9,7 +9,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use super::{HeadersUnset, MessageBody, PublishBuilder, PublishCodec, message_of};
-use crate::codec::CodecError;
+use crate::codec::{CodecError, Encoding};
 use crate::{
     OutgoingDestination, OutgoingMessage, OwnedTransactions, PayloadForm, Publisher, Transaction,
     TransactionalPublisher,
@@ -140,8 +140,9 @@ where
         // it, one that buffers the message is handed the codec's and never touches this.
         let mut buf = BytesMut::new();
         let slot = <P::Payload as PayloadForm>::encode_slot(&mut buf);
-        let payload = <P::Payload as PayloadForm>::encoded(self.enc.codec(), value, slot)
-            .map_err(TransactionPublishError::Encode)?;
+        let payload =
+            <P::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
+                .map_err(TransactionPublishError::Encode)?;
         self.publisher
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await
@@ -310,8 +311,9 @@ where
         // that lends the payload writes into it.
         let mut buf = BytesMut::new();
         let slot = <Txn::Payload as PayloadForm>::encode_slot(&mut buf);
-        let payload = <Txn::Payload as PayloadForm>::encoded(self.enc.codec(), value, slot)
-            .map_err(TransactionPublishError::Encode)?;
+        let payload =
+            <Txn::Payload as PayloadForm>::encoded(&Encoding::new(self.enc.codec(), value), slot)
+                .map_err(TransactionPublishError::Encode)?;
         self.txn
             .publish(OutgoingMessage::with_payload(name, payload), None)
             .await

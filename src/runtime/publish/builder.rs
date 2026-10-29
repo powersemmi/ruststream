@@ -16,7 +16,7 @@ use bytes::BytesMut;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::{Codec, CodecError, Encoding};
 use crate::{
     CallerName, FixedName, HeaderMap, HeadersContract, MessageHeaders, NameTemplate, NoHeaders,
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
@@ -304,7 +304,10 @@ impl<T: Serialize, Enc: PublishCodec> WirePayload<T, Enc> for EncodedWire {
         codec: &Enc,
         buf: &'v mut BytesMut,
     ) -> Result<Form::Form<'v>, PayloadError> {
-        Ok(Form::encoded(codec.codec(), value, Form::encode_slot(buf))?)
+        Ok(Form::encoded(
+            &Encoding::new(codec.codec(), value),
+            Form::encode_slot(buf),
+        )?)
     }
 }
 

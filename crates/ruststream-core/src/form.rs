@@ -8,12 +8,11 @@
 use std::marker::PhantomData;
 
 use bytes::BytesMut;
-use serde::Serialize;
 
-use crate::codec::{Codec, CodecError};
+use crate::codec::CodecError;
 use crate::outgoing::{Outgoing, OutgoingName, Payload};
 use crate::wire::{Serialized, WireBytes};
-use crate::{HeaderMap, Lend, OutgoingMessage, PayloadForm, Take};
+use crate::{HeaderMap, Lend, OutgoingMessage, PayloadEncode, PayloadForm, Take};
 
 /// The destination as the message that leaves reads it, kept in the spent stage's own slot
 /// where the stage owns it.
@@ -53,17 +52,12 @@ impl PayloadForm for Lend {
     }
 
     #[inline]
-    fn encoded<'b, C, T>(
-        codec: &C,
-        value: &T,
-        buf: Self::Encode<'b>,
-    ) -> Result<Self::Form<'b>, CodecError>
+    fn encoded<'b, E>(encode: &E, buf: Self::Encode<'b>) -> Result<Self::Form<'b>, CodecError>
     where
-        C: Codec,
-        T: Serialize,
+        E: PayloadEncode,
     {
         buf.clear();
-        codec.encode_into(value, buf)?;
+        encode.encode_into(buf)?;
         Ok(&**buf)
     }
 
@@ -133,18 +127,13 @@ impl PayloadForm for Take {
     }
 
     #[inline]
-    fn encoded<'b, C, T>(
-        codec: &C,
-        value: &T,
-        _buf: Self::Encode<'b>,
-    ) -> Result<Self::Form<'b>, CodecError>
+    fn encoded<'b, E>(encode: &E, _buf: Self::Encode<'b>) -> Result<Self::Form<'b>, CodecError>
     where
-        C: Codec,
-        T: Serialize,
+        E: PayloadEncode,
     {
         // The transport keeps what it is handed, so the codec's own buffer travels to it and the
         // caller's scratch is never touched.
-        codec.encode(value)
+        encode.encode()
     }
 
     #[inline]
