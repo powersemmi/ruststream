@@ -8,7 +8,7 @@ use std::{
     future::ready,
     marker::PhantomData,
     sync::{Arc, OnceLock},
-    task::Poll,
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
@@ -215,40 +215,76 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
         // Poll the receiver in place rather than wrapping it in an owning stream, so `stream` can
         // be called again after the returned stream is dropped (helpers re-enter it per call).
         stream::poll_fn(move |cx| {
-            // Register before reading the pending seek: a seek landing between the read and the
-            // park then still finds a waker to rouse.
-            // Only a seeker wakes this waker, and a discarding subscription mints none.
-            if log::retains::<Log>() {
-                self.subscription.seek.waker.register(cx.waker());
-            }
-            self.apply_pending_seek();
-            loop {
-                match self.rx.poll_recv(cx) {
-                    // A stale pre-seek copy (a requeue that raced the seek): drop it, the replay
-                    // already covers everything from the watermark on.
-                    Poll::Ready(Some(delivery))
-                        if log::retains::<Log>()
-                            && delivery.seq < self.subscription.seek.watermark() =>
-                    {
-                        #[cfg(feature = "testing")]
-                        if let Some(coordinator) = &coordinator {
-                            coordinator.consumed();
-                        }
-                    }
-                    Poll::Ready(Some(delivery)) => {
-                        return Poll::Ready(Some(Ok(MemoryMessage {
-                            delivery: Some(delivery),
-                            subscription: Some(Arc::clone(&self.subscription)),
-                            #[cfg(feature = "testing")]
-                            coordinator: coordinator.clone(),
-                            mode: PhantomData,
-                        })));
-                    }
-                    Poll::Ready(None) => return Poll::Ready(None),
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
+            self.begin_poll(cx);
+            let delivery = ready!(self.poll_fresh(
+                cx,
+                #[cfg(feature = "testing")]
+                coordinator.as_ref(),
+            ));
+            Poll::Ready(delivery.map(|delivery| {
+                Ok(self.message(
+                    delivery,
+                    #[cfg(feature = "testing")]
+                    coordinator.as_ref(),
+                ))
+            }))
         })
+    }
+}
+
+impl<Log: LogMode> MemorySubscriber<Log> {
+    /// The start of every poll of the stream and the batch paths: register for a seeker's wake-up,
+    /// then apply a pending seek.
+    #[inline]
+    pub(crate) fn begin_poll(&mut self, cx: &Context<'_>) {
+        // Register before reading the pending seek: a seek landing between the read and the
+        // park then still finds a waker to rouse.
+        // Only a seeker wakes this waker, and a discarding subscription mints none.
+        if log::retains::<Log>() {
+            self.subscription.seek.waker.register(cx.waker());
+        }
+        self.apply_pending_seek();
+    }
+
+    /// The next queued delivery that is not a stale pre-seek copy, or the end of the queue.
+    #[inline]
+    pub(crate) fn poll_fresh(
+        &mut self,
+        cx: &mut Context<'_>,
+        #[cfg(feature = "testing")] coordinator: Option<&Coordinator>,
+    ) -> Poll<Option<MemoryDelivery>> {
+        loop {
+            match ready!(self.rx.poll_recv(cx)) {
+                // A stale pre-seek copy (a requeue that raced the seek): drop it, the replay
+                // already covers everything from the watermark on.
+                Some(delivery)
+                    if log::retains::<Log>()
+                        && delivery.seq < self.subscription.seek.watermark() =>
+                {
+                    #[cfg(feature = "testing")]
+                    if let Some(coordinator) = coordinator {
+                        coordinator.consumed();
+                    }
+                }
+                fresh => return Poll::Ready(fresh),
+            }
+        }
+    }
+
+    /// The message a delivery off this subscription is handed out as.
+    #[inline]
+    pub(crate) fn message(
+        &self,
+        delivery: MemoryDelivery,
+        #[cfg(feature = "testing")] coordinator: Option<&Coordinator>,
+    ) -> MemoryMessage<Log> {
+        MemoryMessage {
+            delivery: Some(delivery),
+            subscription: Some(Arc::clone(&self.subscription)),
+            #[cfg(feature = "testing")]
+            coordinator: coordinator.cloned(),
+            mode: PhantomData,
+        }
     }
 }
 

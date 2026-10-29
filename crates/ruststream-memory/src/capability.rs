@@ -7,16 +7,15 @@
 //! them.
 
 use std::{
-    marker::PhantomData,
     num::NonZeroUsize,
-    sync::Arc,
     task::{Poll, ready},
 };
 
 use futures::{Stream, stream};
 
-use super::{LogMode, MemoryMessage, MemorySubscriber, log};
+use super::{LogMode, MemoryMessage, MemorySubscriber};
 use ruststream_core::{BatchSubscriber, IncomingMessage, Partitioned, Subscriber};
+
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
 pub const PARTITION_KEY_HEADER: &str = "partition-key";
 
@@ -48,58 +47,34 @@ impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
         // The drain happens inside a single poll, so no batch state is buffered between polls
         // and the stream stays cancel-safe, like `MemorySubscriber::stream`.
         stream::poll_fn(move |cx| {
-            // Same ordering as `MemorySubscriber::stream`: register, then apply a pending seek.
-            // Only a seeker wakes this waker, and a discarding subscription mints none.
-            if log::retains::<Log>() {
-                self.subscription.seek.waker.register(cx.waker());
-            }
-            self.apply_pending_seek();
-            let first = loop {
-                match ready!(self.rx.poll_recv(cx)) {
-                    // A stale pre-seek copy (a requeue that raced the seek): drop it, the
-                    // replay already covers everything from the watermark on.
-                    Some(delivery)
-                        if log::retains::<Log>()
-                            && delivery.seq < self.subscription.seek.watermark() =>
-                    {
-                        #[cfg(feature = "testing")]
-                        if let Some(coordinator) = &coordinator {
-                            coordinator.consumed();
-                        }
-                    }
-                    Some(delivery) => break delivery,
-                    None => return Poll::Ready(None),
-                }
+            self.begin_poll(cx);
+            let first = ready!(self.poll_fresh(
+                cx,
+                #[cfg(feature = "testing")]
+                coordinator.as_ref(),
+            ));
+            let Some(first) = first else {
+                return Poll::Ready(None);
             };
             // Sized for the batch the registration asked for: a batch grown one push at a time
             // reallocates six times on its way to 64.
             let mut batch = Vec::with_capacity(limit);
-            batch.push(MemoryMessage {
-                delivery: Some(first),
-                subscription: Some(Arc::clone(&self.subscription)),
+            batch.push(self.message(
+                first,
                 #[cfg(feature = "testing")]
-                coordinator: coordinator.clone(),
-                mode: PhantomData,
-            });
+                coordinator.as_ref(),
+            ));
             while batch.len() < limit {
-                match self.rx.poll_recv(cx) {
-                    // The same stale-copy filter as above, off the batch.
-                    Poll::Ready(Some(delivery))
-                        if log::retains::<Log>()
-                            && delivery.seq < self.subscription.seek.watermark() =>
-                    {
+                match self.poll_fresh(
+                    cx,
+                    #[cfg(feature = "testing")]
+                    coordinator.as_ref(),
+                ) {
+                    Poll::Ready(Some(delivery)) => batch.push(self.message(
+                        delivery,
                         #[cfg(feature = "testing")]
-                        if let Some(coordinator) = &coordinator {
-                            coordinator.consumed();
-                        }
-                    }
-                    Poll::Ready(Some(delivery)) => batch.push(MemoryMessage {
-                        delivery: Some(delivery),
-                        subscription: Some(Arc::clone(&self.subscription)),
-                        #[cfg(feature = "testing")]
-                        coordinator: coordinator.clone(),
-                        mode: PhantomData,
-                    }),
+                        coordinator.as_ref(),
+                    )),
                     // Drained (pending) or closed: ship what we have; a closed channel ends
                     // the stream on the next poll.
                     Poll::Ready(None) | Poll::Pending => break,
