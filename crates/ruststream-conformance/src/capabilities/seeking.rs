@@ -7,10 +7,10 @@ use super::{
     DEFAULT_TIMEOUT, RESUBSCRIBE_TIMEOUT, SeekPosition, ack_or_unsupported, expect_within,
     promptly, publish_all, within,
 };
-use crate::conformance::harness::{expect_next, expect_no_more, on_foreign_runtime};
-use crate::conformance::helpers::unique_subject;
-use crate::conformance::lifecycle::shutdown_within;
-use crate::{
+use crate::harness::{expect_next, expect_no_more, on_foreign_runtime};
+use crate::helpers::unique_subject;
+use crate::lifecycle::shutdown_within;
+use ruststream_core::{
     Broker, Connected, IncomingMessage, Positioned, Publisher, Seekable, Seeker, Subscriber,
     SubscriptionSource,
 };
@@ -36,7 +36,6 @@ const SEEK_COUNT: u8 = 5;
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource, Retention};
@@ -300,7 +299,6 @@ where
 /// position is evicted.
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemoryPosition, MemorySource, Retention};

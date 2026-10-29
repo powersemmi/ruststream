@@ -31,7 +31,6 @@
 //! # Examples
 //!
 //! ```no_run
-//! # #[cfg(feature = "memory")]
 //! # async fn run() {
 //! use std::time::Duration;
 //!
@@ -57,10 +56,11 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use super::harness::{InProcessBroker, on_foreign_runtime};
 use super::helpers::unique_subject;
-use crate::{
+use ruststream_core::{
     AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
-    Subscriber, SubscriptionSource, testing::InProcess,
+    Subscriber, SubscriptionSource,
 };
+use ruststream_runtime::testing::InProcess;
 
 /// The message type a subscriber yields.
 type SubscriberMessage<S> = <S as Subscriber>::Message;
@@ -82,7 +82,6 @@ const SENTINEL: &[u8] = b"conformance-sentinel";
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use std::time::Duration;
 ///
@@ -119,7 +118,6 @@ pub enum Answer {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use std::time::Duration;
 ///
@@ -177,7 +175,6 @@ pub struct Answers {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use std::time::Duration;
 ///
@@ -242,7 +239,6 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use std::time::Duration;
 ///
@@ -752,5 +748,5 @@ async fn collect_back<S, M, E>(
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;

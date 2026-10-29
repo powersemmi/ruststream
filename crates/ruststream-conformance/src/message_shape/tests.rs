@@ -17,12 +17,12 @@ use tokio::spawn;
 use tokio::time::sleep;
 
 use super::{ORDERED, OptionCases, keyed_order, publish_options, publisher_carries};
-use crate::conformance::helpers::unique_subject;
-use crate::memory::{
+use crate::helpers::unique_subject;
+use ruststream::memory::{
     ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublish,
     MemoryPublisher, MemorySource, MemorySubscriber, PARTITION_KEY_HEADER,
 };
-use crate::{
+use ruststream_core::{
     AckError, AddressedCopies, HeaderMap, IncomingMessage, OutgoingMessage, PairError,
     PublishPolicy, Publisher, Subscribe, Subscriber, SubscriptionSource, Take,
 };
@@ -793,11 +793,11 @@ mod credentials {
     use serde_json::json;
 
     use super::super::{describes_addresses_without_credentials, publishes_without_credentials};
-    use crate::asyncapi::{Binding, Bindings};
-    use crate::memory::{
+    use ruststream::memory::{
         ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublish, MemoryPublisher,
     };
-    use crate::{Broker, DescribeServer, PairError, PublishPolicy, ServerSpec};
+    use ruststream_asyncapi::{Binding, Bindings};
+    use ruststream_core::{Broker, DescribeServer, PairError, PublishPolicy, ServerSpec};
 
     /// A policy that puts its connection URL, password and all, into its operation binding.
     struct LeakyPublish {

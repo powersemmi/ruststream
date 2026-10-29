@@ -27,15 +27,15 @@ use tokio::{
 };
 
 use super::{CONSTRUCTION_BUDGET, ladder, shared_handle_closes, shutdown_flushes};
-use crate::{
+use ruststream::memory::{
+    ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
+    MemoryPublisher, MemorySubscriber,
+};
+use ruststream_core::{
     AckError, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend, NamedCopies,
     OutgoingMessage, Publisher, Subscribe, Subscriber, SubscriptionSource,
-    memory::{
-        ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
-        MemoryPublisher, MemorySubscriber,
-    },
-    testing::{Backlog, TestableBroker},
 };
+use ruststream_runtime::testing::{Backlog, TestableBroker};
 
 /// The one rule a [`Faulty`] broker breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

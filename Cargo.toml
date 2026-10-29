@@ -7,6 +7,7 @@ members = [
     "crates/ruststream-observability",
     "crates/ruststream-testing",
     "crates/ruststream-cli",
+    "crates/ruststream-conformance",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
 ]
@@ -68,6 +69,7 @@ ruststream-asyncapi = { version = "=0.7.6", path = "crates/ruststream-asyncapi" 
 ruststream-observability = { version = "=0.7.6", path = "crates/ruststream-observability" }
 ruststream-testing = { version = "=0.7.6", path = "crates/ruststream-testing" }
 ruststream-cli = { version = "=0.7.6", path = "crates/ruststream-cli" }
+ruststream-conformance = { version = "=0.7.6", path = "crates/ruststream-conformance" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -982,7 +984,7 @@ allowed_external_types = [
 [features]
 default = ["json"]
 memory = ["dep:ruststream-memory"]
-conformance = ["testing"]
+conformance = ["testing", "dep:ruststream-conformance"]
 json = [
     "dep:serde_json",
     "ruststream-core/json",
@@ -999,6 +1001,7 @@ asyncapi = [
     "ruststream-core/asyncapi",
     "ruststream-runtime/asyncapi",
     "ruststream-cli/asyncapi",
+    "ruststream-conformance?/asyncapi",
 ]
 metrics = ["dep:ruststream-observability", "ruststream-observability/metrics"]
 logging = [
@@ -1028,6 +1031,7 @@ ruststream-asyncapi = { workspace = true, optional = true }
 ruststream-observability = { workspace = true, optional = true }
 ruststream-testing = { workspace = true, optional = true }
 ruststream-cli.workspace = true
+ruststream-conformance = { workspace = true, optional = true }
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true

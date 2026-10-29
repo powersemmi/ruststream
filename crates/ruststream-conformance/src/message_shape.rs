@@ -31,17 +31,18 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use super::helpers::unique_subject;
 #[cfg(feature = "asyncapi")]
-use crate::ConnectedBroker;
+use ruststream_asyncapi::build_spec;
 #[cfg(feature = "asyncapi")]
-use crate::DescribeServer;
+use ruststream_core::ConnectedBroker;
 #[cfg(feature = "asyncapi")]
-use crate::asyncapi::build_spec;
-#[cfg(feature = "asyncapi")]
-use crate::runtime::{AppInfo, RustStream};
-use crate::{
+use ruststream_core::DescribeServer;
+use ruststream_core::{
     AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingFor, OutgoingMessage,
-    PublishPolicy, Publisher, Subscriber, SubscriptionSource, runtime::RETRY_COUNT_HEADER,
+    PublishPolicy, Publisher, Subscriber, SubscriptionSource,
 };
+use ruststream_runtime::RETRY_COUNT_HEADER;
+#[cfg(feature = "asyncapi")]
+use ruststream_runtime::{AppInfo, RustStream};
 
 /// How long a check waits for a delivery it expects. Long enough for a live consumer that joins a
 /// group on its first poll; a correct broker never comes near it, it only bounds a failing run.
@@ -325,7 +326,6 @@ fn refused_arrived(check: &str, what: &str) -> ! {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::Bytes;
 /// use ruststream::conformance::{helpers::unique_subject, message_shape};
@@ -465,7 +465,6 @@ impl<Options, Observed> OptionCases<Options, Observed> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() {
     /// use ruststream::conformance::helpers::unique_subject;
     /// use ruststream::conformance::message_shape::{self, OptionCases};
@@ -591,7 +590,6 @@ impl<Options, Observed> OptionCases<Options, Observed> {
 /// that exercise every field.
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::helpers::unique_subject;
 /// use ruststream::conformance::message_shape::{self, OptionCases};
@@ -734,7 +732,7 @@ pub async fn publish_options<B, MkBroker, Src, MkSrc, Policy, Observed, Observe>
 
 /// Fails when a publish policy's bindings carry `secret`.
 ///
-/// A policy describes the positions it is bound on (a reply, an [`Out`](crate::runtime::Out)
+/// A policy describes the positions it is bound on (a reply, an [`Out`](ruststream_runtime::Out)
 /// slot, a dead-letter destination) in the generated document, which is published and shared.
 /// Configure `policy` the way a deployment would, with a password you pass as `secret`, and this
 /// scans its channel, operation and message bindings and its reply address location.
@@ -742,7 +740,7 @@ pub async fn publish_options<B, MkBroker, Src, MkSrc, Policy, Observed, Observe>
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "asyncapi", feature = "memory"))]
+/// # #[cfg(feature = "asyncapi")]
 /// # fn demo() {
 /// use ruststream::conformance::message_shape;
 /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish};
@@ -808,13 +806,13 @@ pub(crate) fn carries_secret(value: &Value, secret: &str) -> bool {
 /// deployment would from them (joining them into one setting where the broker takes a list).
 /// The document built from its [`DescribeServer`] must carry none of the userinfo, whichever
 /// addresses it names, and must name at least one of them with its port (what
-/// [`ServerSpec::host_from_url`](crate::ServerSpec::host_from_url) returns for it): a
+/// [`ServerSpec::host_from_url`](ruststream_core::ServerSpec::host_from_url) returns for it): a
 /// description that names no address passes the scan for the wrong reason.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "asyncapi", feature = "memory"))]
+/// # #[cfg(feature = "asyncapi")]
 /// # fn demo() {
 /// use std::future::Future;
 ///
@@ -966,5 +964,5 @@ async fn settle<M: IncomingMessage>(msg: M, label: &str) {
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;

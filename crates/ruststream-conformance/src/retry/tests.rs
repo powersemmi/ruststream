@@ -16,17 +16,16 @@ use futures::{Stream, StreamExt, stream};
 use tokio::{runtime::Handle, sync::Mutex as AsyncMutex, time};
 
 use super::{CONTROL, EXTRA_DELIVERIES, broker_moves, redelivery_address};
-use crate::{
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher, MemorySource,
+    MemorySubscriber,
+};
+use ruststream_core::{
     AckError, AddressedCopies, BrokerMoves, BytesMut, DeclareRetryError, HeaderMap,
     IncomingMessage, Name, OutgoingMessage, Publisher, RedeliveryAddress, RedeliveryAddressed,
-    RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, Take,
-    memory::{
-        ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage, MemoryPublisher,
-        MemorySource, MemorySubscriber,
-    },
-    nonzero,
-    runtime::RETRY_COUNT_HEADER,
+    RetryDeclaration, Subscribe, Subscriber, SubscriptionSource, Take, nonzero,
 };
+use ruststream_runtime::RETRY_COUNT_HEADER;
 
 // The factories stay closures throughout: their bounds are higher-ranked, which a method path
 // does not satisfy.

@@ -13,17 +13,17 @@ use std::{
 use futures::{Stream, StreamExt};
 
 use super::{Refusal, backlog_matches_server, refuses_like_the_server};
-use crate::conformance::harness::run_suite;
-use crate::memory::{
+use crate::harness::run_suite;
+use ruststream::memory::{
     ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
     MemoryPosition, MemoryPublisher, MemorySource, MemorySubscriber, Retaining, Retention,
 };
-use crate::testing::{Backlog, Coordinator, InProcess, TestableBroker};
-use crate::{
+use ruststream_core::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, HeaderMap,
     IncomingMessage, Name, OutgoingFor, OutgoingMessage, PairError, PublishPolicy, Publisher,
     RawMessage, Seekable, Seeker, Subscribe, Subscriber, Take, nonzero,
 };
+use ruststream_runtime::testing::{Backlog, Coordinator, InProcess, TestableBroker};
 
 /// What is wrong with a [`Faulty`] broker's transport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +146,7 @@ impl InProcess for Faulty {
     }
 }
 
-crate::register_testable_broker!(Faulty);
+ruststream_runtime::register_testable_broker!(Faulty);
 
 /// How many subscriptions each name has, shared with the subscriptions.
 type Opened = Arc<Mutex<HashMap<String, usize>>>;

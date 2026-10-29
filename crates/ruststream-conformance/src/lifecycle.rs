@@ -16,7 +16,6 @@
 //! # Examples
 //!
 //! ```no_run
-//! # #[cfg(feature = "memory")]
 //! # async fn run() {
 //! use ruststream::conformance::lifecycle;
 //! use ruststream::memory::{MemoryBroker, MemorySource};
@@ -57,10 +56,11 @@ use tokio::time::{Instant as TokioInstant, timeout, timeout_at};
 
 use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
-use crate::{
+use ruststream_core::{
     AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
-    Subscriber, SubscriptionSource, testing::Backlog,
+    Subscriber, SubscriptionSource,
 };
+use ruststream_runtime::testing::Backlog;
 
 /// How long a single publish, settlement or subscription may take before the check fails it.
 const STEP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -471,7 +471,7 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
 /// The check acknowledges one delivery, holds a second one, publishes a third message and shuts
 /// down at once; `shutdown` itself must return within a bound. Then it looks from another
 /// connection, and how depends on `backlog`, the broker's answer to whether a message waits for a
-/// subscription that opens later ([`TestableBroker::backlog`](crate::testing::TestableBroker)):
+/// subscription that opens later ([`TestableBroker::backlog`](ruststream_runtime::testing::TestableBroker)):
 ///
 /// * [`Backlog::Delivered`] (a queue, a log): a new connection subscribes after the shutdown. The
 ///   published message must arrive within ten seconds, and for all ten seconds the acknowledged
@@ -481,7 +481,7 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
 ///   the publish, and the published message must reach it.
 ///
 /// `make_broker` must reach the same broker every time it is called: a server, or in process one
-/// world shared by every broker it builds (clones of one [`MemoryBroker`](crate::memory::MemoryBroker)
+/// world shared by every broker it builds (clones of one [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html)
 /// share their bus). An in-process transport that gives every broker a world of its own runs this
 /// check live only. Where the transport leases a delivery to the consumer that took it (an SQS
 /// visibility timeout, a `JetStream` ack wait), give the descriptor a lease of a few seconds: a
@@ -491,7 +491,6 @@ async fn held_across_shutdown<S, M, E, B, MkBroker, Src, MkSrc>(
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::lifecycle;
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -636,7 +635,6 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::lifecycle;
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -928,5 +926,5 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;

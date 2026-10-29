@@ -31,13 +31,13 @@ use super::{
     batch_seeking, batches, owned_transactions, request_reply, seeking, seeking_unknown_position,
     transactions,
 };
-use crate::conformance::helpers::unique_subject;
-use crate::memory::{
+use crate::helpers::unique_subject;
+use ruststream::memory::{
     ConnectedMemoryBroker, LogMode, MemoryBroker, MemoryError, MemoryMessage, MemoryPosition,
     MemoryPublisher, MemoryRequester, MemorySeeker, MemorySource, MemorySubscriber, RequestError,
     Retaining, Retention,
 };
-use crate::{
+use ruststream_core::{
     AckError, AddressedCopies, BatchSubscriber, Broker, BytesMut, HeaderMap, IncomingMessage,
     OutgoingMessage, OwnedTransactions, Positioned, Publisher, RequestReply, Seekable, Seeker,
     Subscribe, Subscriber, SubscriptionSource, Take, Transaction, TransactionalPublisher, nonzero,

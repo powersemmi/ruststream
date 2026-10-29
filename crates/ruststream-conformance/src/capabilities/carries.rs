@@ -15,9 +15,9 @@ use super::{
     DEFAULT_TIMEOUT, REDELIVERY_TIMEOUT, SubscriberMessage, ack_or_unsupported, expect_within,
     nack_requeue, within,
 };
-use crate::conformance::helpers::unique_subject;
-use crate::conformance::lifecycle::shutdown_within;
-use crate::{
+use crate::helpers::unique_subject;
+use crate::lifecycle::shutdown_within;
+use ruststream_core::{
     AckError, AddressedCopies, BatchSubscriber, Broker, BrokerMoves, Carries, CarriesBatch,
     Connected, IncomingMessage, NamedCopies, OutgoingMessage, Publisher, Subscriber,
     SubscriptionSource,
@@ -89,7 +89,6 @@ impl CopyPathCheck for BrokerMoves {
 /// driver reads a row; a broker crate runs the suite with its own descriptor and publisher.
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # mod demo {
 /// # use std::future::Future;
 /// # use futures::{Stream, StreamExt};
@@ -310,7 +309,6 @@ pub async fn carries<
 /// one vector beside the deliveries.
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # mod demo {
 /// # use std::future::Future;
 /// # use std::num::NonZeroUsize;

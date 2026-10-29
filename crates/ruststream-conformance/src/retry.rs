@@ -2,26 +2,25 @@
 //! of one message, and the delivery limit and dead-letter destination a broker applies itself.
 //!
 //! A registration retries a delivery in one of three ways, and the subscription descriptor's
-//! [`Copies`](crate::SubscriptionSource::Copies) says which. Each way has its check here:
+//! [`Copies`](ruststream_core::SubscriptionSource::Copies) says which. Each way has its check here:
 //!
-//! * [`AddressedCopies`](crate::AddressedCopies): the runtime publishes a `retry_after` copy to the
+//! * [`AddressedCopies`](ruststream_core::AddressedCopies): the runtime publishes a `retry_after` copy to the
 //!   address the descriptor reports. [`redelivery_address`] holds the broker to that address, and
 //!   along the way to the count every delivery reports through
-//!   [`redelivery_count`](crate::IncomingMessage::redelivery_count). Run it with the broker's own
-//!   descriptor, and a second time with the bare [`Name`](crate::Name) source where the connected
+//!   [`redelivery_count`](ruststream_core::IncomingMessage::redelivery_count). Run it with the broker's own
+//!   descriptor, and a second time with the bare [`Name`](ruststream_core::Name) source where the connected
 //!   form declares `Subscribe::Copies = AddressedCopies`: that is how `#[subscriber("orders")]`
 //!   retries.
 //! * [`BrokerMoves`]: the broker applies the registration's `max_attempts(..)` and
 //!   `dead_letter(..)` itself. [`broker_moves`] declares both, requeues a message until the cap
 //!   runs out and expects it in the dead-letter destination, and holds the broker to refusing a
 //!   declaration it cannot map.
-//! * [`NamedCopies`](crate::NamedCopies): the mount site names the destination, so the broker has
+//! * [`NamedCopies`](ruststream_core::NamedCopies): the mount site names the destination, so the broker has
 //!   no address to answer for and nothing here to run.
 //!
 //! # Examples
 //!
 //! ```no_run
-//! # #[cfg(feature = "memory")]
 //! # async fn run() {
 //! use ruststream::Name;
 //! use ruststream::conformance::retry;
@@ -54,11 +53,12 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 use super::harness::on_foreign_runtime;
 use super::helpers::unique_subject;
-use crate::{
+use ruststream_core::{
     AckError, Broker, BrokerMoves, Connected, ConnectedBroker, HeaderMap, IncomingMessage,
     OutgoingMessage, Publisher, RedeliveryAddressed, RetryDeclaration, Subscriber,
-    SubscriptionSource, runtime::RETRY_COUNT_HEADER,
+    SubscriptionSource,
 };
+use ruststream_runtime::RETRY_COUNT_HEADER;
 
 /// How long a delivery the check expects may take, live included.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,8 +90,8 @@ const POISON: &[u8] = b"poison";
 ///
 /// The runtime publishes a `retry_after` copy exactly like this, so an address that reaches
 /// nothing loses every delayed message. Only a descriptor declaring
-/// [`AddressedCopies`](crate::AddressedCopies) has one; a
-/// [`NamedCopies`](crate::NamedCopies) descriptor takes its destination from the mount site and
+/// [`AddressedCopies`](ruststream_core::AddressedCopies) has one; a
+/// [`NamedCopies`](ruststream_core::NamedCopies) descriptor takes its destination from the mount site and
 /// has nothing to check here.
 ///
 /// The check opens two subscriptions from the one descriptor, the way two replicas of a service
@@ -115,8 +115,8 @@ const POISON: &[u8] = b"poison";
 /// on the copy's first delivery and one more on each redelivery; `None` is the honest answer of a transport that counts
 /// nothing, and a requeue the transport reports as [`AckError::Unsupported`] ends the cycle.
 ///
-/// Run it with the broker's own descriptor, and again with the bare [`Name`](crate::Name) source
-/// where the connected form's `Subscribe::Copies` is [`AddressedCopies`](crate::AddressedCopies):
+/// Run it with the broker's own descriptor, and again with the bare [`Name`](ruststream_core::Name) source
+/// where the connected form's `Subscribe::Copies` is [`AddressedCopies`](ruststream_core::AddressedCopies):
 /// that answer makes the name the address of every `#[subscriber("orders")]` registration, and
 /// only a publish to it proves the claim. The `Name` call compiles only where the broker made
 /// that claim.
@@ -128,7 +128,6 @@ const POISON: &[u8] = b"poison";
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::Name;
 /// use ruststream::conformance::harness;
@@ -472,7 +471,7 @@ fn assert_count<M: IncomingMessage>(msg: &M, expected: u64, which: &str) {
 /// to 100). The names the check makes contain letters, digits and `-` only, which every broker's
 /// queue, topic and subject grammar admits.
 ///
-/// Run it with the broker's descriptor, and with the bare [`Name`](crate::Name) source where the
+/// Run it with the broker's descriptor, and with the bare [`Name`](ruststream_core::Name) source where the
 /// connected form's `Subscribe::Copies` is [`BrokerMoves`]: the name then carries the declaration
 /// through `Subscribe::declare_retry`.
 ///
@@ -719,5 +718,5 @@ async fn settle_ack<M: IncomingMessage>(msg: M, label: &str) {
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;

@@ -9,10 +9,10 @@ use super::{
     DEFAULT_TIMEOUT, REDELIVERY_TIMEOUT, SeekPosition, SubscriberMessage, ack_or_unsupported,
     collect_batched, collect_batches, expect_no_batch, nack_requeue, payloads, publish_all, within,
 };
-use crate::conformance::harness::on_foreign_runtime;
-use crate::conformance::helpers::unique_subject;
-use crate::conformance::lifecycle::shutdown_within;
-use crate::{
+use crate::harness::on_foreign_runtime;
+use crate::helpers::unique_subject;
+use crate::lifecycle::shutdown_within;
+use ruststream_core::{
     BatchSubscriber, Broker, Connected, IncomingMessage, OutgoingMessage, Positioned, Publisher,
     Seekable, Seeker, SubscriptionSource,
 };
@@ -27,7 +27,7 @@ use crate::{
 /// contract, and the claim goes unchecked for it.
 /// A batch settled from a current-thread runtime that stops right after (a batch handler on a
 /// dedicated thread) settles all the same: the requeued element comes back. A transport that
-/// answers a requeue with [`AckError::Unsupported`](crate::AckError::Unsupported) passes both with
+/// answers a requeue with [`AckError::Unsupported`](ruststream_core::AckError::Unsupported) passes both with
 /// nothing coming back.
 ///
 /// The settling runtime is handed the delivered messages, so they are `'static`.
@@ -35,7 +35,6 @@ use crate::{
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -292,7 +291,6 @@ async fn batch_settles_on_foreign_runtime<Pub, S, Batch, M, E>(
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource, Retention};

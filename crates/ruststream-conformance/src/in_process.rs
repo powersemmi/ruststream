@@ -1,6 +1,6 @@
 //! The in-process transport held to what the test harness relies on, and to the real server.
 //!
-//! [`TestApp`](crate::testing::TestApp) drives a service through a broker's in-process transport.
+//! [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) drives a service through a broker's in-process transport.
 //! It counts the deliveries in flight through the [`Coordinator`] the transport reports to, reads
 //! the transport's publish log back for its assertions, and, live, waits on the subscriptions
 //! [`TestableBroker::routes`] names. A transport that miscounts ends a settle before the handler
@@ -10,7 +10,7 @@
 //! [`run_suite`](super::harness::run_suite) runs the checks that need nothing from the broker:
 //!
 //! * the publish log records what the broker's own publisher sent, not only what a test injected
-//!   (for a broker registered with [`register_testable_broker!`](crate::register_testable_broker),
+//!   (for a broker registered with [`register_testable_broker!`](ruststream_runtime::register_testable_broker),
 //!   whose default publisher the harness pairs);
 //! * two subscriptions of one name, and one of another, receive what
 //!   [`routes`](TestableBroker::routes) says they receive: each message reaches exactly the
@@ -22,7 +22,7 @@
 //!   counted by the time its timer falls due.
 //!
 //! Two opt-in suites hold what the in-process transport declares to what the server does. They
-//! connect the broker twice per probe, with [`Broker::connect`](crate::Broker::connect) and with
+//! connect the broker twice per probe, with [`Broker::connect`](ruststream_core::Broker::connect) and with
 //! [`InProcess::connect_in_process`], so run them where the broker's live suite runs:
 //!
 //! * [`backlog_matches_server`]: a message published before a subscription opens reaches it on
@@ -34,7 +34,6 @@
 //! # Examples
 //!
 //! ```no_run
-//! # #[cfg(feature = "memory")]
 //! # async fn run() {
 //! use ruststream::conformance::in_process::{self, Refusal};
 //! use ruststream::memory::{MemoryBroker, MemorySource};
@@ -58,10 +57,12 @@ use tokio::{runtime, time, time::timeout};
 
 use super::harness::{expect_next, expect_no_more};
 use super::helpers::unique_subject;
-use crate::{
+use ruststream_core::{
     AckError, Connected, ConnectedBroker, HeaderMap, IncomingMessage, OutgoingMessage, Publisher,
     RawMessage, Subscribe, Subscriber, SubscriptionSource,
-    testing::{Backlog, Coordinator, InProcess, TestableBroker, TestableRegistration},
+};
+use ruststream_runtime::testing::{
+    Backlog, Coordinator, InProcess, TestableBroker, TestableRegistration,
 };
 
 /// How long a scenario waits for a delivery the in-process transport owes.
@@ -577,7 +578,7 @@ where
 /// Which transport a probe runs against.
 #[derive(Debug, Clone, Copy)]
 enum Transport {
-    /// [`Broker::connect`](crate::Broker::connect): the real server.
+    /// [`Broker::connect`](ruststream_core::Broker::connect): the real server.
     Server,
     /// [`InProcess::connect_in_process`].
     InProcess,
@@ -644,12 +645,11 @@ where
 /// the first publish (a name nothing declared yet); the in-process transport must refuse it too,
 /// and on both the subscription must still open and receive the later message alone.
 ///
-/// It connects with [`Broker::connect`](crate::Broker::connect), so run it where the broker's live suite runs.
+/// It connects with [`Broker::connect`](ruststream_core::Broker::connect), so run it where the broker's live suite runs.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::in_process;
 /// use ruststream::memory::MemoryBroker;
@@ -777,7 +777,6 @@ pub async fn backlog_matches_server<B, MkBroker, Pub, MkPub>(
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::in_process::{self, Refusal};
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -842,13 +841,12 @@ pub enum Refusal<Src> {
 /// that refuses everything, or refuses one byte early, fails too.
 ///
 /// `make_broker` builds the broker configured as a deployment configures it, and `make_publisher`
-/// the publisher the probes publish through. It connects with [`Broker::connect`](crate::Broker::connect), so run it where
+/// the publisher the probes publish through. It connects with [`Broker::connect`](ruststream_core::Broker::connect), so run it where
 /// the broker's live suite runs.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::in_process::{self, Refusal};
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -1056,5 +1054,5 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;

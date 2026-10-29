@@ -1,10 +1,10 @@
 //! Optional conformance suites, one per capability trait.
 //!
-//! A broker crate that implements a capability ([`RequestReply`](crate::RequestReply),
-//! [`BatchSubscriber`](crate::BatchSubscriber),
-//! [`TransactionalPublisher`](crate::TransactionalPublisher),
-//! [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`], [`Carries`](crate::Carries),
-//! [`CarriesBatch`](crate::CarriesBatch)) runs the matching suite to prove the implementation
+//! A broker crate that implements a capability ([`RequestReply`](ruststream_core::RequestReply),
+//! [`BatchSubscriber`](ruststream_core::BatchSubscriber),
+//! [`TransactionalPublisher`](ruststream_core::TransactionalPublisher),
+//! [`OwnedTransactions`](ruststream_core::OwnedTransactions), [`Seekable`], [`Carries`](ruststream_core::Carries),
+//! [`CarriesBatch`](ruststream_core::CarriesBatch)) runs the matching suite to prove the implementation
 //! honours the trait contract; brokers without the capability simply do not call it. Like
 //! [`harness::lifecycle`](super::harness::lifecycle), every suite is built from caller-supplied
 //! factories so it stays broker-agnostic. The in-memory broker is the executable reference: it
@@ -30,9 +30,11 @@ use futures::{Stream, StreamExt};
 use tokio::time::timeout;
 
 use super::harness::expect_next;
-use crate::{AckError, IncomingMessage, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber};
+use ruststream_core::{
+    AckError, IncomingMessage, OutgoingMessage, Publisher, Seekable, Seeker, Subscriber,
+};
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);

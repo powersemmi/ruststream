@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fmt, process};
 
-use crate::Subscriber;
 use futures::StreamExt;
+use ruststream_core::Subscriber;
 use tokio::time::{sleep, timeout};
 
 /// A subject built from `prefix` that no other run reuses.
@@ -28,7 +28,6 @@ use tokio::time::{sleep, timeout};
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::helpers::unique_subject;
 /// use ruststream::conformance::message_shape::{self, OptionCases};
@@ -208,10 +207,10 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "memory")]
     #[tokio::test]
     async fn next_message_returns_the_next_delivery() {
-        use crate::{IncomingMessage, OutgoingMessage, Publisher, memory::MemoryBroker};
+        use ruststream::memory::MemoryBroker;
+        use ruststream_core::{IncomingMessage, OutgoingMessage, Publisher};
 
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("conf-next");
@@ -226,10 +225,10 @@ mod tests {
         msg.ack().await.unwrap();
     }
 
-    #[cfg(feature = "memory")]
     #[tokio::test]
     async fn wait_for_no_messages_distinguishes_quiet_from_delivery() {
-        use crate::{OutgoingMessage, Publisher, memory::MemoryBroker};
+        use ruststream::memory::MemoryBroker;
+        use ruststream_core::{OutgoingMessage, Publisher};
 
         let broker = MemoryBroker::new();
         let mut sub = broker.subscribe("conf-quiet");

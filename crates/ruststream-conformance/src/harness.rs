@@ -9,11 +9,10 @@
 //!
 //! # Examples
 //!
-//! The example uses [`crate::memory::MemoryBroker`], so it needs the `memory` feature; a broker
+//! The example uses [`ruststream::memory::MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html), so it needs the `memory` feature; a broker
 //! crate passes its own production broker here.
 //!
 //! ```no_run
-//! # #[cfg(all(feature = "testing", feature = "memory"))]
 //! # async fn run() {
 //! use ruststream::{conformance::harness, memory::MemoryBroker};
 //!
@@ -24,19 +23,19 @@
 use std::{fmt, thread, time::Duration};
 
 pub use super::retry::redelivery_address;
-#[cfg(feature = "asyncapi")]
-use crate::DescribeServer;
-#[cfg(feature = "asyncapi")]
-use crate::asyncapi::build_spec;
-#[cfg(feature = "asyncapi")]
-use crate::runtime::{AppInfo, RustStream};
-use crate::{
-    AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, Subscribe,
-    Subscriber, SubscriptionSource,
-    testing::{Backlog, InProcess, TestableBroker},
-};
 use bytes::Bytes;
 use futures::StreamExt;
+#[cfg(feature = "asyncapi")]
+use ruststream_asyncapi::build_spec;
+#[cfg(feature = "asyncapi")]
+use ruststream_core::DescribeServer;
+use ruststream_core::{
+    AckError, Broker, Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, Subscribe,
+    Subscriber, SubscriptionSource,
+};
+use ruststream_runtime::testing::{Backlog, InProcess, TestableBroker};
+#[cfg(feature = "asyncapi")]
+use ruststream_runtime::{AppInfo, RustStream};
 use tokio::{runtime, sync::oneshot, time::timeout};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -53,10 +52,10 @@ type SubscriberMessage<S> = <S as Subscriber>::Message;
 /// through the broker's own [`Subscribe`] / [`TestableBroker::inject`] surface.
 ///
 /// This is the routing contract and nothing else. A capability
-/// ([`BatchSubscriber`](crate::BatchSubscriber),
-/// [`RequestReply`](crate::RequestReply), [`TransactionalPublisher`](crate::TransactionalPublisher),
-/// [`OwnedTransactions`](crate::OwnedTransactions), [`Seekable`](crate::Seekable),
-/// [`Carries`](crate::Carries), [`CarriesBatch`](crate::CarriesBatch)) has a suite of
+/// ([`BatchSubscriber`](ruststream_core::BatchSubscriber),
+/// [`RequestReply`](ruststream_core::RequestReply), [`TransactionalPublisher`](ruststream_core::TransactionalPublisher),
+/// [`OwnedTransactions`](ruststream_core::OwnedTransactions), [`Seekable`](ruststream_core::Seekable),
+/// [`Carries`](ruststream_core::Carries), [`CarriesBatch`](ruststream_core::CarriesBatch)) has a suite of
 /// its own in [`capabilities`](super::capabilities), which the broker calls for each capability it
 /// implements: none of them can be folded in here, because the bound would either exclude every
 /// broker that declines the capability or demand the in-process transport implement it. So a
@@ -139,7 +138,6 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::harness::{self, InProcessBroker};
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -161,7 +159,6 @@ impl<B> InProcessBroker<B> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() {
     /// use std::time::Duration;
     ///
@@ -259,7 +256,6 @@ impl<B: InProcess> Broker for InProcessBroker<B> {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::{conformance::harness, memory::{MemoryBroker, MemorySource}};
 ///
@@ -315,7 +311,7 @@ pub async fn lifecycle<B, MkBroker, Src, MkSrc, Pub, MkPub>(
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "conformance", feature = "asyncapi", feature = "memory"))]
+/// # #[cfg(feature = "asyncapi")]
 /// # fn demo() {
 /// use ruststream::conformance::harness;
 /// use ruststream::memory::{MemoryBroker, MemorySource};

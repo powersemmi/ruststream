@@ -9,10 +9,10 @@ use super::{
     AFTER_SHUTDOWN_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, MISS_TIMEOUT, ack_or_unsupported, promptly,
     within,
 };
-use crate::conformance::harness::{expect_next, on_foreign_runtime};
-use crate::conformance::helpers::unique_subject;
-use crate::conformance::lifecycle::shutdown_within;
-use crate::{
+use crate::harness::{expect_next, on_foreign_runtime};
+use crate::helpers::unique_subject;
+use crate::lifecycle::shutdown_within;
+use ruststream_core::{
     Broker, Connected, HeaderMap, IncomingMessage, OutgoingMessage, Publisher, RequestReply,
     Subscriber, SubscriptionSource,
 };
@@ -31,14 +31,13 @@ use crate::{
 /// runtime the broker connected on, not on the caller's. The requester moves to that thread, so it
 /// is `'static`.
 ///
-/// The factories mirror [`harness::lifecycle`](crate::conformance::harness::lifecycle): `make_source` opens
+/// The factories mirror [`harness::lifecycle`](crate::harness::lifecycle): `make_source` opens
 /// the responder's subscription, `make_requester` produces the [`RequestReply`] publisher under
 /// test, and `make_publisher` produces the plain publisher the responder replies through.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource};

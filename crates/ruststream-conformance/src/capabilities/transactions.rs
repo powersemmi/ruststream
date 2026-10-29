@@ -5,10 +5,10 @@ use std::fmt;
 use futures::Stream;
 
 use super::{ack_or_unsupported, collect_payloads, collect_payloads_within, promptly, within};
-use crate::conformance::harness::{expect_next, expect_no_more, on_foreign_runtime};
-use crate::conformance::helpers::unique_subject;
-use crate::conformance::lifecycle::shutdown_within;
-use crate::{
+use crate::harness::{expect_next, expect_no_more, on_foreign_runtime};
+use crate::helpers::unique_subject;
+use crate::lifecycle::shutdown_within;
+use ruststream_core::{
     Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, OwnedTransactions,
     Subscriber, SubscriptionSource, Transaction, TransactionalPublisher,
 };
@@ -31,7 +31,6 @@ use crate::{
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource};
@@ -304,7 +303,6 @@ where
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() {
 /// use ruststream::conformance::capabilities;
 /// use ruststream::memory::{MemoryBroker, MemorySource};

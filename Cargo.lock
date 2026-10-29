@@ -1223,6 +1223,7 @@ dependencies = [
  "rmp-serde",
  "ruststream-asyncapi",
  "ruststream-cli",
+ "ruststream-conformance",
  "ruststream-core",
  "ruststream-example-suite",
  "ruststream-macros",
@@ -1269,6 +1270,23 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_norway",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "ruststream-conformance"
+version = "0.7.6"
+dependencies = [
+ "bytes",
+ "futures",
+ "inventory",
+ "ruststream",
+ "ruststream-asyncapi",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

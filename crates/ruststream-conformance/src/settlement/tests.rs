@@ -14,16 +14,16 @@ use futures::{Stream, StreamExt, stream};
 use tokio::{runtime::Handle, time::sleep};
 
 use super::{Answer, Answers, matches_in_process, suite};
-use crate::{
+use crate::harness::{self, InProcessBroker};
+use ruststream::memory::{
+    ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
+    MemoryPublisher, MemorySource, MemorySubscriber,
+};
+use ruststream_core::{
     AckError, AddressedCopies, Broker, ConnectedBroker, HeaderMap, IncomingMessage, Lend,
     OutgoingMessage, Publisher, RawMessage, Subscriber, SubscriptionSource,
-    conformance::harness::{self, InProcessBroker},
-    memory::{
-        ClosedMemoryBroker, ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryMessage,
-        MemoryPublisher, MemorySource, MemorySubscriber,
-    },
-    testing::{Coordinator, InProcess, TestableBroker},
 };
+use ruststream_runtime::testing::{Coordinator, InProcess, TestableBroker};
 
 /// The one defect a double carries, each the shape of one a broker crate shipped or could ship.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
