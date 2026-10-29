@@ -240,13 +240,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     where
         L2: BlanketLayer,
     {
-        Router {
-            routes: (other, self.routes),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(other)
     }
 
     /// Attaches `handler` to an already-created `subscriber`. Machinery, not the user path: a
@@ -268,16 +262,22 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         S: Subscriber + Send + 'static,
         H: Handler<S::Message> + 'static,
     {
+        self.with_route(HandleRoute {
+            subscriber,
+            handler,
+            meta,
+            policies: FailurePolicies::default(),
+        })
+    }
+
+    /// Prepends one registration to the chain, carrying the codec, layers and pipeline over: the
+    /// shared tail of every step that adds a route.
+    fn with_route<Route>(
+        self,
+        route: Route,
+    ) -> Router<B, (Route, Routes), RouteCodec, RouteLayers, RoutePipe> {
         Router {
-            routes: (
-                HandleRoute {
-                    subscriber,
-                    handler,
-                    meta,
-                    policies: FailurePolicies::default(),
-                },
-                self.routes,
-            ),
+            routes: (route, self.routes),
             codec: self.codec,
             layers: self.layers,
             pipeline: self.pipeline,

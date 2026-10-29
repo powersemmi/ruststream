@@ -51,23 +51,14 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         let policies = def.failure_policies();
         let workers = def.workers();
         let handler = Typed::over(codec, def.into_handler()).on_decode_failure(policies.decode);
-        Router {
-            routes: (
-                SubscribeRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
-                    _context: PhantomData,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(SubscribeRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            _context: PhantomData,
+        })
     }
 
     /// Mounts a batch definition on `source`, decoding with `codec`. The shared tail of the
@@ -96,24 +87,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         // kind explicitly.
         let handler = TypedBatch::<_, Def::Input, _, _>::over(codec, def.into_handler())
             .with_decode(policies.decode);
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
-                    batch_size,
-                    _context: PhantomData,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(BatchRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            batch_size,
+            _context: PhantomData,
+        })
     }
 
     /// Mounts a self-deserializing batch definition on `source`: each element constructs itself
@@ -138,24 +120,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         let batch_size = def.batch_size();
         let handler =
             DeserializedBatch::<_, F, _>::over(def.into_handler()).with_decode(policies.decode);
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
-                    batch_size,
-                    _context: PhantomData,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(BatchRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            batch_size,
+            _context: PhantomData,
+        })
     }
 
     /// Mounts a carried batch definition on `source`: the subscription's batches lend the values
@@ -181,24 +154,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         let batch_size = def.batch_size();
         let handler = CarriedBatch::<Source, Connected<B>, T, _>::over(def.into_handler())
             .with_decode(policies.decode);
-        Router {
-            routes: (
-                BatchRoute {
-                    source,
-                    handler,
-                    meta,
-                    policies,
-                    workers,
-                    batch_size,
-                    _context: PhantomData,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(BatchRoute {
+            source,
+            handler,
+            meta,
+            policies,
+            workers,
+            batch_size,
+            _context: PhantomData,
+        })
     }
 
     /// Mounts an injected definition on `source`: its startup injections (an attached publish
@@ -233,24 +197,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
-        Router {
-            routes: (
-                InjectRoute {
-                    source,
-                    def,
-                    codec,
-                    extra,
-                    meta,
-                    policies,
-                    workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(InjectRoute {
+            source,
+            def,
+            codec,
+            extra,
+            meta,
+            policies,
+            workers,
+        })
     }
 
     /// The batch counterpart of [`mount_inject`](Self::mount_inject): the tail of the
@@ -285,25 +240,16 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         let policies = def.failure_policies();
         let workers = def.workers();
         let batch_size = def.batch_size();
-        Router {
-            routes: (
-                BatchInjectRoute {
-                    source,
-                    def,
-                    codec,
-                    extra,
-                    meta,
-                    policies,
-                    workers,
-                    batch_size,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(BatchInjectRoute {
+            source,
+            def,
+            codec,
+            extra,
+            meta,
+            policies,
+            workers,
+            batch_size,
+        })
     }
 
     /// Mounts a batch publishing definition on `source`, decoding with `codec` and replying
@@ -353,26 +299,17 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
         // pieces in a starter that pairs and builds at startup (see `BatchPublishingRoute`),
         // letting a router-mounted batch publishing handler pick up the app-wide `publish_layer`
         // chain.
-        Router {
-            routes: (
-                BatchPublishingRoute {
-                    source,
-                    def,
-                    codec,
-                    publisher,
-                    extra,
-                    meta,
-                    policies,
-                    workers,
-                    batch_size,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(BatchPublishingRoute {
+            source,
+            def,
+            codec,
+            publisher,
+            extra,
+            meta,
+            policies,
+            workers,
+            batch_size,
+        })
     }
 
     /// Mounts a publishing definition on `source` whose reply travels the encoded wiring: the
@@ -413,25 +350,16 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
-        Router {
-            routes: (
-                PublishingRoute {
-                    source,
-                    def,
-                    codec,
-                    publisher,
-                    extra,
-                    meta,
-                    policies,
-                    workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(PublishingRoute {
+            source,
+            def,
+            codec,
+            publisher,
+            extra,
+            meta,
+            policies,
+            workers,
+        })
     }
 
     /// The byte-reply counterpart of
@@ -471,24 +399,15 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
             .describing::<Connected<B>, _>(&source);
         let policies = def.failure_policies();
         let workers = def.workers();
-        Router {
-            routes: (
-                RawReplyRoute {
-                    source,
-                    def,
-                    codec,
-                    publisher,
-                    extra,
-                    meta,
-                    policies,
-                    workers,
-                },
-                self.routes,
-            ),
-            codec: self.codec,
-            layers: self.layers,
-            pipeline: self.pipeline,
-            _broker: PhantomData,
-        }
+        self.with_route(RawReplyRoute {
+            source,
+            def,
+            codec,
+            publisher,
+            extra,
+            meta,
+            policies,
+            workers,
+        })
     }
 }
