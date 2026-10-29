@@ -72,6 +72,85 @@ Service state, [Service state](https://powersemmi.github.io/ruststream/latest/co
 - [assert_shut_down](https://powersemmi.github.io/ruststream/latest/components/application/testing/service-state/assert-shut-down/): [`TestApp::assert_shut_down`].
 - [run_result](https://powersemmi.github.io/ruststream/latest/components/application/testing/service-state/run-result/): [`TestApp::run_result`], what `run` would return now.
 
+# Hooks
+
+- [Hooks](https://powersemmi.github.io/ruststream/latest/components/application/testing/hooks/): code a test runs at the moment something happens, instead of reading the record afterwards.
+- [on_call](https://powersemmi.github.io/ruststream/latest/components/application/testing/hooks/on-call/): [`SubscriberAssertions::on_call`] runs an async closure each time the subscription's handler is called.
+- [on_publish](https://powersemmi.github.io/ruststream/latest/components/application/testing/hooks/on-publish/): [`PublishedAssertions::on_publish`] runs one each time a message is published to the destination or through the slot.
+
+```
+# #[cfg(all(feature = "testing", feature = "memory", feature = "macros", feature = "json"))]
+# mod demo {
+use std::error::Error;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use ruststream::memory::prelude::*;
+use ruststream::testing::TestApp;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+#[derive(Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "orders")]
+struct Order {
+    id: u64,
+}
+
+#[derive(Debug, PartialEq, Outgoing, Serialize, Deserialize)]
+#[outgoing(name = "confirmations")]
+struct Confirmation {
+    order_id: u64,
+}
+
+#[subscriber("orders", reply)]
+async fn confirm(order: &Order) -> Confirmation {
+    Confirmation { order_id: order.id }
+}
+
+fn app() -> impl App {
+    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+        b.include(confirm).out_reply(Publish);
+    })
+}
+
+pub async fn every_order_is_confirmed_as_it_arrives() -> Result<(), Box<dyn Error>> {
+    let tb = TestApp::start(app()).await?;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    tb.broker::<MemoryBroker>()
+        .subscriber("orders")
+        .on_call(async move |orders| {
+            let count = seen.fetch_add(1, Ordering::SeqCst) + 1;
+            orders.assert_called(count).settled(HandlerOutcome::ack());
+        });
+
+    let (audit, mut audited) = mpsc::channel(8);
+    tb.broker::<MemoryBroker>()
+        .published::<Confirmation>("confirmations")
+        .on_publish(async move |confirmations| {
+            let last = confirmations.decoded().pop();
+            let _ = audit.send(last).await;
+        });
+
+    tb.broker::<MemoryBroker>()
+        .message(&Order { id: 7 })
+        .publish()
+        .await?;
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(audited.recv().await.flatten(), Some(Confirmation { order_id: 7 }));
+    Ok(())
+}
+# }
+# fn main() {}
+```
+
+A hook gets the same handle it was registered on, borrowed for the call, so it reads the record as
+it stands at the event with the assertions a test already uses. The publish that caused the event
+returns once its hooks finished, and a failed assertion inside a hook fails that publish. Hooks run
+under [`TestApp::start`] and [`TestApp::start_live`] alike.
+
 # Against a running broker
 
 - [start_live](https://powersemmi.github.io/ruststream/latest/components/application/testing/starting-and-stopping/start-live/): [`TestApp::start_live`] connects the same app to a running stand, and [`TestApp::start_live_within`] bounds the wait for a reaction.

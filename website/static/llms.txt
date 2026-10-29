@@ -38,6 +38,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Records](https://powersemmi.github.io/ruststream/latest/components/application/testing/records/): `subscriber(name)`, `published::<T>(name)`, `out::<M>()`
 - [Subscriber assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/subscriber-assertions/): what a handler received and how it settled
 - [Published assertions](https://powersemmi.github.io/ruststream/latest/components/application/testing/published-assertions/): what was published, with its headers and per-message settings
+- [Hooks](https://powersemmi.github.io/ruststream/latest/components/application/testing/hooks/): `on_call`, `on_publish`, a test's own code at the moment a subscription is called or a message is published
 - [Subscribers](https://powersemmi.github.io/ruststream/latest/components/subscribers/): `#[subscriber]`, subscription sources, mount-site settings, batches, start positions, routers, the retry cap and destination, failure policy, typed headers
 - [Message sets](https://powersemmi.github.io/ruststream/latest/components/subscribers/message-sets/): several message types on one subscription with `#[derive(InMessages)]`: the header rule, a rule of your own, left to right, and what the derive checks
 - [Messages](https://powersemmi.github.io/ruststream/latest/components/subscribers/messages/): what a handler returns: ack, retry, drop, `retry_after`, `and_after` and post-settle hooks
@@ -71,6 +72,7 @@ This site holds the entry pages. How each topic is done lives in the module over
 - [Running beside another server](https://docs.rs/ruststream/latest/ruststream/runtime/index.html#running-beside-another-server): `start()` and the running handle
 - [Codecs](https://docs.rs/ruststream/latest/ruststream/codec/index.html): JSON, CBOR and MessagePack, where a codec is chosen, and payloads that carry their own bytes
 - [Testing](https://docs.rs/ruststream/latest/ruststream/testing/index.html): testing a service's production app with `TestApp`, every broker in process, addressed by its production type
+- [Testing hooks](https://docs.rs/ruststream/latest/ruststream/testing/index.html#hooks): `on_call` and `on_publish`, acting at the moment of a call or a publish
 - [Testing against a running broker](https://docs.rs/ruststream/latest/ruststream/testing/index.html#against-a-running-broker): `TestApp::start_live`, the same test body against a stand
 - [AsyncAPI](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html): the generated AsyncAPI document and its viewer
 - [OpenTelemetry](https://docs.rs/ruststream/latest/ruststream/otel/index.html): trace propagation, OTLP export and per-handler metrics
