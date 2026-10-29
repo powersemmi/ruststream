@@ -10,7 +10,7 @@ help: the trait `DefaultPublish` is not implemented for `ConnectedBus`
 29 | struct ConnectedBus;
    | ^^^^^^^^^^^^^^^^^^^
 help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
-  --> src/memory/mod.rs
+  --> crates/ruststream-memory/src/lib.rs
    |
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
