@@ -1,6 +1,8 @@
 //! Settling a dispatched batch: the handler's [`BatchResult`] applied to each delivery behind it,
 //! and what the harness records of the batch on the way.
 
+#[cfg(feature = "testing")]
+use bytes::Bytes;
 use tracing::error;
 
 use super::{BatchResult, uniform_batch};
@@ -37,33 +39,12 @@ pub(super) async fn settle_split_batch<M, C>(
         // Fan the uniform outcome out over the accepted elements only; the rejects keep their
         // own settlements.
         BatchResult::Uniform(outcome) => uniform_batch(outcome, accepted_len),
-        BatchResult::PerElement(results) => {
-            if results.len() != accepted_len {
-                error!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    expected = accepted_len,
-                    returned = results.len(),
-                    "per-element outcome count does not match the batch; \
-                     retrying the unmatched remainder",
-                );
-            }
-            results
-        }
+        BatchResult::PerElement(results) => checked_outcomes(results, accepted_len, subscription),
     };
     // The body saw the accepted elements, so they are the call the harness records. A batch that
     // refused every element never reached the body, and records nothing.
     #[cfg(feature = "testing")]
-    let mut log = (accepted_len > 0).then(|| {
-        BatchLog::of(
-            batch
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| rejected.binary_search_by_key(index, |&(at, _)| at).is_err())
-                .map(|(_, msg)| msg),
-            LentValues::default(),
-        )
-    });
+    let mut log = (accepted_len > 0).then(|| BatchLog::of_accepted(&batch, &rejected));
     let mut accepted_results = per_element.into_iter();
     let mut rejected = rejected.into_iter().peekable();
     for (index, msg) in batch.into_iter().enumerate() {
@@ -126,6 +107,27 @@ pub(crate) async fn settle_batch<M, C>(
     .await;
 }
 
+/// The per-element outcomes a handler returned for `expected` deliveries, logged where the counts
+/// differ: an unmatched delivery is retried, and an outcome past the last delivery is dropped.
+#[inline]
+fn checked_outcomes(
+    results: Vec<HandlerOutcome>,
+    expected: usize,
+    subscription: &str,
+) -> Vec<HandlerOutcome> {
+    if results.len() != expected {
+        error!(
+            target: "ruststream::dispatch",
+            subscription = %subscription,
+            expected,
+            returned = results.len(),
+            "per-element outcome count does not match the batch; \
+             retrying the unmatched remainder",
+        );
+    }
+    results
+}
+
 /// What the harness records of the values a batch lent its handler, one per accepted delivery
 /// in order: empty where the batch lent none, and nothing at all outside the `testing` feature.
 #[cfg(feature = "testing")]
@@ -177,17 +179,7 @@ pub(crate) async fn settle_lent_batch<M, C>(
             }
         }
         BatchResult::PerElement(results) => {
-            if results.len() != accepted.len() {
-                error!(
-                    target: "ruststream::dispatch",
-                    subscription = %subscription,
-                    expected = accepted.len(),
-                    returned = results.len(),
-                    "per-element outcome count does not match the batch; \
-                     retrying the unmatched remainder",
-                );
-            }
-            let mut results = results.into_iter();
+            let mut results = checked_outcomes(results, accepted.len(), subscription).into_iter();
             for msg in accepted {
                 // An unmatched message gets retried: an extra redelivery beats losing it.
                 let mut result = results.next().unwrap_or_else(HandlerOutcome::retry);
@@ -239,7 +231,7 @@ impl BatchLog {
             deliveries: accepted
                 .into_iter()
                 .map(|msg| Delivered {
-                    raw: bytes::Bytes::copy_from_slice(msg.payload()),
+                    raw: Bytes::copy_from_slice(msg.payload()),
                     value: lent.next(),
                     settle: None,
                 })
@@ -247,6 +239,18 @@ impl BatchLog {
             settled: 0,
             _pending: PendingRecord::new(),
         }
+    }
+
+    /// The log of a split batch: the deliveries the body saw, which are the ones not `rejected`.
+    fn of_accepted<M: IncomingMessage>(batch: &[M], rejected: &[(usize, HandlerResult)]) -> Self {
+        Self::of(
+            batch
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| rejected.binary_search_by_key(index, |&(at, _)| at).is_err())
+                .map(|(_, msg)| msg),
+            LentValues::default(),
+        )
     }
 
     fn settled(&mut self, status: HandlerResult) {
