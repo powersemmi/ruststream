@@ -160,26 +160,8 @@ where
         Redelivery::DeadLetter {
             destination,
             at_cap,
-        } => {
-            if at_cap {
-                warn_at_cap(name, attempt_of(slot.get()), Some(destination));
-            }
-            let destination = Arc::from(destination);
-            publish_copy(
-                slot,
-                name,
-                Some(destination),
-                None,
-                retry,
-                delivery,
-                build_cx,
-            )
-            .await
-        }
-        Redelivery::Reject => {
-            warn_at_cap(name, attempt_of(slot.get()), None);
-            slot.take().nack(false).await
-        }
+        } => dead_letter(slot, name, destination, at_cap, retry, delivery, build_cx).await,
+        Redelivery::Reject => reject_spent(slot, name).await,
     }
 }
 
@@ -253,24 +235,12 @@ where
             && delivery.declaration.max_attempts().is_some()
         {
             match redelivery_of(slot.get(), &delivery.declaration) {
+                // Under a cap a destination takes only the spent deliveries.
                 Redelivery::DeadLetter { destination, .. } => {
-                    warn_at_cap(name, attempt_of(slot.get()), Some(destination));
-                    let destination = Arc::from(destination);
-                    return publish_copy(
-                        slot,
-                        name,
-                        Some(destination),
-                        None,
-                        retry,
-                        delivery,
-                        build_cx,
-                    )
-                    .await;
+                    return dead_letter(slot, name, destination, true, retry, delivery, build_cx)
+                        .await;
                 }
-                Redelivery::Reject => {
-                    warn_at_cap(name, attempt_of(slot.get()), None);
-                    return slot.take().nack(false).await;
-                }
+                Redelivery::Reject => return reject_spent(slot, name).await,
                 Redelivery::Subscription => {}
             }
         }
@@ -287,20 +257,7 @@ where
     }
 
     let Some(retry) = delivery.retry.as_ref() else {
-        // A delivery the declaration sends elsewhere is the broker's to move, and this requeue is
-        // what moves it, so it was never due a delay. Only one that comes back loses its delay.
-        if matches!(
-            redelivery_of(slot.get(), &delivery.declaration),
-            Redelivery::Subscription
-        ) {
-            warn!(
-                target: "ruststream::dispatch",
-                subscription = %name,
-                "retry_after on a broker with neither native delayed redelivery nor a copy path \
-                 of its own; requeuing immediately (the delay is dropped)",
-            );
-        }
-        return slot.take().nack(true).await;
+        return requeue_now(slot, name, &delivery.declaration).await;
     };
 
     match redelivery_of(slot.get(), &delivery.declaration) {
@@ -317,32 +274,86 @@ where
             )
             .await
         }
+        // A delivery that has run out of attempts is not retried, so the delay it asked for does
+        // not apply to the copy that carries it away.
         Redelivery::DeadLetter {
             destination,
             at_cap,
-        } => {
-            if at_cap {
-                warn_at_cap(name, attempt_of(slot.get()), Some(destination));
-            }
-            // A delivery that has run out of attempts is not retried, so the delay it asked for
-            // does not apply to the copy that carries it away.
-            let destination = Arc::from(destination);
-            publish_copy(
-                slot,
-                name,
-                Some(destination),
-                None,
-                retry,
-                delivery,
-                build_cx,
-            )
-            .await
-        }
-        Redelivery::Reject => {
-            warn_at_cap(name, attempt_of(slot.get()), None);
-            slot.take().nack(false).await
-        }
+        } => dead_letter(slot, name, destination, at_cap, retry, delivery, build_cx).await,
+        Redelivery::Reject => reject_spent(slot, name).await,
     }
+}
+
+/// Requeues a delayed retry at once, on a broker that moves the subscription's deliveries itself
+/// and cannot hold one back.
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from the requeue.
+async fn requeue_now<M: IncomingMessage>(
+    slot: &mut Slot<M>,
+    name: &str,
+    declaration: &RetryDeclaration,
+) -> Result<(), AckError> {
+    // A delivery the declaration sends elsewhere is the broker's to move, and this requeue is
+    // what moves it, so it was never due a delay. Only one that comes back loses its delay.
+    if matches!(
+        redelivery_of(slot.get(), declaration),
+        Redelivery::Subscription
+    ) {
+        warn!(
+            target: "ruststream::dispatch",
+            subscription = %name,
+            "retry_after on a broker with neither native delayed redelivery nor a copy path \
+             of its own; requeuing immediately (the delay is dropped)",
+        );
+    }
+    slot.take().nack(true).await
+}
+
+/// Sends the delivery to the declared dead-letter `destination` at once, saying so where it goes
+/// there because its attempts are spent (`at_cap`).
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from dropping the original, as [`publish_copy`] does.
+async fn dead_letter<M, C>(
+    slot: &mut Slot<M>,
+    name: &str,
+    destination: &str,
+    at_cap: bool,
+    retry: &DeferredRetry<C>,
+    delivery: &Delivery<C>,
+    build_cx: fn(&M) -> C,
+) -> Result<(), AckError>
+where
+    M: IncomingMessage,
+    C: Send + Sync + 'static,
+{
+    if at_cap {
+        warn_at_cap(name, attempt_of(slot.get()), Some(destination));
+    }
+    let destination = Arc::from(destination);
+    publish_copy(
+        slot,
+        name,
+        Some(destination),
+        None,
+        retry,
+        delivery,
+        build_cx,
+    )
+    .await
+}
+
+/// Rejects a delivery whose attempts are spent and which has nowhere declared to go.
+///
+/// # Errors
+///
+/// Returns the [`AckError`] from the rejection.
+async fn reject_spent<M: IncomingMessage>(slot: &mut Slot<M>, name: &str) -> Result<(), AckError> {
+    warn_at_cap(name, attempt_of(slot.get()), None);
+    slot.take().nack(false).await
 }
 
 /// Says once per exhausted delivery where it went, because that is the point at which a message
