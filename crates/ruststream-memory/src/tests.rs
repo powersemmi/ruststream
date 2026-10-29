@@ -150,7 +150,7 @@ fn an_unconnected_subscription_redelivers_on_the_settling_runtime() {
 /// the subscriber are gone, the bus and its publish log are freed while the timer still waits.
 #[tokio::test(start_paused = true)]
 async fn a_pending_redelivery_does_not_keep_the_bus_alive() {
-    let broker = MemoryBroker::retaining(Retention::Messages(crate::nonzero!(8)));
+    let broker = MemoryBroker::retaining(Retention::Messages(ruststream_core::nonzero!(8)));
     let bus = Arc::downgrade(&broker.state);
     let mut sub = broker.subscribe("delayed");
     let publisher = broker.publisher();
@@ -196,7 +196,7 @@ async fn a_discarding_broker_records_nothing_it_publishes() {
 /// positions of what is left do not shift.
 #[tokio::test]
 async fn a_retaining_broker_evicts_past_its_message_bound() {
-    let broker = MemoryBroker::retaining(Retention::Messages(crate::nonzero!(2)));
+    let broker = MemoryBroker::retaining(Retention::Messages(ruststream_core::nonzero!(2)));
     let publisher = broker.publisher();
     for i in 0..5u8 {
         publisher
@@ -225,7 +225,7 @@ async fn a_retaining_broker_evicts_past_its_message_bound() {
 /// message a publish just produced must be readable back.
 #[tokio::test]
 async fn a_byte_bound_keeps_the_newest_message_whatever_its_size() {
-    let broker = MemoryBroker::retaining(Retention::Bytes(crate::nonzero!(4)));
+    let broker = MemoryBroker::retaining(Retention::Bytes(ruststream_core::nonzero!(4)));
     let publisher = broker.publisher();
     publisher
         .publish(OutgoingMessage::new("frames", &[0u8; 64]), None)
@@ -255,7 +255,7 @@ fn retained(broker: &MemoryBroker<Retaining>, name: &str) -> Vec<Vec<u8>> {
 /// A byte bound evicts the oldest messages until what is left fits, whatever their count.
 #[tokio::test]
 async fn a_byte_bound_evicts_the_oldest_past_its_budget() {
-    let broker = MemoryBroker::retaining(Retention::Bytes(crate::nonzero!(4)));
+    let broker = MemoryBroker::retaining(Retention::Bytes(ruststream_core::nonzero!(4)));
     let publisher = broker.publisher();
     for i in 0..3u8 {
         publisher
@@ -272,8 +272,8 @@ async fn a_byte_bound_evicts_the_oldest_past_its_budget() {
 #[tokio::test]
 async fn a_combined_bound_evicts_at_whichever_bound_is_reached_first() {
     let broker = MemoryBroker::retaining(Retention::MessagesAndBytes {
-        messages: crate::nonzero!(2),
-        bytes: crate::nonzero!(4),
+        messages: ruststream_core::nonzero!(2),
+        bytes: ruststream_core::nonzero!(4),
     });
     let publisher = broker.publisher();
     for i in 0..3u8 {
@@ -464,7 +464,6 @@ async fn a_pattern_reads_every_match_and_the_rule_survives_shutdown() {
 }
 
 /// A `MemorySource` names the subscription of a manual definition, as a subject string does.
-#[cfg(feature = "json")]
 #[test]
 fn a_memory_source_names_a_manual_subscription() {
     use std::future::ready;
@@ -472,7 +471,7 @@ fn a_memory_source_names_a_manual_subscription() {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    use crate::runtime::{Context, Handle, Router, Verdict, subscriber};
+    use ruststream_runtime::{Context, Handle, Router, Verdict, subscriber};
 
     #[derive(Deserialize, JsonSchema)]
     struct Order {

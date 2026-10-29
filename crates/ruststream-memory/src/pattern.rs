@@ -11,7 +11,9 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use super::{ConnectedMemoryBroker, Discarding, LogMode, MemoryError, MemorySubscriber, Sender};
-use crate::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource};
+use ruststream_core::{
+    AddressedCopies, RedeliveryAddress, RedeliveryAddressed, SubscriptionSource,
+};
 
 /// How the broker picks the subscriptions a publish reaches when patterns are subscribed.
 ///
@@ -22,7 +24,6 @@ use crate::{AddressedCopies, RedeliveryAddress, RedeliveryAddressed, Subscriptio
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -376,12 +377,11 @@ impl Routing {
 /// every subscription of this broker, so a pattern needs no destination for its retries. A
 /// pattern subscription has no replay position: it reads many names, and a retaining broker keeps
 /// a log per name, so its subscriber is
-/// never [`Seekable`](crate::Seekable) and a handler on it cannot read a seek handle.
+/// never [`Seekable`](ruststream_core::Seekable) and a handler on it cannot read a seek handle.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// # #[derive(serde::Deserialize)]
@@ -413,7 +413,6 @@ impl MemoryPattern {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;

@@ -1,6 +1,6 @@
 //! What a broker keeps of what it published: the per-name log, its bound, and the two log modes.
 //!
-//! The log is the replay store the [`Seekable`](crate::Seekable) capability reads back. A
+//! The log is the replay store the [`Seekable`](ruststream_core::Seekable) capability reads back. A
 //! [`Discarding`] broker keeps none, so publishing costs the fanout and nothing else and memory
 //! does not grow with the message count. A [`Retaining`] broker keeps the newest messages of
 //! every name within its [`Retention`] bound, and only its subscriptions can be repositioned.
@@ -16,7 +16,7 @@ use bytes_utils::Str;
 
 use super::DeliveryInner;
 #[cfg(any(feature = "testing", test))]
-use crate::RawMessage;
+use ruststream_core::RawMessage;
 
 /// How much of one name's publish log a retaining broker keeps.
 ///
@@ -27,7 +27,6 @@ use crate::RawMessage;
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -87,7 +86,7 @@ impl Retention {
 /// The log mode of a broker that keeps no publish log, and the default of
 /// [`MemoryBroker`](super::MemoryBroker).
 ///
-/// [`Seekable`](crate::Seekable) is not implemented for its subscriptions, so replaying one is a
+/// [`Seekable`](ruststream_core::Seekable) is not implemented for its subscriptions, so replaying one is a
 /// compile error rather than a replay that silently finds nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Discarding;
@@ -95,7 +94,7 @@ pub struct Discarding;
 /// The log mode of a [`MemoryBroker::retaining`](super::MemoryBroker::retaining) broker.
 ///
 /// The newest messages of every name are kept within its [`Retention`] bound, and its
-/// subscriptions are [`Seekable`](crate::Seekable).
+/// subscriptions are [`Seekable`](ruststream_core::Seekable).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Retaining;
 

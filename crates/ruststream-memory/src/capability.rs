@@ -29,7 +29,7 @@ use super::{
     Bus, Discarding, LogMode, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound,
     MemoryPublisher, MemoryState, MemorySubscriber, Retaining, SubscriptionShared, log,
 };
-use crate::{
+use ruststream_core::{
     BatchSubscriber, BytesMut, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned,
     Positioned, Publisher, RequestReply, Seekable, Seeker, Str, Subscriber, Take, Transaction,
     TransactionalPublisher,
@@ -53,8 +53,8 @@ pub enum RequestError {
         timeout: Duration,
     },
     /// The operation ran through a handle aliasing a bus that was shut down
-    /// ([`ConnectedBroker::shutdown`](crate::ConnectedBroker::shutdown)) and not revived by a
-    /// sibling clone's [`Broker::connect`](crate::Broker::connect).
+    /// ([`ConnectedBroker::shutdown`](ruststream_core::ConnectedBroker::shutdown)) and not revived by a
+    /// sibling clone's [`Broker::connect`](ruststream_core::Broker::connect).
     #[error("the memory broker is shut down")]
     ShutDown,
 }
@@ -70,7 +70,6 @@ pub enum RequestError {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use std::time::Duration;
 ///
@@ -343,7 +342,7 @@ impl TransactionalPublisher for MemoryPublisher {
 }
 
 /// An owned in-process transaction, opened by
-/// [`transaction`](crate::OwnedTransactions::transaction) on a [`MemoryPublisher`].
+/// [`transaction`](ruststream_core::OwnedTransactions::transaction) on a [`MemoryPublisher`].
 ///
 /// A private delivery buffer, fanned out to the bus in publish order on commit and discarded
 /// on abort.
@@ -354,7 +353,6 @@ impl TransactionalPublisher for MemoryPublisher {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -542,7 +540,6 @@ impl SeekControl {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -609,7 +606,6 @@ impl MemoryPosition {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::Seeker;
 /// use ruststream::memory::prelude::*;
@@ -700,7 +696,7 @@ impl Seeker for MemorySeeker {
     /// Records the reposition and wakes the subscription; the stream applies it at the top of
     /// its next poll, so once this resolves the next delivery reflects the new position.
     ///
-    /// Under a [`TestApp`](crate::testing::TestApp) the reposition counts as in-flight work
+    /// Under a [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) the reposition counts as in-flight work
     /// until the subscription applies it, so driving the service to a standstill waits for the
     /// replay instead of racing the poll that produces it.
     ///
@@ -896,15 +892,14 @@ impl Positioned for MemoryMessage<Retaining> {
 /// The in-memory broker's per-delivery context: this delivery's position in its name's publish
 /// log, and the subscription's own seeker.
 ///
-/// The runtime builds one per dispatched delivery (see [`BuildContext`](crate::BuildContext)),
+/// The runtime builds one per dispatched delivery (see [`BuildContext`](ruststream_core::BuildContext)),
 /// and handlers read its fields by key - [`Position`] and [`SeekHandle`] - through the
-/// [`Ctx`](crate::runtime::Ctx) extractor or `ctx.context(..)`. A body that manages a log
+/// [`Ctx`](ruststream_runtime::Ctx) extractor or `ctx.context(..)`. A body that manages a log
 /// cursor names this type as its `C` axis and needs nothing else.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::{MemoryContext, Position, SeekHandle};
 /// use ruststream::prelude::*;
@@ -936,7 +931,7 @@ pub struct MemoryContext {
     seeker: MemorySeeker,
 }
 
-impl crate::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
+impl ruststream_core::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
@@ -953,7 +948,7 @@ impl crate::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
 /// shared by every delivery of the batch.
 ///
 /// The runtime builds one per dispatched batch from the batch's first delivery (see
-/// [`BuildBatchContext`](crate::BuildBatchContext)), and a batch body reads it by key -
+/// [`BuildBatchContext`](ruststream_core::BuildBatchContext)), and a batch body reads it by key -
 /// [`SeekHandle`] - through `ctx.context(..)`. Per-delivery data (a [`Position`]) has no place
 /// here: a batch spans many deliveries, so the position a body reacts to rides the elements
 /// themselves (a `&[Message<H, T>]` batch reads it off each element's header contract), and
@@ -963,7 +958,6 @@ impl crate::BuildContext<MemoryMessage<Retaining>> for MemoryContext {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::Seeker;
 /// use ruststream::memory::{MemoryBatchContext, MemoryPosition, SeekHandle};
@@ -1001,7 +995,7 @@ pub struct MemoryBatchContext {
     seeker: MemorySeeker,
 }
 
-impl crate::BuildBatchContext<MemoryMessage<Retaining>> for MemoryBatchContext {
+impl ruststream_core::BuildBatchContext<MemoryMessage<Retaining>> for MemoryBatchContext {
     /// # Panics
     ///
     /// Panics on a request-reply inbox message, which is not a subscription delivery; no
@@ -1013,7 +1007,7 @@ impl crate::BuildBatchContext<MemoryMessage<Retaining>> for MemoryBatchContext {
     }
 }
 
-impl crate::Field<MemoryBatchContext> for SeekHandle {
+impl ruststream_core::Field<MemoryBatchContext> for SeekHandle {
     type Value<'a> = &'a MemorySeeker;
 
     fn get(self, src: &MemoryBatchContext) -> &MemorySeeker {
@@ -1026,7 +1020,6 @@ impl crate::Field<MemoryBatchContext> for SeekHandle {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::Position;
 /// use ruststream::prelude::*;
@@ -1044,7 +1037,7 @@ impl crate::Field<MemoryBatchContext> for SeekHandle {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Position;
 
-impl crate::ContextField for Position {
+impl ruststream_core::ContextField for Position {
     type Context = MemoryContext;
     type Value = MemoryPosition;
 
@@ -1053,7 +1046,7 @@ impl crate::ContextField for Position {
     }
 }
 
-impl crate::Field<MemoryContext> for Position {
+impl ruststream_core::Field<MemoryContext> for Position {
     type Value<'a> = MemoryPosition;
 
     fn get(self, src: &MemoryContext) -> MemoryPosition {
@@ -1067,7 +1060,6 @@ impl crate::Field<MemoryContext> for Position {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::{MemoryPosition, SeekHandle};
 /// use ruststream::prelude::*;
@@ -1090,7 +1082,7 @@ impl crate::Field<MemoryContext> for Position {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct SeekHandle;
 
-impl crate::ContextField for SeekHandle {
+impl ruststream_core::ContextField for SeekHandle {
     type Context = MemoryContext;
     type Value = MemorySeeker;
 
@@ -1099,7 +1091,7 @@ impl crate::ContextField for SeekHandle {
     }
 }
 
-impl crate::Field<MemoryContext> for SeekHandle {
+impl ruststream_core::Field<MemoryContext> for SeekHandle {
     type Value<'a> = &'a MemorySeeker;
 
     fn get(self, src: &MemoryContext) -> &MemorySeeker {

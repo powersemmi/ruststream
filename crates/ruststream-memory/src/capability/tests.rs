@@ -6,10 +6,10 @@ use tokio::sync::oneshot;
 use super::super::{MemoryBroker, MemorySource, Retention};
 use super::*;
 #[cfg(feature = "testing")]
-use crate::Subscribe;
+use ruststream_core::Subscribe;
+use ruststream_core::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource, nonzero};
 #[cfg(feature = "testing")]
-use crate::testing::TestableBroker;
-use crate::{Broker, ConnectedBroker, HeaderMap, StartAt, SubscriptionSource, nonzero};
+use ruststream_runtime::testing::TestableBroker;
 
 /// A broker whose subscriptions can be repositioned. The window is wider than anything these
 /// tests publish, so what they assert is the seek machinery, never an eviction.

@@ -1,25 +1,13 @@
-//! In-process broker: the bus, and what it keeps of what went over it.
+//! The in-memory broker of [RustStream](https://docs.rs/ruststream): a full broker that keeps its
+//! queues inside the process, and the reference implementation of the broker contract.
 //!
-//! [`MemoryBroker`] is a complete broker inside the service's process and the reference
-//! implementation the [`conformance`](crate::conformance) suites run against. A service mounting
-//! on it globs [`prelude`].
-//!
-//! - [Memory broker][memory]: [`MemoryBroker`], its subscription source [`MemorySource`], its
-//!   publish policies, and how its deliveries settle and come back.
-//! - [Retention][retention]: [`MemoryBroker::retaining`] keeps the newest messages of every name
-//!   within a [`Retention`] bound, and its subscriptions replay over them through
-//!   [`MemoryPosition`] and [`MemorySeeker`].
-//! - [Patterns][patterns]: a [`MemoryPattern`] subscription reads every name its pattern
-//!   matches, and the broker's [`Routing`] decides who receives a shared match.
-//!
-//! [memory]: https://powersemmi.github.io/ruststream/latest/components/memory/
-//! [retention]: https://powersemmi.github.io/ruststream/latest/components/memory/retention/
-//! [patterns]: https://powersemmi.github.io/ruststream/latest/components/memory/patterns/
+//! Services use it through the `ruststream` facade, as
+//! [`ruststream::memory`](https://docs.rs/ruststream/latest/ruststream/memory/), whose overview
+//! teaches it.
 
 mod capability;
 mod log;
 mod pattern;
-pub mod prelude;
 
 use capability::SeekControl;
 pub use capability::{
@@ -50,22 +38,22 @@ use std::{
     time::Duration,
 };
 
-use crate::runtime::IntoSource;
-#[cfg(feature = "testing")]
-use crate::testing::Backlog;
-#[cfg(feature = "testing")]
-use crate::testing::InProcess;
-#[cfg(feature = "testing")]
-use crate::testing::TestableBroker;
-use crate::{
+use bytes::Bytes;
+use futures::future::lazy;
+use futures::{Stream, stream};
+use ruststream_core::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
     FromName, HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher,
     RawMessage, RedeliveryAddress, RedeliveryAddressed, ServerSpec, Subscribe, Subscriber,
     SubscriptionSource, Take,
 };
-use bytes::Bytes;
-use futures::future::lazy;
-use futures::{Stream, stream};
+use ruststream_runtime::IntoSource;
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::Backlog;
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::InProcess;
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::TestableBroker;
 #[cfg(feature = "testing")]
 use ruststream_runtime::testing::coordinator::Coordinator;
 use thiserror::Error;
@@ -208,7 +196,7 @@ struct MemoryState {
     notify: Notify,
     inbox_seq: AtomicU64,
     /// The harness's quiescence-and-recording coordinator, installed by a
-    /// [`TestApp`](crate::testing::TestApp) run. Empty in production, so `fanout` does no extra work.
+    /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run. Empty in production, so `fanout` does no extra work.
     #[cfg(feature = "testing")]
     coordinator: OnceLock<Coordinator>,
 }
@@ -517,7 +505,7 @@ impl MemoryState {
         }
     }
 
-    /// Installs the harness coordinator for a [`TestApp`](crate::testing::TestApp) run, and
+    /// Installs the harness coordinator for a [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, and
     /// starts recording if the broker keeps no log of its own. Idempotent.
     ///
     /// A discarding broker retains nothing in production, and its own code cannot read a log
@@ -550,7 +538,7 @@ impl MemoryState {
 ///
 /// The type parameter is the broker's log mode, and it decides what a subscription can do.
 /// [`new`](Self::new) builds the default, [`Discarding`] form: nothing is kept, memory does not
-/// grow with the message count, and there is no [`Seekable`](crate::Seekable) implementation to
+/// grow with the message count, and there is no [`Seekable`](ruststream_core::Seekable) implementation to
 /// reposition a subscription with. [`retaining`](Self::retaining) builds the [`Retaining`] form,
 /// which keeps the newest messages of every name within its [`Retention`] bound and replays them
 /// on demand.
@@ -562,7 +550,7 @@ impl MemoryState {
 /// [`MemoryPublisher`], partition keys on [`MemoryMessage`], and repositioning through
 /// [`MemorySeeker`] over the per-name publish log.
 ///
-/// A [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome is the broker's own
+/// A [`retry_after`](ruststream_runtime::HandlerOutcome::retry_after) outcome is the broker's own
 /// affair: the delivery returns to the same subscriber once the delay has elapsed, and nothing is
 /// republished. Every delivery carries the count of what the broker has handed that subscriber,
 /// the first delivery included, which [`MemoryMessage`] reports through
@@ -574,7 +562,6 @@ impl MemoryState {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -639,7 +626,7 @@ impl MemoryBroker<Discarding> {
     ///
     /// Nothing a subscriber has consumed stays in memory, so a long-running service on this
     /// broker holds only what its subscribers have yet to read. Replay is not available: the
-    /// [`Seekable`](crate::Seekable) capability is implemented for a
+    /// [`Seekable`](ruststream_core::Seekable) capability is implemented for a
     /// [`retaining`](Self::retaining) broker's subscriptions alone.
     #[must_use]
     pub fn new() -> Self {
@@ -653,14 +640,13 @@ impl MemoryBroker<Discarding> {
 impl MemoryBroker<Retaining> {
     /// Creates a broker keeping the newest messages of every name within `retention`.
     ///
-    /// Its subscriptions are [`Seekable`](crate::Seekable): a seeker replays the retained
+    /// Its subscriptions are [`Seekable`](ruststream_core::Seekable): a seeker replays the retained
     /// messages from any position that has not been evicted. The bound holds per name, so the
     /// broker's footprint is the bound times the number of names it publishes under.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;
@@ -705,7 +691,6 @@ impl<Log: LogMode> MemoryBroker<Log> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// # #[derive(serde::Deserialize)]
@@ -742,7 +727,7 @@ impl<Log: LogMode> MemoryBroker<Log> {
 
     /// Opens a subscription to `name`. The returned subscriber starts receiving messages
     /// published after this call; messages published earlier are not delivered, though a
-    /// retaining broker's [`Seekable`](crate::Seekable) capability can replay them from its
+    /// retaining broker's [`Seekable`](ruststream_core::Seekable) capability can replay them from its
     /// publish log.
     ///
     /// On a shut-down broker the registration is refused and the subscriber simply never
@@ -920,7 +905,6 @@ impl<Log: LogMode> ConnectedBroker for ConnectedMemoryBroker<Log> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::MemoryPublish;
 /// use ruststream::memory::prelude::*;
@@ -975,7 +959,6 @@ impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
 /// # mod demo {
 /// use std::time::Duration;
 ///
@@ -1062,7 +1045,7 @@ impl ClosedMemoryBroker {
 impl<Log: LogMode> DescribeServer for MemoryBroker<Log> {
     /// The in-memory broker has no network address, so it describes itself as an in-process server
     /// over the `"memory"` protocol. Registered with
-    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled), the label is its
+    /// [`with_broker_labeled`](ruststream_runtime::RustStream::with_broker_labeled), the label is its
     /// stable identity, letting a service mount several memory brokers with disjoint routing and
     /// address each one by name.
     fn describe_server(&self) -> ServerSpec {
@@ -1138,9 +1121,9 @@ impl<Log: LogMode> TestableBroker for ConnectedMemoryBroker<Log> {
 // One registration per log mode: the harness finds a broker by the type the app was built on,
 // and the two modes are two types.
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(MemoryBroker<Discarding>);
+ruststream_runtime::register_testable_broker!(MemoryBroker<Discarding>);
 #[cfg(feature = "testing")]
-crate::register_testable_broker!(MemoryBroker<Retaining>);
+ruststream_runtime::register_testable_broker!(MemoryBroker<Retaining>);
 
 impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
     type Subscriber = MemorySubscriber<Log>;
@@ -1173,7 +1156,7 @@ impl<Log: LogMode> Subscribe for ConnectedMemoryBroker<Log> {
 
 /// A subscription descriptor for [`MemoryBroker`], naming the subject to receive on.
 ///
-/// The broker-owned counterpart to the generic [`Name`](crate::Name) source: it carries no extra
+/// The broker-owned counterpart to the generic [`Name`](ruststream_core::Name) source: it carries no extra
 /// configuration, the in-memory broker having none.
 /// Pass it to the descriptor form of the macro, `#[subscriber(MemorySource::new("orders"))]`, the
 /// way a NATS service passes `SubscribeOptions`.
@@ -1248,11 +1231,11 @@ impl IntoSource for MemoryPattern {
 /// Subscriber returned by [`MemoryBroker::subscribe`]. Yields one [`MemoryMessage`] per
 /// delivery; consumers must call `ack` or `nack` on each.
 ///
-/// Also consumable in batches through the [`BatchSubscriber`](crate::BatchSubscriber) capability,
+/// Also consumable in batches through the [`BatchSubscriber`](ruststream_core::BatchSubscriber) capability,
 /// which caps each batch at the size it is asked for and allocates it at that size up front. A
 /// subscription of a [`Retaining`] broker is
-/// repositionable over its publish log through the [`Seekable`](crate::Seekable) capability: mint
-/// a [`MemorySeeker`] with [`seeker`](crate::Seekable::seeker) before opening the stream.
+/// repositionable over its publish log through the [`Seekable`](ruststream_core::Seekable) capability: mint
+/// a [`MemorySeeker`] with [`seeker`](ruststream_core::Seekable::seeker) before opening the stream.
 pub struct MemorySubscriber<Log = Discarding> {
     rx: mpsc::UnboundedReceiver<MemoryDelivery>,
     /// What this subscription shares with every delivery it yields and every seeker minted off
@@ -1393,7 +1376,7 @@ impl<Log: LogMode> Subscriber for MemorySubscriber<Log> {
 /// Publisher returned by [`MemoryBroker::publisher`]. Fanout copy to every subscriber of the
 /// target name at publish time.
 ///
-/// Also implements [`TransactionalPublisher`](crate::TransactionalPublisher): while a
+/// Also implements [`TransactionalPublisher`](ruststream_core::TransactionalPublisher): while a
 /// transaction is active on this handle, publishes are buffered and fan out together on commit.
 pub struct MemoryPublisher {
     state: Arc<MemoryState>,
@@ -1424,7 +1407,7 @@ impl fmt::Debug for MemoryPublisher {
 /// The bus is in-process, so there is no transport to fail: operations against a live bus
 /// succeed, and a publish, subscription, or transaction commit through a handle aliasing a
 /// shut-down bus reports [`ShutDown`](MemoryError::ShutDown). The transaction variants cover
-/// misuse, which the [`TransactionalPublisher`](crate::TransactionalPublisher) contract requires
+/// misuse, which the [`TransactionalPublisher`](ruststream_core::TransactionalPublisher) contract requires
 /// to surface as errors rather than silent no-ops. The subscription variants refuse a name or a
 /// pattern when the subscription opens, so a service with a bad one does not start.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -1637,7 +1620,7 @@ impl<Log: LogMode> IncomingMessage for MemoryMessage<Log> {
     }
 
     fn partition_key(&self) -> Option<&[u8]> {
-        crate::Partitioned::partition_key(self)
+        ruststream_core::Partitioned::partition_key(self)
     }
 
     fn headers(&self) -> &HeaderMap {
