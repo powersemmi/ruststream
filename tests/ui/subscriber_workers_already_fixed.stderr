@@ -7,7 +7,7 @@ error[E0277]: this subscriber's worker policy is already fixed
    = help: the trait `WorkersStep` is not implemented for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Name, (Fixed, Open, Open, Open)>`
    = note: a subscription has one concurrency policy, named once: keep the clause in the attribute, or drop it there and name the policy here
 help: the trait `WorkersStep` is implemented for `SubscriberBuilder<Def, Src, (Open, F, P, B), DC>`
-  --> src/runtime/settings.rs
+  --> crates/ruststream-runtime/src/settings.rs
    |
    | impl<Def, Src, F, P, B, DC> WorkersStep for SubscriberBuilder<Def, Src, (Open, F, P, B), DC> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

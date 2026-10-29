@@ -6,7 +6,7 @@ error[E0277]: this address still has an unbound placeholder
    |
    = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
 help: the trait `BoundSegment` is implemented for `String`
-  --> src/runtime/publish/builder.rs
+  --> crates/ruststream-runtime/src/publish/builder.rs
    |
    | impl BoundSegment for String {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -30,7 +30,7 @@ error[E0277]: this address still has an unbound placeholder
    |
    = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
 help: the trait `BoundSegment` is implemented for `String`
-  --> src/runtime/publish/builder.rs
+  --> crates/ruststream-runtime/src/publish/builder.rs
    |
    | impl BoundSegment for String {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -49,7 +49,7 @@ error[E0277]: this address still has an unbound placeholder
    |
    = note: a name template opens one setter per placeholder, and the publish appears once every one of them is bound
 help: the trait `BoundSegment` is implemented for `String`
-  --> src/runtime/publish/builder.rs
+  --> crates/ruststream-runtime/src/publish/builder.rs
    |
    | impl BoundSegment for String {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

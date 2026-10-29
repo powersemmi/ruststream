@@ -10,7 +10,7 @@ note: expected this to be `EncodedWire`
 10 | #[derive(Outgoing, Serialized)]
    |                    ^^^^^^^^^^
 note: required by a bound in `PublishBuilder::<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest>::with_codec`
-  --> src/runtime/publish/builder.rs
+  --> crates/ruststream-runtime/src/publish/builder.rs
    |
    |     pub fn with_codec<C: Codec>(
    |            ---------- required by a bound in this associated function

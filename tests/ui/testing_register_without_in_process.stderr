@@ -16,7 +16,7 @@ help: the trait `InProcess` is implemented for `MemoryBroker<Log>`
    | impl<Log: LogMode> InProcess for MemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `TestableRegistration::of`
-  --> src/testing/broker.rs
+  --> crates/ruststream-runtime/src/testing/broker.rs
    |
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function
@@ -41,7 +41,7 @@ help: the trait `DefaultPublish` is implemented for `ConnectedMemoryBroker<Log>`
    | impl<Log: LogMode> DefaultPublish for ConnectedMemoryBroker<Log> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `TestableRegistration::of`
-  --> src/testing/broker.rs
+  --> crates/ruststream-runtime/src/testing/broker.rs
    |
    |     pub const fn of<B>() -> Self
    |                  -- required by a bound in this associated function

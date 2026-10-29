@@ -13,4 +13,4 @@ error[E0277]: this handler has no unbound Out slot marked `Journal`
              `(A0, A1, ruststream::runtime::MissingSlot<M>)` implements `ruststream::runtime::BindSlot<M, Src, ruststream::runtime::SlotPos<2>>`
              `(A0, ruststream::runtime::MissingSlot<M>, A2)` implements `ruststream::runtime::BindSlot<M, Src, ruststream::runtime::SlotPos<1>>`
              `(ruststream::runtime::MissingSlot<M>, A1, A2)` implements `ruststream::runtime::BindSlot<M, Src, ruststream::runtime::SlotPos<0>>`
-   = note: required for `(ruststream::runtime::NoReply, (ruststream::runtime::MissingSlot<Audit>,))` to implement `ruststream::runtime::BindAt<runtime::router::mount::InjectMount, Journal, _, ruststream::runtime::SlotPos<_>>`
+   = note: required for `(ruststream::runtime::NoReply, (ruststream::runtime::MissingSlot<Audit>,))` to implement `ruststream::runtime::BindAt<ruststream_runtime::router::mount::InjectMount, Journal, _, ruststream::runtime::SlotPos<_>>`

@@ -6,12 +6,12 @@ error[E0277]: `MemoryRequester` does not support broker-side transactions
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
-  --> src/runtime/slot.rs
+  --> crates/ruststream-runtime/src/slot.rs
    |
    |   impl<P: TransactionalPublisher, M: OutSlot> TransactionalPublisher for SlotPublisher<P, M> {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SlotPublisher<P, M>`
    |
-  ::: src/runtime/handle/outs/entry.rs
+  ::: crates/ruststream-runtime/src/handle/outs/entry.rs
    |
    | / impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: OutPipeline<W>, Body>
    | |     TransactionalPublisher for Slot<M, W, E, Pipe, Body>
@@ -22,13 +22,13 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
    = note: required for `ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>` to implement `PublishPolicy<ConnectedMemoryBroker>`
-   = note: required for `runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>` to implement `runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
-   = note: required for `(runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `ruststream_runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_publish::BatchPublishingRoute<Name, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, JsonCodec, ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>, ((),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
    = note: 1 redundant requirement hidden
    = note: required for `RouterWith<ruststream::runtime::BatchPublishMount, Router<MemoryBroker>, SubscriberBuilder<Sealed<ReplyValue<HandleValue<ruststream::runtime::Batch<Order>, Vec<Receipt>, (), (), confirm, ruststream::runtime::Probed>, ResolvedDest>>, Name, (Open, Open, Open, Fixed)>, (ruststream::runtime::WithSource<ReplyWiring<MemoryRequest, UnnamedCodec, PublishTransformIdentity, BatchTransformIdentity, InTransaction>>, ()), ruststream::runtime::ReplyLast>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::transactional`
-  --> src/runtime/app/include/guard.rs
+  --> crates/ruststream-runtime/src/app/include/guard.rs
    |
    |     pub fn transactional(
    |            ------------- required by a bound in this associated function

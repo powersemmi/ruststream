@@ -7,7 +7,7 @@ error[E0277]: `dead_letter(..)` has nothing to declare here
    = help: the trait `ruststream::runtime::DeadLetterOpen` is not implemented for `ruststream::runtime::StepTaken`
    = note: a registration declares `dead_letter(name)` once, right after `include(..)` and before `out_retry(policy)`: `b.include(reconcile).max_attempts(nonzero!(5)).dead_letter("orders.dead")`
 note: required by a bound in `Mounting::<'s, B, Layers, C, State, Pipeline, RouterWith<Mount, R, Def, Attach, Last>>::dead_letter`
-  --> src/runtime/app/include/guard.rs
+  --> crates/ruststream-runtime/src/app/include/guard.rs
    |
    |     pub fn dead_letter(
    |            ----------- required by a bound in this associated function

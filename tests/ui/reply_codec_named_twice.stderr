@@ -9,7 +9,7 @@ error[E0599]: the method `codec` exists for struct `Mounting<'_, MemoryBroker, I
    | |_____________|
    |
    |
-  ::: src/runtime/publish/sink.rs
+  ::: crates/ruststream-runtime/src/publish/sink.rs
    |
    |   pub struct CallCodec<C>(pub(crate) C);
    |   ----------------------- doesn't satisfy `_: CodecSlotOpen`
