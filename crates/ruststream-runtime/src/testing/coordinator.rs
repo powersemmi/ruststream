@@ -443,12 +443,14 @@ impl Coordinator {
     /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
     /// publish order.
     #[doc(hidden)]
+    #[must_use]
     pub fn published(&self, scope_id: usize, name: &str) -> Vec<PublishedEntry> {
         self.published_within(scope_id, name, Within::ALL)
     }
 
     /// Like [`published`](Self::published), over the publishes recorded up to `within`.
     #[doc(hidden)]
+    #[must_use]
     pub fn published_within(
         &self,
         scope_id: usize,

@@ -602,8 +602,8 @@ impl SubscriberAssertions<'_> {
     /// running when the harness shuts down or is dropped is stopped where it waits, and `shutdown`
     /// returns once it is gone. A hook runs on a thread of its own inside the test's runtime, its
     /// clock included. A panic inside it, a failed assertion included, is raised again from the
-    /// publish, `settle` or `advance` that drove the call, or else from
-    /// [`TestApp::shutdown`](super::TestApp::shutdown) or the harness being dropped.
+    /// publish, `settle` or `advance` that drove the call, or else from [`TestApp::shutdown`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.shutdown) or the
+    /// harness being dropped.
     ///
     /// # Examples
     ///

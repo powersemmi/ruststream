@@ -395,7 +395,7 @@ impl<T: 'static> PublishedAssertions<T> {
     /// the test's runtime, its clock included. A
     /// panic inside it, a failed assertion included, is raised again from the publish, `settle`
     /// or `advance` that drove the event, or else from
-    /// [`TestApp::shutdown`](super::TestApp::shutdown) or the harness being dropped.
+    /// [`TestApp::shutdown`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.shutdown) or the harness being dropped.
     ///
     /// # Examples
     ///

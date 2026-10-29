@@ -371,9 +371,10 @@ where
     }
 }
 
-/// The harness's hold on the failures of its hooks, for the ends of a test that drive nothing
-/// further: a shutdown raises what it holds once the handlers are done, and a harness dropped
-/// without one raises it as it goes.
+/// The harness's hold on the failures of its hooks.
+///
+/// It serves the ends of a test that drive nothing further: a shutdown raises what it holds once
+/// the handlers are done, and a harness dropped without one raises it as it goes.
 #[derive(Debug)]
 pub struct HookFailures(Coordinator);
 
