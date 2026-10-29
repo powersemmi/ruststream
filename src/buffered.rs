@@ -7,7 +7,7 @@
 //! explicit: a blanket impl would collide with the native ones broker crates write.
 //!
 //! A service never names it. The batch size is the registration's
-//! [`batch(n)`](crate::runtime::SubscriberSettings::batch) and arrives as the argument of
+//! [`batch(n)`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.SubscriberSettings.html#method.batch) and arrives as the argument of
 //! [`BatchSubscriber::batches`]; what stays the adapter's own is the deadline that closes a
 //! partial batch.
 

@@ -34,7 +34,7 @@ use crate::bindable::Bindable;
 /// ruststream = { version = "0.7", default-features = false }
 /// ```
 ///
-/// [`MemoryBroker`](crate::memory::MemoryBroker) is the reference implementation of every trait
+/// [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html) is the reference implementation of every trait
 /// on this list, and `ruststream-nats`
 /// ([docs.rs](https://docs.rs/ruststream-nats/latest/ruststream_nats/)) is a worked example over
 /// a real client.
@@ -52,12 +52,12 @@ use crate::bindable::Bindable;
 ///   policy a reply and a retry copy use when the mount site names none.
 ///
 /// Settings in the broker's own vocabulary ride the mount chain:
-/// [`SubscriberBuilder`](crate::runtime::SubscriberBuilder) for a subscription's descriptor,
-/// [`MapPublisher`](crate::runtime::MapPublisher) for a publish policy, and
+/// [`SubscriberBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.SubscriberBuilder.html) for a subscription's descriptor,
+/// [`MapPublisher`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.MapPublisher.html) for a publish policy, and
 /// [`Publisher::Options`](crate::Publisher::Options) for one message.
 ///
 /// Optional capabilities, each implemented only where the transport supports it and each checked
-/// by its own suite in [`conformance::capabilities`](crate::conformance::capabilities):
+/// by its own suite in [`conformance::capabilities`](https://docs.rs/ruststream/latest/ruststream/conformance/capabilities/index.html):
 ///
 /// | Trait | For a broker that supports |
 /// |---|---|
@@ -75,18 +75,18 @@ use crate::bindable::Bindable;
 /// and never with a broker's type, and the mount site checks the bound policy's live form against
 /// it at compile time. Implementing the trait on the live publisher is all a service needs to
 /// reach the typed form of that capability. A live value that offers more than the core's
-/// capabilities extends the vocabulary as [`OutSlot`](crate::runtime::OutSlot) describes.
+/// capabilities extends the vocabulary as [`OutSlot`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.OutSlot.html) describes.
 ///
 /// Around the traits: a per-delivery context with [`ContextField`](crate::ContextField) keys and
 /// a batch context through [`BuildBatchContext`](crate::BuildBatchContext); protocol bindings for
 /// the `AsyncAPI` document on the descriptor and the policies
-/// ([`asyncapi::Bindings`](crate::asyncapi::Bindings)); a prelude of the crate's own ([`prelude`](crate::prelude#a-broker-crates-prelude));
-/// the in-process mode under a `testing` feature ([`InProcess`](crate::testing::InProcess),
-/// [`TestableBroker`](crate::testing::TestableBroker),
-/// [`register_testable_broker!`](crate::register_testable_broker)); and
-/// [`conformance`](crate::conformance), whose suites prove the crate and whose overview ends with the author checklist. Async work around encode and decode
+/// ([`asyncapi::Bindings`](crate::bindings::Bindings)); a prelude of the crate's own ([`prelude`](https://docs.rs/ruststream/latest/ruststream/prelude/index.html#a-broker-crates-prelude));
+/// the in-process mode under a `testing` feature ([`InProcess`](https://docs.rs/ruststream/latest/ruststream/testing/trait.InProcess.html),
+/// [`TestableBroker`](https://docs.rs/ruststream/latest/ruststream/testing/trait.TestableBroker.html),
+/// [`register_testable_broker!`](https://docs.rs/ruststream/latest/ruststream/macro.register_testable_broker.html)); and
+/// [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html), whose suites prove the crate and whose overview ends with the author checklist. Async work around encode and decode
 /// (a schema registry, an envelope) belongs on the async edges, not in a codec, as the
-/// [`codec`](crate::codec) overview describes.
+/// [`codec`](https://docs.rs/ruststream/latest/ruststream/codec/index.html) overview describes.
 ///
 /// # Lazy startup contract
 ///
@@ -98,7 +98,7 @@ use crate::bindable::Bindable;
 /// and return the handle" constructor) does not satisfy this contract. Each broker also ships a
 /// [`SubscriptionSource`](crate::SubscriptionSource) for its subjects, resolved against the
 /// connected form.
-/// [`conformance::harness::lifecycle`](crate::conformance::harness::lifecycle) checks the whole
+/// [`conformance::harness::lifecycle`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.lifecycle.html) checks the whole
 /// ladder: synchronous construction, `connect`, subscribe through the source, deliver, ack,
 /// `shutdown`, and the post-shutdown behaviour of aliased handles below.
 ///
@@ -115,9 +115,9 @@ use crate::bindable::Bindable;
 /// whichever thread publishes, settles or requests. A handler on a dedicated thread publishes and
 /// settles from that thread's own runtime: a task spawned there waits behind the handler's
 /// computation and stops with that runtime, while the connection it serves lives on.
-/// [`conformance::harness::lifecycle`](crate::conformance::harness::lifecycle) publishes and
+/// [`conformance::harness::lifecycle`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.lifecycle.html) publishes and
 /// settles with a delay from a runtime that stops at once, and
-/// [`conformance::capabilities::request_reply`](crate::conformance::capabilities::request_reply)
+/// [`conformance::capabilities::request_reply`](https://docs.rs/ruststream/latest/ruststream/conformance/capabilities/fn.request_reply.html)
 /// requests from one; both then expect the work to complete.
 ///
 /// ```
@@ -154,7 +154,7 @@ use crate::bindable::Bindable;
 ///
 /// `shutdown` never blocks or panics: every teardown step that can fail runs there and returns
 /// its error. The [`Closed`](ConnectedBroker::Closed) witness carries teardown diagnostics as
-/// plain data, or is `()`; [`ClosedMemoryBroker`](crate::memory::ClosedMemoryBroker) reports how many
+/// plain data, or is `()`; [`ClosedMemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.ClosedMemoryBroker.html) reports how many
 /// subscriber registrations the shutdown dropped.
 ///
 /// # Configuration and errors
@@ -200,9 +200,9 @@ pub trait Broker: Send + Sync + Sized {
     fn connect(self) -> impl Future<Output = Result<Self::Connected, Self::Error>> + Send;
 
     /// Wraps the broker for publisher-token minting before registration: the returned
-    /// [`Bindable`](crate::runtime::Bindable) hands out
-    /// [`Bound`](crate::runtime::Bound) tokens via its `bind`, and is itself what
-    /// [`with_broker`](crate::runtime::RustStream::with_broker) takes.
+    /// [`Bindable`](crate::bindable::Bindable) hands out
+    /// [`Bound`](crate::bindable::Bound) tokens via its `bind`, and is itself what
+    /// [`with_broker`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker) takes.
     ///
     /// Provided for every broker; implementations do not override it.
     ///

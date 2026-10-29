@@ -513,7 +513,7 @@ impl<Payload: AsRef<[u8]>> OutgoingMessage<'_, Payload> {
 /// - without [`supports_nack_after`](Self::supports_nack_after) and
 ///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
 ///   delivery and, after the delay, publishes a copy through the registration's retry publisher
-///   with an incremented [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER), to the
+///   with an incremented [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html), to the
 ///   address the subscription reports
 ///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed));
 /// - without [`redelivery_count`](Self::redelivery_count), a `max_attempts(..)` cap reads that
@@ -566,7 +566,7 @@ pub trait IncomingMessage: Send + Sync {
     ///
     /// Defaulted to `None`, which is the honest answer for a transport with no counter of its
     /// own; the runtime then counts with its own
-    /// [`RETRY_COUNT_HEADER`](crate::runtime::RETRY_COUNT_HEADER) alone. A broker whose
+    /// [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html) alone. A broker whose
     /// deliveries carry a count reports it here - `JetStream`'s `num_delivered`, a claimed Redis
     /// stream entry's delivery count, Pulsar's `redelivery_count`, SQS's
     /// `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt`, AMQP 1.0's `delivery-count` - so
@@ -619,7 +619,7 @@ pub trait IncomingMessage: Send + Sync {
     /// field's. It reports that error here. The runtime asks before it materializes the handler's
     /// input, on every input lane and for each delivery of a batch, and settles a delivery that
     /// reports an error by the subscription's decode-failure policy
-    /// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a payload that
+    /// ([`on_failure(decode = ..)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.FailurePolicies.html)), as it settles a payload that
     /// does not decode: the handler does not run, and the warning names the subscription, the
     /// message type and the error.
     ///
@@ -719,7 +719,7 @@ pub trait IncomingMessage: Send + Sync {
     ///
     /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
     /// message back for `delay` on its own. The runtime reads this BEFORE settling a
-    /// [`retry_after`](crate::runtime::HandlerOutcome::retry_after) outcome: when it returns `true`
+    /// [`retry_after`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html#method.retry_after) outcome: when it returns `true`
     /// the runtime calls [`nack_after`](Self::nack_after) and trusts the broker timer; when it
     /// returns `false` the runtime applies its broker-agnostic deferred-republish fallback
     /// instead, so the delay is never silently dropped. Brokers with native delayed redelivery

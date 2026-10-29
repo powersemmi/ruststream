@@ -10,7 +10,7 @@ use bytes::BytesMut;
 ///
 /// A `Serialized` value leaves the service byte-for-byte with no codec anywhere on the path,
 /// selected purely by the type, on every typed surface: the `message(&value)` entry of a
-/// publish builder (an [`Out`](crate::runtime::Out) slot, a transaction scope, any publisher),
+/// publish builder (an [`Out`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Out.html) slot, a transaction scope, any publisher),
 /// and the reply position (the same `.reply()` chain and `reply("dest")` clause an encoded
 /// reply uses).
 ///
@@ -24,8 +24,8 @@ use bytes::BytesMut;
 /// `#[derive(Serialized)]` (under the `macros` feature) covers a newtype or single-field struct
 /// over a byte buffer, and, with `#[wire(encode = ..)]`, any type whose format names an encode
 /// function. Any other shape is the bytes plus the wire spellings that route the type onto the
-/// serialized wire: [`MessageWire`] for the typed publish entry, and
-/// [`ReplyShape`](crate::runtime::ReplyShape) for the reply position.
+/// serialized wire: [`MessageWire`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.MessageWire.html) for the typed publish entry, and
+/// [`ReplyShape`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.ReplyShape.html) for the reply position.
 ///
 /// ```
 /// use std::convert::Infallible;

@@ -21,7 +21,7 @@ use crate::{Broker, Connected, ConnectedBroker, PairError, PublishPolicy};
 /// The channel between the erased `connect` and the typed starters: `connect` stores the typed
 /// connected broker here, starters clone it out to open their subscriptions. The teardown takes
 /// the slot's reference back so the connected broker can be consumed by value. Public only
-/// because [`BrokerRegistration`](crate::runtime::BrokerRegistration) names it in a hidden
+/// because [`BrokerRegistration`](crate::bindable::BrokerRegistration) names it in a hidden
 /// method; never constructed by users.
 #[doc(hidden)]
 pub type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
@@ -32,7 +32,7 @@ pub type ConnectedSlot<B> = Arc<Mutex<Option<Arc<<B as Broker>::Connected>>>>;
 /// hands out [`Bound`] tokens *before* `with_broker` runs - registration order stops mattering,
 /// which is what a bidirectional bridge needs (each direction's scope takes the other broker's
 /// token). Pass the wrapper itself to
-/// [`with_broker`](crate::runtime::RustStream::with_broker); a token whose broker never
+/// [`with_broker`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker); a token whose broker never
 /// registers fails fast at pairing with a clear error.
 ///
 /// [`bind`]: Self::bind
@@ -122,7 +122,7 @@ impl<B: Broker + 'static> Bindable<B> {
 
     /// Mints a token for `source`: a publisher source carrying this broker's instance identity,
     /// usable at any include site, in a sibling task via
-    /// [`RunningApp::publisher`](crate::runtime::RunningApp::publisher), or directly with
+    /// [`RunningApp::publisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RunningApp.html#method.publisher), or directly with
     /// [`Bound::live`] once the app started.
     #[must_use]
     pub fn bind<S>(&self, source: S) -> Bound<B, S>
@@ -201,8 +201,8 @@ where
     ///
     /// Available anywhere the application startup has already connected the broker: an
     /// `after_startup` hook (the documented home of a first publish), or a sibling task after
-    /// [`start`](crate::runtime::RustStream::start) returned (the
-    /// [`RunningApp::publisher`](crate::runtime::RunningApp::publisher) sugar calls this).
+    /// [`start`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.start) returned (the
+    /// [`RunningApp::publisher`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RunningApp.html#method.publisher) sugar calls this).
     ///
     /// # Errors
     ///

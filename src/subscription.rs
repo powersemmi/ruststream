@@ -148,7 +148,7 @@ impl CopyPath for AddressedCopies {}
 /// One subscription like this reads many destinations, so the descriptor has no single answer and
 /// the mount site names one: `.out_retry(policy).to("orders")` for a fixed destination, or a
 /// publish transform that names it per delivery. A registration that names neither does not
-/// compile on a [`Router`](crate::runtime::Router) chain; mounted directly in a broker scope, it
+/// compile on a [`Router`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Router.html) chain; mounted directly in a broker scope, it
 /// compiles and the app refuses to start, with an error naming the subscription and the
 /// descriptor.
 ///
@@ -552,7 +552,7 @@ impl RetryDeclaration {
 /// `conformance::harness::redelivery_address` checks an [`AddressedCopies`] descriptor's answer,
 /// and `conformance::retry::broker_moves` a [`BrokerMoves`] descriptor's mapping of the cap.
 /// Settings a service adds at the mount site reach the descriptor through an extension trait over
-/// [`SubscriberBuilder`](crate::runtime::SubscriberBuilder), and protocol bindings for the
+/// [`SubscriberBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.SubscriberBuilder.html), and protocol bindings for the
 /// `AsyncAPI` document come from its `*_bindings` methods.
 ///
 /// [`subscribe`]: Self::subscribe
@@ -733,7 +733,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// This is where a broker's own vocabulary reaches the document: a `RabbitMQ` queue's
     /// durability and its exchange, a Kafka topic's name where it differs from the channel id, a
     /// Pulsar namespace. The core never names a field of yours - it carries what you build with
-    /// [`Binding`](crate::asyncapi::Binding) and writes `bindingVersion` for you.
+    /// [`Binding`](crate::bindings::Binding) and writes `bindingVersion` for you.
     ///
     /// Three rules bound what belongs here. The value is computed from this descriptor alone,
     /// because the document is built before anything connects: a Kafka topic's real partition
@@ -741,7 +741,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
     /// from here at all. A credential never goes in, for the reason
     /// [`DescribeServer`](crate::DescribeServer) gives: the document is published and shared. And
     /// a protocol the specification has no binding for goes in
-    /// [`Binding::extension`](crate::asyncapi::Binding::extension), because the protocol keys are
+    /// [`Binding::extension`](crate::bindings::Binding::extension), because the protocol keys are
     /// a closed list.
     ///
     /// The default says nothing, and a broker that says nothing changes no document.
@@ -886,7 +886,7 @@ pub trait SubscriptionSource<C: ConnectedBroker> {
 /// A `.to(name)` on the retry position overrides the answer. The generated document reports such
 /// a name with a `send` operation; the answered address is the subscription's own channel, which
 /// the document already carries.
-/// [`conformance::harness::redelivery_address`](crate::conformance::harness::redelivery_address)
+/// [`conformance::harness::redelivery_address`](https://docs.rs/ruststream/latest/ruststream/conformance/retry/fn.redelivery_address.html)
 /// holds the answer to its promise: a copy published there arrives at the subscription that
 /// reported it, once per group, with its headers.
 ///
@@ -1130,7 +1130,7 @@ impl FromName for Name {
 /// `#[subscriber]` and `#[subscriber(Kind)]` fix the subscription *kind* and leave its value to
 /// the mount site, so the definition's source starts as `Unnamed<Kind>`. It implements no
 /// [`SubscriptionSource`]: mounting a definition that was never named is a compile
-/// error, not a startup one. [`name`](crate::runtime::SubscriberSettings::name) replaces it with
+/// error, not a startup one. [`name`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.SubscriberSettings.html#method.name) replaces it with
 /// the kind itself, built through [`FromName`].
 ///
 /// # Examples

@@ -340,7 +340,7 @@ pub trait Publisher: Send + Sync {
     /// no per-message setting writes `type Options = ();`.
     ///
     /// The type is the broker's own, and so are the builder steps that fill it: a broker ships an
-    /// extension trait over [`PublishBuilder`](crate::runtime::PublishBuilder) bounded on this
+    /// extension trait over [`PublishBuilder`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html) bounded on this
     /// type, so its steps appear on a builder over its own publisher and nowhere else.
     ///
     /// `Clone` and `'static` are what the test harness needs: it copies the options of each
@@ -351,7 +351,7 @@ pub trait Publisher: Send + Sync {
     ///
     /// A setting takes one shape: a field here, a default on the policy, and a step on the
     /// publish builder, shipped from the broker's prelude. The step writes through
-    /// [`PublishBuilder::options_mut`](crate::runtime::PublishBuilder::options_mut), so nothing
+    /// [`PublishBuilder::options_mut`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.PublishBuilder.html#method.options_mut), so nothing
     /// wraps the publisher and the publish still goes through the mount site's entry, with its
     /// codec and transforms. A send in a trait of the broker's own would pass outside the slot
     /// view a test asserts on, and a setting carried as a header would be bytes `publish` parses
@@ -456,7 +456,7 @@ pub trait Publisher: Send + Sync {
     /// This is the contract a broker implements, and the direct call a broker crate used on its
     /// own - without this one - is written against. Inside a service built on `ruststream` it is
     /// the layer underneath: what a handler sends goes through the publish builder
-    /// ([`message`](crate::runtime::PublishExt::message)), which resolves the destination, the
+    /// ([`message`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishExt.html#method.message)), which resolves the destination, the
     /// codec and the headers and assembles the
     /// [`OutgoingMessage`] itself. Reach for this one where the message is already built: a
     /// publish transform, a middleware, a post-settle hook.
@@ -506,7 +506,7 @@ pub trait Publisher: Send + Sync {
     ///
     /// Every message the runtime sends through this publisher starts from that base: a publish
     /// through the builder, and the reply a `reply("dest")` handler returns (whose
-    /// [`PublishTransform`](crate::runtime::PublishTransform) stack then writes over it, like any
+    /// [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html) stack then writes over it, like any
     /// other call site). A publish a handler body issues on a value it obtained outside the
     /// framework is that body's own call and reaches nothing here.
     ///
@@ -635,11 +635,11 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// handed, because the document is built before anything connects, so a Kafka topic's real
     /// partition count cannot come from here. A credential never goes in, for the reason
     /// [`DescribeServer`](crate::DescribeServer) gives. And a protocol the specification has no
-    /// binding for goes in [`Binding::extension`](crate::asyncapi::Binding::extension).
+    /// binding for goes in [`Binding::extension`](crate::bindings::Binding::extension).
     ///
     /// The policy answers for every position it is bound on: the reply of a `reply(..)`
-    /// registration, an [`Out`](crate::runtime::Out) slot, and the publisher a dead-lettered
-    /// delivery leaves through. A [`Bound`](crate::runtime::Bound) token answers with the policy
+    /// registration, an [`Out`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Out.html) slot, and the publisher a dead-lettered
+    /// delivery leaves through. A [`Bound`](crate::bindable::Bound) token answers with the policy
     /// it carries, so a cross-broker publish is described by the broker it reaches. The channel's
     /// `servers` list does not follow it: that comes from the label the registration's own broker
     /// was registered under, which is the only broker the runtime can name for a channel.
@@ -789,9 +789,9 @@ pub trait PublishPolicy<C: ConnectedBroker> {
     /// with `address: null` and puts the expression in the operation's `reply.address.location`,
     /// so a reader knows the destination is decided per delivery and where to read it.
     ///
-    /// It reaches the document only where a [`PublishTransform`](crate::runtime::PublishTransform)
+    /// It reaches the document only where a [`PublishTransform`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html)
     /// on the reply position declares
-    /// [`Destination = Names`](crate::runtime::PublishTransform::Destination): that transform is
+    /// [`Destination = Names`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishTransform.html#associatedtype.Destination): that transform is
     /// what actually redirects the reply, and without it the reply goes to the name the mount
     /// site declared, which is what the document reports.
     ///

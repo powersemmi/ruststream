@@ -7,13 +7,13 @@
 /// driver, a client decodes a frame of its own format. A handler taking `&T` reads that value
 /// straight from the delivery, with no codec and no copy. The broker implements this on its
 /// delivery type, and its crate's derive puts `T` on the carried input lane by writing
-/// `impl Input for T { type Axis = SoloCarried<T>; }` (both from [`runtime`](crate::runtime));
+/// `impl Input for T { type Axis = SoloCarried<T>; }` (both from [`runtime`](https://docs.rs/ruststream/latest/ruststream/runtime/index.html));
 /// a `T` that derives `Deserialize` rides the codec instead. The lane asks of `T`
 /// `Clone + Send + Sync + 'static`; `Clone` because the test harness keeps a clone of each value.
 ///
 /// `None` is a delivery whose value is gone, such as a claimed id whose row was deleted. The
 /// runtime settles it by the subscription's decode-failure policy
-/// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a payload that
+/// ([`on_failure(decode = ..)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.FailurePolicies.html)), as it settles a payload that
 /// does not decode. A row the driver could not read is reported through
 /// [`decode_error`](crate::IncomingMessage::decode_error) instead: the runtime asks it before the
 /// value, settles the delivery by the same policy, and logs the error the driver met.
@@ -94,7 +94,7 @@ pub trait Carries<T> {
 /// The value at index `i` belongs to the `i`-th delivery the batch yields when it is iterated.
 /// A delivery past the end of the slice carries no value: the runtime settles it by the
 /// subscription's decode-failure policy
-/// ([`on_failure(decode = ..)`](crate::runtime::FailurePolicies)), as it settles a single
+/// ([`on_failure(decode = ..)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.FailurePolicies.html)), as it settles a single
 /// delivery whose [`Carries::carried`] answers `None`. A broker puts such deliveries last. A
 /// delivery whose row it could not read goes there too, and reports the error through
 /// [`decode_error`](crate::IncomingMessage::decode_error), which the runtime logs.

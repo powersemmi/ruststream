@@ -510,7 +510,7 @@ pub struct SubscriptionBindings {
 /// What one publish position contributes to the document, one set per level.
 ///
 /// Assembled by the runtime at mount time from the [`PublishPolicy`](crate::PublishPolicy) bound
-/// on the mount chain - a reply, an [`Out`](crate::runtime::Out) slot, the publisher a dead-lettered
+/// on the mount chain - a reply, an [`Out`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Out.html) slot, the publisher a dead-lettered
 /// delivery leaves through - and carried in the registration's metadata until the document is
 /// built.
 ///

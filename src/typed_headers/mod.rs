@@ -5,8 +5,8 @@
 //! bytes, unit-only enums) or `Option`s of those. [`HeaderMap::insert_typed`] flattens such a
 //! struct into `field name -> string value` entries, and the crate-internal `to_typed` parses
 //! them back, converting each value by what the target field expects. The parse direction
-//! reaches user code through the [`Message<H, P>`](crate::runtime::Message) input and the
-//! [`Headers`](crate::runtime::Headers) extractor, which ride the same machinery.
+//! reaches user code through the [`Message<H, P>`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Message.html) input and the
+//! [`Headers`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Headers.html) extractor, which ride the same machinery.
 
 mod de;
 mod ser;
@@ -122,8 +122,8 @@ impl HeaderMap {
     /// # Examples
     ///
     /// The method is crate-internal; a handler reaches this parse through the
-    /// [`Headers`](crate::runtime::Headers) extractor or the
-    /// [`Message<H, P>`](crate::runtime::Message) input:
+    /// [`Headers`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Headers.html) extractor or the
+    /// [`Message<H, P>`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Message.html) input:
     ///
     /// ```
     /// # #[cfg(all(feature = "macros", feature = "json"))]

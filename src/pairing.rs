@@ -1,5 +1,5 @@
 //! Which connected broker a pairing the runtime makes resolves against, for the test harness to
-//! attribute what the paired publisher publishes. A [`Bound`](crate::runtime::Bound) token pairs
+//! attribute what the paired publisher publishes. A [`Bound`](crate::bindable::Bound) token pairs
 //! against its own broker and says so here.
 
 use std::cell::Cell;

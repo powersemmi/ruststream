@@ -30,7 +30,7 @@ pub enum CodecError {
 /// `encode` and `decode` are synchronous: a codec holds only what a constant and the bytes at
 /// hand decide. An integration that needs I/O to serialize (a schema registry, a key service)
 /// goes around the codec, on the async edges: the broker's delivery path on the way in, a
-/// [`PublishLayer`](crate::runtime::PublishLayer) on the way out.
+/// [`PublishLayer`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.PublishLayer.html) on the way out.
 ///
 /// # Examples
 ///
@@ -222,7 +222,7 @@ pub trait Codec: Send + Sync {
     /// Encodes `value` into a mutable byte buffer.
     ///
     /// Returning [`BytesMut`] lets the encoded buffer move into the publish pipeline (an
-    /// [`Outgoing`](crate::runtime::Outgoing) payload) without a copy, while still allowing
+    /// [`Outgoing`](crate::outgoing::Outgoing) payload) without a copy, while still allowing
     /// publish middleware to mutate it in place. It is what a publish to a transport that keeps
     /// the payload ([`Take`](crate::Take)) calls, once per message.
     ///

@@ -21,7 +21,7 @@ pub enum AckError {
     /// advisory has nothing to bring the record back with, and a transport that acknowledges at
     /// one quality of service may not at another. Saying so is what keeps the runtime honest -
     /// `Ok(())` from `nack(requeue = true)` is a promise the message comes back, which the retry
-    /// path and [`conformance`](crate::conformance) both read that way.
+    /// path and [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) both read that way.
     #[error("acknowledgement is not supported by this broker")]
     Unsupported,
 

@@ -4,7 +4,7 @@
 //! names: who owns the service, under what licence it runs, how its operations group, and where
 //! the prose lives. [`AppId`] is the service's own identifier.
 //!
-//! They live outside the `asyncapi` feature because [`AppInfo`](crate::runtime::AppInfo) and
+//! They live outside the `asyncapi` feature because [`AppInfo`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.AppInfo.html) and
 //! [`ServerSpec`](crate::ServerSpec) carry them whether or not a document is ever generated.
 
 use std::fmt;

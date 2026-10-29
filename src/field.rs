@@ -55,7 +55,7 @@ pub trait Field<Src: ?Sized> {
 
 /// A [`Field`]-style key that also names its context type and yields an owned value.
 ///
-/// It powers the [`Ctx`](crate::runtime::Ctx) extractor: because the key carries its context
+/// It powers the [`Ctx`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Ctx.html) extractor: because the key carries its context
 /// as an associated type, a handler taking `Ctx(value): Ctx<Key>` needs no `&mut Context`
 /// parameter at all - the `#[subscriber]` macro projects the subscription's context type from
 /// the first `Ctx` key it sees. The value is owned (`'static`): extractor values bind before the

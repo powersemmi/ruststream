@@ -50,7 +50,7 @@ use crate::{
 /// its reply wiring with one context, so a batch's replies would all go to one peer. A crate that
 /// declines says so in its docs: a `&[T]` body then does not compile on that transport.
 ///
-/// [`conformance::capabilities::batches`](crate::conformance::capabilities::batches) checks that
+/// [`conformance::capabilities::batches`](https://docs.rs/ruststream/latest/ruststream/conformance/capabilities/fn.batches.html) checks that
 /// a batch never comes back larger than the size it was opened with. It is not part of
 /// `harness::run_suite`: a crate calls it for this capability itself.
 #[diagnostic::on_unimplemented(
@@ -70,7 +70,7 @@ pub trait BatchSubscriber: Subscriber {
     /// Returns a stream of batches of at most `size` messages.
     ///
     /// `size` is the one parameter the framework passes down: it comes from the registration's
-    /// [`batch(n)`](crate::runtime::SubscriberSettings::batch), which every batch handler names.
+    /// [`batch(n)`](https://docs.rs/ruststream/latest/ruststream/runtime/trait.SubscriberSettings.html#method.batch), which every batch handler names.
     /// Everything else about how batches are formed - a block timeout, a consumer group, a
     /// prefetch window - is the broker's own business, configured on its subscription source.
     ///
@@ -196,7 +196,7 @@ pub trait Positioned: IncomingMessage {
 /// Misuse is an error, never a silent no-op: a [`commit`] or [`abort`] with no open transaction,
 /// and a [`begin_transaction`] while one is open, must return `Self::Error`. A caller can
 /// therefore trust that `Ok` from `commit` means "an open transaction committed", not "there was
-/// nothing to commit". The [`conformance`](crate::conformance) transactional suite checks these
+/// nothing to commit". The [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) transactional suite checks these
 /// paths.
 ///
 /// This is the borrowed kind of the two transaction capabilities: the handle carries at most one
@@ -1279,8 +1279,8 @@ impl SecurityScheme {
 ///
 /// Broker crates implement this so their connection coordinates land in the generated `AsyncAPI`
 /// document and the broker carries a stable identity when registered with
-/// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled); it can also be wired on
-/// manually with [`RustStream::server`](crate::runtime::RustStream::server). A broker without a
+/// [`with_broker_labeled`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.with_broker_labeled); it can also be wired on
+/// manually with [`RustStream::server`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.RustStream.html#method.server). A broker without a
 /// network address (the in-memory broker) describes itself with
 /// [`ServerSpec::in_process`], so it still gets a label / identity for multi-broker routing.
 ///
