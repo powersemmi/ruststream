@@ -562,7 +562,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// # Panics
     ///
     /// Raises again the panic a test's hook left (see
-    /// [`SubscriberAssertions::on_call`](super::SubscriberAssertions::on_call)) once the handlers
+    /// [`SubscriberAssertions::on_call`](ruststream_runtime::testing::SubscriberAssertions::on_call)) once the handlers
     /// are done, so a hook's failed assertion fails the test however it ends. A harness dropped
     /// without a shutdown raises it as it goes.
     ///
