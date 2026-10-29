@@ -24,14 +24,14 @@ use thiserror::Error;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use ruststream_core::{HeaderMap, Publisher, Str};
+use ruststream_runtime::HandlerResult;
 #[cfg(feature = "poll-diagnostics")]
-use crate::runtime::PollDiagnostics;
-use crate::runtime::{
+use ruststream_runtime::PollDiagnostics;
+use ruststream_runtime::{
     BlanketLayer, Context, Handler, HandlerOutcome, HealthProbe, HealthState, Layer, Outgoing,
     PublishLayer, PublishNext, PublishPipeline,
 };
-use crate::{HeaderMap, Publisher, Str};
-use ruststream_runtime::HandlerResult;
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -313,7 +313,6 @@ impl OtelBuilder {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(all(feature = "memory", feature = "json"))]
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::otel::Otel;
@@ -357,7 +356,7 @@ impl Otel {
     }
 
     /// A consume-side [`Layer`] recording the per-delivery metrics; add it with
-    /// [`RustStream::layer`](crate::runtime::RustStream::layer). Pair it with
+    /// [`RustStream::layer`](ruststream_runtime::RustStream::layer). Pair it with
     /// [`OpenTelemetry::consume_layer`](crate::otel::propagation::OpenTelemetry::consume_layer) for
     /// the trace-context propagation half.
     #[must_use]
@@ -369,7 +368,7 @@ impl Otel {
 
     /// A publish-side middleware recording the per-publish metrics (and stamping the queue-time
     /// header unless disabled); add it with
-    /// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer).
+    /// [`RustStream::publish_layer`](ruststream_runtime::RustStream::publish_layer).
     #[must_use]
     pub fn publish_layer(&self) -> OtelPublishLayer {
         OtelPublishLayer {

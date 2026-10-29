@@ -1,10 +1,6 @@
-//! Prometheus metrics for the consume and publish paths (`metrics` feature).
+//! Prometheus metrics for a service: the consume and publish layers and the registry they record into.
 //!
-//! - [Prometheus][prometheus]: one [`Metrics`] collector hands out a consume [`Layer`] and a
-//!   [`PublishLayer`] over one [`Registry`], and [`Metrics::export`] renders it for a
-//!   `/metrics` route; [`Metrics`] lists the series.
-//!
-//! [prometheus]: https://powersemmi.github.io/ruststream/latest/components/observability/metrics/
+//! Re-exported as [`ruststream::metrics`](https://docs.rs/ruststream/latest/ruststream/metrics/).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,16 +10,16 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
 
-use crate::runtime::{
+use ruststream_runtime::HandlerResult;
+use ruststream_runtime::{
     BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishLayer, PublishNext,
     PublishPipeline,
 };
-use ruststream_runtime::HandlerResult;
 
 #[cfg(feature = "poll-diagnostics")]
-use crate::runtime::PollDiagnostics;
-#[cfg(feature = "poll-diagnostics")]
 use poll::PollCollector;
+#[cfg(feature = "poll-diagnostics")]
+use ruststream_runtime::PollDiagnostics;
 
 /// Default histogram buckets (seconds) for handler duration.
 const DURATION_BUCKETS: &[f64] = &[
@@ -40,9 +36,9 @@ struct Inner {
 /// Collects consume and publish metrics into a shared Prometheus registry.
 ///
 /// Cheap to clone (shares one registry and counter set). Hand [`consume_layer`](Self::consume_layer)
-/// to [`RustStream::layer`](crate::runtime::RustStream::layer) and
+/// to [`RustStream::layer`](ruststream_runtime::RustStream::layer) and
 /// [`publish_layer`](Self::publish_layer) to
-/// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer).
+/// [`RustStream::publish_layer`](ruststream_runtime::RustStream::publish_layer).
 ///
 /// The consume layer records every handled message, and the publish layer every publish
 /// attempt, the failed ones included. The registry is the global default unless
@@ -321,7 +317,7 @@ impl fmt::Debug for MetricsPublish {
 }
 
 impl PublishLayer for MetricsPublish {
-    fn on_publish<'a, N: PublishPipeline, P: crate::Publisher>(
+    fn on_publish<'a, N: PublishPipeline, P: ruststream_core::Publisher>(
         &'a self,
         out: &'a mut Outgoing<'a>,
         next: PublishNext<'a, N, P>,
@@ -349,7 +345,7 @@ mod poll {
         Bucket, Gauge, Histogram, LabelPair, Metric, MetricFamily, MetricType,
     };
 
-    use crate::runtime::PollDiagnostics;
+    use ruststream_runtime::PollDiagnostics;
     use ruststream_runtime::poll_diagnostics::BUCKET_BOUNDS_NS;
 
     const DURATION: &str = "ruststream_handler_poll_duration_seconds";

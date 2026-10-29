@@ -1218,7 +1218,6 @@ dependencies = [
  "gungraun",
  "inventory",
  "opentelemetry",
- "opentelemetry-otlp",
  "opentelemetry_sdk",
  "prometheus",
  "prost",
@@ -1228,6 +1227,7 @@ dependencies = [
  "ruststream-example-suite",
  "ruststream-macros",
  "ruststream-memory",
+ "ruststream-observability",
  "ruststream-runtime",
  "schemars",
  "serde",
@@ -1237,7 +1237,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "trybuild",
 ]
@@ -1304,6 +1303,26 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ruststream-observability"
+version = "0.7.6"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "prometheus",
+ "ruststream",
+ "ruststream-core",
+ "ruststream-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -14,11 +14,11 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{IdGenerator, RandomIdGenerator};
 use tracing::Instrument;
 
-use crate::runtime::{
+use ruststream_core::{HeaderMap, Str};
+use ruststream_runtime::{
     BlanketLayer, Context, ForReply, Handler, HandlerOutcome, Layer, Outgoing, PublishContext,
     PublishTransform, Reads,
 };
-use crate::{HeaderMap, Str};
 
 /// The HTTP header carrying the W3C trace context.
 const TRACEPARENT: &str = "traceparent";
@@ -68,7 +68,6 @@ impl Injector for HeaderInjector<'_> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::otel::OpenTelemetry;
@@ -113,7 +112,6 @@ impl OpenTelemetry {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
@@ -156,12 +154,11 @@ impl OpenTelemetry {
 
     /// The consume-side [`Layer`]: opens a span per delivery and stamps the consumer's trace context
     /// onto the working headers. Add it with
-    /// [`RustStream::layer`](crate::runtime::RustStream::layer).
+    /// [`RustStream::layer`](ruststream_runtime::RustStream::layer).
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
@@ -201,12 +198,11 @@ impl OpenTelemetry {
     /// The publish-side [`PublishTransform`]: copies the delivery's `traceparent` onto every
     /// reply. Compose it onto a reply's wiring with the mount site's `.transform(..)` step (or,
     /// on a batch reply, `.batch_transform(for_batch(..))` - see
-    /// [`for_batch`](crate::runtime::for_batch)).
+    /// [`for_batch`](ruststream_runtime::for_batch)).
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::otel::OpenTelemetry;
@@ -409,7 +405,7 @@ mod tests {
 
     #[test]
     fn the_publish_transform_carries_the_incoming_trace_onto_the_reply() {
-        use crate::runtime::{Outgoing, PublishContext};
+        use ruststream_runtime::{Outgoing, PublishContext};
 
         let mut incoming = HeaderMap::new();
         incoming.insert(TRACEPARENT, HEADER);
@@ -426,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_delivery_without_a_trace_leaves_the_reply_untouched() {
-        use crate::runtime::{Outgoing, PublishContext};
+        use ruststream_runtime::{Outgoing, PublishContext};
 
         let incoming = HeaderMap::new();
         let cx = PublishContext::from_map("orders", &incoming, &());

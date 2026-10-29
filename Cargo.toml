@@ -4,6 +4,7 @@ members = [
     "crates/ruststream-runtime",
     "crates/ruststream-memory",
     "crates/ruststream-asyncapi",
+    "crates/ruststream-observability",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
 ]
@@ -62,6 +63,7 @@ ruststream-core = { version = "=0.7.6", path = "crates/ruststream-core" }
 ruststream-runtime = { version = "=0.7.6", path = "crates/ruststream-runtime" }
 ruststream-memory = { version = "=0.7.6", path = "crates/ruststream-memory" }
 ruststream-asyncapi = { version = "=0.7.6", path = "crates/ruststream-asyncapi" }
+ruststream-observability = { version = "=0.7.6", path = "crates/ruststream-observability" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -989,10 +991,13 @@ asyncapi = [
     "ruststream-core/asyncapi",
     "ruststream-runtime/asyncapi",
 ]
-metrics = ["dep:prometheus", "ruststream-runtime/metrics"]
-logging = ["dep:tracing-subscriber"]
+metrics = ["dep:ruststream-observability", "ruststream-observability/metrics"]
+logging = ["dep:ruststream-observability", "ruststream-observability/logging"]
 cli = ["dep:clap", "dep:anyhow"]
-poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
+poll-diagnostics = [
+    "ruststream-runtime/poll-diagnostics",
+    "ruststream-observability?/poll-diagnostics",
+]
 testing = [
     "dep:inventory",
     "tokio/test-util",
@@ -1000,20 +1005,14 @@ testing = [
     "ruststream-runtime/testing",
     "ruststream-memory?/testing",
 ]
-otel = [
-    "dep:opentelemetry",
-    "dep:opentelemetry_sdk",
-    "dep:opentelemetry-otlp",
-    "dep:tracing-opentelemetry",
-    "dep:tracing-subscriber",
-    "ruststream-runtime/otel",
-]
+otel = ["dep:ruststream-observability", "ruststream-observability/otel"]
 
 [dependencies]
 ruststream-core.workspace = true
 ruststream-runtime.workspace = true
 ruststream-memory = { workspace = true, optional = true }
 ruststream-asyncapi = { workspace = true, optional = true }
+ruststream-observability = { workspace = true, optional = true }
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true
@@ -1023,18 +1022,12 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 ruststream-macros = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-prometheus = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde_norway = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
-opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
-opentelemetry-otlp = { workspace = true, optional = true }
-tracing-opentelemetry = { workspace = true, optional = true }
 
 # One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
 # file is added in two places and `scripts/bench_results.py` fails loudly when one of them is
@@ -1127,6 +1120,8 @@ tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "ti
 axum = "0.8"
 # The custom-codec examples build their codec over it.
 rmp-serde = "1"
+# The metrics tests and examples read the registry the layers record into.
+prometheus = { version = "0.14", default-features = false }
 trybuild = "1"
 # The one real generator behind `#[wire(prost)]`. It is a dev-dependency and nothing else: the
 # shorthand expands to paths in this crate, so the only way to know the expansion type-checks

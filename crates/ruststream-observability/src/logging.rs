@@ -1,13 +1,6 @@
-//! Colored, `RUST_LOG`-driven console logging built on [`tracing_subscriber`] (`logging`
-//! feature).
+//! The `tracing` subscriber a service installs at startup.
 //!
-//! - [Logging][logging]: [`init`] installs the console logger, and [`Logging`] tunes its
-//!   defaults; the generated `run` command calls [`init`] itself.
-//! - [TracingLayer][tracing-layer]: [`TracingLayer`](crate::runtime::layers::TracingLayer) logs
-//!   every delivery and its outcome as `tracing` events.
-//!
-//! [logging]: https://powersemmi.github.io/ruststream/latest/components/observability/logging/
-//! [tracing-layer]: https://powersemmi.github.io/ruststream/latest/components/observability/tracing-layer/
+//! Re-exported as [`ruststream::logging`](https://docs.rs/ruststream/latest/ruststream/logging/).
 
 use std::fmt::Write as _;
 use std::io;
