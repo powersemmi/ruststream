@@ -16,6 +16,64 @@ repository = "https://github.com/powersemmi/ruststream"
 homepage = "https://powersemmi.github.io/ruststream/latest/"
 authors = ["RustStream contributors"]
 
+[workspace.dependencies]
+bytes = "1"
+# The owned string of the message path: a `Bytes` with the UTF-8 invariant, so a name and a header
+# key clone by reference count and can be sliced out of a buffer a broker already holds.
+# 0.1.3 is the real floor: `Str::from_static`, which is how a constant key costs nothing, arrived
+# there.
+bytes-utils = "0.1.3"
+futures = "0.3"
+# The ring that feeds each dedicated thread of a `threads(n)` subscription: a preallocated SPSC
+# ring whose push and pop are a store each. 0.3.5 is the release whose costs were read.
+rtrb = "0.4.0"
+# 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
+# forwards the 128-bit methods, both of which arrived there.
+serde = { version = "1.0.69", features = ["derive"] }
+thiserror = "2"
+
+# 1.44 is the real floor: a `threads(n)` thread yields through `task::coop::consume_budget`, which
+# landed there.
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+# 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
+# landed there, so nothing below it ever compiled here.
+tokio-util = { version = "0.7.10", features = ["rt"] }
+# 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
+# where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
+tracing = "0.1.29"
+# The cycle counter the poll-time diagnostics read: `rdtsc` on x86_64 with an invariant TSC, the
+# system counter on aarch64, the monotonic clock elsewhere.
+quanta = "0.13.0"
+pin-project-lite = "0.2"
+
+# Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
+# release for release (a loose range let a partial `cargo update` pair a new core with an old
+# macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
+ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros" }
+# 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
+# `otel` feature never resolved anything lower, and the declared bound claimed years of releases
+# that were never built against.
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+serde_json = "1"
+rmp-serde = "1"
+# 0.2.1 is the real floor: the crate-root `into_writer`/`from_reader` re-exports the CBOR codec
+# calls arrived in that release.
+ciborium = "0.2.1"
+prometheus = { version = "0.14", default-features = false }
+schemars = "1"
+serde_norway = "0.9"
+clap = { version = "4", features = ["derive"] }
+# 1.0.1 is the real floor: `bail!` with a formatted message does not compile against 1.0.0.
+anyhow = "1.0.1"
+# 0.3.5 is the real floor: earlier 0.3 releases lose the broker registrations to a plain GNU ld,
+# so the registry comes back empty and the harness reports no transport for a broker that did
+# register. Development setups on mold or lld happen to hide it.
+inventory = "0.3.5"
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["grpc-tonic", "trace", "metrics"] }
+tracing-opentelemetry = "0.34"
+
 [[bin]]
 name = "ruststream"
 path = "src/bin/ruststream/main.rs"
@@ -926,62 +984,32 @@ otel = [
 ]
 
 [dependencies]
-bytes = "1"
-# The owned string of the message path: a `Bytes` with the UTF-8 invariant, so a name and a header
-# key clone by reference count and can be sliced out of a buffer a broker already holds.
-# 0.1.3 is the real floor: `Str::from_static`, which is how a constant key costs nothing, arrived
-# there.
-bytes-utils = "0.1.3"
-futures = "0.3"
-# The ring that feeds each dedicated thread of a `threads(n)` subscription: a preallocated SPSC
-# ring whose push and pop are a store each. 0.3.5 is the release whose costs were read.
-rtrb = "0.4.0"
-# 1.0.69 is the real floor: the typed-headers deserializer names `BorrowedStrDeserializer` and
-# forwards the 128-bit methods, both of which arrived there.
-serde = { version = "1.0.69", features = ["derive"] }
-thiserror = "2"
-
-# 1.44 is the real floor: a `threads(n)` thread yields through `task::coop::consume_budget`, which
-# landed there.
-tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
-# 0.7.10 is the real floor: `TaskTracker`, which the runtime uses to join spawned handlers,
-# landed there, so nothing below it ever compiled here.
-tokio-util = { version = "0.7.10", features = ["rt"] }
-# 0.1.29 is the real floor: it is the first release whose own `tracing-core` bound reaches 0.1.21,
-# where `Value` for `Option<T>` landed - the dispatch spans record optional fields.
-tracing = "0.1.29"
-# The cycle counter the poll-time diagnostics read: `rdtsc` on x86_64 with an invariant TSC, the
-# system counter on aarch64, the monotonic clock elsewhere.
-quanta = { version = "0.13.0", optional = true }
-pin-project-lite = { version = "0.2", optional = true }
-
-# Exact pin: the two crates release in lockstep and the proc-macro surface tracks the library
-# release for release (a loose range let a partial `cargo update` pair a new core with an old
-# macros crate and fail to compile). Bumped by the same edit as [workspace.package].version.
-ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros", optional = true }
-# 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
-# `otel` feature never resolved anything lower, and the declared bound claimed years of releases
-# that were never built against.
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"], optional = true }
-serde_json = { version = "1", optional = true }
-rmp-serde = { version = "1", optional = true }
-# 0.2.1 is the real floor: the crate-root `into_writer`/`from_reader` re-exports the CBOR codec
-# calls arrived in that release.
-ciborium = { version = "0.2.1", optional = true }
-prometheus = { version = "0.14", default-features = false, optional = true }
-schemars = { version = "1", optional = true }
-serde_norway = { version = "0.9", optional = true }
-clap = { version = "4", features = ["derive"], optional = true }
-# 1.0.1 is the real floor: `bail!` with a formatted message does not compile against 1.0.0.
-anyhow = { version = "1.0.1", optional = true }
-# 0.3.5 is the real floor: earlier 0.3 releases lose the broker registrations to a plain GNU ld,
-# so the registry comes back empty and the harness reports no transport for a broker that did
-# register. Development setups on mold or lld happen to hide it.
-inventory = { version = "0.3.5", optional = true }
-opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics"], optional = true }
-opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["grpc-tonic", "trace", "metrics"], optional = true }
-tracing-opentelemetry = { version = "0.34", optional = true }
+bytes.workspace = true
+bytes-utils.workspace = true
+futures.workspace = true
+rtrb.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+quanta = { workspace = true, optional = true }
+pin-project-lite = { workspace = true, optional = true }
+ruststream-macros = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+ciborium = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 # One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
 # file is added in two places and `scripts/bench_results.py` fails loudly when one of them is
