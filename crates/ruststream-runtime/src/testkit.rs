@@ -15,11 +15,11 @@
 pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::fmt::Debug;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, Once};
 
     use tracing::field::{Field, Visit};
-    use tracing::subscriber::DefaultGuard;
-    use tracing::{Subscriber, subscriber};
+    use tracing::subscriber::{DefaultGuard, Interest};
+    use tracing::{Metadata, Subscriber, span, subscriber};
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context, SubscriberExt as _};
 
@@ -61,7 +61,43 @@ pub(crate) mod log_capture {
 
     /// Installs the capturing subscriber for the current thread. Events are collected until the
     /// returned guard is dropped.
+    /// The process-wide subscriber: it records nothing, and keeps every callsite's interest at
+    /// "sometimes". Without it the only global dispatcher is the no-op one, and a callsite a test
+    /// on another thread hits first, while no capture is installed anywhere, can be cached as
+    /// never interested: a capture installed a moment later then misses that event.
+    struct Undecided;
+
+    impl Subscriber for Undecided {
+        fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+            Interest::sometimes()
+        }
+
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            false
+        }
+
+        fn new_span(&self, _span: &span::Attributes<'_>) -> span::Id {
+            span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &span::Id, _values: &span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &span::Id, _follows: &span::Id) {}
+
+        fn event(&self, _event: &tracing::Event<'_>) {}
+
+        fn enter(&self, _span: &span::Id) {}
+
+        fn exit(&self, _span: &span::Id) {}
+    }
+
     pub(crate) fn start() -> (Events, DefaultGuard) {
+        static UNDECIDED: Once = Once::new();
+        UNDECIDED.call_once(|| {
+            // Another test binary's global subscriber is not this process's concern: a failure
+            // here means one is already installed, which keeps the interest open just as well.
+            let _ = subscriber::set_global_default(Undecided);
+        });
         let events: Events = Arc::new(Mutex::new(Vec::new()));
         let guard = subscriber::set_default(
             tracing_subscriber::registry().with(Capture(Arc::clone(&events))),
