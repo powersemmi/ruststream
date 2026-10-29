@@ -3,9 +3,9 @@
 
 use std::fmt;
 
-use crate::runtime::inject::FromStartup;
-use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::slot::OutSlot;
+use crate::inject::FromStartup;
+use crate::metadata::OutgoingMessageMetadata;
+use crate::slot::OutSlot;
 use crate::{Connected, PairError};
 
 use super::entry::{OutEntry, Slot};

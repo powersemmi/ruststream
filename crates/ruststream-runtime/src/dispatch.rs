@@ -42,7 +42,7 @@ use super::poll_diagnostics::PollDiagnostics;
 #[cfg(feature = "poll-diagnostics")]
 use super::poll_diagnostics::PollSampler;
 use super::publish::PublishContext;
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 use super::redelivery::ErasedRetryPublisher;
 use super::redelivery::{DeferredRetry, ScopeDelivery};
 use super::shutdown::Shutdown;
@@ -66,7 +66,7 @@ use threads::Threads;
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// use ruststream::runtime::RETRY_COUNT_HEADER;
@@ -141,7 +141,7 @@ pub struct Workers {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
@@ -246,7 +246,7 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;
@@ -294,7 +294,7 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;
@@ -340,7 +340,7 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::{Declared, SubscriberBuilder};
@@ -398,7 +398,7 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::{Declared, SubscriberBuilder};
@@ -455,7 +455,7 @@ impl Workers {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
@@ -557,7 +557,7 @@ pub(crate) struct Delivery<C = ()> {
     /// thread's runtime. `None` everywhere else.
     pub(crate) thread_tasks: Option<TaskTracker>,
     /// The harness's recording-and-quiescence hooks for this scope. Empty (uninstalled) outside a
-    /// [`TestApp`](crate::testing::TestApp) run, so the per-delivery read is a single atomic load.
+    /// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run, so the per-delivery read is a single atomic load.
     #[cfg(feature = "testing")]
     pub(crate) hooks: Arc<TestHooks>,
     /// This broker's registration index, used to scope recorded deliveries per broker.
@@ -639,7 +639,7 @@ impl<C> Delivery<C> {
 
     /// A delivery context publishing its retry copies through `publisher` at `destination`. For
     /// tests.
-    #[cfg(all(test, feature = "memory"))]
+    #[cfg(test)]
     pub(crate) fn deferring_to(
         publisher: Arc<dyn ErasedRetryPublisher<C>>,
         destination: &str,
@@ -656,7 +656,7 @@ impl<C> Delivery<C> {
 
     /// The same context with a declaration on it, as a mount site's `max_attempts(..)` and
     /// `dead_letter(..)` leave it. For tests.
-    #[cfg(all(test, feature = "memory"))]
+    #[cfg(test)]
     pub(crate) fn declaring(mut self, declaration: RetryDeclaration) -> Self {
         self.declaration = declaration;
         self
@@ -1582,7 +1582,7 @@ async fn run_batch<H, Batch, C, St>(
     }
 }
 
-/// The harness scope a delivery runs under, or `None` when no [`TestApp`](crate::testing::TestApp)
+/// The harness scope a delivery runs under, or `None` when no [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html)
 /// is driving this app.
 #[cfg(feature = "testing")]
 fn harness_scope<C>(delivery: &Delivery<C>) -> Option<HarnessScope> {
@@ -2037,9 +2037,9 @@ where
     Ok(())
 }
 
-#[cfg(all(test, feature = "testing", feature = "memory"))]
+#[cfg(all(test, feature = "testing"))]
 mod harness_tests;
 mod pool;
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests;
 mod threads;

@@ -4,9 +4,9 @@ use std::{any::type_name, borrow::Cow, marker::PhantomData};
 
 #[cfg(feature = "asyncapi")]
 use crate::bindings::{PublishBindings, SubscriptionBindings};
-use crate::runtime::input::{DecodeWith, Materialize};
+use crate::input::{DecodeWith, Materialize};
 #[cfg(feature = "asyncapi")]
-use crate::runtime::join_headers;
+use crate::join_headers;
 use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource};
 
 /// What a declared outgoing message is to the registration declaring it.
@@ -17,8 +17,8 @@ use crate::{ConnectedBroker, PublishPolicy, RetryDeclaration, SubscriptionSource
 /// reply on the `receive` operation instead of a `send` operation of its own, and to tell a
 /// dead-letter channel from a business destination.
 ///
-/// The variants are named apart from the mount-position markers [`Reply`](crate::runtime::Reply)
-/// and [`Slot`](crate::runtime::Slot): a position is where a policy is bound, a kind is what the
+/// The variants are named apart from the mount-position markers [`Reply`](crate::Reply)
+/// and [`Slot`](crate::Slot): a position is where a policy is bound, a kind is what the
 /// document makes of the message that leaves through it.
 ///
 /// # Examples
@@ -78,7 +78,7 @@ pub struct OutgoingMessageMetadata {
     /// cannot drift apart.
     pub parameters: &'static [&'static str],
     /// True when the type rides the serialized wire
-    /// ([`Serialized`](crate::runtime::Serialized)): its bytes are its own wire format, so the
+    /// ([`Serialized`](crate::Serialized)): its bytes are its own wire format, so the
     /// missing payload schema is by design rather than a documentation gap.
     pub serialized: bool,
     /// What this entry is to its registration: a slot publish, a reply, or a dead-letter
@@ -86,7 +86,7 @@ pub struct OutgoingMessageMetadata {
     pub kind: OutgoingKind,
     /// The media type the codec bound at the mount site encodes this message in
     /// ([`Codec::CONTENT_TYPE`](crate::codec::Codec::CONTENT_TYPE)). `None` where nothing
-    /// encodes: a [`Serialized`](crate::runtime::Serialized) reply and a dead-lettered delivery
+    /// encodes: a [`Serialized`](crate::Serialized) reply and a dead-lettered delivery
     /// both carry bytes that are their own wire format.
     pub content_type: Option<&'static str>,
     /// The runtime expression naming where a reply of this entry actually goes, when the
@@ -255,7 +255,7 @@ pub struct IncomingMessageMetadata {
     /// The serialized JSON Schema of the model's `#[message(headers(..))]` contract, when it
     /// declares one.
     pub headers_schema: Option<String>,
-    /// True when the model reads its own bytes ([`Deserialized`](crate::runtime::Deserialized)):
+    /// True when the model reads its own bytes ([`Deserialized`](crate::Deserialized)):
     /// no codec decodes it, so the missing schema and media type are by design.
     pub deserialized: bool,
     /// The media type the codec of the mount decodes this model in; `None` for a model that
@@ -347,7 +347,7 @@ impl IncomingMessageMetadata {
 
 /// What one bound publish position says about itself, read off its policy at mount time.
 ///
-/// The three publish positions - a reply, an [`Out`](crate::runtime::Out) slot, the publisher a
+/// The three publish positions - a reply, an [`Out`](crate::Out) slot, the publisher a
 /// dead-lettered delivery leaves through - each resolve one of these and write it onto the
 /// [`OutgoingMessageMetadata`] entries they own. Nothing here runs per message.
 #[derive(Debug, Clone, Default)]
@@ -458,17 +458,17 @@ pub struct HandlerMetadata {
     /// describe. Feeds the messages of the `AsyncAPI` `receive` operation.
     pub incoming: Vec<IncomingMessageMetadata>,
     /// True when the input rides the self-deserializing lane
-    /// ([`Deserialized`](crate::runtime::Deserialized)): the payload has no serde model, so
+    /// ([`Deserialized`](crate::Deserialized)): the payload has no serde model, so
     /// the missing schema is by design rather than a documentation gap.
     pub deserialized: bool,
     /// The name of the `AsyncAPI` server this handler's broker was registered under, when the
     /// registration carries one: the label of
-    /// [`with_broker_labeled`](crate::runtime::RustStream::with_broker_labeled). Feeds the
+    /// [`with_broker_labeled`](crate::RustStream::with_broker_labeled). Feeds the
     /// channel's `servers` list, so a multi-broker document says which broker a channel lives
     /// on instead of showing every channel on every server.
     ///
     /// A cross-broker publish is outside what this can answer: a
-    /// [`Bound`](crate::runtime::Bound) token publishes against its own broker, which the
+    /// [`Bound`](crate::Bound) token publishes against its own broker, which the
     /// registration's label does not name.
     pub server: Option<Cow<'static, str>>,
     /// The media type the codec decoding this subscription produces, when a codec decodes it

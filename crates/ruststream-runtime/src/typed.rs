@@ -185,7 +185,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "json", feature = "memory"))]
+#[cfg(all(test, feature = "json"))]
 mod tests {
     use std::future::ready;
     use std::sync::{
@@ -197,15 +197,15 @@ mod tests {
 
     use super::{Typed, typed};
     use crate::codec::JsonCodec;
-    use crate::memory::{MemoryBroker, MemoryMessage};
-    use crate::runtime::context::Context;
-    use crate::runtime::dispatch::Delivery;
-    use crate::runtime::failure::FailurePolicy;
-    use crate::runtime::handle::Message;
-    use crate::runtime::handler::{Handler, HandlerOutcome, HandlerResult};
-    use crate::runtime::input::DecodedPair;
+    use crate::context::Context;
+    use crate::dispatch::Delivery;
+    use crate::failure::FailurePolicy;
+    use crate::handle::Message;
+    use crate::handler::{Handler, HandlerOutcome, HandlerResult};
+    use crate::input::DecodedPair;
     use crate::testkit::delivery::one_delivery;
     use crate::{AckError, HeaderMap, IncomingMessage};
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
 
     fn counting_inner(seen: &Arc<AtomicU32>) -> impl Handler<u32> {
         let seen = Arc::clone(seen);
@@ -233,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn raw_bytes_lend_the_payload_itself() {
         use super::Typed;
-        use crate::runtime::input::Provided;
+        use crate::input::Provided;
 
         /// A marker family: the kind only labels the input, the view stays `&[u8]`.
         struct Frame;
@@ -302,7 +302,6 @@ mod tests {
 
     // The decode diagnostic carries the subscription name and the target type (needs a tracing
     // subscriber, hence the `logging` feature gate).
-    #[cfg(feature = "logging")]
     #[tokio::test]
     async fn decode_failure_log_names_subscription_and_type() {
         use crate::testkit::log_capture;
@@ -334,10 +333,9 @@ mod tests {
     // A delivery its broker could not read is refused before the codec runs, and the warning
     // names the subscription, the input type and the error the broker reported (needs a tracing
     // subscriber, hence the `logging` feature gate).
-    #[cfg(feature = "logging")]
     #[tokio::test]
     async fn a_reported_decode_error_is_logged_with_subscription_type_and_error() {
-        use crate::runtime::input::REPORTED;
+        use crate::input::REPORTED;
         use crate::testkit::log_capture;
         use crate::testkit::unreadable::{REASON, Unreadable};
 

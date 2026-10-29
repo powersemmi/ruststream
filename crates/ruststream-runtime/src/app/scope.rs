@@ -6,22 +6,22 @@ use crate::{Broker, Connected, Subscriber};
 
 use crate::PublishPolicy;
 use crate::bindable::ConnectedSlot;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::Handler;
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::{BlanketLayer, Identity};
-use crate::runtime::publish::{PublishIdentity, PublishPipeline};
-use crate::runtime::router::{RouterDef, RouterSink};
+use crate::failure::FailurePolicies;
+use crate::handler::Handler;
+use crate::metadata::HandlerMetadata;
+use crate::middleware::{BlanketLayer, Identity};
+use crate::publish::{PublishIdentity, PublishPipeline};
+use crate::router::{RouterDef, RouterSink};
 
 use super::{LifecycleHook, lifecycle_hooks::box_startup_publish};
 
 /// A handler-registration scope bound to one broker.
 ///
-/// Handed to the [`RustStream::with_broker`](crate::runtime::RustStream::with_broker) closure. It
-/// drives the same registration chain a [`Router`](crate::runtime::Router) does - `include`
+/// Handed to the [`RustStream::with_broker`](crate::RustStream::with_broker) closure. It
+/// drives the same registration chain a [`Router`](crate::Router) does - `include`
 /// returns a guard over one - plus the broker it is bound to and the app's global middleware
 /// stack `Layers`; registrations are collected and started later, in
-/// [`RustStream::run`](crate::runtime::RustStream::run).
+/// [`RustStream::run`](crate::RustStream::run).
 pub struct BrokerScope<B: Broker, Layers = Identity, C = (), State = (), Pipeline = PublishIdentity>
 {
     pub(super) broker: B,
@@ -49,12 +49,12 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// publisher. The scope-side home of the first message (seeding reference data, announcing
     /// readiness): the pairing happens inside, so no token leaves the closure. A failing hook
     /// aborts startup, exactly like the app-level
-    /// [`after_startup`](crate::runtime::RustStream::after_startup).
+    /// [`after_startup`](crate::RustStream::after_startup).
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Serialize;
@@ -99,7 +99,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     /// Attaches `handler` (wrapped with the app's global stack) to an already-created
     /// `subscriber`.
     ///
-    /// Machinery, not the user path - see [`Router::handle`](crate::runtime::Router::handle);
+    /// Machinery, not the user path - see [`Router::handle`](crate::Router::handle);
     /// a service mounts definitions with [`include`](Self::include) and the value constructors.
     pub fn handle<S, H, Cx>(&mut self, subscriber: S, handler: H, meta: HandlerMetadata)
     where
@@ -122,7 +122,7 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///
     /// The app's global stack must be a [`BlanketLayer`] (it applies to handlers whose concrete
     /// types the router hides), which every bundled layer and any
-    /// [`Stack`](crate::runtime::Stack) of them satisfies.
+    /// [`Stack`](crate::Stack) of them satisfies.
     pub fn include_router<R>(&mut self, router: R)
     where
         R: RouterDef<B, State>,
@@ -151,10 +151,10 @@ impl<B: Broker, Layers, C, State, Pipeline> fmt::Debug
     }
 }
 
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 mod tests {
-    use crate::memory::MemoryBroker;
-    use crate::runtime::{AppInfo, RustStream};
+    use crate::{AppInfo, RustStream};
+    use ruststream::memory::MemoryBroker;
 
     #[test]
     fn scope_debug_reports_its_registrations() {

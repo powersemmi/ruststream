@@ -14,33 +14,33 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::{BatchDef, BatchResult, SliceHandler};
+use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
 use crate::codec::JsonCodec;
-use crate::memory::{
-    ConnectedMemoryBroker, MemoryBatchContext, MemoryBroker, MemoryPosition, MemoryPublish,
-    MemoryPublisher, Retention, SeekHandle,
-};
+use crate::context::Context;
+use crate::dispatch::Delivery;
+use crate::failure::FailurePolicy;
+use crate::handler::{Handler, HandlerOutcome};
+use crate::inject::{FromStartup, InjectCall, InjectDef};
 use crate::nonzero;
-use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
-use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
-use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
-use crate::runtime::context::Context;
-use crate::runtime::dispatch::Delivery;
-use crate::runtime::failure::FailurePolicy;
-use crate::runtime::handler::{Handler, HandlerOutcome};
-use crate::runtime::inject::{FromStartup, InjectCall, InjectDef};
-use crate::runtime::publish::PublishIdentity;
-use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
-use crate::runtime::shutdown::Shutdown;
-use crate::runtime::subscriber_def::SubscriberDef;
-use crate::runtime::{
-    Deserialized, Handle, Input, Message, Outs, Reads, Reply, Router, Slot, SoloDeserialized,
-    subscriber,
-};
+use crate::publish::PublishIdentity;
+use crate::publishing::PublishingDef;
+use crate::settings::{BatchSized, SubscriberBuilder, SubscriberSettings};
+use crate::shutdown::Shutdown;
+use crate::subscriber_def::SubscriberDef;
 use crate::testkit::batch::{publish_payloads, pull_batch};
 use crate::{
     Broker, BuildBatchContext, CallerName, HeaderMap, Name, OutSlot, OutgoingDestination,
     OutgoingMessage, PairError, PublishPolicy, Publisher, Seeker, Unnamed,
+};
+use crate::{
+    Deserialized, Handle, Input, Message, Outs, Reads, Reply, Router, Slot, SoloDeserialized,
+    subscriber,
+};
+use ruststream::memory::{
+    ConnectedMemoryBroker, MemoryBatchContext, MemoryBroker, MemoryPosition, MemoryPublish,
+    MemoryPublisher, Retention, SeekHandle,
 };
 
 use super::eager::{construct, settle_batch};
@@ -789,7 +789,6 @@ fn a_refused_construction_under_fail_fast_tears_the_service_down() {
 /// The diagnostic names the subscription and the input type, so the offending producer is
 /// findable from the logs. Asserted on the construction itself: a field value is only evaluated
 /// while a subscriber listens.
-#[cfg(feature = "logging")]
 #[test]
 fn a_refused_construction_names_the_subscription_and_the_input_type() {
     use crate::testkit::log_capture;

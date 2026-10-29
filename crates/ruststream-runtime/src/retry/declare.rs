@@ -19,8 +19,8 @@ use std::marker::PhantomData;
 use std::num::NonZeroU32;
 
 use crate::RetryDeclaration;
-use crate::runtime::router::{AttachDeclaration, RouterCommit};
-use crate::runtime::slot::{
+use crate::router::{AttachDeclaration, RouterCommit};
+use crate::slot::{
     AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NoReply, Reply, ReplyLast,
     SlotPos, TransactionalLast, TransformLast,
 };

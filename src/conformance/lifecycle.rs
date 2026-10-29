@@ -55,7 +55,7 @@ use std::{
 use futures::{Stream, StreamExt};
 use tokio::time::{Instant as TokioInstant, timeout, timeout_at};
 
-use super::harness::{expect_next, on_foreign_runtime};
+use super::harness::{expect_next, on_foreign_runtime, unknown_backlog};
 use super::helpers::unique_subject;
 use crate::{
     AckError, Broker, Connected, ConnectedBroker, IncomingMessage, OutgoingMessage, Publisher,
@@ -532,6 +532,7 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
     let observer = match backlog {
         Backlog::Missed => Some(connect_and_subscribe(make_broker(), make_source(&subject)).await),
         Backlog::Delivered => None,
+        other => unknown_backlog(other),
     };
 
     let (connected, mut subscriber) =
@@ -574,6 +575,7 @@ pub async fn shutdown_flushes<B, MkBroker, Src, MkSrc, Pub, MkPub>(
         let reader = match backlog {
             Backlog::Delivered => "a new connection (the broker declares a backlog)",
             Backlog::Missed => "a subscription open on another connection",
+            other => unknown_backlog(other),
         };
         let lost = format!(
             "shutdown_flushes: a message published right before shutdown never reached {reader}; \

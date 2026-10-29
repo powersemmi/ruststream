@@ -1,4 +1,4 @@
-//! The publish path of one [`Out`](crate::runtime::Out) slot: the mount site's per-slot transform
+//! The publish path of one [`Out`](crate::Out) slot: the mount site's per-slot transform
 //! stack, then the app-wide publish pipeline, then the slot's attributed leaf.
 //!
 //! A slot publish is issued by the handler body itself, so it never passes the dispatch that
@@ -8,7 +8,7 @@
 //! the slot it was named on and with the app's pipeline underneath it ([`SlotTransforms`],
 //! composed by [`LowerOutTransforms`]), and the entry sends through the whole path
 //! ([`OutPipeline`]). A slot that names no transform in an app that adds no
-//! [`publish_layer`](crate::runtime::RustStream::publish_layer) keeps
+//! [`publish_layer`](crate::RustStream::publish_layer) keeps
 //! [`PublishIdentity`] there, which sends the message straight to the leaf - the same call the
 //! entry made before any of this existed.
 //!
@@ -27,7 +27,7 @@ use super::{
 };
 #[cfg(feature = "asyncapi")]
 use crate::bindings::Bindings;
-use crate::runtime::lifecycle::BoxError;
+use crate::lifecycle::BoxError;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::PipelinePublish;
 use crate::{
@@ -206,10 +206,10 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
     }
 }
 
-/// The publish path of one [`Out`](crate::runtime::Out) slot, as the entry sends through it.
+/// The publish path of one [`Out`](crate::Out) slot, as the entry sends through it.
 ///
 /// A slot entry carries the path its mount site composed - the app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain, with the slot's own
+/// [`publish_layer`](crate::RustStream::publish_layer) chain, with the slot's own
 /// `.transform(..)` steps above it - and this is how a publish travels it. `W` is the slot's
 /// wired live value, which is what fixes the broker's per-message options the transforms write.
 /// It is implemented for exactly the three shapes a mount can compose: [`PublishIdentity`]
@@ -219,7 +219,7 @@ impl<P: Publisher> Publisher for NamedDestinationSend<P> {
 /// [`SlotTransforms`] (the slot's own transforms run first, over a copy of the call's options,
 /// then whichever of the two is underneath).
 ///
-/// A hand-written [`Handle`](crate::runtime::Handle) body generic over its slot entry names this
+/// A hand-written [`Handle`](crate::Handle) body generic over its slot entry names this
 /// bound on the entry's pipeline parameter; nothing else does.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not the publish path of a slot over `{W}`",

@@ -7,7 +7,7 @@
 //! # Examples
 //!
 //! ```
-//! # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+//! # #[cfg(feature = "json")]
 //! # mod demo {
 //! use ruststream::memory::prelude::*;
 //! use ruststream::runtime::layers::TracingLayer;
@@ -79,7 +79,7 @@ pub trait Layer<H> {
 /// A logging layer that wraps every handler of the application:
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::{BlanketLayer, Handler, Identity, Layer, Stack};
@@ -333,7 +333,7 @@ pub mod layers {
 
         use super::*;
         use crate::HeaderMap;
-        use crate::runtime::dispatch::Delivery;
+        use crate::dispatch::Delivery;
 
         struct Fixed(HandlerResult);
 

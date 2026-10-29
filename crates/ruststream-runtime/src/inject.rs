@@ -56,7 +56,7 @@ use super::typed::{refused, unmaterialized};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::runtime::{HandlerOutcome, Out};
 /// use ruststream::{Outgoing, Publisher, subscriber};
@@ -82,7 +82,7 @@ use super::typed::{refused, unmaterialized};
 /// A handler with two publishers names a slot marker for each, and the mount site binds both:
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -371,11 +371,11 @@ mod tests {
 
     use super::{InjectCall, InjectDef, InjectHandler};
     use crate::Name;
-    use crate::runtime::context::Context;
-    use crate::runtime::dispatch::Workers;
-    use crate::runtime::failure::{FailurePolicies, FailurePolicy};
-    use crate::runtime::handler::HandlerOutcome;
-    use crate::runtime::input::Decoded;
+    use crate::context::Context;
+    use crate::dispatch::Workers;
+    use crate::failure::{FailurePolicies, FailurePolicy};
+    use crate::handler::HandlerOutcome;
+    use crate::input::Decoded;
 
     /// A hand-written injected def overriding nothing optional, pinning the trait defaults that
     /// the macro always fills in.
@@ -435,19 +435,19 @@ mod tests {
     /// The decode diagnostic of the injected path. It is asserted on the handler itself because
     /// the subject is the warning's content, and a field value is only evaluated while a
     /// subscriber listens.
-    #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
+    #[cfg(feature = "json")]
     mod diagnostics {
         use super::ManualInject;
         use crate::HeaderMap;
         use crate::codec::JsonCodec;
-        use crate::memory::MemoryBroker;
-        use crate::runtime::context::Context;
-        use crate::runtime::dispatch::Delivery;
-        use crate::runtime::failure::FailurePolicy;
-        use crate::runtime::handler::Handler;
-        use crate::runtime::inject::InjectHandler;
+        use crate::context::Context;
+        use crate::dispatch::Delivery;
+        use crate::failure::FailurePolicy;
+        use crate::handler::Handler;
+        use crate::inject::InjectHandler;
         use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
+        use ruststream::memory::MemoryBroker;
 
         /// The diagnostic names the subscription and the type that was expected, so the
         /// offending producer is findable from the logs; `fail_fast` still settles the message

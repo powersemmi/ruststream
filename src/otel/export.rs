@@ -27,10 +27,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[cfg(feature = "poll-diagnostics")]
 use crate::runtime::PollDiagnostics;
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, HealthProbe, HealthState, Layer,
-    Outgoing, PublishLayer, PublishNext, PublishPipeline,
+    BlanketLayer, Context, Handler, HandlerOutcome, HealthProbe, HealthState, Layer, Outgoing,
+    PublishLayer, PublishNext, PublishPipeline,
 };
 use crate::{HeaderMap, Publisher, Str};
+use ruststream_runtime::HandlerResult;
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///

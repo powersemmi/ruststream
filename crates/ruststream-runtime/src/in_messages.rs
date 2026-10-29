@@ -1,5 +1,5 @@
 //! A declared set of message models one subscription receives: the receiving counterpart of
-//! [`OutMessages`](crate::runtime::OutMessages).
+//! [`OutMessages`](crate::OutMessages).
 //!
 //! `#[derive(InMessages)]` on an enum whose variants each wrap one model makes the enum a
 //! handler input. Each variant decodes through its model's own path (the codec of the mount for
@@ -14,8 +14,8 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 
 use crate::codec::{Codec, CodecError};
-use crate::runtime::handle::{Deserialized, Input, Solo, SoloDeserialized};
-use crate::runtime::metadata::IncomingMessageMetadata;
+use crate::handle::{Deserialized, Input, Solo, SoloDeserialized};
+use crate::metadata::IncomingMessageMetadata;
 use crate::{IncomingMessage, MessageInfo};
 
 /// A declared set of message models a handler receives on one subscription, as
@@ -31,7 +31,7 @@ use crate::{IncomingMessage, MessageInfo};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;

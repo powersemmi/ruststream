@@ -2,9 +2,9 @@
 //!
 //! A definition names its input as a marker type: [`Decoded<T>`] decodes the payload with the
 //! scope codec and lends the handler `&T`, [`Provided<F>`] lends the payload itself as `&[u8]`
-//! so the [`Deserialized`](crate::runtime::Deserialized) type `F` constructs itself from it -
+//! so the [`Deserialized`](crate::Deserialized) type `F` constructs itself from it -
 //! no codec, no copy - [`DecodedPair<H, P>`] decodes the payload and the delivery's typed
-//! header contract together, lending a [`Message<H, P>`](crate::runtime::Message) pair, and
+//! header contract together, lending a [`Message<H, P>`](crate::Message) pair, and
 //! [`Carried<T>`] lends the value the delivery already holds ([`Carries`]). The adapter holds
 //! what one delivery materializes into for the duration of the call ([`Materialize::Held`], on
 //! its stack) and the handler borrows a reference to [`InputKind::Target`], so no allocation,
@@ -17,11 +17,11 @@ use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
+use crate::Message;
 use crate::codec::{Codec, CodecError};
-use crate::runtime::Message;
-use crate::runtime::handle::{Input, Solo, SoloSet};
-use crate::runtime::in_messages::InMessages;
-use crate::runtime::metadata::IncomingMessageMetadata;
+use crate::handle::{Input, Solo, SoloSet};
+use crate::in_messages::InMessages;
+use crate::metadata::IncomingMessageMetadata;
 use crate::{Carries, IncomingMessage, Subscriber, SubscriptionSource};
 
 #[cfg(feature = "testing")]
@@ -265,7 +265,7 @@ where
 /// The self-deserializing input kind: no codec runs.
 ///
 /// The adapter lends the payload bytes as delivered and the
-/// [`Deserialized`](crate::runtime::Deserialized) family `F` constructs its borrowed form from
+/// [`Deserialized`](crate::Deserialized) family `F` constructs its borrowed form from
 /// them right before the body runs.
 pub struct Provided<F>(PhantomData<F>);
 
@@ -324,7 +324,7 @@ where
 
 /// The pair input kind: the payload decodes into `P` and the delivery's headers into the
 /// contract `H`, both under the same decode failure policy; the handler borrows the
-/// [`Message<H, P>`](crate::runtime::Message) pair.
+/// [`Message<H, P>`](crate::Message) pair.
 pub struct DecodedPair<H, P>(PhantomData<(H, P)>);
 
 impl<H, P> fmt::Debug for DecodedPair<H, P> {

@@ -9,30 +9,39 @@ use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
-use crate::runtime::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
-use crate::runtime::shutdown::Shutdown;
+use crate::lifecycle::{BoxError, BoxFuture, ConnectedLifecycle};
+use crate::shutdown::Shutdown;
 
 use super::{LifecycleHook, RustStreamError};
 
 /// A broker that finished [`Broker::connect`](crate::Broker::connect), held erased for the
 /// consuming teardown, paired with its optional label.
-pub(crate) struct ConnectedEntry {
-    pub(crate) lifecycle: Box<dyn ConnectedLifecycle>,
-    pub(crate) label: Option<String>,
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct ConnectedEntry {
+    /// The connected broker, erased.
+    pub lifecycle: Box<dyn ConnectedLifecycle>,
+    /// The label it was registered under, if any.
+    pub label: Option<String>,
 }
 
 /// A lifecycle hook with the state already bound, so the teardown stays non-generic.
 pub(crate) type BoundHook = Box<dyn FnOnce() -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// The app's shutdown hooks, with the state bound in.
-pub(crate) struct ShutdownHooks {
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct ShutdownHooks {
     on_shutdown: Vec<BoundHook>,
     after_shutdown: Vec<BoundHook>,
 }
 
 impl ShutdownHooks {
     /// Binds the shared state into each hook, erasing the state type from the hook lists.
-    pub(crate) fn bind<State: Send + Sync + 'static>(
+    #[doc(hidden)]
+    pub fn bind<State: Send + Sync + 'static>(
         on_shutdown: Vec<LifecycleHook<State>>,
         after_shutdown: Vec<LifecycleHook<State>>,
         state: &Arc<State>,
@@ -58,13 +67,22 @@ fn bind_hooks<State: Send + Sync + 'static>(
 }
 
 /// Everything a started service tears down, in the order it tears it down.
-pub(crate) struct Teardown {
-    pub(crate) shutdown: Shutdown,
-    pub(crate) handles: Vec<JoinHandle<()>>,
-    pub(crate) hooks: ShutdownHooks,
-    pub(crate) brokers: Vec<ConnectedEntry>,
-    pub(crate) shutdown_timeout: Option<Duration>,
-    pub(crate) continuations: TaskTracker,
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct Teardown {
+    /// The service's shutdown signal.
+    pub shutdown: Shutdown,
+    /// The dispatch loops to join.
+    pub handles: Vec<JoinHandle<()>>,
+    /// The shutdown hooks the service registered.
+    pub hooks: ShutdownHooks,
+    /// The connected brokers, shut down last.
+    pub brokers: Vec<ConnectedEntry>,
+    /// How long shutdown waits for in-flight handlers.
+    pub shutdown_timeout: Option<Duration>,
+    /// The spawned continuations shutdown joins.
+    pub continuations: TaskTracker,
 }
 
 impl Teardown {
@@ -77,7 +95,8 @@ impl Teardown {
     /// Returns [`RustStreamError`] if a dispatch task panicked, a broker failed to shut down, or
     /// the service had already torn itself down on a fail-fast failure
     /// ([`RustStreamError::Dispatch`]).
-    pub(crate) async fn run(self) -> Result<(), RustStreamError> {
+    #[doc(hidden)]
+    pub async fn run(self) -> Result<(), RustStreamError> {
         let Self {
             shutdown,
             handles,

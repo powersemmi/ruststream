@@ -50,7 +50,7 @@ impl HealthState {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::{HealthProbe, RustStreamError, SubscriptionCount};
@@ -108,7 +108,7 @@ pub struct SubscriptionCount {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::SubscriptionEnd;
@@ -203,7 +203,6 @@ impl HealthProbe {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use axum::Router;
     /// use axum::extract::State;

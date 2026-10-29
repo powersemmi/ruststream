@@ -11,22 +11,22 @@ use std::future::ready;
 use serde::{Deserialize, Serialize};
 
 use crate::BytesMut;
+use crate::PublishedThrough;
 use crate::codec::JsonCodec;
-use crate::memory::{
-    MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
-    MemoryPublisher, MemorySource, Position, Retaining, Retention, SeekHandle,
-};
 use crate::nonzero;
-use crate::runtime::PublishedThrough;
-use crate::runtime::{
+use crate::{
+    Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
+    Seeker,
+};
+use crate::{
     Context, ContextKind, Deserialized, Handle, HandlerOutcome, Input, Message, MessageWire,
     OutEntry, OutSlot, Outgoing, Outs, PublishTransform, Reads, Reply, ReplyShape, Router,
     RouterDef, Serialized, SerializedReply, SerializedWire, Slot, SoloDeserialized,
     SubscriberSettings, Verdict, WireBytes, for_batch, subscriber,
 };
-use crate::{
-    Buffered, CallerName, FixedName, MessageHeaders, NoHeaders, OutgoingDestination, Publisher,
-    Seeker,
+use ruststream::memory::{
+    MemoryBatchContext, MemoryBroker, MemoryContext, MemoryPosition, MemoryPublish,
+    MemoryPublisher, Position, Retaining, Retention, SeekHandle,
 };
 
 /// The parity matrix includes the seek axis (a start position, the context keys), so the whole
@@ -525,7 +525,6 @@ where
 fn eager_axes() -> impl RouterDef<Bus> {
     Router::<Bus>::new()
         .include(subscriber("orders", Audit).workers(nonzero!(4)).build())
-        .include(subscriber(MemorySource::new("orders"), Audit).build())
         .include(subscriber("frames", Inspect).build())
         .include(subscriber("orders", Expedite).build())
         // Every batch spelling names its size, and none of them mounts without it: the decoded
@@ -677,7 +676,7 @@ fn every_reply_spelling_mounts() {
 /// them names it. Both spellings of each pair are built here; a step reachable on one side only
 /// would fail this module's build.
 fn order_free_reply_axes() -> impl RouterDef<Bus> {
-    use crate::runtime::FailurePolicies;
+    use crate::FailurePolicies;
 
     Router::<Bus>::new()
         // a batch setting, before and after the reply declaration
@@ -780,7 +779,7 @@ fn the_reply_chain_takes_its_steps_in_any_order() {
 /// declaration names it, and a source transform still applies through it.
 #[test]
 fn the_source_steps_reach_through_the_reply_declaration() {
-    use crate::runtime::SubscriberSettings;
+    use crate::SubscriberSettings;
     use crate::{Name, Unnamed};
 
     let _ = Router::<Bus>::new()
@@ -1028,7 +1027,7 @@ impl Handle<Order, (), (), MemoryContext> for Replayer {
 async fn seek_reaches_the_body_through_the_context() {
     use crate::OutgoingMessage;
     use crate::Publisher;
-    use crate::runtime::{AppInfo, RustStream};
+    use crate::{AppInfo, RustStream};
 
     let app = RustStream::new(AppInfo::new("handle-seek", "0.0.0")).with_broker(bus(), |b| {
         b.include(subscriber("orders", Replayer).build());
@@ -1053,7 +1052,7 @@ async fn seek_reaches_the_body_through_the_context() {
 async fn a_subscriber_dispatches_end_to_end() {
     use crate::OutgoingMessage;
     use crate::Publisher;
-    use crate::runtime::{AppInfo, RustStream};
+    use crate::{AppInfo, RustStream};
 
     let app = RustStream::new(AppInfo::new("handle-parity", "0.0.0")).with_broker(bus(), |b| {
         b.include(subscriber("orders", Audit).build());

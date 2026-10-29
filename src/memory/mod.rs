@@ -50,14 +50,13 @@ use std::{
     time::Duration,
 };
 
+use crate::runtime::IntoSource;
 #[cfg(feature = "testing")]
 use crate::testing::Backlog;
 #[cfg(feature = "testing")]
 use crate::testing::InProcess;
 #[cfg(feature = "testing")]
 use crate::testing::TestableBroker;
-#[cfg(feature = "testing")]
-use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, AddressedCopies, Broker, BytesMut, ConnectedBroker, DefaultPublish, DescribeServer,
     FromName, HeaderMap, IncomingMessage, OutgoingMessage, PairError, PublishPolicy, Publisher,
@@ -67,6 +66,8 @@ use crate::{
 use bytes::Bytes;
 use futures::future::lazy;
 use futures::{Stream, stream};
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::coordinator::Coordinator;
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
@@ -1225,6 +1226,22 @@ impl<Log: LogMode> RedeliveryAddressed<ConnectedMemoryBroker<Log>> for MemorySou
     ) -> impl Future<Output = Result<RedeliveryAddress, MemoryError>> + Send {
         // One subject is both ends of the bus, and no lookup is needed to say so.
         ready(Ok(RedeliveryAddress::new(self.name.clone())))
+    }
+}
+
+impl IntoSource for MemorySource {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
+    }
+}
+
+impl IntoSource for MemoryPattern {
+    type Source = Self;
+
+    fn into_source(self) -> Self {
+        self
     }
 }
 

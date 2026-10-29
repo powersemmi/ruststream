@@ -266,5 +266,5 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 mod tests;

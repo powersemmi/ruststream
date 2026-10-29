@@ -478,11 +478,11 @@ mod tests {
     use super::{PublishingCall, PublishingDef, publishing_metadata};
     use crate::HeaderMap;
     use crate::Name;
-    use crate::runtime::context::Context;
-    use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::failure::FailurePolicies;
-    use crate::runtime::handler::HandlerOutcome;
-    use crate::runtime::input::Decoded;
+    use crate::context::Context;
+    use crate::dispatch::{Delivery, Workers};
+    use crate::failure::FailurePolicies;
+    use crate::handler::HandlerOutcome;
+    use crate::input::Decoded;
 
     /// A hand-written publishing def overriding nothing optional, pinning the trait defaults that
     /// the macro always fills in.
@@ -546,24 +546,24 @@ mod tests {
     /// The two diagnostics of the publishing path. They are asserted on the handler itself
     /// because the subject is the warning's content, and a field value is only evaluated while a
     /// subscriber listens.
-    #[cfg(all(feature = "memory", feature = "json", feature = "logging"))]
+    #[cfg(feature = "json")]
     mod diagnostics {
         use std::future::ready;
 
         use super::ManualPub;
         use crate::codec::JsonCodec;
-        use crate::memory::{MemoryBroker, MemoryError};
-        use crate::runtime::context::Context;
-        use crate::runtime::dispatch::Delivery;
-        use crate::runtime::failure::FailurePolicy;
-        use crate::runtime::handler::Handler;
-        use crate::runtime::publish::{PublishIdentity, TypedPublisher};
-        use crate::runtime::publishing::PublishingHandler;
+        use crate::context::Context;
+        use crate::dispatch::Delivery;
+        use crate::failure::FailurePolicy;
+        use crate::handler::Handler;
+        use crate::publish::{PublishIdentity, TypedPublisher};
+        use crate::publishing::PublishingHandler;
         #[cfg(feature = "testing")]
         use crate::testing::coordinator::Origin;
         use crate::testkit::delivery::one_delivery;
         use crate::testkit::log_capture::{find, start};
         use crate::{HeaderMap, Lend, OutgoingMessage, Publisher};
+        use ruststream::memory::{MemoryBroker, MemoryError};
 
         /// A publisher that always refuses, modelling a broker rejecting the reply.
         struct Rejecting;
@@ -661,16 +661,16 @@ mod tests {
 
     /// The mounted handler keeps its wiring out of Debug: it holds a live connection, and a
     /// registration dump must not print one.
-    #[cfg(all(feature = "memory", feature = "json"))]
+    #[cfg(feature = "json")]
     #[test]
     fn a_mounted_publishing_handler_hides_its_wiring() {
         use crate::codec::JsonCodec;
-        use crate::memory::MemoryPublish;
-        use crate::runtime::failure::FailurePolicy;
-        use crate::runtime::publish::{PublishIdentity, TypedPublisher};
-        use crate::runtime::publishing::PublishingHandler;
+        use crate::failure::FailurePolicy;
+        use crate::publish::{PublishIdentity, TypedPublisher};
+        use crate::publishing::PublishingHandler;
         #[cfg(feature = "testing")]
         use crate::testing::coordinator::Origin;
+        use ruststream::memory::MemoryPublish;
 
         let handler = PublishingHandler {
             def: ManualPub,

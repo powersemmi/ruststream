@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/ruststream-core",
+    "crates/ruststream-runtime",
     "crates/ruststream-macros",
     "crates/ruststream-example-suite",
 ]
@@ -56,6 +57,7 @@ pin-project-lite = "0.2"
 ruststream-macros = { version = "=0.7.6", path = "crates/ruststream-macros" }
 # The crates the facade re-exports, pinned exactly for the same reason as the macros crate.
 ruststream-core = { version = "=0.7.6", path = "crates/ruststream-core" }
+ruststream-runtime = { version = "=0.7.6", path = "crates/ruststream-runtime" }
 # 0.3.22 is the real floor, not 0.3: `tracing-opentelemetry` 0.34 requires `^0.3.22`, so the
 # `otel` feature never resolved anything lower, and the declared bound claimed years of releases
 # that were never built against.
@@ -971,42 +973,45 @@ allowed_external_types = [
 default = ["json"]
 memory = []
 conformance = ["testing"]
-json = ["dep:serde_json", "ruststream-core/json"]
-msgpack = ["dep:rmp-serde"]
-cbor = ["dep:ciborium"]
+json = ["dep:serde_json", "ruststream-core/json", "ruststream-runtime/json"]
+msgpack = ["ruststream-runtime/msgpack"]
+cbor = ["ruststream-runtime/cbor"]
 macros = ["dep:ruststream-macros"]
-asyncapi = ["json", "dep:schemars", "dep:serde_norway", "ruststream-core/asyncapi"]
-metrics = ["dep:prometheus"]
+asyncapi = [
+    "json",
+    "dep:schemars",
+    "dep:serde_norway",
+    "ruststream-core/asyncapi",
+    "ruststream-runtime/asyncapi",
+]
+metrics = ["dep:prometheus", "ruststream-runtime/metrics"]
 logging = ["dep:tracing-subscriber"]
 cli = ["dep:clap", "dep:anyhow"]
-poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
-testing = ["dep:inventory", "tokio/test-util", "ruststream-core/testing"]
+poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
+testing = ["dep:inventory", "tokio/test-util", "ruststream-core/testing", "ruststream-runtime/testing"]
 otel = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
     "dep:tracing-opentelemetry",
     "dep:tracing-subscriber",
+    "ruststream-runtime/otel",
 ]
 
 [dependencies]
 ruststream-core.workspace = true
+ruststream-runtime.workspace = true
 bytes.workspace = true
 bytes-utils.workspace = true
 futures.workspace = true
-rtrb.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-quanta = { workspace = true, optional = true }
-pin-project-lite = { workspace = true, optional = true }
 ruststream-macros = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-rmp-serde = { workspace = true, optional = true }
-ciborium = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 serde_norway = { workspace = true, optional = true }
@@ -1107,6 +1112,8 @@ schemars = "1"
 # `Handle::id`, which is stable from there on.
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time", "net", "test-util"] }
 axum = "0.8"
+# The custom-codec examples build their codec over it.
+rmp-serde = "1"
 trybuild = "1"
 # The one real generator behind `#[wire(prost)]`. It is a dev-dependency and nothing else: the
 # shorthand expands to paths in this crate, so the only way to know the expansion type-checks

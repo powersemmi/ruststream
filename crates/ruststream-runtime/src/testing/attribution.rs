@@ -15,7 +15,7 @@ use crate::RawMessage;
 /// The broker's per-message options one publish carried, copied and type-erased so the
 /// assertions can hand them back to a test as the broker's own type.
 #[derive(Clone)]
-pub(crate) struct RecordedOptions {
+pub struct RecordedOptions {
     /// The broker's options type, so a `with_options` naming another one fails by name.
     pub(crate) type_name: &'static str,
     /// `None` when the publish carried no options: no step ran, the policy's defaults applied.
@@ -68,7 +68,7 @@ impl fmt::Debug for RecordedOptions {
 
 /// When one hand-over began and ended on the harness's clock.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Span {
+pub struct Span {
     /// The clock when the message was captured, before the broker took it.
     pub(crate) started: u64,
     /// The clock once the broker took it.
@@ -86,7 +86,7 @@ impl Span {
 /// One publish the runtime handed a broker, as the harness recorded it: the message, the options
 /// it went with, and when the hand-over ran.
 #[derive(Clone, Debug)]
-pub(crate) struct RuntimePublish {
+pub struct RuntimePublish {
     pub(crate) message: RawMessage,
     pub(crate) options: RecordedOptions,
     pub(crate) span: Span,
@@ -94,7 +94,7 @@ pub(crate) struct RuntimePublish {
 
 /// One publish the harness recorded on a broker.
 #[derive(Clone, Debug)]
-pub(crate) enum PublishedEntry {
+pub enum PublishedEntry {
     /// A publish the test made itself, which reaches no broker's options type.
     Test { message: RawMessage, span: Span },
     /// A publish the runtime made, with the options it carried.
@@ -139,7 +139,7 @@ impl PublishedEntry {
 
 /// What the harness knows about the per-message options of one message on a broker's view.
 #[derive(Clone, Debug)]
-pub(crate) enum MessageOptions {
+pub enum MessageOptions {
     /// The runtime published the message with these options.
     Recorded(RecordedOptions),
     /// The harness has no record of the message's options: the test published it itself, a
@@ -165,7 +165,8 @@ pub(crate) enum MessageOptions {
 /// counts agree and no two of them were in flight at once; otherwise a message is attributed only
 /// when every record it could belong to certainly holds the same options, and is
 /// [`MessageOptions::Ambiguous`] where a guess could name the options of another publish.
-pub(crate) fn attribute(
+#[doc(hidden)]
+pub fn attribute(
     log: &[RawMessage],
     records: &[PublishedEntry],
     evicted: usize,
@@ -199,9 +200,9 @@ pub(crate) fn attribute(
 /// The harness's record of one destination as the `published` assertions read it: every message
 /// in publish order, with the options the runtime published it with. A message the test
 /// published itself has none.
-pub(crate) fn split_record(
-    recorded: Vec<PublishedEntry>,
-) -> (Vec<RawMessage>, Vec<MessageOptions>) {
+#[doc(hidden)]
+#[must_use]
+pub fn split_record(recorded: Vec<PublishedEntry>) -> (Vec<RawMessage>, Vec<MessageOptions>) {
     recorded
         .into_iter()
         .map(|entry| match entry {

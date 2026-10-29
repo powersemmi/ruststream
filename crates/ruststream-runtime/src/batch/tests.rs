@@ -13,13 +13,12 @@ use super::super::input::Decoded;
 use super::super::shutdown::Shutdown;
 use super::*;
 use crate::codec::{CodecError, JsonCodec};
-use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
-use crate::runtime::redelivery::bare_retry_publisher;
-use crate::runtime::{Input, SoloDeserialized};
+use crate::redelivery::bare_retry_publisher;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
-#[cfg(feature = "logging")]
 use crate::testkit::log_capture;
 use crate::{AckError, HeaderMap, Name, Subscriber, SubscriptionSource};
+use crate::{Input, SoloDeserialized};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryMessage, MemorySubscriber};
 
 #[tokio::test]
 async fn per_element_outcomes_settle_individually() {
@@ -384,7 +383,6 @@ async fn a_refused_ack_does_not_abort_the_batch() {
 
 /// The mismatch diagnostic names the subscription and both counts, so the handler bug behind a
 /// short outcome vector is identifiable from the logs alone.
-#[cfg(feature = "logging")]
 #[tokio::test]
 async fn outcome_count_mismatch_is_logged_with_both_counts() {
     let (events, guard) = log_capture::start();
@@ -419,7 +417,6 @@ async fn outcome_count_mismatch_is_logged_with_both_counts() {
 
 /// The decode and ack-failure diagnostics carry the subscription (plus the element type and the
 /// broker error), so a failure is attributable without a second run.
-#[cfg(feature = "logging")]
 #[tokio::test]
 async fn decode_and_ack_failures_are_logged_with_their_subscription() {
     let broker = MemoryBroker::new();
@@ -467,10 +464,9 @@ async fn decode_and_ack_failures_are_logged_with_their_subscription() {
 /// A batch element its broker could not read settles by the decode policy, and the warning names
 /// the subscription, the element type and the error the broker reported. Every batch lane asks
 /// through the same place, so one element stands for all of them.
-#[cfg(feature = "logging")]
 #[test]
 fn a_reported_element_is_logged_with_its_subscription_type_and_error() {
-    use crate::runtime::input::REPORTED;
+    use crate::input::REPORTED;
     use crate::testkit::unreadable::{REASON, Unreadable};
 
     let (events, guard) = log_capture::start();

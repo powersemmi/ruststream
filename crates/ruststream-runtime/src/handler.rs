@@ -8,12 +8,13 @@ use super::context::Context;
 /// hands it to the dispatcher, which spawns it; it never crosses the public API by itself.
 type AfterFut = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
-/// The broker status half of a [`HandlerOutcome`]: what the router does with the message after
-/// the handler returns. Internal machinery - the policies, the dispatcher's settle match and
+/// The broker status half of a [`HandlerOutcome`].
+///
+/// It is what the router does with the message after the handler returns. Internal machinery - the policies, the dispatcher's settle match and
 /// the test seams read it; user code constructs and inspects [`HandlerOutcome`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub(crate) enum HandlerResult {
+#[doc(hidden)]
+pub enum HandlerResult {
     /// Acknowledge the message; the broker will remove it from the queue.
     Ack,
     /// Negatively acknowledge the message; `requeue = true` asks the broker to redeliver.
@@ -44,13 +45,15 @@ impl HandlerResult {
     /// Constructor for [`NackAfter`](Self::NackAfter), mirroring
     /// [`HandlerOutcome::retry_after`].
     #[must_use]
-    pub(crate) const fn retry_after(delay: Duration) -> Self {
+    #[doc(hidden)]
+    pub const fn retry_after(delay: Duration) -> Self {
         Self::NackAfter { delay }
     }
 
     /// Constructor for `Nack { requeue: false }`, mirroring [`HandlerOutcome::drop`].
     #[must_use]
-    pub(crate) const fn drop() -> Self {
+    #[doc(hidden)]
+    pub const fn drop() -> Self {
         Self::Nack { requeue: false }
     }
 }
@@ -71,7 +74,7 @@ impl HandlerResult {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// use serde::Deserialize;
@@ -105,7 +108,7 @@ impl HandlerResult {
 /// A batch handler settles each element with its own outcome:
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -150,7 +153,7 @@ impl HandlerOutcome {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;
@@ -211,7 +214,7 @@ impl HandlerOutcome {
     /// A payment not settled yet comes back after five seconds, at most five times, then goes to a dead-letter destination:
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///
@@ -273,7 +276,7 @@ impl HandlerOutcome {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;
@@ -336,7 +339,9 @@ impl HandlerOutcome {
     }
 
     /// The status the dispatcher settles the message by.
-    pub(crate) const fn outcome(&self) -> HandlerResult {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn outcome(&self) -> HandlerResult {
         self.outcome
     }
 

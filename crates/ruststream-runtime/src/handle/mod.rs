@@ -20,7 +20,7 @@
 //! on the attribute path.
 //!
 //! ```
-//! # #[cfg(all(feature = "memory", feature = "json"))]
+//! # #[cfg(feature = "json")]
 //! # mod demo {
 //! use ruststream::memory::MemoryBroker;
 //! use ruststream::prelude::*;
@@ -57,12 +57,12 @@ mod reply_slots;
 mod value;
 mod verdict;
 
-#[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+#[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod matrix_tests;
-#[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+#[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod parity_tests;
 
-use crate::runtime::settings::{AllOpen, SubscriberBuilder};
+use crate::settings::{AllOpen, SubscriberBuilder};
 #[doc(hidden)]
 pub use axis::{
     Axis, AxisDocs, Batch, BatchCarried, BatchPair, BatchedAxis, DecodeOutcome, Solo, SoloAxis,
@@ -103,8 +103,6 @@ pub type ValueBuilder<Def, Src> = SubscriberBuilder<Def, <Src as IntoSource>::So
 
 use std::borrow::Cow;
 
-#[cfg(feature = "memory")]
-use crate::memory::{MemoryPattern, MemorySource};
 use crate::{Name, Unnamed};
 
 use super::context::Context;
@@ -185,24 +183,6 @@ impl IntoSource for Name {
 // The deferred-name flow: constructing over `Unnamed<S>` keeps the mount uncompilable until
 // `.name(..)` builds the source, exactly as for an unnamed attribute definition.
 impl<S> IntoSource for Unnamed<S> {
-    type Source = Self;
-
-    fn into_source(self) -> Self {
-        self
-    }
-}
-
-#[cfg(feature = "memory")]
-impl IntoSource for MemorySource {
-    type Source = Self;
-
-    fn into_source(self) -> Self {
-        self
-    }
-}
-
-#[cfg(feature = "memory")]
-impl IntoSource for MemoryPattern {
     type Source = Self;
 
     fn into_source(self) -> Self {

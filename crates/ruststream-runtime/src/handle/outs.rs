@@ -6,7 +6,7 @@
 //! capability the body needs on the wired value and nothing else:
 //!
 //! ```
-//! # #[cfg(all(feature = "memory", feature = "json"))]
+//! # #[cfg(feature = "json")]
 //! # mod demo {
 //! use ruststream::prelude::*;
 //! # #[derive(serde::Deserialize, schemars::JsonSchema)]

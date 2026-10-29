@@ -12,7 +12,6 @@
 ///
 /// It compiles where its callers do: with a tracing subscriber and the in-memory broker their
 /// modules need.
-#[cfg(all(feature = "logging", feature = "memory"))]
 pub(crate) mod log_capture {
     use std::collections::HashMap;
     use std::fmt::Debug;
@@ -91,7 +90,7 @@ pub(crate) mod log_capture {
 ///
 /// Its callers read the warning it causes, so it compiles where they do: with a tracing subscriber
 /// and the in-memory broker and codec their modules need.
-#[cfg(all(feature = "logging", feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 pub(crate) mod unreadable {
     use std::future::ready;
 
@@ -146,12 +145,12 @@ pub(crate) mod unreadable {
 /// It stays below `TestApp` on purpose: its callers test an adapter's handling of one delivery,
 /// which `TestApp` never exposes, since it drives the whole dispatch around the adapter.
 /// Behaviour a service can observe is tested through the harness.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 pub(crate) mod delivery {
     use futures::StreamExt;
 
-    use crate::memory::{MemoryBroker, MemoryMessage};
     use crate::{OutgoingMessage, Publisher, Subscriber};
+    use ruststream::memory::{MemoryBroker, MemoryMessage};
 
     /// Publishes `payload` to `name` and pulls the delivery back off the bus. It drives the
     /// transport itself, so it publishes through the broker SPI rather than the typed builder.
@@ -177,14 +176,14 @@ pub(crate) mod delivery {
 
 /// Drives the in-memory broker for the batch handler tests: publish a few deliveries, then pull
 /// them back as one batch.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 pub(crate) mod batch {
     use std::num::NonZeroUsize;
 
     use futures::StreamExt;
 
-    use crate::memory::{LogMode, MemoryBroker, MemoryMessage, MemorySubscriber};
     use crate::{BatchSubscriber, OutgoingMessage, Publisher};
+    use ruststream::memory::{LogMode, MemoryBroker, MemoryMessage, MemorySubscriber};
 
     /// Publishes each number as its JSON encoding, so a `Decoded<u32>` handler sees them.
     pub(crate) async fn publish_numbers<Log: LogMode>(

@@ -1,18 +1,18 @@
 //! Form tokens for [`IncludeDef`](super::IncludeDef): which mounting machinery a definition uses.
 //!
 //! A definition names its form once, and both registration surfaces (a
-//! [`Router`](super::Router) chain and a [`BrokerScope`](crate::runtime::BrokerScope)) dispatch
+//! [`Router`](super::Router) chain and a [`BrokerScope`](crate::BrokerScope)) dispatch
 //! on that token, so `include(def)` reads the same wherever it is written.
 
 /// A plain subscriber (`#[subscriber("in")]`).
 #[derive(Debug, Clone, Copy)]
 pub struct Subscribing;
 /// A self-deserializing subscriber (a handler taking a
-/// [`Deserialized`](crate::runtime::Deserialized) input): no decode, no codec.
+/// [`Deserialized`](crate::Deserialized) input): no decode, no codec.
 #[derive(Debug, Clone, Copy)]
 pub struct RawSubscribing;
 /// A byte-reply subscriber (a `reply("out")` handler whose reply type is
-/// [`Serialized`](crate::runtime::Serialized), on any input): the reply bytes go out as-is
+/// [`Serialized`](crate::Serialized), on any input): the reply bytes go out as-is
 /// through a bare publisher.
 #[derive(Debug, Clone, Copy)]
 pub struct RawReply;
@@ -37,7 +37,7 @@ pub struct RawReplyOut;
 #[derive(Debug, Clone, Copy)]
 pub struct Batch;
 /// A self-deserializing batch subscriber (a handler taking a batch of
-/// [`Deserialized`](crate::runtime::Deserialized) elements): a batch with no decode step.
+/// [`Deserialized`](crate::Deserialized) elements): a batch with no decode step.
 #[derive(Debug, Clone, Copy)]
 pub struct RawBatch;
 /// A carried batch subscriber (a handler taking a batch of values its subscription's batches

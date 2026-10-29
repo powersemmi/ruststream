@@ -22,15 +22,15 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use crate::codec::Codec;
-use crate::runtime::handle::{DeclaresReply, ReplyShape};
-use crate::runtime::metadata::{OutgoingMessageMetadata, PublishDescription};
-use crate::runtime::publish::{
+use crate::handle::{DeclaresReply, ReplyShape};
+use crate::metadata::{OutgoingMessageMetadata, PublishDescription};
+use crate::publish::{
     AddBatchReplyTransform, AddReplyTransform, CallCodec, CodecSlotOpen, DestinationUse, FitsOffer,
     ForReply, ForSlot, LowerOutTransforms, MapReplyPolicy, NameReplyCodec, Names, NarrowToUse,
     PublishTransform, PublishTransformIdentity, PublishTransformStack, PublishingDirectly,
     RawReplyWiring, Reads, ReplyWiring, SlotStackUse, TransactionalReply, UnnamedCodec,
 };
-use crate::runtime::router::{
+use crate::router::{
     BatchPublishInjectMount, BatchPublishMount, DefaultReply, PublishInjectMount, PublishMount,
     RawReplyInjectMount, RawReplyMount, ReplyAttachment,
 };
@@ -52,7 +52,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -111,7 +111,7 @@ use crate::{
 /// [`Publisher::Options`](crate::Publisher::Options) and a step on the publish builder.
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::memory::{ConnectedMemoryBroker, MemoryPublisher};
@@ -211,7 +211,7 @@ pub trait OutSlot: 'static {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -259,7 +259,7 @@ impl OutSlot for DefaultSlot {
 ///
 /// A mount site attaches every publish policy with one verb, and this is the marker of the one
 /// position that is not an [`Out`](super::Out) slot. It carries no dictionary: what a reply may be
-/// is the reply type's own [`ReplyShape`](crate::runtime::ReplyShape), while what leaves a slot is
+/// is the reply type's own [`ReplyShape`](crate::ReplyShape), while what leaves a slot is
 /// the slot marker's `#[publishes(..)]` list.
 ///
 /// Without the call the reply takes the broker's own
@@ -268,7 +268,7 @@ impl OutSlot for DefaultSlot {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// # use ruststream::subscriber;
@@ -302,7 +302,7 @@ pub struct NoReply;
 /// leave through a slot identified by `Slot`.
 ///
 /// `#[derive(OutSlot)]` emits one impl per listed type, and the publish builder's typed entry
-/// point ([`Slot::message`](crate::runtime::Slot::message)) requires it. That is what keeps
+/// point ([`Slot::message`](crate::Slot::message)) requires it. That is what keeps
 /// the generated document honest: an unrestricted `Out<impl Publisher, Marker>` reports the
 /// marker's dictionary as what the handler sends, so a message outside it would be a publish the
 /// document never declared.
@@ -313,7 +313,7 @@ pub struct NoReply;
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -355,9 +355,9 @@ pub struct NoReply;
 /// A message outside the dictionary does not compile:
 ///
 /// ```compile_fail
-/// # #[cfg(not(all(feature = "macros", feature = "memory", feature = "json")))]
+/// # #[cfg(not(feature = "json"))]
 /// # compile_error!("the example needs the macros, memory and json features");
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -434,7 +434,7 @@ impl DestinationOffer for NameTemplate {
 /// The offer of a whole `#[publishes(..)]` dictionary: [`Names`] only while every member leaves
 /// its destination open, because one member that fixes its channel settles the whole slot.
 ///
-/// The dual of [`Either`](crate::runtime::publish::Either), which combines what a transform stack
+/// The dual of [`Either`](crate::publish::Either), which combines what a transform stack
 /// does. Machinery behind [`OutSlot::Destination`].
 #[doc(hidden)]
 pub trait Both<Rhs> {
@@ -465,7 +465,6 @@ impl<Rhs> Both<Rhs> for Reads {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "macros")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// use ruststream::runtime::ListOffer;
@@ -543,12 +542,12 @@ impl<P, M> SlotPublisher<P, M> {
     ///
     /// This is the wrapper's own delegation seam, not the extension point for broker-defined
     /// capabilities: a handler body holds the arena entry
-    /// ([`Slot`](crate::runtime::Slot)), never this wrapper, so a trait grafted here is
+    /// ([`Slot`](crate::Slot)), never this wrapper, so a trait grafted here is
     /// unreachable from one. A broker whose paired value offers more than the core capability
     /// vocabulary ([`Publisher`], [`TransactionalPublisher`], [`OwnedTransactions`],
     /// [`RequestReply`]) - or is not a publisher at all (a per-partition producer cache, a shard
     /// router) - implements its capability trait for the live value and grafts it onto the entry
-    /// instead, as [`Slot`](crate::runtime::Slot) documents.
+    /// instead, as [`Slot`](crate::Slot) documents.
     ///
     /// Publishes made through the value obtained here bypass the slot's test-capture
     /// attribution, like a settled owned transaction's buffer: assert on the broker's publish
@@ -710,7 +709,7 @@ impl_contains_message! {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::{Deserialize, Serialize};
@@ -809,7 +808,7 @@ impl<M> MissingSlot<M> {
 }
 
 /// What one `.out(marker, policy)` call attaches: the slot's publish policy and the
-/// [`PublishTransform`](crate::runtime::PublishTransform) stack the `.transform(..)` steps after it
+/// [`PublishTransform`](crate::PublishTransform) stack the `.transform(..)` steps after it
 /// compose.
 ///
 /// The stack is pure declaration, like the policy: it lowers onto the app's publish pipeline at
@@ -1014,7 +1013,7 @@ impl NamedStep for ReplyLast {}
 /// The dispatch is on the marker rather than on the attachment so that the call site's own
 /// argument settles which position is meant, and the error names that marker when the position is
 /// not there to bind. Every marker grows the attachment through [`BindAt`]: [`Reply`], the
-/// handler's own slot markers, and [`Retry`](crate::runtime::Retry), which is the slot the
+/// handler's own slot markers, and [`Retry`](crate::Retry), which is the slot the
 /// runtime publishes a deferred `retry_after` copy through.
 ///
 /// Machinery; never named directly.
@@ -1062,10 +1061,10 @@ where
 
 /// Binds one `.out(marker, policy)` call into a mount chain's attachment: the reply position for
 /// [`Reply`], one [`Out`](super::Out) slot for a slot marker, the deferred-retry slot for
-/// [`Retry`](crate::runtime::Retry).
+/// [`Retry`](crate::Retry).
 ///
 /// `Index` is inferred per call - [`ReplyLast`] for the reply, [`SlotPos`] for a slot,
-/// [`RetryPos`](crate::runtime::RetryPos) for the deferred retry - which is what makes the calls
+/// [`RetryPos`](crate::RetryPos) for the deferred retry - which is what makes the calls
 /// order-independent and what the steps after the call ride. Machinery; never named directly.
 #[doc(hidden)]
 #[diagnostic::on_unimplemented(

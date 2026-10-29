@@ -12,14 +12,14 @@ use crate::{Broker, DescribeServer, ServerSpec};
 use tokio_util::task::TaskTracker;
 
 use crate::bindable::ConnectedSlot;
-use crate::runtime::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::{Identity, Stack};
+use crate::lifecycle::{BoxError, BrokerCell, BrokerLifecycle};
+use crate::metadata::HandlerMetadata;
+use crate::middleware::{Identity, Stack};
 #[cfg(feature = "poll-diagnostics")]
-use crate::runtime::poll_diagnostics::PollDiagnostics;
-use crate::runtime::publish::{PublishIdentity, PublishLayer, PublishStack};
-use crate::runtime::redelivery::ScopeDelivery;
-use crate::runtime::router::RouterSink;
+use crate::poll_diagnostics::PollDiagnostics;
+use crate::publish::{PublishIdentity, PublishLayer, PublishStack};
+use crate::redelivery::ScopeDelivery;
+use crate::router::RouterSink;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::TestHooks;
 
@@ -57,7 +57,7 @@ use super::{AppInfo, LifecycleHook, LifecyclePhase, Starter, StateInit};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::layers::TracingLayer;
@@ -102,7 +102,7 @@ pub struct RustStream<Layers = Identity, State = (), Pipeline = PublishIdentity,
     /// shutdown drains them after the dispatch loops stop. Shared (cloned) into every
     /// [`Delivery`].
     pub(super) continuations: TaskTracker,
-    /// Shared recording-and-quiescence hooks for the [`TestApp`](crate::testing::TestApp) harness,
+    /// Shared recording-and-quiescence hooks for the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness,
     /// cloned into every scope's [`Delivery`]. Empty until a harness installs a coordinator, so a
     /// non-harness run with the `testing` feature enabled stays inert.
     #[cfg(feature = "testing")]
@@ -131,32 +131,47 @@ pub struct Wired;
 /// The label is the broker's stable runtime identity and its `AsyncAPI` server name; it is `Some`
 /// for a broker registered through [`with_broker_labeled`](RustStream::with_broker_labeled) (or its
 /// codec variant) and `None` otherwise.
-pub(crate) struct RegisteredBroker {
-    pub(crate) lifecycle: Box<dyn BrokerLifecycle>,
-    pub(crate) label: Option<String>,
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct RegisteredBroker {
+    /// The broker, erased.
+    pub lifecycle: Box<dyn BrokerLifecycle>,
+    /// The label it was registered under, if any.
+    pub label: Option<String>,
 }
 
-/// The internals the [`TestApp`](crate::testing::TestApp) harness needs to drive an app without
+/// The internals the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness needs to drive an app without
 /// connecting: the brokers (to recover and instrument), the deferred starters, the lifecycle hooks,
 /// and the shared test hooks slot. Produced by [`RustStream::into_test_parts`].
 ///
 /// Public in name only, and never nameable outside the crate: the sealed supertrait of
-/// [`App`](crate::runtime::App) hands it to the harness for an app a builder returned as
+/// [`App`](crate::App) hands it to the harness for an app a builder returned as
 /// `impl App`, and a method of that trait cannot return a crate-private type.
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 #[allow(unreachable_pub, missing_debug_implementations)]
 pub struct TestParts<State> {
-    pub(crate) brokers: Vec<RegisteredBroker>,
-    pub(crate) starters: Vec<Starter<State>>,
-    pub(crate) state_init: StateInit<State>,
-    pub(crate) after_startup: Vec<LifecycleHook<State>>,
-    pub(crate) on_shutdown: Vec<LifecycleHook<State>>,
-    pub(crate) after_shutdown: Vec<LifecycleHook<State>>,
-    pub(crate) shutdown_timeout: Option<Duration>,
-    pub(crate) subscription_end: SubscriptionEnd,
-    pub(crate) continuations: TaskTracker,
-    pub(crate) test_hooks: Arc<TestHooks>,
+    /// The registered brokers, unconnected.
+    pub brokers: Vec<RegisteredBroker>,
+    /// The deferred starters, one per mounted subscription.
+    pub starters: Vec<Starter<State>>,
+    /// Builds the application state.
+    pub state_init: StateInit<State>,
+    /// The hooks run after startup.
+    pub after_startup: Vec<LifecycleHook<State>>,
+    /// The hooks run when shutdown begins.
+    pub on_shutdown: Vec<LifecycleHook<State>>,
+    /// The hooks run after shutdown.
+    pub after_shutdown: Vec<LifecycleHook<State>>,
+    /// How long shutdown waits for in-flight handlers.
+    pub shutdown_timeout: Option<Duration>,
+    /// What a subscription that ends does to the service.
+    pub subscription_end: SubscriptionEnd,
+    /// The spawned continuations shutdown joins.
+    pub continuations: TaskTracker,
+    /// The shared test hooks slot.
+    pub test_hooks: Arc<TestHooks>,
 }
 
 impl<Layers, State, Pipeline, Phase> fmt::Debug for RustStream<Layers, State, Pipeline, Phase> {
@@ -234,7 +249,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     ///
     /// The hook runs once before brokers connect; its future can `await` (open a database pool,
     /// connect a client), and the produced `State2` is shared with every handler (read via
-    /// [`Context::state`](crate::runtime::Context::state)) and the read-only lifecycle hooks. A
+    /// [`Context::state`](crate::Context::state)) and the read-only lifecycle hooks. A
     /// failing hook aborts startup. The initial state is `()` (from [`new`](Self::new)), so the
     /// first call's hook receives `()`.
     ///
@@ -254,7 +269,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// A pool built at startup is the state the handlers read, and is closed at the end:
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::sync::Arc;
     /// use std::time::Duration;
@@ -351,7 +366,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// Adds an outgoing publish middleware, run on every publish a handler makes before it
     /// reaches the broker (a Confluent / Avro envelope, publish metrics, dead-letter): a
     /// `reply(..)` form's reply and every message that leaves through an injected
-    /// [`Out`](crate::runtime::Out) slot alike, each under the transforms its own mount site
+    /// [`Out`](crate::Out) slot alike, each under the transforms its own mount site
     /// named. It composes into the
     /// pipeline type parameter, so the *last* one added wraps the rest and runs outermost (unlike the
     /// consume-side [`layer`](Self::layer), where the first added is outermost); the middleware must
@@ -409,7 +424,7 @@ impl<Layers, State, Pipeline> RustStream<Layers, State, Pipeline, Setup> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///
@@ -550,7 +565,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::SubscriptionEnd;
@@ -654,13 +669,13 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     ///
     /// `build` receives a [`BrokerScope`] whose [`include`](BrokerScope::include) family reads
     /// the same as on a codec-less scope (`b.include(handle)`) but decodes with `codec`. A
-    /// [`Router`](crate::runtime::Router) mounted in the scope can name a codec of its own with
-    /// [`with_codec`](crate::runtime::Router::with_codec), which wins for its handlers.
+    /// [`Router`](crate::Router) mounted in the scope can name a codec of its own with
+    /// [`with_codec`](crate::Router::with_codec), which wins for its handlers.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json", feature = "cbor"))]
+    /// # #[cfg(all(feature = "json", feature = "cbor"))]
     /// # mod demo {
     /// use ruststream::codec::{CborCodec, JsonCodec};
     /// use ruststream::memory::prelude::*;
@@ -728,7 +743,6 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
     /// use ruststream::runtime::{AppInfo, RustStream};
     /// use ruststream::{Broker, DescribeServer, ServerSpec};
@@ -927,7 +941,7 @@ impl<Layers, State, Pipeline, Phase> RustStream<Layers, State, Pipeline, Phase> 
         &self.servers
     }
 
-    /// Decomposes the app into the pieces the [`TestApp`](crate::testing::TestApp) harness drives:
+    /// Decomposes the app into the pieces the [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness drives:
     /// the brokers, the deferred starters, the lifecycle hooks, and the shared test-hooks slot.
     /// Handlers metadata and `AsyncAPI` servers are dropped (the harness does not need them).
     #[cfg(feature = "testing")]

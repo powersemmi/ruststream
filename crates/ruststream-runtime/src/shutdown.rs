@@ -30,8 +30,11 @@ use super::app::{HealthReport, SubscriptionEnd};
 /// It also carries what every loop reports to the service as a whole: its place in the health
 /// report's subscription count ([`consuming`](Self::consuming)), and the end of its stream
 /// ([`stream_ended`](Self::stream_ended)).
+// Shared with the harness crate under a hidden path; its docs are for this crate's readers, who
+// see the private methods they name.
+#[allow(rustdoc::private_intra_doc_links)]
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Shutdown {
+pub struct Shutdown {
     token: CancellationToken,
     state: Arc<State>,
 }
@@ -68,7 +71,9 @@ impl Shutdown {
 
     /// A signal nobody has raised yet, where a stream ending outside shutdown does what
     /// `on_end` says.
-    pub(crate) fn with_subscription_end(on_end: SubscriptionEnd) -> Self {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_subscription_end(on_end: SubscriptionEnd) -> Self {
         Self {
             token: CancellationToken::new(),
             state: Arc::new(State {
@@ -120,7 +125,8 @@ impl Shutdown {
 
     /// Raises the signal for every holder of this handle, with no failure behind it: the orderly
     /// teardown.
-    pub(crate) fn cancel(&self) {
+    #[doc(hidden)]
+    pub fn cancel(&self) {
         // Relaxed: the flag carries no data of its own, and it is set before the token, so a
         // holder that observes the cancellation observes the flag as well. A holder that reads
         // the flag late loses nothing either, because the wait below is the authoritative exit.
@@ -146,7 +152,9 @@ impl Shutdown {
     }
 
     /// Whether the signal has been raised. This is the read a dispatch loop makes per delivery.
-    pub(crate) fn is_cancelled(&self) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
         self.state.cancelled.load(Ordering::Relaxed)
     }
 
@@ -175,7 +183,9 @@ impl Shutdown {
     /// Reads the first recorded failure description without taking it: the health-probe watcher
     /// reports it without racing the run loop's consuming read, and the test harness reports
     /// `run_result` more than once.
-    pub(crate) fn peek_failure(&self) -> Option<String> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn peek_failure(&self) -> Option<String> {
         self.state.failure.lock().ok()?.clone()
     }
 }

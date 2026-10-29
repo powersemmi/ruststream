@@ -19,7 +19,7 @@ use tokio::task::{JoinError, JoinHandle};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 ///

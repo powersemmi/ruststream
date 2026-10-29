@@ -9,7 +9,7 @@ use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 /// The publish builder on any [`Publisher`]: `message(..)`, the one entry point of a publish.
 ///
 /// Blanket-implemented for every publisher, so a broker publisher held in the application state
-/// publishes through the same builder as an [`Out`](crate::runtime::Out) slot. The difference is
+/// publishes through the same builder as an [`Out`](crate::Out) slot. The difference is
 /// the codec ladder: a bare publisher carries no codec of its own, so `message(..)` encodes with
 /// the crate's [`DefaultCodec`](crate::codec::DefaultCodec) unless the call names one with
 /// `with_codec(..)`. A surface that has a codec (an `Out` slot, a transaction scope opened on
@@ -22,7 +22,7 @@ use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Serialize;
@@ -99,7 +99,7 @@ pub trait PublishExt: Publisher {
     /// name another one per publish with `with_codec(..)`.
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;
@@ -142,7 +142,7 @@ pub trait PublishExt: Publisher {
     /// one publisher would be ambiguous at the call.
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::PublishExt;

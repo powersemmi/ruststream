@@ -21,7 +21,7 @@ use super::shutdown::Shutdown;
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::time::Duration;
 ///
@@ -92,7 +92,7 @@ impl FailurePolicy {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;

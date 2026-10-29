@@ -14,17 +14,17 @@ use crate::{
     BatchSubscriber, Broker, BuildBatchContext, BuildContext, Connected, SubscriptionSource,
 };
 
-use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
-use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
-use crate::runtime::failure::{DispatchFailure, FailurePolicies};
-use crate::runtime::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
-use crate::runtime::input::{DecodeWith, Materialize};
-use crate::runtime::lifecycle::BoxError;
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::PublishPipeline;
-use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
-use crate::runtime::retry::RetryOpen;
+use crate::batch_inject::{BatchInjectCall, BatchInjectDef, BatchInjectHandler};
+use crate::dispatch::{Workers, spawn_dispatch_workers};
+use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::inject::{FromStartup, InjectCall, InjectDef, InjectHandler};
+use crate::input::{DecodeWith, Materialize};
+use crate::lifecycle::BoxError;
+use crate::metadata::HandlerMetadata;
+use crate::middleware::BlanketLayer;
+use crate::publish::PublishPipeline;
+use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
+use crate::retry::RetryOpen;
 
 use super::SourceMessage;
 use super::routes::{
@@ -33,8 +33,8 @@ use super::routes::{
 use super::sink::RouterSink;
 
 /// One registration whose handler takes startup injections: an attached publish policy pairing
-/// into an [`Out`](crate::runtime::Out) parameter. An implementation detail of
-/// [`Router`](crate::runtime::Router)'s registration list.
+/// into an [`Out`](crate::Out) parameter. An implementation detail of
+/// [`Router`](crate::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the injections resolve against, one element per
 /// injected parameter.
@@ -50,7 +50,7 @@ pub struct InjectRoute<Source, Def, DecodeCodec, Extra> {
 }
 
 /// The batch counterpart of [`InjectRoute`]. An implementation detail of
-/// [`Router`](crate::runtime::Router)'s registration list.
+/// [`Router`](crate::Router)'s registration list.
 #[doc(hidden)]
 pub struct BatchInjectRoute<Source, Def, DecodeCodec, Extra> {
     pub(super) source: Source,
@@ -295,7 +295,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 mod tests {
     use super::*;
     use crate::Name;

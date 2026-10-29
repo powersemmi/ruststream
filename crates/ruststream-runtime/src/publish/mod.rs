@@ -9,8 +9,8 @@
 
 use std::pin::Pin;
 
+use crate::lifecycle::BoxError;
 pub use crate::outgoing::{Outgoing, OutgoingName};
-use crate::runtime::lifecycle::BoxError;
 pub use crate::wire::{Serialized, WireBytes};
 
 // The boxed future of the DYNAMIC middleware path only (PublishDynLayer / PublishDynNext).
@@ -38,7 +38,7 @@ mod transaction;
 mod transform;
 mod wiring;
 
-pub(crate) use builder::message_of;
+pub use builder::message_of;
 #[cfg(test)]
 pub(crate) use builder::raw_of;
 pub use builder::{

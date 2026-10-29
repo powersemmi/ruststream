@@ -10,7 +10,7 @@
 //! compile error carrying its own message rather than a precedence rule to remember.
 //!
 //! ```
-//! # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+//! # #[cfg(feature = "json")]
 //! # mod demo {
 //! use ruststream::nonzero;
 //! use ruststream::runtime::{HandlerOutcome, SubscriberSettings};
@@ -189,7 +189,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
 
     /// The wrapped definition on its own, so the crate's own tests can call the mount
     /// machinery's accessors on it without a surface in the way.
-    #[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+    #[cfg(all(test, feature = "json", feature = "asyncapi"))]
     pub(crate) fn into_def(self) -> Def {
         self.def
     }
@@ -537,7 +537,7 @@ where
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -675,12 +675,12 @@ pub trait SubscriberSettings: Declared {
     /// name it twice. A step sees each value as it stands when it is called: the attribute's
     /// settings are fixed before any mount-site step, and a step chained before `.threads(n)`
     /// sees the default sequential dispatch. The
-    /// publish-side twin over a policy is [`MapPublisher`](crate::runtime::MapPublisher).
+    /// publish-side twin over a policy is [`MapPublisher`](crate::MapPublisher).
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///
@@ -747,17 +747,15 @@ mod tests {
     // Reading a source's name needs some connected broker to name the impl, and the in-process
     // one is the only broker the core ships. The settings themselves are broker-agnostic, so
     // that one assertion is gated rather than the whole module.
-    #[cfg(feature = "memory")]
     use crate::SubscriptionSource;
-    #[cfg(feature = "memory")]
-    use crate::memory::ConnectedMemoryBroker;
-    use crate::runtime::dispatch::Workers;
-    use crate::runtime::failure::{FailurePolicies, FailurePolicy};
-    use crate::runtime::forms;
-    use crate::runtime::input::Decoded;
-    use crate::runtime::router::IncludeDef;
-    use crate::runtime::subscriber_def::SubscriberDef;
+    use crate::dispatch::Workers;
+    use crate::failure::{FailurePolicies, FailurePolicy};
+    use crate::forms;
+    use crate::input::Decoded;
+    use crate::router::IncludeDef;
+    use crate::subscriber_def::SubscriberDef;
     use crate::{Name, Unnamed, nonzero};
+    use ruststream::memory::ConnectedMemoryBroker;
 
     /// Stands in for a generated definition: the steps only move it around, so it carries the
     /// bare structural surface a definition has, and none of the settings.
@@ -799,7 +797,6 @@ mod tests {
 
         assert_eq!(built.workers, Workers::pool(nonzero!(4)));
         assert_eq!(built.failures.decode, FailurePolicy::Skip);
-        #[cfg(feature = "memory")]
         assert_eq!(
             SubscriptionSource::<ConnectedMemoryBroker>::name(&built.source),
             "orders",

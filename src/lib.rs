@@ -108,14 +108,15 @@
 // The contract's own modules, under the names the layers above it reach them by.
 #[cfg(feature = "asyncapi")]
 use ruststream_core::bindings;
-#[cfg(feature = "testing")]
-use ruststream_core::pairing;
-use ruststream_core::{bindable, outgoing, wire};
 
 pub mod prelude;
 pub mod testing;
-#[cfg(test)]
-mod testkit;
+
+/// Registers a production broker type with the test harness; see
+/// [`testing::TestableRegistration`].
+#[cfg(feature = "testing")]
+#[doc(inline)]
+pub use ruststream_runtime::register_testable_broker;
 
 /// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
 #[cfg(feature = "testing")]
@@ -295,7 +296,7 @@ pub mod __private {
 
     use crate::runtime::Serialized;
     #[cfg(feature = "asyncapi")]
-    use crate::runtime::schema_json;
+    use ruststream_runtime::schema_json;
 
     /// The decode errors `#[derive(InMessages)]` returns when a set picks no variant.
     pub mod in_messages {

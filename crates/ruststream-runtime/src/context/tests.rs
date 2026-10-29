@@ -8,8 +8,8 @@ use futures::future::join_all;
 
 use super::Context;
 use crate::HeaderMap;
-use crate::runtime::dispatch::Delivery;
-use crate::runtime::handler::{HandlerOutcome, HandlerResult};
+use crate::dispatch::Delivery;
+use crate::handler::{HandlerOutcome, HandlerResult};
 
 fn run_all(continuations: Vec<super::Continuation>) {
     executor::block_on(async {

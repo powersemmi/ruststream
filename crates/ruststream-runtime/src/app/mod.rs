@@ -17,25 +17,26 @@ pub use include::{IncludeMount, ScopeCommit};
 pub use include::{Mounting, MountingSlots};
 pub use run::RunningApp;
 pub use scope::BrokerScope;
+pub use service::RegisteredBroker;
 #[cfg(feature = "testing")]
-pub(crate) use service::{RegisteredBroker, TestParts};
+pub use service::TestParts;
 pub use service::{RustStream, Setup, Wired};
-#[cfg(feature = "testing")]
-pub(crate) use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
+pub use teardown::{ConnectedEntry, ShutdownHooks, Teardown};
 
 use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::task::{JoinError, JoinHandle};
 
-use crate::runtime::lifecycle::{BoxError, BoxFuture};
-use crate::runtime::shutdown::Shutdown;
+use crate::lifecycle::{BoxError, BoxFuture};
+use crate::shutdown::Shutdown;
 use crate::{AppId, Contact, ExternalDocs, License, Tag};
 
-/// A registration deferred until [`RustStream::run`]: given the app's shutdown signal, it opens
-/// the subscription (after the broker is connected) and spawns the dispatch task. The broker,
-/// source and handler are captured and type-erased.
-pub(crate) type Starter<St> = Box<
+/// A registration deferred until [`RustStream::run`].
+///
+/// Given the app's shutdown signal, it opens the subscription (after the broker is connected) and
+/// spawns the dispatch task. The broker, source and handler are captured and type-erased.
+pub type Starter<St> = Box<
     dyn FnOnce(Arc<St>, Shutdown) -> BoxFuture<'static, Result<JoinHandle<()>, BoxError>> + Send,
 >;
 
@@ -47,7 +48,7 @@ pub(crate) type StateInit<St> =
 
 /// A read-only lifespan hook (`after_startup` / `on_shutdown` / `after_shutdown`): runs once at the
 /// corresponding lifecycle point with a shared `Arc<St>` handle to the app state.
-pub(crate) type LifecycleHook<St> =
+pub type LifecycleHook<St> =
     Box<dyn FnOnce(Arc<St>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Which read-only lifecycle hook list a hook is appended to.
@@ -282,7 +283,7 @@ pub(super) mod lifecycle_hooks {
 
     use crate::bindable::ConnectedSlot;
     use crate::bindable::pair_bound;
-    use crate::runtime::lifecycle::BoxError;
+    use crate::lifecycle::BoxError;
     use crate::{Broker, Connected, PublishPolicy};
 
     use super::LifecycleHook;

@@ -9,7 +9,9 @@ use serde_json::{Map, Value};
 /// The `AsyncAPI` Schema Object extends JSON Schema Draft 07, while `schemars` generates
 /// 2020-12 by default: a payload generated with the default settings claims one draft inside a
 /// document that says another. Every schema in the document goes through here.
-pub(crate) fn schema_json<T: JsonSchema + ?Sized>() -> Option<String> {
+#[doc(hidden)]
+#[must_use]
+pub fn schema_json<T: JsonSchema + ?Sized>() -> Option<String> {
     let schema = SchemaSettings::draft07()
         .into_generator()
         .into_root_schema_for::<T>();
@@ -20,7 +22,9 @@ pub(crate) fn schema_json<T: JsonSchema + ?Sized>() -> Option<String> {
 /// every delivery) with one model's own contract (`own`), for a model of a message set: the
 /// properties of both, the model's winning where the two name one header, and the union of what
 /// each requires. A contract that is not an object schema is left out.
-pub(crate) fn join_headers(shared: &str, own: Option<&str>) -> Option<String> {
+#[doc(hidden)]
+#[must_use]
+pub fn join_headers(shared: &str, own: Option<&str>) -> Option<String> {
     let parse = |json: &str| match serde_json::from_str::<Value>(json) {
         Ok(Value::Object(schema)) => Some(schema),
         _ => None,

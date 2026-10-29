@@ -108,10 +108,10 @@ mod tests {
     use super::{SubscriberDef, subscriber_metadata};
     use crate::HeaderMap;
     use crate::Name;
-    use crate::runtime::context::Context;
-    use crate::runtime::dispatch::{Delivery, Workers};
-    use crate::runtime::handler::{Handler, HandlerOutcome};
-    use crate::runtime::input::{Decoded, Provided};
+    use crate::context::Context;
+    use crate::dispatch::{Delivery, Workers};
+    use crate::handler::{Handler, HandlerOutcome};
+    use crate::input::{Decoded, Provided};
 
     struct Noop;
 

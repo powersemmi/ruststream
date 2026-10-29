@@ -19,7 +19,7 @@ use opentelemetry::metrics::Histogram;
 use opentelemetry::{KeyValue, global};
 // Only the test-only `typed_batch` constructor still names the bound directly; the adapters
 // reach decoding through `DecodeWith`.
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 use serde::de::DeserializeOwned;
 use tracing::{error, warn};
 
@@ -32,7 +32,7 @@ use super::handle::Deserialized;
 use super::handler::{HandlerOutcome, HandlerResult};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 use crate::codec::Codec;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator;
@@ -205,7 +205,7 @@ where
 pub trait BatchDef: Sized {
     /// The input kind of one batch element ([`Decoded<T>`](super::Decoded) for a `serde`
     /// element, [`Provided<F>`](super::Provided) for a
-    /// [`Deserialized`](crate::runtime::Deserialized) one). The handler consumes a slice of the
+    /// [`Deserialized`](crate::Deserialized) one). The handler consumes a slice of the
     /// elements, `&[T]`.
     type Input: InputKind;
 
@@ -358,7 +358,7 @@ pub(crate) trait BatchHandler<Batch, C = (), S = ()>: Send + Sync {
 /// Hands `handler` one batch of deliveries the way the dispatch loop does once it took them off
 /// the subscription: collected, the shape every decoding batch adapter takes. The adapter tests'
 /// entry point, which names the batch type the trait leaves open.
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 pub(crate) async fn handled<H, M, C, S>(
     handler: &H,
     batch: Vec<M>,
@@ -376,7 +376,7 @@ pub(crate) async fn handled<H, M, C, S>(
 /// Build a [`TypedBatch`] that decodes each element with `codec` into `T` and forwards the batch
 /// as `&[T]` to `inner`. The adapter tests' constructor; the mounts name the input kind
 /// explicitly instead.
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 pub(crate) fn typed_batch<M, T, C, H>(
     codec: C,
     inner: H,
@@ -487,7 +487,7 @@ where
 
 /// The batch adapter of the self-deserializing input kind: no codec runs; each element of the
 /// batch constructs itself from its delivery's payload
-/// ([`Deserialized`](crate::runtime::Deserialized)), borrowing it.
+/// ([`Deserialized`](crate::Deserialized)), borrowing it.
 ///
 /// An element whose construction fails is settled by the `decode` [`FailurePolicy`] and never
 /// reaches the handler, exactly as a codec decode failure on the typed path; the rest reach the
@@ -1006,5 +1006,5 @@ mod carried;
 
 pub(crate) use carried::{CarriedBatch, SourceCarriesBatch};
 
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 mod tests;

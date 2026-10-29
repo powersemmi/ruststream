@@ -15,9 +15,10 @@ use prometheus::{
 };
 
 use crate::runtime::{
-    BlanketLayer, Context, Handler, HandlerOutcome, HandlerResult, Layer, Outgoing, PublishLayer,
-    PublishNext, PublishPipeline,
+    BlanketLayer, Context, Handler, HandlerOutcome, Layer, Outgoing, PublishLayer, PublishNext,
+    PublishPipeline,
 };
+use ruststream_runtime::HandlerResult;
 
 #[cfg(feature = "poll-diagnostics")]
 use crate::runtime::PollDiagnostics;
@@ -349,7 +350,7 @@ mod poll {
     };
 
     use crate::runtime::PollDiagnostics;
-    use crate::runtime::poll_diagnostics::BUCKET_BOUNDS_NS;
+    use ruststream_runtime::poll_diagnostics::BUCKET_BOUNDS_NS;
 
     const DURATION: &str = "ruststream_handler_poll_duration_seconds";
     const DURATION_HELP: &str = "Time a handler spent in one sampled poll, by name.";
@@ -449,7 +450,7 @@ mod tests {
     use prometheus::Registry;
 
     use super::{Metrics, consume_status};
-    use crate::runtime::HandlerResult;
+    use ruststream_runtime::HandlerResult;
 
     #[test]
     fn the_registry_and_the_status_mapping() {

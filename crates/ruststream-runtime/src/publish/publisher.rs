@@ -9,7 +9,7 @@ use super::{
     PublishPipeline, PublishTransform, PublishTransformIdentity,
 };
 use crate::codec::{Codec, Encoding};
-use crate::runtime::lifecycle::BoxError;
+use crate::lifecycle::BoxError;
 use crate::{HeaderMap, PayloadForm, Publisher};
 
 /// A byte [`Publisher`] paired with a [`Codec`] and a static [`PublishTransform`] stack: what a

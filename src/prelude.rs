@@ -3,7 +3,7 @@
 //! `use ruststream::prelude::*;` brings in the application object and its builder, the handler
 //! surface on both paths - the attribute's (with the `macros` feature) and the manual path's
 //! one body trait ([`Handle`]) with its one constructor
-//! ([`subscriber`](crate::runtime::subscriber)) - the settlement type, the per-delivery
+//! ([`subscriber`](fn@crate::runtime::subscriber)) - the settlement type, the per-delivery
 //! context, the extractor parameters, the subscriber settings a mount site fills in, and the
 //! publishing types a handler reaches for. What a handler publishes it publishes through the
 //! builder, so the outgoing message type is not here; see the note on the re-export below.

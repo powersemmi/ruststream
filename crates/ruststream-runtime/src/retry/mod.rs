@@ -34,9 +34,9 @@ pub use destination::{
 };
 
 use crate::Broker;
-use crate::runtime::publish::{CallCodec, PublishTransformStack, Reads, UnnamedCodec};
-use crate::runtime::router::{AttachRetry, Router, RouterCommit, RouterWith};
-use crate::runtime::slot::{
+use crate::publish::{CallCodec, PublishTransformStack, Reads, UnnamedCodec};
+use crate::router::{AttachRetry, Router, RouterCommit, RouterWith};
+use crate::slot::{
     AdmitsAt, BatchTransformLast, BindAt, CodecLast, MapPolicyLast, NamedStep, NoReply,
     OutAttachment, OutSlot, Reply, ReplyLast, SlotPos, TransactionalLast, TransformLast,
 };
@@ -46,7 +46,7 @@ use crate::runtime::slot::{
 ///
 /// The slot is an ordinary [`Out`](super::Out) position, so the chain after the call takes the
 /// steps every slot takes: `.codec(..)` names the position's codec, `.transform(..)` composes a
-/// [`PublishTransform`](crate::runtime::PublishTransform) the copy travels through, and a
+/// [`PublishTransform`](crate::PublishTransform) the copy travels through, and a
 /// broker's own publisher settings reach the
 /// policy through [`map_publisher`](super::MapPublisher::map_publisher). The deferred copy is
 /// already serialized - it is the delivery's own bytes with the retry count incremented - so it
@@ -82,7 +82,7 @@ use crate::runtime::slot::{
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::time::Duration;
 ///

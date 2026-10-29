@@ -4,13 +4,13 @@
 
 use std::any::type_name;
 
-use crate::runtime::batch::BatchResult;
-use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
-use crate::runtime::context::Context;
-use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
-use crate::runtime::publishing::{PublishingCall, PublishingDef};
-use crate::runtime::router::{IncludeDef, forms};
+use crate::batch::BatchResult;
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::context::Context;
+use crate::handler::HandlerOutcome;
+use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
+use crate::publishing::{PublishingCall, PublishingDef};
+use crate::router::{IncludeDef, forms};
 use crate::{CallerName, FixedName, Name, OutgoingDestination, Unnamed};
 
 use super::Handle;
@@ -27,7 +27,7 @@ use super::value::{
 use super::verdict::{Batched, OneByOne};
 // The self-serialized vocabulary lives with the publish builder (the general wire seam serves
 // every typed surface); re-exported here so the reply seam keeps reading as one module.
-pub use crate::runtime::publish::Serialized;
+pub use crate::publish::Serialized;
 
 /// The shape and wire of a reply value: what payload it publishes, what typed header contract
 /// rides it, and whether the framework's codec serializes it.
@@ -202,7 +202,7 @@ pub trait DeclaresReply {
     type Reply;
 
     /// The broker's typed per-delivery context the handler reads, which is what a transform on
-    /// this reply sees through its [`PublishContext`](crate::runtime::PublishContext).
+    /// this reply sees through its [`PublishContext`](crate::PublishContext).
     type Context;
 }
 

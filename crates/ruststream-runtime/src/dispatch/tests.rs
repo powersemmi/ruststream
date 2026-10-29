@@ -10,18 +10,17 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::runtime::redelivery::bare_retry_publisher;
-#[cfg(feature = "logging")]
+use crate::redelivery::bare_retry_publisher;
 use crate::testkit::log_capture;
 
 /// The per-delivery context of a registration that reads none: what a test delivery's transforms
 /// would see.
 fn unit_cx<M>(_msg: &M) {}
-use crate::memory::MemoryBroker;
-use crate::runtime::SubscriptionEnd;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::HandlerOutcome;
+use crate::SubscriptionEnd;
+use crate::failure::FailurePolicies;
+use crate::handler::HandlerOutcome;
 use crate::{Lend, Publisher};
+use ruststream::memory::MemoryBroker;
 
 /// What a test delivery's transport does when asked to settle. The three cases differ in kind,
 /// not degree, so they are variants rather than a flag plus an error slot.
@@ -794,10 +793,8 @@ fn the_delivery_debug_form_reports_wiring_without_leaking_the_publisher() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_panicking_worker_is_reported_when_joined() {
     let joined = tokio::spawn(async { panic!("worker down") }).await;
-    #[cfg(feature = "logging")]
     let (events, guard) = log_capture::start();
     assert!(log_worker_exit(joined).is_none());
-    #[cfg(feature = "logging")]
     {
         drop(guard);
         let failure = log_capture::find(&events, "worker task failed");

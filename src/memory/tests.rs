@@ -462,3 +462,37 @@ async fn a_pattern_reads_every_match_and_the_rule_survives_shutdown() {
     let revived = broker.connect().await.unwrap();
     assert_eq!(revived.state.routing(), Routing::MostSpecific);
 }
+
+/// A `MemorySource` names the subscription of a manual definition, as a subject string does.
+#[cfg(feature = "json")]
+#[test]
+fn a_memory_source_names_a_manual_subscription() {
+    use std::future::ready;
+
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    use crate::runtime::{Context, Handle, Router, Verdict, subscriber};
+
+    #[derive(Deserialize, JsonSchema)]
+    struct Order {
+        id: u64,
+    }
+
+    struct Audit;
+
+    impl Handle<Order> for Audit {
+        fn handle(
+            &self,
+            order: &Order,
+            _outs: &(),
+            _ctx: &mut Context<'_>,
+        ) -> impl Future<Output = Verdict<Order, ()>> {
+            let _ = order.id;
+            ready(Ok(()))
+        }
+    }
+
+    let _ = Router::<MemoryBroker>::new()
+        .include(subscriber(MemorySource::new("orders"), Audit).build());
+}

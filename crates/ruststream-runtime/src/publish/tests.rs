@@ -1,34 +1,34 @@
 // Every fixture below sits behind the feature whose surface it exercises, so the imports they
 // need follow them rather than the file.
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use std::fmt;
-#[cfg(all(feature = "json", any(feature = "logging", feature = "memory")))]
+#[cfg(feature = "json")]
 use std::sync::Arc;
 
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 use crate::PublishPolicy;
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 use crate::Publisher;
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 use crate::codec::Codec;
 
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use std::convert::Infallible;
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use std::sync::Mutex;
 
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use tracing::field::Field;
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use tracing::field::Visit;
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use tracing::subscriber;
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 use tracing::subscriber::DefaultGuard;
 
 use super::*;
 use crate::HeaderMap;
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 use crate::Take;
 #[cfg(feature = "json")]
 use crate::{BytesMut, Lend, PayloadForm};
@@ -44,11 +44,9 @@ mod fixtures {
 
     use thiserror::Error;
 
-    #[cfg(feature = "memory")]
-    use crate::memory::{ConnectedMemoryBroker, MemoryTransaction};
     use crate::{Lend, OutgoingMessage, Publisher, TransactionalPublisher};
-    #[cfg(feature = "memory")]
     use crate::{OwnedTransactions, PairError, PublishPolicy};
+    use ruststream::memory::{ConnectedMemoryBroker, MemoryTransaction};
 
     /// A value JSON cannot encode: an object key must be a string, and this map's are
     /// tuples. Encoding one is a real codec failure, not a stubbed one.
@@ -111,7 +109,6 @@ mod fixtures {
 
     // The publisher a broker hands out is opened per call; refusing to open one is how a
     // broker reports that the handle is unusable.
-    #[cfg(feature = "memory")]
     impl OwnedTransactions for Rigged {
         type Transaction = MemoryTransaction;
 
@@ -122,10 +119,8 @@ mod fixtures {
 
     /// A policy that fails to pair, standing in for a broker whose publisher needs real work
     /// to come alive (a transactional producer initializing).
-    #[cfg(feature = "memory")]
     pub(super) struct RefusePairing;
 
-    #[cfg(feature = "memory")]
     impl PublishPolicy<ConnectedMemoryBroker> for RefusePairing {
         type Live = Rigged;
 
@@ -142,7 +137,7 @@ mod fixtures {
 
 /// Collects the `tracing` messages emitted on this thread: a warning's field values are only
 /// evaluated while a subscriber listens, so asserting on one needs a capture in place.
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::{Context as LayerContext, SubscriberExt as _};
@@ -172,7 +167,7 @@ fn capture_events() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
 // A cancelled commit leaves the broker transaction genuinely unsettled, so the scope's
 // drop warning must still fire (needs a tracing subscriber, hence the `logging` gate; the
 // stub's pending commit is the cancellation window the single-poll memory broker lacks).
-#[cfg(all(feature = "json", feature = "logging"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     use std::future::{pending, ready};
@@ -234,7 +229,7 @@ async fn cancelled_commit_keeps_the_unsettled_drop_warning() {
     );
 }
 
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -242,8 +237,8 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
     use futures::StreamExt;
 
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
     use crate::{IncomingMessage, Subscriber};
+    use ruststream::memory::MemoryBroker;
 
     /// Adds its weight on every pass, proving order and that each layer ran exactly once.
     struct Mark(Arc<AtomicUsize>, usize);
@@ -296,13 +291,13 @@ async fn dyn_stack_walks_its_layers_then_the_static_tail() {
 
 /// Both cursors report where in the chain a middleware sits: the static one is opaque, the
 /// dynamic one counts the middleware still ahead of it.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn the_pipeline_cursors_render_their_position() {
     use std::sync::Mutex;
 
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     /// Records how the cursor it is handed renders, then continues the chain.
     struct Record(Arc<Mutex<Vec<String>>>);
@@ -394,7 +389,7 @@ fn publish_context_reads_the_originating_delivery() {
 
 /// A codec failure is reported by the publish paths instead of reaching the broker, on both
 /// the single-message and the batch reply route.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn an_unencodable_reply_stops_both_reply_paths() {
     use fixtures::unencodable;
@@ -402,7 +397,7 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
 
     use crate::Subscriber;
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("out");
@@ -449,14 +444,14 @@ async fn an_unencodable_reply_stops_both_reply_paths() {
 
 /// A plain typed publisher sends the batch's replies one by one, and exposes the codec the
 /// batch mounts reuse for decoding.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
     use futures::StreamExt;
 
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
     use crate::{IncomingMessage, Subscriber};
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("out");
@@ -500,11 +495,11 @@ async fn a_plain_wiring_publishes_each_reply_and_names_its_codec() {
 
 /// The transactional sink reports the same reply codec as the stack it wraps: the batch mounts
 /// read it off either shape.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[test]
 fn the_transactional_sink_reports_the_reply_codec() {
     use crate::codec::{Codec, JsonCodec};
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let sink = Transactional::live(TypedPublisher::with_codec(broker.publisher(), JsonCodec));
@@ -517,11 +512,11 @@ fn the_transactional_sink_reports_the_reply_codec() {
 
 /// The live sinks hide their leaf and codec from Debug: a publisher is not a data type,
 /// and its connection must not print.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[test]
 fn the_live_sinks_render_without_their_leaf() {
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryPublish;
+    use ruststream::memory::MemoryPublish;
 
     let typed = TypedPublisher::with_codec(MemoryPublish, JsonCodec);
     assert_eq!(format!("{typed:?}"), "TypedPublisher { .. }");
@@ -532,13 +527,13 @@ fn the_live_sinks_render_without_their_leaf() {
 }
 
 /// The scope a bare publisher opens holds its publishes back until the commit.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_publisher_scope_holds_its_publishes_until_the_commit() {
     use futures::StreamExt;
 
-    use crate::memory::MemoryBroker;
     use crate::{IncomingMessage, Subscriber};
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("scoped");
@@ -610,7 +605,7 @@ async fn a_refused_begin_fails_the_batch_before_the_first_reply() {
 
 /// A reply that cannot be produced aborts the whole batch, so no half-published batch stays
 /// visible.
-#[cfg(all(feature = "json", feature = "memory"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_failed_reply_aborts_the_whole_batch() {
     use std::sync::atomic::Ordering;
@@ -647,7 +642,7 @@ async fn a_failed_reply_aborts_the_whole_batch() {
 
 /// When the abort itself fails, the original error still travels and the abort failure is
 /// only logged: the caller acts on the failure that broke the batch.
-#[cfg(all(feature = "json", feature = "memory", feature = "logging"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_failed_abort_is_logged_rather_than_propagated() {
     use std::sync::atomic::Ordering;
@@ -769,14 +764,14 @@ async fn a_scoped_publish_reports_an_encode_failure_without_settling() {
 
 /// An owned transaction encodes with the publisher's codec, keeps its buffer private, and
 /// discards it on abort.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn an_owned_transaction_encodes_and_discards_on_abort() {
     use fixtures::unencodable;
     use futures::StreamExt;
 
     use crate::Subscriber;
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("owned");
@@ -807,14 +802,14 @@ async fn an_owned_transaction_encodes_and_discards_on_abort() {
 
 /// A policy that fails to pair fails the whole wiring stack: neither shape hands out a
 /// half-built publisher, and the error travels to the startup that asked for it.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_refused_pairing_fails_the_whole_wiring() {
     use fixtures::RefusePairing;
 
     use crate::Broker;
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     let connected = MemoryBroker::new().connect().await.expect("connect failed");
 
@@ -859,7 +854,7 @@ async fn a_refused_begin_reports_the_publisher_error() {
 
 /// Likewise for the owned kind: a refused open is reported, not papered over with an empty
 /// buffer that would silently drop everything published into it.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn a_refused_owned_transaction_reports_the_publisher_error() {
     use fixtures::Rigged;

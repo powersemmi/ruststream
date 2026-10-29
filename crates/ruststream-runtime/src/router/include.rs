@@ -3,7 +3,7 @@
 //! `include` mounts every definition form, single-message and batch alike - an attribute
 //! definition and a value one (`subscriber(..)`, `batch(..)`, ...) the same way; which machinery
 //! runs is picked by the definition's form token ([`IncludeDef::Form`]), exactly as on a
-//! [`BrokerScope`](crate::runtime::BrokerScope). Forms that take a publish policy hand back a
+//! [`BrokerScope`](crate::BrokerScope). Forms that take a publish policy hand back a
 //! mount chain; because a router is a consuming builder, the chain commits through an explicit
 //! terminal (`.build()`, after an `.out(marker, policy)` per position) and returns the grown
 //! router.
@@ -16,7 +16,7 @@ use crate::Broker;
 
 use super::builder::Router;
 use super::mount::RouterMount;
-use crate::runtime::settings::Declared;
+use crate::settings::Declared;
 
 impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>
@@ -34,12 +34,12 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// Decoding uses the chain's codec when one was set with
     /// [`with_codec`](Router::with_codec), else the
     /// [`DefaultCodec`](crate::codec::DefaultCodec). The router-level counterpart of
-    /// [`BrokerScope::include`](crate::runtime::BrokerScope::include).
+    /// [`BrokerScope::include`](crate::BrokerScope::include).
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};

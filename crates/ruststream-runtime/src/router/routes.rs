@@ -7,23 +7,23 @@ use std::num::NonZeroUsize;
 
 use crate::{BatchSubscriber, Broker, BuildContext, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::BatchHandler;
-use crate::runtime::dispatch::Workers;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::Handler;
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::{PublishIdentity, PublishPipeline};
-use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetryPairing, RetrySetup};
-use crate::runtime::retry::DestinationDeclared;
-use crate::runtime::retry::RetryOpen;
+use crate::batch::BatchHandler;
+use crate::dispatch::Workers;
+use crate::failure::FailurePolicies;
+use crate::handler::Handler;
+use crate::metadata::HandlerMetadata;
+use crate::middleware::BlanketLayer;
+use crate::publish::{PublishIdentity, PublishPipeline};
+use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetryPairing, RetrySetup};
+use crate::retry::DestinationDeclared;
+use crate::retry::RetryOpen;
 use crate::{CopyPath, RetryDeclaration};
 
 use super::sink::RouterSink;
 use super::{SourceBatch, SourceMessage};
 
 /// One subscription registration: a source plus the handler it dispatches to. An implementation
-/// detail of [`Router`](crate::runtime::Router)'s registration list.
+/// detail of [`Router`](crate::Router)'s registration list.
 ///
 /// `Cx` is the broker's typed per-delivery context the handler reads, carried so a definition
 /// with a context of its own mounts on a router as it does on a scope.
@@ -39,7 +39,7 @@ pub struct SubscribeRoute<S, H, Cx = ()> {
 }
 
 /// One registration bound to an already-created subscriber. An implementation detail of
-/// [`Router`](crate::runtime::Router).
+/// [`Router`](crate::Router).
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct HandleRoute<S, H> {
@@ -50,7 +50,7 @@ pub struct HandleRoute<S, H> {
 }
 
 /// One batch-subscription registration: a source plus the batch handler consuming its batches.
-/// An implementation detail of [`Router`](crate::runtime::Router)'s registration list.
+/// An implementation detail of [`Router`](crate::Router)'s registration list.
 ///
 /// `Cx` is the broker's subscription-scoped batch context the handler reads, carried explicitly
 /// because the adapter handlers are generic over it.
@@ -132,7 +132,7 @@ pub trait RetryDestinationsDeclared {}
 /// the descriptor's business, and the runtime reports one that cannot answer at startup.
 macro_rules! impl_destination_declared {
     ($([$($extra:tt)*] $route:ty),+ $(,)?) => {$(
-        impl<$($extra)*> $crate::runtime::router::RetryDestinationsDeclared for $route {}
+        impl<$($extra)*> $crate::router::RetryDestinationsDeclared for $route {}
     )+};
 }
 
@@ -371,7 +371,7 @@ macro_rules! impl_route_subscription {
 impl_route_subscription!(SubscribeRoute<S, H, Cx>, BatchRoute<S, H, Cx>);
 
 /// One registration's `AsyncAPI` metadata, collected independently of the app state type (so
-/// [`Router::handlers`](crate::runtime::Router::handlers) works whatever state the handlers read).
+/// [`Router::handlers`](crate::Router::handlers) works whatever state the handlers read).
 pub(super) trait RouteMeta {
     fn collect(&self, out: &mut Vec<HandlerMetadata>);
 }
@@ -505,10 +505,10 @@ where
 /// A mountable group of handler registrations.
 ///
 /// Mounting applies the app's global [`BlanketLayer`] to each handler and registers it, so the
-/// app-wide [`layer`](crate::runtime::RustStream::layer) stack reaches router handlers.
-/// Implemented by [`Router`](crate::runtime::Router) and its internal registration list; you
+/// app-wide [`layer`](crate::RustStream::layer) stack reaches router handlers.
+/// Implemented by [`Router`](crate::Router) and its internal registration list; you
 /// obtain one from a builder and pass it to
-/// [`include_router`](crate::runtime::BrokerScope::include_router). You do not implement it.
+/// [`include_router`](crate::BrokerScope::include_router). You do not implement it.
 ///
 /// `State` is the app's shared-state type: a router whose handlers read typed state is
 /// `RouterDef<B, State>` only for that `State`, while a state-agnostic router is generic over it, so it
@@ -516,7 +516,7 @@ where
 ///
 /// `RetryPipeline` is the publish path a registration's retry copies travel: a router hands its
 /// own down to its registrations, and the parameter defaults to
-/// [`PublishIdentity`](crate::runtime::PublishIdentity), which is the path of a router built
+/// [`PublishIdentity`](crate::PublishIdentity), which is the path of a router built
 /// without publish middleware - so `RouterDef<B>` names what a builder function returns.
 pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity> {
     /// Applies `global` to every registration and pushes it into `sink`. Called by `include_router`.
@@ -534,7 +534,7 @@ pub trait RouterDef<B: Broker, State = (), RetryPipeline = PublishIdentity> {
 
 /// Metadata collection over a router's registration list, independent of the app state type.
 ///
-/// Split from [`RouterDef`] so [`Router::handlers`](crate::runtime::Router::handlers) does not have
+/// Split from [`RouterDef`] so [`Router::handlers`](crate::Router::handlers) does not have
 /// to name the state type a stateful router's handlers read.
 pub trait RouterHandlers {
     /// Appends each registration's metadata, in registration order.

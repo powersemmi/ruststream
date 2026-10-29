@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use crate::runtime::dispatch::Workers;
+use crate::dispatch::Workers;
 use crate::{ConnectedBroker, SubscriptionSource};
 
 use super::SubscriberBuilder;
@@ -25,7 +25,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::{Declared, Placement, SubscriberBuilder};
@@ -92,7 +92,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::num::NonZeroUsize;
     ///
@@ -162,7 +162,7 @@ impl<Def, Src, State, DefCodec> SubscriberBuilder<Def, Src, State, DefCodec> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::ConnectedMemoryBroker;
     /// use ruststream::memory::prelude::*;

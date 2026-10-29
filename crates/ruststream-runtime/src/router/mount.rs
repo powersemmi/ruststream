@@ -2,13 +2,13 @@
 //!
 //! A definition ties itself to a form token ([`IncludeDef::Form`]), and one entry point per
 //! surface - [`Router::include`](super::Router::include) and
-//! [`BrokerScope::include`](crate::runtime::BrokerScope::include) - resolves the token to the
+//! [`BrokerScope::include`](crate::BrokerScope::include) - resolves the token to the
 //! machinery that form needs, at compile time. The subscription source is never named at a
 //! mount site: it belongs to the definition, which takes the broker's own source expression.
 
 use crate::codec::Codec;
-use crate::runtime::input::{Carried, Decoded, DecodedPair, Provided};
-use crate::runtime::publish::{RawReplyWiring, ReplyWiring};
+use crate::input::{Carried, Decoded, DecodedPair, Provided};
+use crate::publish::{RawReplyWiring, ReplyWiring};
 // The default-codec resolution exists only when a codec feature supplies a default.
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;

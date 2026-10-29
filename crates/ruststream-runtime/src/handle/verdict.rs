@@ -13,12 +13,12 @@
 //!   batch-length by contract), and `Result<Vec<Reply>, Vec<HandlerOutcome>>` for a batch reply
 //!   body (one reply per element).
 //!
-//! An [`and_after`](crate::runtime::HandlerOutcome::and_after) continuation rides the outcome
+//! An [`and_after`](crate::HandlerOutcome::and_after) continuation rides the outcome
 //! itself, so it stays a return capability on every shape. Per-element vectors are batch-length
 //! by contract; the adapters check once per batch and panic on a mismatch (see the module docs
 //! of [`handle`](super)).
 
-use crate::runtime::handler::HandlerOutcome;
+use crate::handler::HandlerOutcome;
 
 use super::axis::{Axis, Input};
 

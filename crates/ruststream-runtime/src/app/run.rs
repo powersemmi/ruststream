@@ -12,8 +12,8 @@ use tokio_util::task::TaskTracker;
 use tracing::{debug, info, warn};
 
 use crate::bindable::Bound;
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::shutdown::Shutdown;
+use crate::metadata::HandlerMetadata;
+use crate::shutdown::Shutdown;
 use crate::{Broker, Connected, PairError, PublishPolicy};
 
 use super::health::{HealthProbe, HealthState};
@@ -88,7 +88,6 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{AppInfo, RustStream};
@@ -173,7 +172,6 @@ impl<Layers: Send, State: Send + Sync + 'static, Pipeline, Phase>
 /// beside a foreground server:
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # async fn run() -> Result<(), ruststream::runtime::RustStreamError> {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{AppInfo, RustStream};
@@ -228,7 +226,6 @@ impl RunningApp {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(feature = "memory")]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use axum::Router;
     /// use axum::extract::State;
@@ -264,11 +261,11 @@ impl RunningApp {
         self.teardown.shutdown.health().probe()
     }
 
-    /// Pairs a [`Bound`](crate::runtime::Bound) token against its broker, for sending from a
+    /// Pairs a [`Bound`](crate::Bound) token against its broker, for sending from a
     /// sibling task while the service runs (the third home of a publisher, next to reply
-    /// wiring and [`Out`](crate::runtime::Out) injection).
+    /// wiring and [`Out`](crate::Out) injection).
     ///
-    /// Sugar over [`Bound::live`](crate::runtime::Bound::live), anchored here because the handle
+    /// Sugar over [`Bound::live`](crate::Bound::live), anchored here because the handle
     /// existing is the witness that startup connected every registered broker.
     ///
     /// # Errors
@@ -278,7 +275,7 @@ impl RunningApp {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::prelude::*;
     /// use serde::Serialize;

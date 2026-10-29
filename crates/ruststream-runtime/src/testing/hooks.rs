@@ -95,7 +95,7 @@ impl Within {
 /// What a [`PublishedAssertions`] reads, and so what its hooks are keyed by: a destination on
 /// one broker of the app, or an `Out` slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PublishTarget {
+pub enum PublishTarget {
     /// The destination `name` on the broker registered at `scope_id`.
     Channel { scope_id: usize, name: String },
     /// The `Out` slot named this.
@@ -104,7 +104,10 @@ pub(crate) enum PublishTarget {
 
 /// The hooks registered on one coordinator, and what they still owe.
 #[derive(Default)]
-pub(crate) struct Hooks {
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct Hooks {
     /// Whether any hook was ever registered: a test that registers none pays this load alone.
     registered: AtomicBool,
     calls: Mutex<Vec<OnCall>>,
@@ -142,7 +145,10 @@ pub(crate) struct DueCall {
 
 /// One recorded publish and the hooks it runs, or nothing when no hook matched it.
 #[must_use]
-pub(crate) struct DuePublish(Option<PublishRun>);
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct DuePublish(Option<PublishRun>);
 
 /// The hooks one publish runs, and what their handle reads.
 struct PublishRun {
@@ -241,7 +247,8 @@ impl Hooks {
     }
 
     /// Raises again, in the caller's task, the first panic a hook raised.
-    pub(crate) fn raise_failure(&self) {
+    #[doc(hidden)]
+    pub fn raise_failure(&self) {
         let failed = lock(&self.failed).take();
         if let Some(payload) = failed {
             panic::resume_unwind(payload);
@@ -290,7 +297,8 @@ impl Coordinator {
 
 impl DuePublish {
     /// Runs the hooks, if any matched the publish.
-    pub(crate) async fn run(self) {
+    #[doc(hidden)]
+    pub async fn run(self) {
         let Some(PublishRun {
             coordinator,
             target,

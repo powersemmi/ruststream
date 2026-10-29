@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use super::Outgoing;
 use crate::HeaderMap;
-use crate::runtime::context::DeliveryHeaders;
+use crate::context::DeliveryHeaders;
 
 /// A read-only view of the originating delivery, handed to a [`PublishTransform`].
 ///
@@ -14,7 +14,7 @@ use crate::runtime::context::DeliveryHeaders;
 /// [`headers`](Self::headers) (a W3C `traceparent`, a correlation id), and the broker's typed
 /// per-delivery [`context`](Self::context) by [`Field`](crate::Field) key. This is how a trace / correlation id
 /// propagates from the incoming message onto the reply (the static, zero-cost path; the app-wide
-/// [`PublishLayer`](crate::runtime::PublishLayer) stays context-agnostic). `C` is the
+/// [`PublishLayer`](crate::PublishLayer) stays context-agnostic). `C` is the
 /// handler's context type (`()` when it names none).
 ///
 /// A batch's replies are the exception, because a batch spans many deliveries and has no single
@@ -37,6 +37,14 @@ impl<'a, C> PublishContext<'a, C> {
         }
     }
 
+    /// The context of a reply to a delivery whose headers are `headers`, for a transform's tests
+    /// in another crate of the workspace.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn from_map(name: &'a str, headers: &'a HeaderMap, cx: &'a C) -> Self {
+        Self::new(name, headers, cx)
+    }
+
     /// The channel the originating message was delivered on.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -50,7 +58,7 @@ impl<'a, C> PublishContext<'a, C> {
     }
 
     /// Reads a broker-supplied per-delivery field off the typed context by compile-time `key`,
-    /// mirroring [`Context::context`](crate::runtime::Context::context).
+    /// mirroring [`Context::context`](crate::Context::context).
     pub fn context<K: crate::Field<C>>(&self, key: K) -> K::Value<'_> {
         key.get(self.cx)
     }
@@ -67,9 +75,9 @@ impl<C> fmt::Debug for PublishContext<'_, C> {
 /// What one publish position hands its transforms.
 ///
 /// A reply is published by the runtime, which still holds the delivery being answered, so a
-/// transform there can read it. A message leaving an [`Out`](crate::runtime::Out) slot is
+/// transform there can read it. A message leaving an [`Out`](crate::Out) slot is
 /// published by the handler body, which has already read whatever it wanted from its own
-/// [`Context`](crate::runtime::Context), so there is no delivery left to hand on. The difference
+/// [`Context`](crate::Context), so there is no delivery left to hand on. The difference
 /// between the two positions is exactly this view, not two interfaces: [`PublishTransform`] takes
 /// the kind as a parameter and every position picks its own at compile time.
 ///
@@ -94,7 +102,7 @@ impl<C> ContextKind for ForReply<C> {
         Self: 'a;
 }
 
-/// The kind of an [`Out`](crate::runtime::Out) slot position: the transform reads a
+/// The kind of an [`Out`](crate::Out) slot position: the transform reads a
 /// [`SlotContext`], which names the slot and nothing else.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ForSlot;
@@ -106,7 +114,7 @@ impl ContextKind for ForSlot {
         Self: 'a;
 }
 
-/// What a transform on an [`Out`](crate::runtime::Out) slot gets to read: the slot's own name.
+/// What a transform on an [`Out`](crate::Out) slot gets to read: the slot's own name.
 ///
 /// A slot publish is issued by the handler body, so the delivery that prompted it is the body's to
 /// read and to put on the message; by the time a transform runs there is no delivery left. What
@@ -125,7 +133,7 @@ impl<'a> SlotContext<'a> {
         Self { slot }
     }
 
-    /// The slot's [`OutSlot::NAME`](crate::runtime::OutSlot::NAME).
+    /// The slot's [`OutSlot::NAME`](crate::OutSlot::NAME).
     #[must_use]
     pub const fn slot(&self) -> &'a str {
         self.slot
@@ -276,14 +284,14 @@ impl<Rhs: DestinationUse> Either<Rhs> for Names {
 /// A static, compile-time publish transform: mutates an [`Outgoing`] before it is sent, with read
 /// access to whatever its position hands it.
 ///
-/// The publish-side counterpart to the consume-side [`Layer`](crate::runtime::Layer): zero-cost composition,
+/// The publish-side counterpart to the consume-side [`Layer`](crate::Layer): zero-cost composition,
 /// no `dyn` dispatch. Composed onto a position by the `.transform(..)` step of a mount site's
 /// chain. Use for
 /// per-destination transforms that belong to the publisher itself - a Confluent / Avro envelope, a
 /// fixed content-type header, or stamping the delivery's trace / correlation id onto the reply
 /// (read it from `cx`). For cross-cutting
-/// *observation* across every publish (metrics), use the app-wide [`PublishLayer`](crate::runtime::PublishLayer) via
-/// [`RustStream::publish_layer`](crate::runtime::RustStream::publish_layer) instead; the per-publisher
+/// *observation* across every publish (metrics), use the app-wide [`PublishLayer`](crate::PublishLayer) via
+/// [`RustStream::publish_layer`](crate::RustStream::publish_layer) instead; the per-publisher
 /// transforms run first (closest to the value), then the app-wide publish pipeline, then the send.
 ///
 /// # Which positions a transform mounts on
@@ -574,7 +582,7 @@ impl<C, Options, L: PublishTransform<ForReply<C>, Options>> BatchPublishTransfor
 /// implementation to write.
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use ruststream::runtime::{for_batch, ContextKind, Outgoing, PublishTransform, Reads};

@@ -2,14 +2,14 @@
 //!
 //! Every publish policy a registration names is attached with one verb,
 //! [`out`](RouterWith::out): [`Reply`] names the policy the value a `reply("dest")` handler
-//! returns leaves through, a slot marker names one [`Out`](crate::runtime::Out) slot's, and
+//! returns leaves through, a slot marker names one [`Out`](crate::Out) slot's, and
 //! [`Retry`] names the one a deferred `retry_after` copy leaves through.
 //! [`out_reply`](RouterWith::out_reply) and [`out_retry`](RouterWith::out_retry) are the same
 //! call with the marker spelled out.
 //!
 //! The steps after a call ride the position it named - [`codec`](RouterWith::codec),
 //! [`transform`](RouterWith::transform),
-//! [`map_publisher`](crate::runtime::MapPublisher::map_publisher) on either kind,
+//! [`map_publisher`](crate::MapPublisher::map_publisher) on either kind,
 //! [`batch_transform`](RouterWith::batch_transform) and
 //! [`transactional`](RouterWith::transactional) on the reply alone - so the chain reads the same
 //! whichever position it is filling.
@@ -17,7 +17,7 @@
 //! A [`Router`](super::Router) is a consuming builder, so the chain commits through an explicit
 //! terminal, [`build`](RouterWith::build): `Drop` cannot return the router the registration grew
 //! into. A chain left unfinished never becomes a router, so a forgotten `.build()` is a compile
-//! error at the next use. A [`BrokerScope`](crate::runtime::BrokerScope) drives the same chain
+//! error at the next use. A [`BrokerScope`](crate::BrokerScope) drives the same chain
 //! through a guard that commits when the statement ends.
 
 use std::borrow::Cow;
@@ -25,10 +25,10 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroU32;
 
-use crate::runtime::retry::{
+use crate::retry::{
     CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DestinationLast, DestinationOpen, Retry,
 };
-use crate::runtime::slot::{
+use crate::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, NoOutBound, OutPosition,
     Reply, ReplyLast, ReplyStep, TransactionalLast, TransformLast,
 };
@@ -55,11 +55,11 @@ pub trait RouterCommit<Mount, R, Def>: Sized {
 /// A mount chain over one registration's attachment.
 ///
 /// The attachment is a pair: the reply position (the broker's default until `.out(Reply, ..)`
-/// names a policy, or [`NoReply`](crate::runtime::NoReply) on a handler that declares no reply)
-/// and the slot tuple (one position per [`Out`](crate::runtime::Out) marker the handler declares,
+/// names a policy, or [`NoReply`](crate::NoReply) on a handler that declares no reply)
+/// and the slot tuple (one position per [`Out`](crate::Out) marker the handler declares,
 /// each unbound until its `.out(marker, ..)`). `Last` is the position the chain named most
 /// recently, which is what the steps after it ride; it starts as
-/// [`NoOutBound`](crate::runtime::NoOutBound), where those steps do not exist.
+/// [`NoOutBound`](crate::NoOutBound), where those steps do not exist.
 #[must_use = "a router registration is only added once .build() commits it"]
 pub struct RouterWith<Mount, R, Def, Attach, Last = NoOutBound> {
     def: Def,
@@ -81,11 +81,11 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     }
 
     /// Names the publish policy of one position: [`Reply`] for the value a `reply("dest")`
-    /// handler returns, an [`Out`](crate::runtime::Out) slot's own marker for a slot, [`Retry`]
+    /// handler returns, an [`Out`](crate::Out) slot's own marker for a slot, [`Retry`]
     /// for the deferred `retry_after` copy.
     ///
     /// `policy` is one of the broker prelude's (`Publish`, `TransactionalPublish`, ...), or a
-    /// [`Bound`](crate::runtime::Bound) token wrapping one for a cross-broker target; the runtime
+    /// [`Bound`](crate::Bound) token wrapping one for a cross-broker target; the runtime
     /// pairs it after the brokers connect. Calls bind by marker, so their order does not matter,
     /// and each position takes exactly one: binding one twice does not compile. Omitting
     /// `.out(Reply, ..)` leaves the reply on the broker's own
@@ -129,7 +129,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// The reply type fixes its destination, and the mount site names the policy the reply leaves through:
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::{Deserialize, Serialize};
@@ -226,7 +226,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// there, so the cap holds where the broker holds the message back itself and where its crate
     /// honours the delay by publishing a copy that carries the framework's header.
     ///
-    /// An immediate [`retry`](crate::runtime::HandlerOutcome::retry) obeys the cap too. On a
+    /// An immediate [`retry`](crate::HandlerOutcome::retry) obeys the cap too. On a
     /// transport that counts its own redeliveries it stays the broker's requeue; on one that
     /// counts none the runtime republishes the delivery at once so the count travels with it, so
     /// under a cap an immediate retry is no longer a broker requeue.
@@ -234,7 +234,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # fn build() {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
@@ -288,7 +288,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # fn build() {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
@@ -348,7 +348,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # fn build() {
     /// use ruststream::memory::{MemoryBroker, MemoryPublish};
     /// use ruststream::runtime::{HandlerOutcome, Router, RouterDef};
@@ -390,7 +390,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// surface's own.
     ///
     /// Named once per position: the codec slot the call fills is filled, so a second one does not
-    /// compile. A byte-for-byte ([`Serialized`](crate::runtime::Serialized)) reply carries its own
+    /// compile. A byte-for-byte ([`Serialized`](crate::Serialized)) reply carries its own
     /// bytes and has no codec position at all.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn codec<Cd>(
@@ -403,9 +403,9 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         RouterWith::new(self.def, self.attach.codec_last(codec), self.router)
     }
 
-    /// Composes a static [`PublishTransform`](crate::runtime::PublishTransform) onto everything
+    /// Composes a static [`PublishTransform`](crate::PublishTransform) onto everything
     /// that leaves the position named last, of that position's own
-    /// [`ContextKind`](crate::runtime::ContextKind): a reply hands the transform the delivery it
+    /// [`ContextKind`](crate::ContextKind): a reply hands the transform the delivery it
     /// answers, a slot hands it the slot's name.
     ///
     /// The step repeats and they run in the order the chain writes them, so a chain names as many
@@ -414,7 +414,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     /// Before any `.out(..)` the step has no position to ride, and the call fails naming the fix.
     ///
     /// A transform declaring
-    /// [`Destination = Names`](crate::runtime::PublishTransform::Destination) needs the position to
+    /// [`Destination = Names`](crate::PublishTransform::Destination) needs the position to
     /// offer that right, and the call fails here when it does not: the reply type already declares
     /// its channel, the replies are a batch's, the right has been taken by an earlier transform, or
     /// the slot's `#[publishes(..)]` dictionary contains a type that fixes its own channel.
@@ -430,9 +430,9 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
         RouterWith::new(self.def, self.attach.transform_last(transform), self.router)
     }
 
-    /// Composes a [`BatchPublishTransform`](crate::runtime::BatchPublishTransform) onto every
+    /// Composes a [`BatchPublishTransform`](crate::BatchPublishTransform) onto every
     /// reply of a batch (`&[T]` plus `reply(..)`), after the per-message stack. Wrap a
-    /// per-message transform with [`for_batch`](crate::runtime::for_batch) to reuse it here.
+    /// per-message transform with [`for_batch`](crate::for_batch) to reuse it here.
     ///
     /// Reply-only: a slot publish is one message with no batch to run a batch transform over.
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
@@ -506,7 +506,7 @@ impl<Mount, R, Def, Attach, Last> fmt::Debug for RouterWith<Mount, R, Def, Attac
 /// chain already filled: the hook a broker crate layers its own publisher settings on.
 ///
 /// The publish-side mirror of
-/// [`map_source`](crate::runtime::SubscriberSettings::map_source). Core cannot know that a publish
+/// [`map_source`](crate::SubscriberSettings::map_source). Core cannot know that a publish
 /// has an exchange, a partition key or a confirm mode, so the broker declares a trait over the
 /// mount chain bound to its own policy type and implements each method as one `map_publisher`
 /// call. The bound means those methods simply do not exist on a chain that named another broker's
@@ -590,7 +590,7 @@ where
 }
 
 use super::mount::DefaultReply;
-use crate::runtime::slot::NoReply;
+use crate::slot::NoReply;
 
 /// The attachment a reply-only form starts with: the broker's default policy, no slots.
 pub(crate) type ReplyOnly = (DefaultReply, ());

@@ -3,12 +3,12 @@
 //! There are two of them, because a registration has two ways to finish. One that is complete as
 //! it stands commits when the guard drops at the end of the statement ([`Mounting`]), so the type
 //! carries no `#[must_use]`: dropping it IS the registration. One carrying
-//! [`Out`](crate::runtime::Out) slots has nothing to commit until every slot is bound, so its
+//! [`Out`](crate::Out) slots has nothing to commit until every slot is bound, so its
 //! terminal is a call ([`MountingSlots::build`]) and the type says so with `#[must_use]` - a
 //! forgotten `.build()` is then a warning at the mount site rather than a panic at startup.
 //!
 //! A form with nothing of the handler's own to attach still gets a [`Mounting`] guard, because
-//! every registration can bind the deferred-retry slot ([`Retry`](crate::runtime::Retry)), and
+//! every registration can bind the deferred-retry slot ([`Retry`](crate::Retry)), and
 //! binding it opens a mount chain over the finished route so the slot steps follow.
 
 use std::borrow::Cow;
@@ -17,17 +17,15 @@ use std::num::NonZeroU32;
 
 use crate::Broker;
 
-use crate::runtime::app::scope::BrokerScope;
-use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::{PublishIdentity, PublishPipeline};
-use crate::runtime::retry::{
+use crate::app::scope::BrokerScope;
+use crate::middleware::BlanketLayer;
+use crate::publish::{PublishIdentity, PublishPipeline};
+use crate::retry::{
     Absent, CapOpen, DeadLetterOpen, DeclareCap, DeclareDeadLetter, DeclareMount, DestinationLast,
     DestinationOpen, Present, Retry, RetryOpen, RouteDeclaring, RoutePosition,
 };
-use crate::runtime::router::{
-    MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith,
-};
-use crate::runtime::slot::{
+use crate::router::{MapPublisher, Router, RouterBroker, RouterCommit, RouterDef, RouterWith};
+use crate::slot::{
     AdmitsAt, BatchTransformLast, CodecLast, MapPolicyLast, NamedStep, OutPosition, Reply,
     ReplyLast, ReplyStep, TransactionalLast, TransformLast,
 };
@@ -78,14 +76,14 @@ where
     }
 }
 
-/// The guard [`BrokerScope::include`](crate::runtime::BrokerScope::include) hands back for a
+/// The guard [`BrokerScope::include`](crate::BrokerScope::include) hands back for a
 /// registration that is complete as it stands: one router mount chain and the scope it drains
 /// into.
 ///
 /// Every step forwards to the chain underneath, so the vocabulary, the typestate and the
 /// diagnostics are the router's. Dropping the guard at the end of the statement is what commits,
 /// which is why the type is not `#[must_use]`: `b.include(respond).out_reply(Publish);` is a
-/// whole registration. A registration whose [`Out`](crate::runtime::Out) slots have to be bound
+/// whole registration. A registration whose [`Out`](crate::Out) slots have to be bound
 /// first gets [`MountingSlots`] instead.
 pub struct Mounting<'s, B, Layers, C, State, Pipeline, Chain>
 where
@@ -103,7 +101,7 @@ where
     B: Broker + 'static,
     Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         chain: Chain,
         scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
     ) -> Self {
@@ -151,8 +149,8 @@ where
     RouterWith<Mount, R, Def, Attach, Last>: ScopeCommit<B, Layers, C, State, Pipeline>,
 {
     /// See [`RouterWith::out`]: names the publish policy of one position, the reply's
-    /// ([`Reply`](crate::runtime::Reply)), one slot's, or the deferred retry's
-    /// ([`Retry`](crate::runtime::Retry)).
+    /// ([`Reply`](crate::Reply)), one slot's, or the deferred retry's
+    /// ([`Retry`](crate::Retry)).
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out<M, Policy, Index>(
         self,
@@ -445,7 +443,7 @@ where
         ScopeCommit<B, Layers, C, State, Pipeline>,
 {
     /// Names the publish policy of one position. A registration whose handler publishes nothing
-    /// of its own has exactly one, the deferred retry: see [`Retry`](crate::runtime::Retry), and
+    /// of its own has exactly one, the deferred retry: see [`Retry`](crate::Retry), and
     /// it binds once. The call opens a mount chain over the finished route, so the steps after it
     /// are the slot steps.
     // The unit marker drives inference, so it travels by value to keep the call site
@@ -617,7 +615,7 @@ where
     }
 }
 
-/// The guard a registration carrying [`Out`](crate::runtime::Out) slots gets.
+/// The guard a registration carrying [`Out`](crate::Out) slots gets.
 ///
 /// It holds the same chain as [`Mounting`], finished by [`build`](Self::build) once every slot is
 /// bound. A chain that still holds an unbound slot has nothing to commit, so this guard's
@@ -641,7 +639,7 @@ impl<'s, B, Layers, C, State, Pipeline, Chain>
 where
     B: Broker + 'static,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         chain: Chain,
         scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
     ) -> Self {
@@ -681,7 +679,7 @@ where
         MountingSlots::new(f(chain), scope)
     }
 
-    /// Commits the registration. Exists only once every [`Out`](crate::runtime::Out) slot is
+    /// Commits the registration. Exists only once every [`Out`](crate::Out) slot is
     /// bound: a chain that still has a `MissingSlot<..>` in its attachment fails to compile here,
     /// naming the slot.
     ///
@@ -708,8 +706,8 @@ where
     B: Broker + 'static,
 {
     /// See [`RouterWith::out`]: names the publish policy of one position, the reply's
-    /// ([`Reply`](crate::runtime::Reply)), one slot's, or the deferred retry's
-    /// ([`Retry`](crate::runtime::Retry)).
+    /// ([`Reply`](crate::Reply)), one slot's, or the deferred retry's
+    /// ([`Retry`](crate::Retry)).
     #[allow(clippy::type_complexity)] // the chain's own state; an alias would hide the position
     pub fn out<M, Policy, Index>(
         self,

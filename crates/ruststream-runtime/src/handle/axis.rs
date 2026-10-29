@@ -13,7 +13,7 @@
 //! | `Message<H, P>` | one decoded message + typed headers | `&Message<H, P>` |
 //! | `F<'_>` where `F` is [`Deserialized`] | one payload, self-constructed | `&F<'_>` |
 //! | `T` on the carried lane | the value one delivery holds | `&T` |
-//! | `S` where `S` is an [`InMessages`](crate::runtime::InMessages) set | one decoded message, as the variant the set picks | `&S` |
+//! | `S` where `S` is an [`InMessages`](crate::InMessages) set | one decoded message, as the variant the set picks | `&S` |
 //! | `[T]` | a batch of decoded messages | `&[T]` |
 //! | `[Message<H, P>]` | a batch with typed headers per element | `&[Message<H, P>]` |
 //! | `[F<'_>]` where `F` is [`Deserialized`] | a batch of self-constructed payloads | `&[F<'_>]` |
@@ -29,20 +29,18 @@ use std::{error, fmt};
 
 use serde::de::DeserializeOwned;
 
-use crate::runtime::input::{Carried, Decoded, DecodedPair, InputKind, Provided};
+use crate::input::{Carried, Decoded, DecodedPair, InputKind, Provided};
 
 use super::docs::DocState;
 use super::verdict::{Batched, OneByOne, VerdictFamily};
-use crate::runtime::router::forms;
-use crate::runtime::router::forms::{
-    BatchOut, CarriedBatch, Out, RawBatch, RawSubscribing, Subscribing,
-};
+use crate::router::forms;
+use crate::router::forms::{BatchOut, CarriedBatch, Out, RawBatch, RawSubscribing, Subscribing};
 
 /// One incoming message together with its decoded typed header contract.
 ///
 /// As a [`Handle`](super::Handle) input (`Message<OrderHeaders, Order>`), the core decodes the
 /// payload and the headers in the same stage, under the same
-/// [`on_failure(decode = ..)`](crate::runtime::FailurePolicies) policy as the payload alone, and
+/// [`on_failure(decode = ..)`](crate::FailurePolicies) policy as the payload alone, and
 /// the body receives ready values. The pairing is structural: each consumer declares the
 /// contract it reads, so two subscribers of one subject may read different header sets.
 ///
@@ -53,7 +51,7 @@ use crate::runtime::router::forms::{
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -113,7 +111,7 @@ impl<H, P> Message<H, P> {
 /// The core hands [`from_payload`](Self::from_payload) the delivery's bytes exactly as they
 /// arrived - no codec runs, no decode policy of a codec applies, and nothing is copied: the
 /// output borrows the broker's buffer. A failed construction is settled by the subscriber's
-/// [`on_failure(decode = ..)`](crate::runtime::FailurePolicies) policy, the same rung a codec
+/// [`on_failure(decode = ..)`](crate::FailurePolicies) policy, the same rung a codec
 /// decode failure lands on. This is the lane a zero-copy wire format (flatbuffers, capnp, a
 /// hand-rolled frame) rides without pretending to be `serde`.
 ///
@@ -263,7 +261,6 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 /// A handler of one carried value and one of a batch, over a broker crate whose derive puts `SendEmail` on this lane:
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory"))]
 /// # mod demo {
 /// # mod db_queue {
 /// #     // The broker crate's side: its broker, its descriptor, its deliveries and pages of rows.
@@ -368,7 +365,7 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 #[derive(Debug)]
 pub struct SoloCarried<T>(PhantomData<T>);
 
-/// The single message-set input: `In = S` for an [`InMessages`](crate::runtime::InMessages)
+/// The single message-set input: `In = S` for an [`InMessages`](crate::InMessages)
 /// enum `S`.
 ///
 /// The set's variants each wrap one model, and the set decodes the delivery as the variant its
@@ -381,7 +378,7 @@ pub struct SoloSet<S>(PhantomData<S>);
 #[derive(Debug)]
 pub struct Batch<T>(PhantomData<T>);
 
-/// The message-set batch input: `In = [S]` for an [`InMessages`](crate::runtime::InMessages)
+/// The message-set batch input: `In = [S]` for an [`InMessages`](crate::InMessages)
 /// enum `S`. See [`SoloSet`].
 #[derive(Debug)]
 pub struct BatchSet<S>(PhantomData<S>);

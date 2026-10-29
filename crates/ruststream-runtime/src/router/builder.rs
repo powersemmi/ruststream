@@ -11,32 +11,30 @@ use crate::{
     SubscriptionSource,
 };
 
-use crate::runtime::batch::{
-    BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata,
-};
-use crate::runtime::batch_inject::{BatchInjectDef, batch_inject_metadata};
-use crate::runtime::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
-use crate::runtime::dispatch::Workers;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::Handler;
-use crate::runtime::inject::{InjectDef, inject_metadata};
-use crate::runtime::input::{Carried, DecodeWith, Materialize, Provided};
-use crate::runtime::metadata::{HandlerMetadata, OutgoingKind, PublishDescription};
-use crate::runtime::middleware::{BlanketLayer, Identity, Layer, Stack};
-use crate::runtime::publish::{
+use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch, batch_metadata};
+use crate::batch_inject::{BatchInjectDef, batch_inject_metadata};
+use crate::batch_publishing::{BatchPublishingDef, batch_publishing_metadata};
+use crate::dispatch::Workers;
+use crate::failure::FailurePolicies;
+use crate::handler::Handler;
+use crate::inject::{InjectDef, inject_metadata};
+use crate::input::{Carried, DecodeWith, Materialize, Provided};
+use crate::metadata::{HandlerMetadata, OutgoingKind, PublishDescription};
+use crate::middleware::{BlanketLayer, Identity, Layer, Stack};
+use crate::publish::{
     FitsOffer, ForReply, NamesDestination, NarrowToUse, OutPipeline, PublishIdentity,
     PublishPipeline, PublishTransform, Reads,
 };
-use crate::runtime::publishing::{PublishingDef, publishing_metadata};
-use crate::runtime::redelivery::{PublishesCopiesHere, RetryPairing, RetrySetup};
-use crate::runtime::retry::{
+use crate::publishing::{PublishingDef, publishing_metadata};
+use crate::redelivery::{PublishesCopiesHere, RetryPairing, RetrySetup};
+use crate::retry::{
     Absent, DeclareCap, DeclareDeadLetter, DeclareMount, Present, Retry, RetryOffer, RetryOpen,
     RetryStackUse, RouteDeclaring, RoutePosition, SettlesDestination,
 };
-use crate::runtime::settings::BatchSized;
-use crate::runtime::slot::{NoReply, OutAttachment, SlotCodec};
-use crate::runtime::subscriber_def::{SubscriberDef, subscriber_metadata};
-use crate::runtime::typed::Typed;
+use crate::settings::BatchSized;
+use crate::slot::{NoReply, OutAttachment, SlotCodec};
+use crate::subscriber_def::{SubscriberDef, subscriber_metadata};
+use crate::typed::Typed;
 
 use super::builders::RouterWith;
 use super::routes::{
@@ -56,7 +54,7 @@ use super::{
 ///
 /// Build it by chaining (each call consumes the router and returns a new type that carries the
 /// added registration), then mount it with
-/// [`include_router`](crate::runtime::BrokerScope::include_router). The registration list `Routes` is
+/// [`include_router`](crate::BrokerScope::include_router). The registration list `Routes` is
 /// an opaque nested tuple, so a builder function returns `impl RouterDef<B>` instead of naming the
 /// type.
 ///
@@ -70,7 +68,7 @@ use super::{
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # fn build() {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{Context, Handle, HandlerOutcome, Router, RouterDef, subscriber};
@@ -104,13 +102,13 @@ pub struct Router<B, Routes = (), C = (), Layers = Identity, Pipe = PublishIdent
     pub(super) routes: Routes,
     pub(super) codec: C,
     pub(super) layers: Layers,
-    /// The publish pipeline this chain's [`Out`](crate::runtime::Out) slots send through, under
+    /// The publish pipeline this chain's [`Out`](crate::Out) slots send through, under
     /// each slot's own `.transform(..)` steps.
     ///
     /// A slot's pipeline is part of the instantiated definition's type, so it is fixed when the
     /// slot binds - which is at `include`, before an app exists. A router built on its own
     /// therefore carries [`PublishIdentity`] here and its slots publish with nothing in the way;
-    /// the chain a [`BrokerScope`](crate::runtime::BrokerScope) drives carries the app's own
+    /// the chain a [`BrokerScope`](crate::BrokerScope) drives carries the app's own
     /// pipeline, because there the app is already known. Replies are not affected either way:
     /// their publisher pairs at startup, so they travel the app's pipeline on both surfaces.
     pub(super) pipeline: Pipe,
@@ -148,7 +146,7 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
 {
     /// Adds a router-scope middleware layer, wrapping every handler in this router when the
     /// router is mounted. The first layer added runs outermost within the router; the app's
-    /// global [`layer`](crate::runtime::RustStream::layer) stack wraps outside it.
+    /// global [`layer`](crate::RustStream::layer) stack wraps outside it.
     ///
     /// The layer must be a [`BlanketLayer`] (it applies to handlers whose concrete types the
     /// router hides), like the app-global stack, and it is declared before the router's first
@@ -168,7 +166,7 @@ impl<B: Broker + 'static, RouteCodec, RouteLayers, RoutePipe>
 }
 
 impl<B: Broker + 'static, RouteCodec, RoutePipe> Router<B, (), RouteCodec, Identity, RoutePipe> {
-    /// The empty chain a [`BrokerScope`](crate::runtime::BrokerScope) drives one registration
+    /// The empty chain a [`BrokerScope`](crate::BrokerScope) drives one registration
     /// through: the scope's codec and its publish pipeline, with no router-scope layers of its
     /// own (the app's stack wraps at the drain, as it does for any router).
     pub(crate) fn for_scope(codec: RouteCodec, pipeline: RoutePipe) -> Self {
@@ -211,7 +209,7 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// Two modules' routers mounted as one group:
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;
@@ -269,10 +267,10 @@ impl<B: Broker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
 
     /// Attaches `handler` to an already-created `subscriber`. Machinery, not the user path: a
     /// service mounts definitions with [`include`](Router::include) and the value constructors
-    /// ([`subscriber`](crate::runtime::subscriber), ...).
+    /// ([`subscriber`](crate::subscriber), ...).
     ///
     /// The subscriber is created up front (before connect), the handler arrives fully wired (a
-    /// decode adapter included, see [`typed`](crate::runtime::typed)), and the metadata is the
+    /// decode adapter included, see [`typed`](crate::typed)), and the metadata is the
     /// caller's to assemble. That is the shape the runtime's own dispatch tests and a broker
     /// author holding a hand-built subscriber need, and nothing above it.
     #[allow(clippy::type_complexity)] // the grown chain's own type; an alias would hide the route
@@ -771,12 +769,12 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// processes up to `n` deliveries of this subscriber concurrently, [`Workers::keyed`]
     /// dispatches over per-key sequential lanes. On an `include`d definition this overrides the
     /// attribute's `workers(..)` clause and the chained
-    /// [`workers`](crate::runtime::SubscriberSettings::workers) setting alike.
+    /// [`workers`](crate::SubscriberSettings::workers) setting alike.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::Deserialize;
@@ -817,11 +815,11 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// decode step, so the layer sees the raw delivery.
     ///
     /// The per-registration counterpart of the app-wide
-    /// [`RustStream::layer`](crate::runtime::RustStream::layer) and the router-wide
+    /// [`RustStream::layer`](crate::RustStream::layer) and the router-wide
     /// [`layer`](Router::layer) on a fresh router: those two wrap every handler in their scope, so
     /// they take a [`BlanketLayer`], which cannot be written for a layer fixed to one message
     /// type. This one wraps exactly one registration, whose handler type is still concrete here,
-    /// so it takes an ordinary [`Layer`] - which is what a [`DynStack`](crate::runtime::DynStack)
+    /// so it takes an ordinary [`Layer`] - which is what a [`DynStack`](crate::DynStack)
     /// over the broker's own message type is.
     ///
     /// Which of the two a `.layer(..)` call is follows what the chain named before it, like every
@@ -832,7 +830,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::runtime::layers::TracingLayer;
@@ -925,7 +923,7 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// A form that publishes nothing of its own is a finished route by the time `include`
     /// returns, and the one position such a registration still has is the deferred retry - see
-    /// [`Retry`](crate::runtime::Retry). Naming it opens a mount chain over that route, so the
+    /// [`Retry`](crate::Retry). Naming it opens a mount chain over that route, so the
     /// steps after it are the slot steps and `.build()` hands the router back.
     ///
     /// Name it after that registration's other settings ([`workers`](Self::workers),
@@ -934,7 +932,7 @@ impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Duration;
     ///
@@ -1194,7 +1192,7 @@ where
 
 /// What one bound slot contributes to the document: what its policy and codec say about each
 /// destination its marker declares. Produced by
-/// [`OutAttachment::describe`](crate::runtime::OutAttachment) at the commit, before wiring
+/// [`OutAttachment::describe`](crate::OutAttachment) at the commit, before wiring
 /// consumes the attachment.
 pub(super) type SlotDescription = Vec<(Cow<'static, str>, PublishDescription)>;
 

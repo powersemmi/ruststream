@@ -6,18 +6,16 @@ use tokio::task::JoinHandle;
 
 use crate::{BatchSubscriber, Broker, Connected, Subscriber, SubscriptionSource};
 
-use crate::runtime::batch::BatchHandler;
-use crate::runtime::dispatch::{
-    Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers,
-};
-use crate::runtime::failure::{DispatchFailure, FailurePolicies};
-use crate::runtime::handler::Handler;
-use crate::runtime::lifecycle::{BoxError, BoxFuture};
-use crate::runtime::metadata::HandlerMetadata;
-use crate::runtime::redelivery::{
+use crate::batch::BatchHandler;
+use crate::dispatch::{Workers, spawn_batch_dispatch, spawn_dispatch, spawn_dispatch_workers};
+use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::handler::Handler;
+use crate::lifecycle::{BoxError, BoxFuture};
+use crate::metadata::HandlerMetadata;
+use crate::redelivery::{
     CopyPathAddress, RetrySetup, ScopeDelivery, open_mounted_subscriber, open_subscription,
 };
-use crate::runtime::shutdown::Shutdown;
+use crate::shutdown::Shutdown;
 
 use super::{SourceBatch, SourceMessage};
 
@@ -40,8 +38,8 @@ pub(crate) type BoundStarter<B, State> = Box<
 /// `State` is the app's shared state type, threaded so a handler is only mounted on a sink whose state
 /// type it matches.
 ///
-/// Created and drained inside the application; a [`RouterDef`](crate::runtime::RouterDef) pushes
-/// into it during [`include_router`](crate::runtime::BrokerScope::include_router). You do not
+/// Created and drained inside the application; a [`RouterDef`](crate::RouterDef) pushes
+/// into it during [`include_router`](crate::BrokerScope::include_router). You do not
 /// construct one directly.
 pub struct RouterSink<B: Broker, State = ()> {
     starters: Vec<BoundStarter<B, State>>,
@@ -185,7 +183,7 @@ impl<B: Broker + 'static, State: Send + Sync + 'static> RouterSink<B, State> {
     }
 
     /// Pushes a fully custom starter, for the one mount the factory helpers cannot express:
-    /// applying a [`BlanketLayer`](crate::runtime::BlanketLayer) inside the startup closure
+    /// applying a [`BlanketLayer`](crate::BlanketLayer) inside the startup closure
     /// (its RPITIT return captures the layer borrow, so the applied handler cannot leave a
     /// factory closure).
     pub(crate) fn push_raw(&mut self, starter: BoundStarter<B, State>, meta: HandlerMetadata) {

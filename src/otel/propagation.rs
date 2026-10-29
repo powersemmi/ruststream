@@ -414,7 +414,7 @@ mod tests {
         let mut incoming = HeaderMap::new();
         incoming.insert(TRACEPARENT, HEADER);
         incoming.insert(TRACESTATE, "vendor=opaque");
-        let cx = PublishContext::new("orders", &incoming, &());
+        let cx = PublishContext::from_map("orders", &incoming, &());
 
         let mut out = Outgoing::new("replies", b"body".as_slice());
         PublishTransform::apply(&TracePropagation, &mut out, &mut None::<()>, &cx);
@@ -429,7 +429,7 @@ mod tests {
         use crate::runtime::{Outgoing, PublishContext};
 
         let incoming = HeaderMap::new();
-        let cx = PublishContext::new("orders", &incoming, &());
+        let cx = PublishContext::from_map("orders", &incoming, &());
 
         let mut out = Outgoing::new("replies", b"body".as_slice());
         PublishTransform::apply(&TracePropagation, &mut out, &mut None::<()>, &cx);

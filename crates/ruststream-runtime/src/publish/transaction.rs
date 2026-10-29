@@ -41,7 +41,7 @@ impl<T> Admits<T, ()> for AnyDeclared {}
 ///
 /// The surfaces are a bare publisher ([`PublishExt::begin`](super::PublishExt::begin)) and an
 /// `Out` slot whose wired value is a [`TransactionalPublisher`]
-/// ([`Slot::begin`](crate::runtime::Slot::begin)).
+/// ([`Slot::begin`](crate::Slot::begin)).
 /// Publishes issued through the scope become visible together on [`commit`](Self::commit), or
 /// not at all after [`abort`](Self::abort); both consume the scope, so a double commit or a
 /// publish after settling is a compile error. This is the hand-written counterpart of the
@@ -49,8 +49,8 @@ impl<T> Admits<T, ()> for AnyDeclared {}
 ///
 /// The scope encodes values with the surface's codec and sends them into the open transaction
 /// directly: it opens on the surface's own publisher, so the position's
-/// [`PublishTransform`](crate::runtime::PublishTransform) stack and the app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware do not run here.
+/// [`PublishTransform`](crate::PublishTransform) stack and the app-wide
+/// [`publish_layer`](crate::RustStream::publish_layer) middleware do not run here.
 ///
 /// `Admit` is the surface the scope was opened on, and gates what [`message`](Self::message)
 /// admits (see [`Admits`]): a scope opened on a slot admits what the slot's typed entry admits,
@@ -211,7 +211,7 @@ impl<P, Enc, Admit> fmt::Debug for TransactionScope<'_, P, Enc, Admit> {
 /// The surfaces are a bare publisher
 /// ([`PublishExt::owned_transaction`](super::PublishExt::owned_transaction))
 /// and an `Out` slot whose wired value is an [`OwnedTransactions`] publisher
-/// ([`Slot::transaction`](crate::runtime::Slot::transaction)).
+/// ([`Slot::transaction`](crate::Slot::transaction)).
 /// The owned counterpart of [`TransactionScope`]: the scope borrows the handle's single
 /// broker-side transaction, while this value owns an independent one
 /// ([`OwnedTransactions::Transaction`]), so any number can be open on one publisher and driven
@@ -221,8 +221,8 @@ impl<P, Enc, Admit> fmt::Debug for TransactionScope<'_, P, Enc, Admit> {
 /// after settling is a compile error.
 ///
 /// Like the scope, it encodes values and buffers them directly: the publish paths a mount site
-/// composes - the position's [`PublishTransform`](crate::runtime::PublishTransform) stack and the
-/// app-wide [`publish_layer`](crate::runtime::RustStream::publish_layer) middleware - end in a
+/// composes - the position's [`PublishTransform`](crate::PublishTransform) stack and the
+/// app-wide [`publish_layer`](crate::RustStream::publish_layer) middleware - end in a
 /// send, and
 /// the buffer is not one, so none of them run here. `Admit` is the
 /// surface the transaction was opened on and gates what [`message`](Self::message) admits, as

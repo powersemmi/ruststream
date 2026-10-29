@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::*;
-#[cfg(feature = "memory")]
 use crate::OutgoingMessage;
 use crate::{MessageHeaders, NoHeaders, WithHeaders};
 
@@ -119,13 +118,12 @@ fn an_unrestricted_declaration_documents_the_whole_dictionary() {
 
 /// The slot wrapper is transparent for the whole transaction protocol: what the handler
 /// aborts through the slot never reaches the bus.
-#[cfg(feature = "memory")]
 #[tokio::test]
 async fn a_slot_publisher_delegates_the_transaction_protocol() {
     use futures::StreamExt;
 
     use crate::Subscriber;
-    use crate::memory::MemoryBroker;
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("slots.ledger");
@@ -146,15 +144,15 @@ async fn a_slot_publisher_delegates_the_transaction_protocol() {
 
 /// The builder reports both pre-broker failures, each in its own arm, and stops before the
 /// broker sees anything.
-#[cfg(all(feature = "memory", feature = "json"))]
+#[cfg(feature = "json")]
 #[tokio::test]
 async fn the_builder_separates_the_encode_and_the_headers_failure() {
     use futures::StreamExt;
 
     use crate::Subscriber;
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryBroker;
-    use crate::runtime::{PublishError, PublishIdentity, Slot};
+    use crate::{PublishError, PublishIdentity, Slot};
+    use ruststream::memory::MemoryBroker;
 
     let broker = MemoryBroker::new();
     let mut subscriber = broker.subscribe("events.done");

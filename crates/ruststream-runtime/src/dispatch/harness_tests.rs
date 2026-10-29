@@ -12,17 +12,17 @@ use bytes::BytesMut;
 use futures::{Stream, stream};
 
 use super::{Delivery, DispatchFailure, run_batch};
-use crate::memory::{ConnectedMemoryBroker, MemoryError};
-use crate::runtime::batch::CarriedBatch;
-use crate::runtime::context::Context;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::shutdown::Shutdown;
+use crate::batch::CarriedBatch;
+use crate::context::Context;
+use crate::failure::FailurePolicies;
+use crate::handler::HandlerOutcome;
+use crate::shutdown::Shutdown;
 use crate::testing::coordinator::Coordinator;
 use crate::{
     AckError, BatchSubscriber, CarriesBatch, HeaderMap, IncomingMessage, NamedCopies, Subscriber,
     SubscriptionSource,
 };
+use ruststream::memory::{ConnectedMemoryBroker, MemoryError};
 
 /// A value that counts the clones made of it.
 #[derive(Debug)]

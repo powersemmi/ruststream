@@ -1,6 +1,6 @@
 //! The broker side of the harness: [`InProcess`], the transition that runs a production broker
 //! inside the test process, and [`TestableBroker`], the view of its connected form the
-//! [`TestApp`](super::TestApp) harness and the [`conformance`](crate::conformance) suite drive.
+//! [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness and the [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) suite drive.
 
 use std::any::{Any, TypeId, type_name};
 use std::fmt;
@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time;
 use tokio::time::Instant;
 
-use crate::runtime::{BoxError, BoxFuture, InProcessConnect};
+use crate::{BoxError, BoxFuture, InProcessConnect};
 use crate::{Broker, DefaultPublish, OutgoingMessage, PublishPolicy, Publisher, RawMessage};
 
 use super::Coordinator;
@@ -20,7 +20,7 @@ use super::Coordinator;
 /// instead of [`connect`](Broker::connect): it produces the broker's own connected form, backed
 /// by an in-process transport, with no I/O. The connected form is the one production gets, so the
 /// app's routes, publish policies and subscription descriptors resolve against it unchanged, and
-/// [`TestApp`](super::TestApp) runs the service's production app as it is.
+/// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) runs the service's production app as it is.
 ///
 /// The transport has no configuration of its own. It reads every setting from the broker it was
 /// built from (default group, prefetch, topology declaration, whatever the real broker applies),
@@ -31,7 +31,7 @@ use super::Coordinator;
 /// A broker crate implements this under its `testing` feature, next to
 /// [`TestableBroker`] on the connected form, and registers the broker with
 /// [`register_testable_broker!`](crate::register_testable_broker).
-/// [`MemoryBroker`](crate::memory::MemoryBroker) is the reference: it has no server, so its
+/// [`MemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.MemoryBroker.html) is the reference: it has no server, so its
 /// in-process transition is its ordinary `connect`.
 ///
 /// The in-process mode lives in the production types: the connected form, its subscriber, its
@@ -41,7 +41,7 @@ use super::Coordinator;
 /// production binary. A mount that compiles against the broker compiles in process, and a
 /// capability is the same type in both.
 ///
-/// The same test also runs against a stand: [`TestApp::start_live`](super::TestApp::start_live)
+/// The same test also runs against a stand: [`TestApp::start_live`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.start_live)
 /// connects the broker through its ordinary `connect` and needs nothing beyond the connected form
 /// and its [`DefaultPublish`] policy, through which the harness publishes a test's input.
 ///
@@ -50,9 +50,9 @@ use super::Coordinator;
 /// A service's whole test suite runs against this transport, so every difference from the real
 /// one is a green test for behaviour production does not have.
 ///
-/// - Run the [`conformance`](crate::conformance) suites in process, not only against a server:
-///   [`run_suite`](crate::conformance::harness::run_suite), then `lifecycle` and the capability
-///   suites through [`InProcessBroker`](crate::conformance::harness::InProcessBroker). `lifecycle`
+/// - Run the [`conformance`](https://docs.rs/ruststream/latest/ruststream/conformance/index.html) suites in process, not only against a server:
+///   [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html), then `lifecycle` and the capability
+///   suites through [`InProcessBroker`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/struct.InProcessBroker.html). `lifecycle`
 ///   asks what an in-process transport is rarely asked: whether a publisher created before the
 ///   shutdown errors afterwards. A transport whose publish is a channel send accepts the message
 ///   instead.
@@ -70,7 +70,7 @@ use super::Coordinator;
 /// - Keep what the real broker keeps. A queue or a log that exists before the subscription
 ///   delivers what reached it earlier; declare that with [`TestableBroker::backlog`], and read a
 ///   setting that decides it (an earliest offset, a deliver-all consumer) off the connected form.
-///   [`backlog_matches_server`](crate::conformance::in_process::backlog_matches_server) checks the
+///   [`backlog_matches_server`](https://docs.rs/ruststream/latest/ruststream/conformance/in_process/fn.backlog_matches_server.html) checks the
 ///   declaration against the server.
 /// - Read the production wiring. A check the real broker makes at subscribe or publish time (a
 ///   declaration it refuses, a name too long for the protocol, a header it cannot carry) runs in
@@ -88,7 +88,6 @@ use super::Coordinator;
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
 /// # mod demo {
 /// use std::future::Future;
 ///
@@ -145,16 +144,16 @@ pub trait InProcess: Broker<Connected: TestableBroker> {
 /// The view of a connected broker the test tooling drives.
 ///
 /// Implemented on the **connected form** a broker's [`InProcess`] transition produces: the
-/// [`TestApp`](super::TestApp) harness connects every broker of the app in process, then drives
+/// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) harness connects every broker of the app in process, then drives
 /// it through this, and
-/// [`conformance::harness::run_suite`](crate::conformance::harness::run_suite) checks the
+/// [`conformance::harness::run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html) checks the
 /// routing contract through the same surface.
 ///
 /// The transport answers settlement the way the real transport answers it. A transport that cannot
 /// acknowledge (`ZeroMQ`, MQTT `QoS 0`, Redis pub/sub, Core NATS) reports
 /// [`AckError::Unsupported`](crate::AckError::Unsupported) from its deliveries in production, so
 /// the in-process one reports it too: both the harness and
-/// [`run_suite`](crate::conformance::harness::run_suite) accept that answer, while a transport that
+/// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html) accept that answer, while a transport that
 /// claims success makes a handler's retry look settled in a test and lose the message in
 /// production. Either way the delivery is released to [`Coordinator::consumed`] once (from its
 /// `Drop`, which a refused settlement reaches like any other).
@@ -164,7 +163,7 @@ pub trait InProcess: Broker<Connected: TestableBroker> {
 /// dropped (so the harness can tell when the reaction has settled), and routes delayed
 /// redeliveries through [`Coordinator::schedule_redelivery`].
 ///
-/// [`ConnectedMemoryBroker`](crate::memory::ConnectedMemoryBroker) is the in-tree reference
+/// [`ConnectedMemoryBroker`](https://docs.rs/ruststream/latest/ruststream/memory/struct.ConnectedMemoryBroker.html) is the in-tree reference
 /// implementation.
 ///
 /// It is a separate, object-safe capability rather than a
@@ -174,7 +173,6 @@ pub trait InProcess: Broker<Connected: TestableBroker> {
 /// # Examples
 ///
 /// ```no_run
-/// # #[cfg(all(feature = "memory", feature = "conformance"))]
 /// # async fn run() {
 /// use ruststream::conformance::harness;
 /// use ruststream::memory::MemoryBroker;
@@ -242,7 +240,7 @@ pub trait TestableBroker: Send + Sync {
     /// answers with its own rule: every matching subscription where it fans out to all of them
     /// (NATS subjects), or the one it picks where it picks one.
     ///
-    /// A live [`TestApp`](super::TestApp) waits on it: a publish to this broker is owed once by
+    /// A live [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) waits on it: a publish to this broker is owed once by
     /// each subscription this answers, and by no other.
     ///
     /// # Examples
@@ -279,7 +277,7 @@ pub trait TestableBroker: Send + Sync {
     /// [`Backlog::Delivered`] for a queue or a log that keeps them.
     ///
     /// The in-process transport behaves as declared, and
-    /// [`run_suite`](crate::conformance::harness::run_suite) checks that it does. A setting the
+    /// [`run_suite`](https://docs.rs/ruststream/latest/ruststream/conformance/harness/fn.run_suite.html) checks that it does. A setting the
     /// broker was configured with is read here, off the connected form, where it decides the
     /// answer (a log read from its earliest offset, a stream consumer delivering all). The
     /// default is [`Backlog::Missed`].
@@ -348,17 +346,19 @@ pub struct TestableRegistration {
     live: LivePublish,
 }
 
-/// Publishes a test's input onto a connected broker, the connected form erased: what an injection
-/// is in live mode, where no in-process transport takes it. Built for one broker type, which it
-/// downcasts the connected form back to.
-pub(crate) type LivePublish = for<'m> fn(
+/// Publishes a test's input onto a connected broker, the connected form erased.
+///
+/// It is what an injection is in live mode, where no in-process transport takes it. Built for one
+/// broker type, which it downcasts the connected form back to.
+pub type LivePublish = for<'m> fn(
     &'m (dyn Any + Send + Sync),
     OutgoingMessage<'m>,
 ) -> BoxFuture<'m, Result<(), BoxError>>;
 
 /// Publishes `msg` onto `connected`, the connected form of `B`, through the broker's own
 /// [`DefaultPublish`] policy: the way an external producer reaches a live broker.
-pub(crate) fn live_publish<'m, B>(
+#[doc(hidden)]
+pub fn live_publish<'m, B>(
     connected: &'m (dyn Any + Send + Sync),
     msg: OutgoingMessage<'m>,
 ) -> BoxFuture<'m, Result<(), BoxError>>
@@ -404,7 +404,6 @@ impl TestableRegistration {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "memory")]
     /// # {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::testing::TestableRegistration;
@@ -429,23 +428,30 @@ impl TestableRegistration {
     }
 
     /// Whether this registration is the one for the broker type `broker`.
-    pub(crate) fn registers(&self, broker: TypeId) -> bool {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn registers(&self, broker: TypeId) -> bool {
         (self.broker)() == broker
     }
 
     /// The erased in-process transition of the registered broker type.
-    pub(crate) fn transition(&self) -> InProcessConnect {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn transition(&self) -> InProcessConnect {
         self.connect
     }
 
     /// How a test's input reaches the registered broker type once it is connected live.
-    pub(crate) fn live(&self) -> LivePublish {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live(&self) -> LivePublish {
         self.live
     }
 
     /// Resolves `any` to a `TestableBroker` if it is the connected form of this registration's
     /// broker type.
-    pub(crate) fn resolve<'a>(&self, any: &'a dyn Any) -> Option<&'a dyn TestableBroker> {
+    #[doc(hidden)]
+    pub fn resolve<'a>(&self, any: &'a dyn Any) -> Option<&'a dyn TestableBroker> {
         (self.downcast)(any)
     }
 }
@@ -477,7 +483,7 @@ fn testable_view<B: InProcess + 'static>(any: &dyn Any) -> Option<&dyn TestableB
 inventory::collect!(TestableRegistration);
 
 /// Registers a production broker type with the test harness, so
-/// [`TestApp`](crate::testing::TestApp) runs every broker of that type in process.
+/// [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) runs every broker of that type in process.
 ///
 /// It registers two things for the type: its [`InProcess`] transition, which the harness connects
 /// it through instead of [`connect`](crate::Broker::connect), and the [`TestableBroker`] view of
@@ -487,7 +493,6 @@ inventory::collect!(TestableRegistration);
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "memory")]
 /// # mod demo {
 /// use std::future::Future;
 ///
@@ -534,14 +539,14 @@ macro_rules! register_testable_broker {
 /// Waits until at least `count` messages have been published to `name` on `broker`.
 ///
 /// Returns all observed messages; on timeout it returns those seen so far (so assert on the returned
-/// messages, not just on length). For application tests prefer [`TestApp`](super::TestApp), which
+/// messages, not just on length). For application tests prefer [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html), which
 /// drives to quiescence without polling; this helper is for tests that run a service via
-/// [`run_until`](crate::runtime::RustStream::run_until) directly.
+/// [`run_until`](crate::RustStream::run_until) directly.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # async fn demo() -> Result<(), ruststream::memory::MemoryError> {
 /// use std::time::Duration;
 /// use ruststream::memory::MemoryBroker;

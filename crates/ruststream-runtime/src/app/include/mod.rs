@@ -5,12 +5,12 @@
 //! closure, so `include` hands back a [`Mounting`] guard that owns a router chain of its own and
 //! drains it into the scope's sink when the statement ends. The guard is an adapter and nothing
 //! more: every step, every typestate slot and every diagnostic comes from
-//! [`RouterWith`](crate::runtime::RouterWith).
+//! [`RouterWith`](crate::RouterWith).
 //!
 //! Which guard a registration uses follows its form. A plain or batch handler and a
 //! reply-publishing one commit when the [`Mounting`] guard drops at the end of the statement, so
 //! `b.include(handle);` and `b.include(respond).out_reply(Publish);` are each a whole
-//! registration. One carrying [`Out`](crate::runtime::Out) slots gets a [`MountingSlots`] guard
+//! registration. One carrying [`Out`](crate::Out) slots gets a [`MountingSlots`] guard
 //! and commits with `.build()`: a chain that still has an unbound slot has nothing to commit, so
 //! its terminal has to be a call - and the type is `#[must_use]`, so forgetting it is a warning
 //! where the mount site is.
@@ -22,11 +22,11 @@
 mod guard;
 
 use crate::Broker;
-use crate::runtime::middleware::Identity;
-use crate::runtime::router::{Router, RouterMount, forms};
+use crate::middleware::Identity;
+use crate::router::{Router, RouterMount, forms};
 
 use super::scope::BrokerScope;
-use crate::runtime::Declared;
+use crate::Declared;
 pub use guard::{Mounting, MountingSlots, ScopeCommit};
 
 /// The empty chain a scope drives one registration through: its codec and publish pipeline, no
@@ -38,7 +38,7 @@ type ScopeChain<Form, B, C, Pipeline, Def> =
     <Form as RouterMount<ScopeRouter<B, C, Pipeline>, Def>>::Out;
 
 /// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
-/// [`forms`](crate::runtime::forms), it picks the chain the form opens and the guard that
+/// [`forms`](crate::forms), it picks the chain the form opens and the guard that
 /// commits it. Machinery; you never implement or name it.
 #[doc(hidden)]
 pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
@@ -90,7 +90,7 @@ scope_mount! {
     forms::BatchPublishing,
 }
 
-/// Implements [`IncludeMount`] for a form carrying [`Out`](crate::runtime::Out) slots: the same
+/// Implements [`IncludeMount`] for a form carrying [`Out`](crate::Out) slots: the same
 /// chain, in the guard whose terminal is `.build()`. The chain is not committable until every
 /// slot is bound, so no commit bound is stated here - `build` is where it is checked.
 macro_rules! scope_mount_slots {
@@ -184,12 +184,12 @@ impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, 
     ///
     /// A plain or batch handler and a `reply("dest")` one register when the statement ends, so
     /// `b.include(handle);` and `b.include(respond).out_reply(Publish);` are both complete; a
-    /// handler carrying [`Out`](crate::runtime::Out) slots binds each with `.out(marker, policy)`
+    /// handler carrying [`Out`](crate::Out) slots binds each with `.out(marker, policy)`
     /// and finishes with `.build()`. Every form takes `.out_retry(policy)`, the deferred
     /// `retry_after` slot of that one registration, which takes the slot steps like any other.
     ///
     /// Decoding uses the scope codec when one was set
-    /// ([`with_broker_codec`](crate::runtime::RustStream::with_broker_codec)), else the
+    /// ([`with_broker_codec`](crate::RustStream::with_broker_codec)), else the
     /// [`DefaultCodec`](crate::codec::DefaultCodec).
     pub fn include<'s, D>(
         &'s mut self,

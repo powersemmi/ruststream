@@ -29,13 +29,13 @@ use super::{
     Bus, Discarding, LogMode, MemoryDelivery, MemoryError, MemoryMessage, MemoryOutbound,
     MemoryPublisher, MemoryState, MemorySubscriber, Retaining, SubscriptionShared, log,
 };
-#[cfg(feature = "testing")]
-use crate::testing::coordinator::Coordinator;
 use crate::{
     BatchSubscriber, BytesMut, IncomingMessage, OutgoingMessage, OwnedTransactions, Partitioned,
     Positioned, Publisher, RequestReply, Seekable, Seeker, Str, Subscriber, Take, Transaction,
     TransactionalPublisher,
 };
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::coordinator::Coordinator;
 
 /// The well-known header the [`Partitioned`] implementation reads the partition key from.
 pub const PARTITION_KEY_HEADER: &str = "partition-key";

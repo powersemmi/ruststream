@@ -4,14 +4,14 @@
 
 use std::any::type_name;
 
-use crate::runtime::batch::BatchResult;
-use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
-use crate::runtime::context::Context;
-use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::metadata::{OutgoingKind, OutgoingMessageMetadata};
-use crate::runtime::publishing::{PublishingCall, PublishingDef};
-use crate::runtime::router::IncludeDef;
-use crate::runtime::slot::{BindSlots, HasSlots, OutSlot};
+use crate::batch::BatchResult;
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::context::Context;
+use crate::handler::HandlerOutcome;
+use crate::metadata::{OutgoingKind, OutgoingMessageMetadata};
+use crate::publishing::{PublishingCall, PublishingDef};
+use crate::router::IncludeDef;
+use crate::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::Handle;
@@ -33,6 +33,7 @@ where
     type Form = R::SlotForm;
 }
 
+#[doc(hidden)]
 impl<A, R, E, C, H, Doc, Dest> HasSlots
     for Sealed<ReplyValue<HandleValue<A, R, Outs<E>, C, H, Doc>, Dest>>
 where
@@ -45,6 +46,7 @@ where
 /// live values, so the definition is its own bound form.
 macro_rules! impl_reply_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident / $pipe:ident),+))+) => {$(
+        #[doc(hidden)]
         impl<Conn, A, R, C, H, Doc, Dest, $($m, $p, $e, $pipe),+>
             BindSlots<Conn, ($(($p, $e, $pipe),)+)>
             for Sealed<

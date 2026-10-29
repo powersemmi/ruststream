@@ -435,10 +435,18 @@ async fn publish_before_subscribe<C: TestableBroker + Subscribe>(broker: C) {
             Backlog::Missed =>
                 "a subscription must receive only messages published after it opened",
             Backlog::Delivered => "the message published after the subscription opened comes next",
+            other => unknown_backlog(other),
         },
     );
     settle_ack(msg).await;
     broker.shutdown().await.expect("shutdown failed");
+}
+
+/// A [`Backlog`] answer added after this suite was written: the suite has no scenario for it.
+pub(crate) fn unknown_backlog(backlog: Backlog) -> ! {
+    panic!(
+        "the broker declares `Backlog::{backlog:?}`, which this conformance suite has no scenario for"
+    )
 }
 
 /// Acknowledges `msg`, accepting a transport that cannot acknowledge.

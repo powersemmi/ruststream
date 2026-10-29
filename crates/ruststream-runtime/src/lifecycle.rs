@@ -16,20 +16,24 @@ use std::{any::type_name, error::Error as StdError, pin::Pin, sync::Arc};
 use crate::bindable::ConnectedSlot;
 use crate::{Broker, ConnectedBroker};
 
-pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
-pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// A broker's error, erased.
+pub type BoxError = Box<dyn StdError + Send + Sync>;
+/// A lifecycle step's future, erased.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// The in-process transition of one registered broker type, erased: it takes that broker boxed as
-/// `Any` and yields its connected form boxed the same way. A test registration builds it for the
+/// The in-process transition of one registered broker type, erased.
+///
+/// It takes that broker boxed as `Any` and yields its connected form boxed the same way. A test registration builds it for the
 /// concrete type it names, so the erased broker below can connect in process without knowing
 /// which transport it is.
 #[cfg(feature = "testing")]
-pub(crate) type InProcessConnect =
+pub type InProcessConnect =
     fn(Box<dyn Any + Send>) -> BoxFuture<'static, Result<Box<dyn Any + Send>, BoxError>>;
 
 /// An unconnected broker, with its concrete type and error erased. Consuming `connect` yields
 /// the erased connected form.
-pub(crate) trait BrokerLifecycle: Send + Sync {
+pub trait BrokerLifecycle: Send + Sync {
+    /// Connects the broker, yielding its erased connected form.
     fn connect(
         self: Box<Self>,
     ) -> BoxFuture<'static, Result<Box<dyn ConnectedLifecycle>, BoxError>>;
@@ -54,7 +58,8 @@ pub(crate) trait BrokerLifecycle: Send + Sync {
 
 /// A connected broker, erased. Consuming `shutdown` drives the typed
 /// [`ConnectedBroker::shutdown`] and discards the typed witness (it carries no erasable surface).
-pub(crate) trait ConnectedLifecycle: Send + Sync {
+pub trait ConnectedLifecycle: Send + Sync {
+    /// Shuts the broker down, discarding the typed witness.
     fn shutdown(self: Box<Self>) -> BoxFuture<'static, Result<(), BoxError>>;
     /// The concrete broker type's name, for diagnostics and logging.
     fn name(&self) -> &'static str;

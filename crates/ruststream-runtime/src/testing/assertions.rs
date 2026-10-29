@@ -16,9 +16,9 @@ use bytes::Bytes;
 use crate::RawMessage;
 use crate::codec::Codec;
 // Only the DEFAULT codec is feature-dependent; the assertions that take a codec are always here.
+use crate::HandlerOutcome;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::DefaultCodec;
-use crate::runtime::HandlerOutcome;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
@@ -44,13 +44,15 @@ pub struct SubscriberAssertions<'a> {
 }
 
 impl<'a> SubscriberAssertions<'a> {
-    pub(crate) const fn new(coordinator: &'a Coordinator, scope_id: usize, name: String) -> Self {
+    #[doc(hidden)]
+    pub const fn new(coordinator: &'a Coordinator, scope_id: usize, name: String) -> Self {
         Self::within(coordinator, scope_id, name, Within::ALL)
     }
 
     /// Assertions over the calls recorded up to `within`: what a hook reads, the record as it
     /// stood at its call.
-    pub(crate) const fn within(
+    #[doc(hidden)]
+    pub const fn within(
         coordinator: &'a Coordinator,
         scope_id: usize,
         name: String,
@@ -332,7 +334,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "testing", feature = "memory"))]
+    /// # #[cfg(feature = "testing")]
     /// # mod demo {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::HandlerOutcome;
@@ -384,7 +386,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// # Examples
     ///
     /// ```no_run
-    /// # #[cfg(all(feature = "testing", feature = "memory"))]
+    /// # #[cfg(feature = "testing")]
     /// # mod demo {
     /// use ruststream::memory::MemoryBroker;
     /// use ruststream::runtime::HandlerOutcome;
@@ -488,7 +490,7 @@ impl<'a> SubscriberAssertions<'a> {
     /// Asserts the body was handed batches of exactly `sizes`, in the order they arrived.
     ///
     /// The batch the body sees is the batch the broker delivered: the mount site names the size
-    /// with [`batch`](crate::runtime::SubscriberSettings::batch) and the broker builds the batches
+    /// with [`batch`](crate::SubscriberSettings::batch) and the broker builds the batches
     /// to it, so this is where a test reads back that it did. One call is one batch, which is
     /// what [`assert_called`](Self::assert_called) counts, while
     /// [`received_raw`](Self::received_raw) still lists the elements flat. A single-message
@@ -592,8 +594,8 @@ impl SubscriberAssertions<'_> {
     /// assertions a test already uses
     /// (`assert_called(n)`, `with(..)`, `settled(..)`). Several hooks on one subscription run in
     /// the order they were registered; a call recorded before the registration does not run it.
-    /// Both [`TestApp::start`](super::TestApp::start) and
-    /// [`TestApp::start_live`](super::TestApp::start_live) run hooks.
+    /// Both [`TestApp::start`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.start) and
+    /// [`TestApp::start_live`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.start_live) run hooks.
     ///
     /// The harness awaits the hooks of a call before the publish that caused it returns, so a hook
     /// that never completes hangs that publish; the test's own timeout is the guard. A hook still
@@ -607,7 +609,7 @@ impl SubscriberAssertions<'_> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use std::sync::Arc;
     /// use std::sync::atomic::{AtomicUsize, Ordering};
@@ -677,7 +679,8 @@ pub struct PublishedAssertions<T> {
 impl<T> PublishedAssertions<T> {
     /// Assertions over a broker's publishes to one channel, with what the harness knows of each
     /// message's options.
-    pub(crate) fn new(
+    #[doc(hidden)]
+    pub fn new(
         coordinator: &Coordinator,
         target: PublishTarget,
         name: String,
@@ -695,7 +698,8 @@ impl<T> PublishedAssertions<T> {
     }
 
     /// Assertions over an `Out` slot's view, where every publish also carries the options.
-    pub(crate) fn captured(coordinator: &Coordinator, slot: &'static str, within: Within) -> Self {
+    #[doc(hidden)]
+    pub fn captured(coordinator: &Coordinator, slot: &'static str, within: Within) -> Self {
         let (messages, options) = coordinator
             .slot_published(slot, within)
             .into_iter()
@@ -802,7 +806,7 @@ impl<T> PublishedAssertions<T> {
     /// options.
     ///
     /// The options are what the broker's builder steps set on that one publish (see
-    /// [`PublishBuilder::options_mut`](crate::runtime::PublishBuilder::options_mut)); a publish
+    /// [`PublishBuilder::options_mut`](crate::PublishBuilder::options_mut)); a publish
     /// no step touched carried none, which
     /// [`assert_options_default`](Self::assert_options_default) asserts. The harness records
     /// them with every publish the runtime makes (a reply, an `Out` slot publish, a retry copy),
@@ -886,7 +890,7 @@ impl<T> PublishedAssertions<T> {
     /// Asserts the most recent published message carries the header `name` with `value`.
     ///
     /// What a publish transform or an app-wide
-    /// [`publish_layer`](crate::runtime::RustStream::publish_layer) put on the message is read
+    /// [`publish_layer`](crate::RustStream::publish_layer) put on the message is read
     /// here: the assertion sees the message as it left, so a stamp added on the way out shows up
     /// on the reply channel and on `tb.out::<Marker>()` alike.
     ///
@@ -1015,7 +1019,7 @@ impl<T: 'static> PublishedAssertions<T> {
     /// Runs `hook` each time a message is published to this destination from now on, through
     /// every path the harness records: the test's own publishes and every publish a publisher the
     /// runtime paired makes (replies, `Out` slot publishes and requests, retry copies, dead
-    /// letters). On the view of an `Out` slot ([`TestApp::out`](super::TestApp::out)) it runs
+    /// letters). On the view of an `Out` slot ([`TestApp::out`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html#method.out)) it runs
     /// for each publish through that slot.
     ///
     /// The hook is handed assertions over this destination as the harness's record stood at that
@@ -1037,7 +1041,7 @@ impl<T: 'static> PublishedAssertions<T> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # async fn demo() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// use ruststream::memory::prelude::*;
     /// use ruststream::testing::TestApp;

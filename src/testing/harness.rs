@@ -4,14 +4,13 @@
 //! live, each connects through its ordinary `connect`, against a running stand.
 
 use std::any::{TypeId, type_name};
+use std::fmt;
 use std::hint;
 use std::marker::PhantomData;
 use std::ptr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant as WallClock};
-use std::{error, fmt};
 
-use thiserror::Error;
 use tokio::task;
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -20,16 +19,20 @@ use tokio_util::task::TaskTracker;
 
 use crate::OutgoingDestination;
 use crate::runtime::{
-    App, ConnectedEntry, ConnectedLifecycle, HeadersUnset, LifecycleHook, OutSlot, PublishBuilder,
-    RegisteredBroker, RustStreamError, Shutdown, ShutdownHooks, Starter, SubscriptionEnd, Teardown,
-    TestParts,
+    App, HeadersUnset, MessageBody, OutSlot, PublishBuilder, RustStreamError, SubscriptionEnd,
+    UnnamedCodec,
 };
-use crate::runtime::{MessageBody, UnnamedCodec, message_of};
 use crate::{Broker, DefaultPublish, PublishPolicy, Publisher};
+use ruststream_runtime::{
+    ConnectedEntry, ConnectedLifecycle, LifecycleHook, RegisteredBroker, Shutdown, ShutdownHooks,
+    Starter, Teardown, TestParts, message_of,
+};
 
-use super::assertions::PublishedAssertions;
-use super::broker::{LivePublish, TestableBroker, TestableRegistration, live_publish};
-use super::coordinator::{Coordinator, LiveSubscription};
+use ruststream_runtime::testing::coordinator::{Coordinator, LiveSubscription};
+use ruststream_runtime::testing::{
+    LivePublish, PublishedAssertions, TestError, TestableBroker, TestableRegistration, live_publish,
+};
+
 use super::handle::{BrokerHandle, Harness, InjectSink, Target, Transport};
 use super::hooks::{HookFailures, Within};
 
@@ -40,98 +43,6 @@ const DEFAULT_MAX_STEPS: usize = 10_000;
 /// How long a live settle waits by default for the reaction to settle before it reports the
 /// subscription that did not.
 const DEFAULT_SETTLE_DEADLINE: Duration = Duration::from_secs(10);
-
-/// An error from the test harness.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum TestError {
-    /// An `on_startup` or `after_startup` lifecycle hook failed while starting the harness.
-    #[error("startup hook failed: {0}")]
-    Startup(#[source] Box<dyn error::Error + Send + Sync>),
-    /// A subscription failed to open while starting the harness.
-    #[error("subscription failed: {0}")]
-    Subscribe(#[source] Box<dyn error::Error + Send + Sync>),
-    /// A reaction did not settle within the step budget (a non-terminating requeue?).
-    #[error("the reaction did not settle within {processed} dispatched deliveries")]
-    NotQuiescent {
-        /// How many deliveries were dispatched before the harness gave up.
-        processed: usize,
-    },
-    /// A live reaction did not settle before the deadline: a subscription had not handled what was
-    /// published to a destination it reads, or a redelivery that fell due, or a handler was still
-    /// running.
-    #[error(
-        "the live reaction did not settle within {deadline:?}: {}",
-        unsettled(subscription.as_deref(), *handled, *expected)
-    )]
-    NotSettled {
-        /// The subscription still owed a delivery, or `None` when every subscription had handled
-        /// what it was owed and a handler was still running.
-        subscription: Option<String>,
-        /// How many deliveries that subscription had handled.
-        handled: usize,
-        /// How many it was owed: the publishes the harness saw to it, and the redeliveries due.
-        expected: usize,
-        /// The deadline the harness was started with.
-        deadline: Duration,
-    },
-    /// A broker failed to connect while starting the harness: its in-process transition, or its
-    /// `connect` in live mode.
-    #[error("broker {broker} failed to connect: {source}")]
-    Connect {
-        /// The broker's label, or its type for unlabeled brokers.
-        broker: String,
-        /// The broker's own connect error.
-        #[source]
-        source: Box<dyn error::Error + Send + Sync>,
-    },
-    /// A live broker refused a message the test published onto it.
-    #[error("broker {broker} refused the test's publish: {source}")]
-    Publish {
-        /// The broker's label, or its type for unlabeled brokers.
-        broker: String,
-        /// The broker's own publish error.
-        #[source]
-        source: Box<dyn error::Error + Send + Sync>,
-    },
-    /// A publish was attempted after a fail-fast failure tore the service down.
-    #[error("publish after the service shut down")]
-    ShutDown,
-    /// An unscoped [`TestApp::publish`] is ambiguous: more than one broker is registered.
-    #[error("more than one broker is registered; address one with broker::<B>() or broker_named()")]
-    Ambiguous,
-    /// A broker of the app has no in-process mode, so the harness cannot start the app: its type
-    /// is not registered with [`register_testable_broker!`](crate::register_testable_broker),
-    /// which is what a broker crate does under its `testing` feature.
-    ///
-    /// In live mode it reports an injection through an untyped handle (the sole broker,
-    /// [`broker_named`](TestApp::broker_named)) onto a broker of such a type: address it with
-    /// [`broker`](TestApp::broker) instead, which publishes through the type's default policy.
-    #[error(
-        "broker {0} has no in-process mode; enable the `testing` feature of the crate that \
-         provides it in `[dev-dependencies]`"
-    )]
-    NoTransport(String),
-    /// [`TestApp::start_live`] was called on a paused clock. A network client's timeouts would
-    /// fire at once against it, so a live test runs on the real clock.
-    #[error(
-        "the clock is paused, and a live test runs against brokers on the real clock; drop \
-         `start_paused` / `tokio::time::pause()` from this test, or start it in process with \
-         `TestApp::start`"
-    )]
-    PausedClock,
-    /// The message failed to encode for publishing.
-    #[error("failed to encode the message: {0}")]
-    Encode(String),
-}
-
-/// What a live settle was still waiting on at its deadline, for [`TestError::NotSettled`].
-fn unsettled(subscription: Option<&str>, handled: usize, expected: usize) -> String {
-    subscription.map_or_else(
-        || "a handler was still running".to_owned(),
-        |name| format!("subscription {name:?} handled {handled} of {expected} deliveries"),
-    )
-}
 
 /// One broker of the app under test: its label, its erased connected handle (for type/label
 /// addressing), and its type's registration, when a broker crate made one. In process every broker

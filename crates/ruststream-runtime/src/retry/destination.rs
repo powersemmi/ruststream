@@ -2,7 +2,7 @@
 //!
 //! Three things can settle it. A descriptor that addresses its own subscription
 //! ([`AddressedCopies`]) answers at startup. A mount site answers statically with
-//! [`to`](crate::runtime::RouterWith::to) after `out_retry(policy)`. A publish transform on the
+//! [`to`](crate::RouterWith::to) after `out_retry(policy)`. A publish transform on the
 //! position answers per delivery, reading the delivery being retried. A registration on a
 //! descriptor that addresses nothing ([`NamedCopies`]) and says neither does not compile on a
 //! router chain; mounted directly in a broker scope, it fails at startup.
@@ -14,7 +14,7 @@
 use std::borrow::Cow;
 
 use crate::Publisher;
-use crate::runtime::publish::{
+use crate::publish::{
     DestinationUse, Either, FitsTaken, ForReply, Names, PublishTransform, PublishTransformIdentity,
     PublishTransformStack, Reads,
 };
@@ -68,7 +68,7 @@ impl RetryOffer<FixedDestination> for NamedCopies {
 /// What the mount site's transform stack on the deferred-retry position declares about the
 /// destination, read against the live publisher the copies leave through.
 ///
-/// The slot counterpart projects at [`ForSlot`](crate::runtime::ForSlot); this position hands its
+/// The slot counterpart projects at [`ForSlot`](crate::ForSlot); this position hands its
 /// transforms the delivery being retried, so it projects at [`ForReply`]. An empty stack answers
 /// [`Reads`] whatever it runs over. Machinery; never named directly.
 #[doc(hidden)]

@@ -80,7 +80,7 @@ pub trait FromContext<C = (), S = ()>: Sized {
 ///
 /// It is the bridge [`State<T>`](State) uses to pull a sub-value out of the state: a handler taking
 /// `State<T>` resolves when `T: FromRef<S>`. Derive it on the state struct with
-/// [`FromRef`](macro@crate::FromRef) to get an impl per field (each cloning that field), or
+/// [`FromRef`](https://docs.rs/ruststream/latest/ruststream/derive.FromRef.html) to get an impl per field (each cloning that field), or
 /// implement it by hand to derive a value from several fields.
 ///
 /// # Examples
@@ -112,12 +112,12 @@ pub trait FromRef<S>: Sized {
 /// `State<T>` resolves through [`FromContext`] whenever `T: FromRef<S>`, so a handler can take
 /// `State<T>` for any state component - including types defined in other crates (a broker publisher,
 /// a client pool), which a per-field `FromContext` impl could not cover under the orphan rule.
-/// Derive [`FromRef`](macro@crate::FromRef) on the state to make every field available.
+/// Derive [`FromRef`](https://docs.rs/ruststream/latest/ruststream/derive.FromRef.html) on the state to make every field available.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use std::convert::Infallible;
 ///
@@ -198,7 +198,7 @@ where
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::ContextField;
 /// use ruststream::prelude::*;
@@ -243,7 +243,7 @@ pub struct Ctx<K: CtxKey>(pub K::Value);
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// use serde::Deserialize;
@@ -342,7 +342,7 @@ where
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// use serde::Deserialize;
@@ -427,7 +427,7 @@ mod tests {
 
     use super::*;
     use crate::HeaderMap;
-    use crate::runtime::dispatch::Delivery;
+    use crate::dispatch::Delivery;
 
     #[derive(Debug, Deserialize)]
     struct Meta {

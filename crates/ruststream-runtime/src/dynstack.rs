@@ -163,7 +163,7 @@ mod tests {
     use super::super::handler::{Handler, HandlerOutcome};
     use super::{BoxFut, DynMiddleware, DynStack, Next};
     use crate::HeaderMap;
-    use crate::runtime::dispatch::Delivery;
+    use crate::dispatch::Delivery;
 
     struct Input;
 

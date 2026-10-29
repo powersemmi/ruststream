@@ -5,7 +5,7 @@
 //! the live reply publisher only exists once the broker connects, so mounting captures the
 //! pieces in a starter that pairs the publisher, resolves the startup injections and builds the
 //! handler at startup. A router-mounted publishing handler therefore picks up the app-wide
-//! [`publish_layer`](crate::runtime::RustStream::publish_layer) chain.
+//! [`publish_layer`](crate::RustStream::publish_layer) chain.
 
 use std::any::type_name;
 use std::fmt;
@@ -20,24 +20,22 @@ use crate::{
     SubscriptionSource,
 };
 
-use crate::runtime::batch_publishing::{
-    BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler,
-};
-use crate::runtime::dispatch::{Workers, spawn_dispatch_workers};
-use crate::runtime::failure::{DispatchFailure, FailurePolicies};
-use crate::runtime::inject::FromStartup;
-use crate::runtime::input::{DecodeWith, Materialize};
-use crate::runtime::lifecycle::BoxError;
-use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
-use crate::runtime::middleware::BlanketLayer;
-use crate::runtime::publish::{
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef, BatchPublishingHandler};
+use crate::dispatch::{Workers, spawn_dispatch_workers};
+use crate::failure::{DispatchFailure, FailurePolicies};
+use crate::inject::FromStartup;
+use crate::input::{DecodeWith, Materialize};
+use crate::lifecycle::BoxError;
+use crate::metadata::{HandlerMetadata, PublishDescription};
+use crate::middleware::BlanketLayer;
+use crate::publish::{
     ForReply, NamesDestination, PublishPipeline, PublishTransform, ReplyPublisher, TypedPublisher,
 };
-use crate::runtime::publishing::{
+use crate::publishing::{
     EncodeReply, PublishingCall, PublishingDef, PublishingHandler, warn_ignored_reply_name,
 };
-use crate::runtime::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
-use crate::runtime::retry::RetryOpen;
+use crate::redelivery::{CopyPathAddress, CopyPathPairing, RetrySetup, open_subscription};
+use crate::retry::RetryOpen;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::paired;
 
@@ -46,21 +44,21 @@ use super::routes::{
     MountRoute, RouteMeta, RouteMetadata, RouteSubscription, impl_destination_declared,
 };
 use super::sink::RouterSink;
-use crate::runtime::Serialized;
+use crate::Serialized;
 
 /// What the reply position's transform stack does to the destination, projected against the
-/// publisher it runs over: [`Names`](crate::runtime::Names) where a transform decides where each
-/// reply goes, [`Reads`](crate::runtime::Reads) otherwise.
+/// publisher it runs over: [`Names`](crate::Names) where a transform decides where each
+/// reply goes, [`Reads`](crate::Reads) otherwise.
 type ReplyUse<Transforms, Cx, Options> =
     <Transforms as PublishTransform<ForReply<Cx>, Options>>::Destination;
 
 /// One reply-publishing registration whose reply travels the encoded wiring: the stack naming
 /// the reply codec and transforms. An implementation detail of
-/// [`Router`](crate::runtime::Router)'s registration list.
+/// [`Router`](crate::Router)'s registration list.
 ///
 /// `Extra` is the include-site attachment the definition's startup injections resolve against:
 /// the unit padding when the handler declares none beyond its reply, the bound slot sources when
-/// it carries [`Out`](crate::runtime::Out) parameters.
+/// it carries [`Out`](crate::Out) parameters.
 #[doc(hidden)]
 pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
@@ -74,7 +72,7 @@ pub struct PublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 }
 
 /// One reply-publishing registration whose reply leaves byte-for-byte through a bare publisher
-/// (a [`Serialized`](crate::runtime::Serialized) reply type). See [`PublishingRoute`]: the
+/// (a [`Serialized`](crate::Serialized) reply type). See [`PublishingRoute`]: the
 /// app's publish pipeline is not known when the registration is made, so each route names the
 /// wiring its replies travel.
 #[doc(hidden)]
@@ -90,7 +88,7 @@ pub struct RawReplyRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
 }
 
 /// One batch reply-publishing registration, deferred (see [`PublishingRoute`]). An
-/// implementation detail of [`Router`](crate::runtime::Router)'s registration list.
+/// implementation detail of [`Router`](crate::Router)'s registration list.
 #[doc(hidden)]
 pub struct BatchPublishingRoute<Source, Def, DecodeCodec, ReplySource, Extra> {
     pub(super) source: Source,
@@ -556,12 +554,12 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 mod tests {
     use super::*;
     use crate::Name;
     use crate::codec::JsonCodec;
-    use crate::memory::MemoryPublish;
+    use ruststream::memory::MemoryPublish;
 
     /// The deferred routes hold no built handler to print, so their `Debug` has to identify the
     /// registration by its metadata; without that a router's registration list is anonymous.

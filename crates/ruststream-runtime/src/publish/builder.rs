@@ -28,7 +28,7 @@ use crate::wire::Serialized;
 /// A publish under construction: the entry point's payload plus the positions still open.
 ///
 /// Built by the `message(..)` entry point of every publish surface (an
-/// [`Out`](crate::runtime::Out) slot, a transaction scope, any [`Publisher`](crate::Publisher)
+/// [`Out`](crate::Out) slot, a transaction scope, any [`Publisher`](crate::Publisher)
 /// through [`PublishExt`](super::PublishExt)), and finished by
 /// [`publish`](Self::publish). The type parameters are the positions:
 ///
@@ -413,7 +413,8 @@ impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, H
 
 /// Starts a typed publish: `value` is encoded with `codec`, and the destination position is the
 /// one the type declares.
-pub(crate) fn message_of<Sink, T, Enc>(
+#[doc(hidden)]
+pub fn message_of<Sink, T, Enc>(
     sink: Sink,
     value: &T,
     codec: Enc,
@@ -544,7 +545,7 @@ impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, Headers
     /// A type that declares a header contract publishes only with it:
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::memory::prelude::*;
     /// use serde::{Deserialize, Serialize};
@@ -654,7 +655,7 @@ pub trait TemplateAddress<Cont> {
 /// The unbound state of one address placeholder.
 ///
 /// The segment marker rides in the type so the compile error of an unfinished address names the
-/// placeholder that was forgotten, the way an unbound [`Out`](crate::runtime::Out) slot names
+/// placeholder that was forgotten, the way an unbound [`Out`](crate::Out) slot names
 /// itself. `#[derive(Outgoing)]` generates one marker per placeholder of the declared name.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MissingSegment<S>(PhantomData<fn() -> S>);

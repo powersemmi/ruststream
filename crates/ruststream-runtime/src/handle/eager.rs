@@ -7,12 +7,12 @@ use std::{any, fmt};
 
 use tracing::warn;
 
-use crate::runtime::batch::{BatchDef, BatchResult, SliceHandler};
-use crate::runtime::context::Context;
-use crate::runtime::failure::FailurePolicy;
-use crate::runtime::handler::{Handler, HandlerOutcome};
-use crate::runtime::router::IncludeDef;
-use crate::runtime::subscriber_def::SubscriberDef;
+use crate::batch::{BatchDef, BatchResult, SliceHandler};
+use crate::context::Context;
+use crate::failure::FailurePolicy;
+use crate::handler::{Handler, HandlerOutcome};
+use crate::router::IncludeDef;
+use crate::subscriber_def::SubscriberDef;
 use crate::{Name, Unnamed};
 
 use super::Handle;
@@ -218,7 +218,7 @@ where
 /// The dispatch adapter of a batch body.
 ///
 /// Awaits the verdict, checks the per-element contract, and settles the batch by it. The
-/// batch's size was named by [`batch`](crate::runtime::SubscriberSettings::batch) and applied by
+/// batch's size was named by [`batch`](crate::SubscriberSettings::batch) and applied by
 /// the broker, so nothing here resizes it.
 pub struct BatchBody<A, H> {
     body: H,

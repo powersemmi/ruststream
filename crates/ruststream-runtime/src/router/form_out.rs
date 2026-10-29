@@ -1,11 +1,11 @@
-//! Router mounts for the forms carrying [`Out`](crate::runtime::Out) slots, and the commits their
+//! Router mounts for the forms carrying [`Out`](crate::Out) slots, and the commits their
 //! chains resolve through.
 //!
 //! The attachment is the reply position next to a positional slot tuple, one element per marker,
 //! starting all-unbound. Each `.out(marker, policy)` binds one position and `.build()` commits;
 //! the commit impls exist only for fully-bound tuples, so a forgotten binding is a compile error
 //! naming the slot. A handler with a single unnamed `Out` parameter names
-//! [`DefaultSlot`](crate::runtime::DefaultSlot), the implicit marker of that position.
+//! [`DefaultSlot`](crate::DefaultSlot), the implicit marker of that position.
 //!
 //! Like every other form, the subscription source comes from the definition - here from the one
 //! the bound slots instantiate, which is why the commit resolves it rather than the entry point.
@@ -14,7 +14,7 @@
 //! instantiates the definition and the entry's pipeline is part of that instantiated type. The
 //! chain therefore carries the pipeline its slots publish through: [`PublishIdentity`] on a
 //! router built on its own (the app that mounts it, and the middleware it carries, exist only
-//! later), the app's own on a chain a [`BrokerScope`](crate::runtime::BrokerScope) drives.
+//! later), the app's own on a chain a [`BrokerScope`](crate::BrokerScope) drives.
 
 // The typed default reply needs a default codec to encode with, so those pieces are gated the
 // same way; the byte-reply default publishes bare bytes and needs only `DefaultPublish`.
@@ -22,21 +22,21 @@ use crate::{
     BatchSubscriber, Broker, Connected, DefaultPublish, PublishPolicy, SubscriptionSource,
 };
 
+use crate::batch_inject::BatchInjectDef;
+use crate::batch_publishing::BatchPublishingDef;
 use crate::codec::Codec;
-use crate::runtime::batch_inject::BatchInjectDef;
-use crate::runtime::batch_publishing::BatchPublishingDef;
-use crate::runtime::inject::InjectDef;
-use crate::runtime::input::{DecodeWith, Materialize};
+use crate::inject::InjectDef;
+use crate::input::{DecodeWith, Materialize};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
-use crate::runtime::publish::ReplyWiring;
-use crate::runtime::publish::{LowerOutTransforms, NarrowToUse, RawReplyWiring, SlotStackUse};
-use crate::runtime::publishing::PublishingDef;
-use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
-use crate::runtime::slot::{
+use crate::publish::ReplyWiring;
+use crate::publish::{LowerOutTransforms, NarrowToUse, RawReplyWiring, SlotStackUse};
+use crate::publishing::PublishingDef;
+use crate::settings::{BatchSized, DefMountCodec, MountsWith};
+use crate::slot::{
     BindSlots, HasSlots, InitSlots, IntoSlotSource, NoReply, OutAttachment, OutSlot, SlotCodec,
     SlotPolicy, WithSource,
 };
-use crate::runtime::{SourceMessage, SourceSubscriber};
+use crate::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::builders::{RouterCommit, RouterOut, RouterPublishingOut, RouterWith};

@@ -9,16 +9,18 @@ use std::fmt;
 use crate::OutgoingDestination;
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::{Codec, DefaultCodec};
-use crate::runtime::{HeadersUnset, PublishBuilder, PublishSink, Shutdown};
-use crate::runtime::{MessageBody, UnnamedCodec, message_of};
+use crate::runtime::{HeadersUnset, MessageBody, PublishBuilder, PublishSink, UnnamedCodec};
 use crate::{Lend, OutgoingMessage, RawMessage};
+use ruststream_runtime::{Shutdown, message_of};
 
-use super::assertions::{PublishedAssertions, SubscriberAssertions};
-use super::attribution::{attribute, split_record};
-use super::broker::{LivePublish, TestableBroker};
-use super::coordinator::Coordinator;
-use super::harness::{BrokerEntry, Mode, TestError};
-use super::hooks::PublishTarget;
+use ruststream_runtime::testing::attribution::{attribute, split_record};
+use ruststream_runtime::testing::coordinator::Coordinator;
+use ruststream_runtime::testing::hooks::PublishTarget;
+use ruststream_runtime::testing::{
+    LivePublish, PublishedAssertions, SubscriberAssertions, TestError, TestableBroker,
+};
+
+use super::harness::{BrokerEntry, Mode};
 
 /// A handle to one broker in a [`TestApp`](super::TestApp): inject input and assert on its handlers and publishes.
 pub struct BrokerHandle<'a> {

@@ -5,12 +5,12 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
-use crate::runtime::settings::{CapsBatches, SubscriberBuilder};
+use crate::settings::{CapsBatches, SubscriberBuilder};
 
 use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
 use super::{Handle, IntoSource};
-use crate::runtime::router::IncludeDef;
+use crate::router::IncludeDef;
 
 /// The phantom carrying a definition's axes.
 ///
@@ -81,14 +81,14 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// Every axis comes from the body's `impl Handle<..>`: the input spelling (single, raw, batch,
 /// typed-headers pair), the reply type, the injections arena, the broker context and the typed
 /// application state. The chain then carries what is not in the signature - the declarative
-/// settings ([`workers`](crate::runtime::SubscriberSettings::workers),
-/// [`on_failure`](crate::runtime::SubscriberSettings::on_failure),
-/// [`start_at`](crate::runtime::SubscriberSettings::start_at), ...), what the body replies with
+/// settings ([`workers`](crate::SubscriberSettings::workers),
+/// [`on_failure`](crate::SubscriberSettings::on_failure),
+/// [`start_at`](crate::SubscriberSettings::start_at), ...), what the body replies with
 /// and where ([`reply`](SubscriberBuilder::reply), [`to`](SubscriberBuilder::to)), the batch size
-/// ([`batch`](crate::runtime::SubscriberSettings::batch)) and the documentation opt-out
+/// ([`batch`](crate::SubscriberSettings::batch)) and the documentation opt-out
 /// ([`undocumented`](SubscriberBuilder::undocumented)) - and
 /// [`build`](SubscriberBuilder::build) seals the definition for
-/// [`include`](crate::runtime::Router::include).
+/// [`include`](crate::Router::include).
 ///
 /// What the definition never carries is who publishes: a policy is a broker's, and a definition
 /// is broker-agnostic, so the reply's publisher is named at the mount site with
@@ -97,7 +97,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::prelude::*;
@@ -374,6 +374,7 @@ impl<A, R, O, C, H, Doc, Src, State, DC>
     message = "this registration is already undocumented",
     label = "`.undocumented()` was already chained"
 )]
+#[doc(hidden)]
 pub trait IsDocumented {}
 impl IsDocumented for Documented {}
 impl<V, Src, State, DC> SubscriberBuilder<ReplyValue<V, DeclaredDest>, Src, State, DC> {

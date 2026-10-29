@@ -1,16 +1,16 @@
 //! Documented-by-default: the typestate and the schema capture behind `.undocumented()`.
 //!
 //! Under the `asyncapi` feature every registration reports its message schemas unless the chain
-//! opts out with [`undocumented`](crate::runtime::SubscriberBuilder::undocumented). The
+//! opts out with [`undocumented`](crate::SubscriberBuilder::undocumented). The
 //! `JsonSchema` obligation is checked where the definition mounts, and only for definitions
 //! still in the documented state, so the opt-out is a compile-time exit rather than a runtime
 //! switch. Without the feature the state still exists but demands nothing and produces nothing.
 
 use std::borrow::Cow;
 
-use crate::runtime::metadata::OutgoingMessageMetadata;
+use crate::metadata::OutgoingMessageMetadata;
 #[cfg(feature = "asyncapi")]
-use crate::runtime::schema_json;
+use crate::schema_json;
 
 /// The documentation state a definition starts in: its message types' schemas are reported in
 /// the generated document, and mounting demands they are derivable.
@@ -69,6 +69,7 @@ impl<T: ?Sized> Documentable for T {}
 
 /// What one documentation state produces for a type: the schema under [`Documented`] (which is
 /// where the [`Documentable`] obligation lives), nothing under [`Undocumented`].
+#[doc(hidden)]
 pub trait DocState<T: ?Sized> {
     /// The serialized JSON Schema this state reports for `T`.
     fn schema() -> Option<String>;

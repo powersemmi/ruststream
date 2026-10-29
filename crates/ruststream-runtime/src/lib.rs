@@ -1,10 +1,34 @@
-#![doc = include_str!("README.md")]
+//! The application runtime of [RustStream](https://docs.rs/ruststream): the `RustStream` app
+//! builder, the router and its mount chain, the dispatch, the publish pipeline, the codecs and the
+//! in-process dispatch the test harness drives.
+//!
+//! Services and broker crates use these items through the `ruststream` facade, which re-exports
+//! them under the paths its documentation teaches:
+//!
+//! - the crate root as [`ruststream::runtime`](https://docs.rs/ruststream/latest/ruststream/runtime/);
+//! - [`codec`] as [`ruststream::codec`](https://docs.rs/ruststream/latest/ruststream/codec/);
+//! - [`testing`], the broker contract of the test harness, as part of
+//!   [`ruststream::testing`](https://docs.rs/ruststream/latest/ruststream/testing/).
+
+// The contract, under the names the runtime's modules reach it by (`crate::Broker`,
+// `crate::bindable`, ...).
+#[allow(clippy::wildcard_imports)]
+use ruststream_core::*;
+
+pub mod codec;
+pub mod testing;
+#[cfg(test)]
+mod testkit;
+
+/// Re-exported for the [`register_testable_broker!`] macro's expansion; not a stable API.
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use inventory;
 
 mod app;
 mod batch;
 mod batch_inject;
 mod batch_publishing;
-pub mod cli;
 mod context;
 mod dispatch;
 mod dynstack;
@@ -20,7 +44,8 @@ mod main_runtime;
 mod metadata;
 mod middleware;
 #[cfg(feature = "poll-diagnostics")]
-pub(crate) mod poll_diagnostics;
+#[doc(hidden)]
+pub mod poll_diagnostics;
 mod publish;
 mod publishing;
 mod redelivery;
@@ -29,7 +54,8 @@ mod router;
 #[cfg(feature = "asyncapi")]
 mod schema_doc;
 #[cfg(feature = "asyncapi")]
-pub(crate) use schema_doc::{join_headers, schema_json};
+#[doc(hidden)]
+pub use schema_doc::{join_headers, schema_json};
 mod settings;
 mod shutdown;
 mod slot;
@@ -38,23 +64,23 @@ mod typed;
 
 /// The subscriber a source opens, for broker `B` (the source resolves against the broker's
 /// connected form). Tames the long projection in bounds.
-pub(crate) type SourceSubscriber<B, S> =
-    <S as crate::SubscriptionSource<crate::Connected<B>>>::Subscriber;
+pub(crate) type SourceSubscriber<B, S> = <S as SubscriptionSource<Connected<B>>>::Subscriber;
 
 /// The message that subscriber yields. See [`SourceSubscriber`].
-pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as crate::Subscriber>::Message;
+pub(crate) type SourceMessage<B, S> = <SourceSubscriber<B, S> as Subscriber>::Message;
 
 /// The batch that subscriber yields, where it batches. See [`SourceSubscriber`].
-pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as crate::BatchSubscriber>::Batch;
+pub(crate) type SourceBatch<B, S> = <SourceSubscriber<B, S> as BatchSubscriber>::Batch;
 
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use app::TestParts;
 pub use app::{
     App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
     RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
-#[cfg(feature = "testing")]
-pub(crate) use app::{
-    ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown, TestParts,
-};
+#[doc(hidden)]
+pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
 #[doc(hidden)]
 pub use app::{IncludeMount, ScopeCommit};
 // The definition-trait dispatch SPI the retired legacy emission used to implement in user
@@ -92,7 +118,8 @@ pub use handler::{Handler, HandlerOutcome};
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
-pub(crate) use handler::HandlerResult;
+#[doc(hidden)]
+pub use handler::HandlerResult;
 pub use in_messages::{InMessages, InVariant, MessageDeclaration, VariantOf};
 #[doc(hidden)]
 pub use in_messages::{
@@ -106,7 +133,10 @@ pub use crate::bindable::ConnectedSlot;
 #[doc(hidden)]
 pub use input::{Provided, TypedLane};
 #[cfg(feature = "testing")]
-pub(crate) use lifecycle::{BoxError, BoxFuture, ConnectedLifecycle, InProcessConnect};
+#[doc(hidden)]
+pub use lifecycle::InProcessConnect;
+#[doc(hidden)]
+pub use lifecycle::{BoxError, BoxFuture, BrokerLifecycle, ConnectedLifecycle};
 pub use metadata::{
     HandlerMetadata, HeaderDiscriminator, IncomingMessageMetadata, OutgoingKind,
     OutgoingMessageMetadata,
@@ -141,8 +171,8 @@ pub use publish::{
 // The builder's entry point, for the surfaces outside `runtime` that offer one: the test harness
 // injects through the same positions as a live publish.
 pub use crate::bindable::{Bindable, Bound, BrokerRegistration};
-#[cfg(feature = "testing")]
-pub(crate) use publish::message_of;
+#[doc(hidden)]
+pub use publish::message_of;
 #[doc(hidden)]
 pub use redelivery::{
     CopiesAddressed, CopyPathAddress, CopyPathPairing, PublishesCopiesHere, RetryPairing,
@@ -173,8 +203,8 @@ pub use settings::{
 };
 #[doc(hidden)]
 pub use settings::{CapsBatches, DefinitionInputCodec, MountsWith};
-#[cfg(feature = "testing")]
-pub(crate) use shutdown::Shutdown;
+#[doc(hidden)]
+pub use shutdown::Shutdown;
 #[doc(hidden)]
 pub use slot::{
     AdmitsAt, AdmitsSlotAt, BatchTransformLast, BindAt, BindSlot, Both, CodecAt, CodecLast,

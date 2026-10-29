@@ -83,7 +83,7 @@ use std::process::ExitCode;
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 
-use super::app::{App, RustStreamError};
+use super::{App, RustStreamError};
 #[cfg(feature = "asyncapi")]
 use crate::asyncapi;
 #[cfg(feature = "logging")]

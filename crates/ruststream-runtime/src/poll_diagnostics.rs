@@ -32,7 +32,7 @@ const OVER: u64 = 1 << 63;
 
 /// Upper bounds of the histogram buckets in nanoseconds, 1-2-5 from one microsecond to ten
 /// seconds; one more bucket holds everything longer.
-pub(crate) const BUCKET_BOUNDS_NS: [u64; 22] = [
+pub const BUCKET_BOUNDS_NS: [u64; 22] = [
     1_000,
     2_000,
     5_000,
@@ -73,7 +73,7 @@ const BUCKETS: usize = BUCKET_BOUNDS_NS.len() + 1;
 /// after 16 samples.
 ///
 /// A handle is cheap to clone, and every clone reads the same reports. Hand one to
-/// [`RustStream::poll_diagnostics`](crate::runtime::RustStream::poll_diagnostics) to set the
+/// [`RustStream::poll_diagnostics`](crate::RustStream::poll_diagnostics) to set the
 /// threshold or the sampling interval, and keep another to read [`reports`](Self::reports) or to
 /// export them through the `metrics` or `otel` feature.
 ///
@@ -241,7 +241,9 @@ impl PollDiagnostics {
 
     /// The statistics of every subscription, for an exporter that reads the histogram itself.
     #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
-    pub(crate) fn stats(&self) -> Vec<Arc<PollStats>> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn stats(&self) -> Vec<Arc<PollStats>> {
         self.lock().clone()
     }
 
@@ -408,7 +410,10 @@ impl PollReport {
 }
 
 /// One subscription's measurements, shared by every loop, worker and thread that dispatches it.
-pub(crate) struct PollStats {
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct PollStats {
     name: Arc<str>,
     threshold_ns: u64,
     /// The counter the samples are read from. One per subscription: reading it takes no global.
@@ -442,13 +447,15 @@ impl PollStats {
 
     /// The subscription measured.
     #[cfg_attr(not(feature = "metrics"), allow(dead_code))]
-    pub(crate) fn name(&self) -> &str {
+    #[doc(hidden)]
+    pub fn name(&self) -> &str {
         &self.name
     }
 
     /// The samples taken, their sum in nanoseconds, and the count in each bucket of
     /// [`BUCKET_BOUNDS_NS`] (the last one past every bound).
-    pub(crate) fn histogram(&self) -> (u64, u64, [u64; BUCKETS]) {
+    #[doc(hidden)]
+    pub fn histogram(&self) -> (u64, u64, [u64; BUCKETS]) {
         let buckets = array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed));
         (
             buckets.iter().sum(),
@@ -457,7 +464,8 @@ impl PollStats {
         )
     }
 
-    pub(crate) fn report(&self) -> PollReport {
+    #[doc(hidden)]
+    pub fn report(&self) -> PollReport {
         let (samples, _, buckets) = self.histogram();
         PollReport {
             subscription: Arc::clone(&self.name),

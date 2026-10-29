@@ -2,25 +2,25 @@
 //! mounts through the inject machinery, bound to the include site's policies, with the body
 //! adapted to the dispatch contracts here.
 
-use crate::runtime::batch::BatchResult;
-use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
-use crate::runtime::context::Context;
-use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::inject::{InjectCall, InjectDef};
-use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::router::IncludeDef;
-use crate::runtime::slot::{BindSlots, HasSlots, OutSlot};
+use crate::batch::BatchResult;
+use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
+use crate::context::Context;
+use crate::handler::HandlerOutcome;
+use crate::inject::{InjectCall, InjectDef};
+use crate::metadata::OutgoingMessageMetadata;
+use crate::router::IncludeDef;
+use crate::slot::{BindSlots, HasSlots, OutSlot};
 use crate::{ConnectedBroker, Name, PublishPolicy, Unnamed};
 
 use super::arena::{EntryMarkers, Outs};
 use super::entry::Slot;
-use crate::runtime::handle::Handle;
-use crate::runtime::handle::axis::{
+use crate::handle::Handle;
+use crate::handle::axis::{
     Axis, AxisDocs, Batch, BatchPair, BatchSet, BatchedAxis, Deserialized, Input, Message, Solo,
     SoloAxis, SoloCarried, SoloDeserialized, SoloPair, SoloSet,
 };
-use crate::runtime::handle::eager::{construct, run_batch, settle_solo};
-use crate::runtime::handle::value::{HandleValue, Sealed};
+use crate::handle::eager::{construct, run_batch, settle_solo};
+use crate::handle::value::{HandleValue, Sealed};
 
 impl<A, E, C, H, Doc> IncludeDef for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
@@ -29,6 +29,7 @@ where
     type Form = A::SlotForm;
 }
 
+#[doc(hidden)]
 impl<A, E, C, H, Doc> HasSlots for Sealed<HandleValue<A, (), Outs<E>, C, H, Doc>>
 where
     E: EntryMarkers,
@@ -41,6 +42,7 @@ where
 /// capability bounds are checked right here.
 macro_rules! impl_bind_slots {
     ($(($($m:ident / $p:ident: $e:ident / $pipe:ident / $b:ident),+))+) => {$(
+        #[doc(hidden)]
         impl<Conn, A, C, H, Doc, $($m, $p, $e, $pipe, $b),+>
             BindSlots<Conn, ($(($p, $e, $pipe),)+)>
             for Sealed<

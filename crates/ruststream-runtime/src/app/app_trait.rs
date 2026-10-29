@@ -4,13 +4,13 @@
 use std::collections::BTreeMap;
 
 use crate::ServerSpec;
-use crate::runtime::metadata::HandlerMetadata;
+use crate::metadata::HandlerMetadata;
 
 use super::{AppInfo, RunningApp, RustStream, RustStreamError};
 
 mod sealed {
     #[cfg(feature = "testing")]
-    use crate::runtime::TestParts;
+    use crate::TestParts;
 
     /// Closes [`App`](super::App) to [`RustStream`](super::RustStream), and carries what the test
     /// harness needs from an app a builder hands it as `impl App`.
@@ -44,14 +44,13 @@ mod sealed {
 }
 
 /// The functional surface of a built [`RustStream`] service: run it, and read the metadata the
-/// [`AsyncAPI`](crate::asyncapi) generator and the generated CLI need.
+/// [`AsyncAPI`](https://docs.rs/ruststream/latest/ruststream/asyncapi/index.html) generator and the generated CLI need.
 ///
 /// Implemented only by [`RustStream`] (the trait is sealed), so a builder function can hide the
 /// composed middleware / state / publish-pipeline type parameters behind `impl App` instead of
 /// naming `RustStream<Stack<..>, State, PublishStack<..>>` in full:
 ///
 /// ```no_run
-/// # #[cfg(feature = "memory")]
 /// # {
 /// use ruststream::memory::MemoryBroker;
 /// use ruststream::runtime::{App, AppInfo, RustStream};

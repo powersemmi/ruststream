@@ -173,7 +173,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory", feature = "json"))]
+#[cfg(all(test, feature = "json"))]
 mod tests {
     use std::future::ready;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -187,9 +187,9 @@ mod tests {
     use super::super::input::Decoded;
     use super::*;
     use crate::codec::JsonCodec;
-    use crate::memory::{ConnectedMemoryBroker, MemoryBroker};
     use crate::testkit::batch::{publish_payloads, pull_batch};
     use crate::{HeaderMap, Name, Subscriber, SubscriptionSource};
+    use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker};
 
     /// A definition whose "injection" is a plain multiplier: the real ones are `Out`
     /// values, but the handler side only cares that the resolved tuple is handed to every call.

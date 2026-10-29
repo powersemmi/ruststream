@@ -19,14 +19,14 @@ use thiserror::Error;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-use crate::runtime::dispatch::Delivery;
-use crate::runtime::lifecycle::{BoxError, BoxFuture};
-use crate::runtime::metadata::{HandlerMetadata, PublishDescription};
+use crate::dispatch::Delivery;
+use crate::lifecycle::{BoxError, BoxFuture};
+use crate::metadata::{HandlerMetadata, PublishDescription};
 #[cfg(feature = "poll-diagnostics")]
-use crate::runtime::poll_diagnostics::PollDiagnostics;
-#[cfg(all(test, feature = "memory"))]
-use crate::runtime::publish::PublishIdentity;
-use crate::runtime::publish::{
+use crate::poll_diagnostics::PollDiagnostics;
+#[cfg(test)]
+use crate::publish::PublishIdentity;
+use crate::publish::{
     ForReply, OutPipeline, PublishContext, PublishTransform, PublishTransformIdentity,
 };
 use crate::{
@@ -131,7 +131,7 @@ where
 
 /// The retry publisher of a registration that named neither a transform nor a middleware: what a
 /// bare mount produces, for tests that drive the dispatch functions directly.
-#[cfg(all(test, feature = "memory"))]
+#[cfg(test)]
 pub(crate) fn bare_retry_publisher<Cx, P>(live: P) -> Arc<dyn ErasedRetryPublisher<Cx>>
 where
     Cx: Send + Sync + 'static,

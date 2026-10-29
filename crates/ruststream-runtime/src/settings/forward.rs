@@ -16,20 +16,20 @@ use std::marker::PhantomData;
 use crate::ConnectedBroker;
 
 use super::SubscriberBuilder;
-use crate::runtime::batch::{BatchDef, BatchResult};
-use crate::runtime::batch_inject::{BatchInjectCall, BatchInjectDef};
-use crate::runtime::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
-use crate::runtime::context::Context;
-use crate::runtime::dispatch::Workers;
-use crate::runtime::failure::FailurePolicies;
-use crate::runtime::handle::DeclaresReply;
-use crate::runtime::handler::HandlerOutcome;
-use crate::runtime::inject::{InjectCall, InjectDef};
-use crate::runtime::input::InputKind;
-use crate::runtime::metadata::OutgoingMessageMetadata;
-use crate::runtime::publishing::{PublishingCall, PublishingDef};
-use crate::runtime::slot::{BindSlots, HasSlots};
-use crate::runtime::subscriber_def::SubscriberDef;
+use crate::batch::{BatchDef, BatchResult};
+use crate::batch_inject::{BatchInjectCall, BatchInjectDef};
+use crate::batch_publishing::{BatchPublishingCall, BatchPublishingDef};
+use crate::context::Context;
+use crate::dispatch::Workers;
+use crate::failure::FailurePolicies;
+use crate::handle::DeclaresReply;
+use crate::handler::HandlerOutcome;
+use crate::inject::{InjectCall, InjectDef};
+use crate::input::InputKind;
+use crate::metadata::OutgoingMessageMetadata;
+use crate::publishing::{PublishingCall, PublishingDef};
+use crate::slot::{BindSlots, HasSlots};
+use crate::subscriber_def::SubscriberDef;
 
 /// The metadata methods every definition trait shares, forwarded to the wrapped definition, plus
 /// the two settings the builder owns.

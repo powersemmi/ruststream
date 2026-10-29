@@ -7,8 +7,8 @@ use super::{
     BatchPublishTransform, PublishContext, PublishPipeline, Transactional, TypedPublisher,
 };
 use crate::codec::Codec;
-use crate::runtime::lifecycle::BoxError;
-use crate::runtime::publish::sealed::Sealed;
+use crate::lifecycle::BoxError;
+use crate::publish::sealed::Sealed;
 use crate::{PayloadForm, Publisher, TransactionalPublisher};
 
 /// The live reply sink a batch's replies travel through.
@@ -16,7 +16,7 @@ use crate::{PayloadForm, Publisher, TransactionalPublisher};
 /// Implemented by a plain [`TypedPublisher`] (each reply published independently) and by a
 /// [`Transactional`] one (all replies of a batch inside one transaction). Sealed: implemented by
 /// exactly those two types. `Cx` is the originating batch handler's context type, threaded so the
-/// static [`PublishTransform`](crate::runtime::PublishTransform) reads the delivery while publishing each reply.
+/// static [`PublishTransform`](crate::PublishTransform) reads the delivery while publishing each reply.
 pub trait ReplyPublisher<Cx = ()>: Sealed + Send + Sync {
     /// The payload form of the publisher underneath, so a batch's replies encode into what that
     /// form carries. See [`Publisher::Payload`].

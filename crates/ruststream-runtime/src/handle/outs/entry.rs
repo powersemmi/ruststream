@@ -7,12 +7,12 @@ use std::ops::Deref;
 use std::time::Duration;
 
 use crate::codec::Codec;
-use crate::runtime::inject::FromStartup;
-use crate::runtime::publish::{
+use crate::inject::FromStartup;
+use crate::publish::{
     Admits, HeadersUnset, MessageBody, OutPipeline, PublishBuilder, PublishIdentity,
     TransactionScope, TypedTransaction, message_of,
 };
-use crate::runtime::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
+use crate::slot::{ContainsMessage, OutSlot, PublishedThrough, SlotPublisher};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, paired, publishing_to};
 use crate::{
@@ -38,7 +38,7 @@ use crate::{
 /// change its signature. Spelling the entry is for pinning it to a concrete live value.
 ///
 /// `Pipe` is that publish path: the app's own publish pipeline (the
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer) chain) with the slot's
+/// [`publish_layer`](crate::RustStream::publish_layer) chain) with the slot's
 /// `.transform(..)` steps composed on top. It is [`PublishIdentity`] - nothing in the way, the
 /// bare leaf call - until a mount site names either.
 ///
@@ -51,7 +51,7 @@ use crate::{
 /// `Body` is the entry's declared message set, `()` (any dictionary type) unless the
 /// `#[subscriber]` parameter's third `Out` position narrows it;
 /// [`message`](Slot::message) checks it at compile time (see
-/// [`ContainsMessage`](crate::runtime::ContainsMessage)).
+/// [`ContainsMessage`](crate::ContainsMessage)).
 pub struct Slot<M, W, E, Pipe = PublishIdentity, Body = ()> {
     wired: SlotPublisher<W, M>,
     codec: E,
@@ -97,20 +97,20 @@ impl<M: OutSlot, W: Publisher, E: Codec + Send + Sync, Pipe: OutPipeline<W>, Bod
     Slot<M, W, E, Pipe, Body>
 {
     /// Starts a typed publish through the slot, on the message type's own wire
-    /// ([`MessageWire`](crate::runtime::MessageWire)): a `serde::Serialize` value encodes with
-    /// the include site's codec, a [`Serialized`](crate::runtime::Serialized) one carries its
+    /// ([`MessageWire`](crate::MessageWire)): a `serde::Serialize` value encodes with
+    /// the include site's codec, a [`Serialized`](crate::Serialized) one carries its
     /// bytes and they leave as they are. The
     /// message type has to be in the marker's `#[publishes(..)]` dictionary (see
-    /// [`PublishedThrough`](crate::runtime::PublishedThrough)) and, when the entry carries a
+    /// [`PublishedThrough`](crate::PublishedThrough)) and, when the entry carries a
     /// declared message set, in that set (see
-    /// [`ContainsMessage`](crate::runtime::ContainsMessage)); everything else - the
+    /// [`ContainsMessage`](crate::ContainsMessage)); everything else - the
     /// destination and the header contract - comes from the type's `#[derive(Outgoing)]`
     /// declaration, so the builder demands exactly the positions that declaration leaves open.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::runtime::{HandlerOutcome, Out};
     /// use ruststream::{Outgoing, OutSlot, Publisher, subscriber};
@@ -199,7 +199,7 @@ impl<M: OutSlot, W: TransactionalPublisher, E: Send + Sync, Pipe: Send + Sync, B
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::runtime::{HandlerOutcome, Out};
     /// use ruststream::{Outgoing, OutSlot, TransactionalPublisher, subscriber};
@@ -261,7 +261,7 @@ impl<M: OutSlot, W: OwnedTransactions, E: Send + Sync, Pipe: Send + Sync, Body>
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "memory", feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::runtime::{HandlerOutcome, Out};
     /// use ruststream::{Outgoing, OutSlot, OwnedTransactions, subscriber};
@@ -394,7 +394,7 @@ impl<M: OutSlot, W: RequestReply, E: Send + Sync, Pipe: OutPipeline<W>, Body> Re
 
 impl<M, W, E, Pipe, Body> Slot<M, W, E, Pipe, Body> {
     /// Builds an entry over an already-paired live value, for the crate's own unit tests.
-    #[cfg(all(test, feature = "memory", feature = "json"))]
+    #[cfg(all(test, feature = "json"))]
     pub(crate) fn wired(wired: W, codec: E, pipeline: Pipe) -> Self {
         Self {
             wired: SlotPublisher::new(wired),
@@ -455,7 +455,7 @@ where
 /// here, with the broker capability it needs on [`Wire`](Self::Wire) and nothing else:
 ///
 /// ```
-/// # #[cfg(all(feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::prelude::*;
 /// # #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -503,7 +503,7 @@ where
 ///
 /// The three projections are the include site's business, so nothing the mount does reaches the
 /// body's signature: a `.transform(..)` on the slot, an app-wide
-/// [`publish_layer`](crate::runtime::RustStream::publish_layer), a `.codec(..)` override, or a
+/// [`publish_layer`](crate::RustStream::publish_layer), a `.codec(..)` override, or a
 /// different broker behind the policy all land in [`Pipe`](Self::Pipe) and [`Enc`](Self::Enc)
 /// and leave the `where` clause alone.
 ///

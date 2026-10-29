@@ -41,6 +41,7 @@ impl<Policy> fmt::Debug for RawReplyWiring<Policy> {
 }
 
 // The wiring is transparent to the pairing: the bytes leave through the policy's own live form.
+#[doc(hidden)]
 impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
     for RawReplyWiring<Policy>
 {
@@ -72,10 +73,10 @@ impl<CB: ConnectedBroker, Policy: PublishPolicy<CB> + Send> PublishPolicy<CB>
 }
 
 /// Replaces the publish policy a wiring carries, keeping every step the chain already named:
-/// the hook [`map_publisher`](crate::runtime::MapPublisher::map_publisher) - and so a broker
+/// the hook [`map_publisher`](crate::MapPublisher::map_publisher) - and so a broker
 /// crate's own publisher settings - reaches the policy through.
 ///
-/// Implemented for both reply wires and for one [`Out`](crate::runtime::Out) slot's attachment,
+/// Implemented for both reply wires and for one [`Out`](crate::Out) slot's attachment,
 /// so a broker's settings trait is written once and applies wherever a policy is named.
 #[doc(hidden)]
 pub trait MapReplyPolicy: Sized {
@@ -342,6 +343,7 @@ impl PublishingDirectly for Direct {}
 
 // A wiring is a policy over a policy: pairing swaps the leaf for its live form and resolves the
 // codec position, while the transform stacks travel unchanged.
+#[doc(hidden)]
 impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, Direct>
 where
     CB: ConnectedBroker,
@@ -386,6 +388,7 @@ where
 // The transactional wiring pairs into the transactional reply sink, which is where the leaf's
 // live form has to carry broker transactions - so a broker without them fails at the mount that
 // named `.transactional()`, not at the step.
+#[doc(hidden)]
 impl<CB, Policy, Enc, PL, BL> PublishPolicy<CB> for ReplyWiring<Policy, Enc, PL, BL, InTransaction>
 where
     CB: ConnectedBroker,
@@ -428,15 +431,15 @@ where
     }
 }
 
-#[cfg(all(test, feature = "memory", feature = "json", feature = "asyncapi"))]
+#[cfg(all(test, feature = "json", feature = "asyncapi"))]
 mod tests {
     use std::collections::BTreeMap;
 
     use super::{RawReplyWiring, ReplyWiring, TransactionalReply};
     use crate::bindings::{Binding, Bindings};
-    use crate::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
-    use crate::runtime::publish::{Names, NarrowToUse};
+    use crate::publish::{Names, NarrowToUse};
     use crate::{PairError, PublishPolicy};
+    use ruststream::memory::{ConnectedMemoryBroker, MemoryPublish, MemoryPublisher};
 
     /// One binding under `protocol` whose body is the channel the hook was asked about, so a
     /// wrapper that drops a level or passes a name of its own is visible.

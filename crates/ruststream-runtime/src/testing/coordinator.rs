@@ -1,13 +1,13 @@
 //! The recording-and-quiescence [`Coordinator`] shared by the harness, the dispatch path, and a
 //! broker's in-process bus.
 //!
-//! One `Coordinator` is created per [`TestApp`](super::TestApp) run and installed into both the
-//! dispatch [`Delivery`](crate::runtime::dispatch::Delivery) context (via [`TestHooks`]) and each
+//! One `Coordinator` is created per [`TestApp`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) run and installed into both the
+//! dispatch `Delivery` context (via [`TestHooks`]) and each
 //! broker's bus. It does two jobs:
 //!
 //! - Records every delivery a handler saw: the raw payload, headers, and the final outcome
 //!   ([`Outcome`]), keyed by the broker's scope id and the subscription name.
-//! - Tracks in-flight work so [`TestApp::publish`](super::TestApp) can drive the system to a
+//! - Tracks in-flight work so [`TestApp::publish`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) can drive the system to a
 //!   standstill before returning: every enqueue into a subscriber increments the counter, every
 //!   completed dispatch decrements it.
 
@@ -26,8 +26,8 @@ use tokio::task::JoinHandle;
 use tokio::time;
 use tokio::time::Instant;
 
+use crate::HandlerResult;
 pub(crate) use crate::pairing::{Origin, paired};
-use crate::runtime::HandlerResult;
 use crate::{OutgoingMessage, RawMessage};
 
 use super::TestError;
@@ -342,12 +342,15 @@ fn settled_as(settle: Option<HandlerResult>) -> Outcome {
     }
 }
 
-/// A shared slot installed once per broker scope into the dispatch [`Delivery`].
+/// A shared slot installed once per broker scope into the dispatch `Delivery`.
 ///
 /// It is empty in production (the `testing` feature can be on without a harness running), so the
 /// per-delivery read is a single atomic load returning `None`. The harness fills it before any
 /// dispatch task starts, so the read path never races the write.
-pub(crate) struct TestHooks {
+// Machinery the harness crate drives, hidden from the docs; it holds erased closures and
+// futures that have no useful `Debug`.
+#[allow(missing_debug_implementations)]
+pub struct TestHooks {
     coordinator: OnceLock<Coordinator>,
     /// Every subscription the app mounts, as `(broker scope, subscription name)` in mount order,
     /// noted while the app is built; a subscription's position here is its identity. A live settle
@@ -379,7 +382,8 @@ impl TestHooks {
     }
 
     /// Every subscription the app mounts, in mount order.
-    pub(crate) fn subscriptions(&self) -> Vec<LiveSubscription> {
+    #[doc(hidden)]
+    pub fn subscriptions(&self) -> Vec<LiveSubscription> {
         self.subscriptions
             .lock()
             .expect("test hooks subscriptions mutex poisoned")
@@ -394,7 +398,8 @@ impl TestHooks {
     }
 
     /// Installs the coordinator for a harness run. Idempotent; a second install is ignored.
-    pub(crate) fn install(&self, coordinator: Coordinator) {
+    #[doc(hidden)]
+    pub fn install(&self, coordinator: Coordinator) {
         let _ = self.coordinator.set(coordinator);
     }
 
@@ -465,7 +470,7 @@ struct Published {
 
 /// A subscription a live settle waits on: its identity, the broker it belongs to, and its name.
 #[derive(Clone, Debug)]
-pub(crate) struct LiveSubscription {
+pub struct LiveSubscription {
     pub(crate) id: usize,
     pub(crate) scope_id: usize,
     pub(crate) name: String,
@@ -514,7 +519,9 @@ impl Drop for InFlightHold {
 impl Coordinator {
     /// Creates a coordinator that gives up after `max_steps` dispatched deliveries without
     /// reaching quiescence (a guard against perpetual-requeue handlers).
-    pub(crate) fn new(max_steps: usize) -> Self {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(max_steps: usize) -> Self {
         Self {
             inner: Arc::new(Inner {
                 in_flight: AtomicUsize::new(0),
@@ -585,14 +592,16 @@ impl Coordinator {
     }
 
     /// The hooks a test registered on this run's handles.
-    pub(crate) fn hooks(&self) -> &Hooks {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn hooks(&self) -> &Hooks {
         &self.inner.hooks
     }
 
     /// Schedules a delayed redelivery (`nack_after` / `retry_after`): after `delay`, `redeliver`
     /// runs (it must re-enqueue the message and call [`enqueued`](Self::enqueued)). The redelivery is
     /// off the synchronous reaction the harness drives, so a publish returns once the immediate
-    /// settlement is recorded; a test advances time with [`TestApp::advance`](super::TestApp) to
+    /// settlement is recorded; a test advances time with [`TestApp::advance`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) to
     /// fire it.
     ///
     /// A broker calls this from its `nack_after` instead of a bare `tokio::spawn`, so the harness can
@@ -617,7 +626,7 @@ impl Coordinator {
     /// that has to await something itself: the runtime's deferred `retry_after` fallback
     /// re-publishes the message, and the publish is what re-enqueues it. Awaiting the whole
     /// future inside the timer is what makes the copy counted by the time
-    /// [`TestApp::advance`](super::TestApp) drives the reaction.
+    /// [`TestApp::advance`](https://docs.rs/ruststream/latest/ruststream/testing/struct.TestApp.html) drives the reaction.
     ///
     /// # Panics
     ///
@@ -650,7 +659,8 @@ impl Coordinator {
     // The guard is dropped at the end of the block (before the awaits); held only to drain the due
     // timers out of the shared list.
     #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn fire_due_timers(&self) {
+    #[doc(hidden)]
+    pub async fn fire_due_timers(&self) {
         let now = Instant::now();
         let due: Vec<JoinHandle<()>> = {
             let mut timers = self
@@ -683,7 +693,8 @@ impl Coordinator {
     ///
     /// Returns [`TestError::NotQuiescent`] when the step budget is exhausted before the reaction
     /// settles.
-    pub(crate) async fn drive(&self) -> Result<(), TestError> {
+    #[doc(hidden)]
+    pub async fn drive(&self) -> Result<(), TestError> {
         loop {
             // Register interest before reading the counter so a concurrent `settled` cannot slip a
             // wakeup between the check and the await.
@@ -705,10 +716,8 @@ impl Coordinator {
 
     /// Notes where each broker of the app is connected, `connected` giving each registration's
     /// connected form: what a paired publisher's [`Origin`] resolves to.
-    pub(crate) fn locate<'a>(
-        &self,
-        connected: impl IntoIterator<Item = &'a (dyn Any + Send + Sync)>,
-    ) {
+    #[doc(hidden)]
+    pub fn locate<'a>(&self, connected: impl IntoIterator<Item = &'a (dyn Any + Send + Sync)>) {
         *self
             .inner
             .brokers
@@ -726,14 +735,17 @@ impl Coordinator {
 
     /// The clock as the test starts a publish of its own, for
     /// [`record_published`](Self::record_published) once the broker took it.
-    pub(crate) fn test_publish_started(&self) -> u64 {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn test_publish_started(&self) -> u64 {
         self.tick()
     }
 
     /// Records one publish the test made onto the broker registered at `scope_id`, started at
     /// `started` on the harness's clock: the broker took it. Returns the hooks registered on its
     /// destination.
-    pub(crate) fn record_published(
+    #[doc(hidden)]
+    pub fn record_published(
         &self,
         scope_id: usize,
         message: RawMessage,
@@ -800,12 +812,14 @@ impl Coordinator {
 
     /// Every publish to `name` the harness saw go to the broker registered at `scope_id`, in
     /// publish order.
-    pub(crate) fn published(&self, scope_id: usize, name: &str) -> Vec<PublishedEntry> {
+    #[doc(hidden)]
+    pub fn published(&self, scope_id: usize, name: &str) -> Vec<PublishedEntry> {
         self.published_within(scope_id, name, Within::ALL)
     }
 
     /// Like [`published`](Self::published), over the publishes recorded up to `within`.
-    pub(crate) fn published_within(
+    #[doc(hidden)]
+    pub fn published_within(
         &self,
         scope_id: usize,
         name: &str,
@@ -916,7 +930,8 @@ impl Coordinator {
     ///
     /// Returns [`TestError::NotSettled`] naming the subscription still owed a delivery, or the
     /// running handler, when the deadline passes first.
-    pub(crate) async fn settle_live(
+    #[doc(hidden)]
+    pub async fn settle_live(
         &self,
         subscriptions: &[LiveSubscription],
         routing: Routing<'_>,

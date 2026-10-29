@@ -10,12 +10,11 @@ use super::super::handler::HandlerResult;
 use super::super::publish::{Transactional, TypedPublisher};
 use super::*;
 use crate::codec::JsonCodec;
-use crate::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
-use crate::runtime::input::Decoded;
+use crate::input::Decoded;
 use crate::testkit::batch::{publish_numbers, publish_payloads, pull_batch};
-#[cfg(feature = "logging")]
 use crate::testkit::log_capture;
 use crate::{HeaderMap, Name, OutgoingMessage, Publisher, Subscriber, SubscriptionSource, Take};
+use ruststream::memory::{ConnectedMemoryBroker, MemoryBroker, MemoryError, MemoryPublisher};
 
 struct Confirm {
     reply_to: &'static str,
@@ -319,7 +318,6 @@ async fn a_failed_reply_publish_retries_the_whole_batch() {
 
 /// The publish-failure diagnostic names the subscription, the reply channel, the reply type and
 /// the broker error, so the retry is attributable from the logs alone.
-#[cfg(feature = "logging")]
 #[tokio::test]
 async fn a_failed_reply_publish_is_logged_with_its_reply_channel() {
     let broker = MemoryBroker::new();

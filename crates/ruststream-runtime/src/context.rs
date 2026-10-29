@@ -139,7 +139,7 @@ struct AfterHook {
 /// A handler reads its delivery through the context and takes extractors after it:
 ///
 /// ```
-/// # #[cfg(all(feature = "macros", feature = "memory", feature = "json"))]
+/// # #[cfg(feature = "json")]
 /// # mod demo {
 /// use ruststream::memory::prelude::*;
 /// use serde::Deserialize;
@@ -252,7 +252,8 @@ impl<'a, C, S> Context<'a, C, S> {
     /// dispatch (before the harness's clearing [`took_decode_failed`](Self::took_decode_failed)
     /// read), so its read must leave the flag in place.
     #[cfg(feature = "otel")]
-    pub(crate) fn decode_failed(&self) -> bool {
+    #[doc(hidden)]
+    pub fn decode_failed(&self) -> bool {
         self.decode_failed
     }
 
@@ -430,7 +431,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;
@@ -595,7 +596,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;
@@ -641,7 +642,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;
@@ -683,7 +684,7 @@ impl<'a, C, S> Context<'a, C, S> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use std::time::Instant;
     ///
@@ -802,7 +803,7 @@ impl<C, S> After<'_, '_, C, S> {
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(all(feature = "macros", feature = "json"))]
+    /// # #[cfg(feature = "json")]
     /// # mod demo {
     /// use ruststream::prelude::*;
     /// use serde::Deserialize;

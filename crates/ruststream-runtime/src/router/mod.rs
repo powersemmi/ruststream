@@ -7,11 +7,11 @@
 //! returns an opaque [`RouterDef`] rather than naming that type.
 //!
 //! Bind it to a broker by passing it to
-//! [`BrokerScope::include_router`](crate::runtime::BrokerScope::include_router) inside
-//! [`RustStream::with_broker`](crate::runtime::RustStream::with_broker). Nothing connects or
+//! [`BrokerScope::include_router`](crate::BrokerScope::include_router) inside
+//! [`RustStream::with_broker`](crate::RustStream::with_broker). Nothing connects or
 //! subscribes until the application runs. Unlike a hand-rolled callback group, the app's global
-//! [`layer`](crate::runtime::RustStream::layer) stack DOES reach router handlers: each is wrapped
-//! with the app's [`BlanketLayer`](crate::runtime::BlanketLayer) global when the router is mounted.
+//! [`layer`](crate::RustStream::layer) stack DOES reach router handlers: each is wrapped
+//! with the app's [`BlanketLayer`](crate::BlanketLayer) global when the router is mounted.
 
 mod builder;
 mod builders;
@@ -49,15 +49,15 @@ pub use routes::{RouterDef, RouterHandlers};
 pub use sink::RouterSink;
 
 use crate::Connected;
-use crate::runtime::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
-use crate::runtime::subscriber_def::SubscriberDef;
-use crate::runtime::typed::Typed;
+use crate::batch::{BatchDef, CarriedBatch, DeserializedBatch, TypedBatch};
+use crate::subscriber_def::SubscriberDef;
+use crate::typed::Typed;
 
 use routes::{BatchRoute, SubscribeRoute};
 use routes_inject::{BatchInjectRoute, InjectRoute};
 use routes_publish::{BatchPublishingRoute, PublishingRoute, RawReplyRoute};
 
-pub(crate) use crate::runtime::{SourceBatch, SourceMessage};
+pub(crate) use crate::{SourceBatch, SourceMessage};
 
 /// The route a [`SubscriberDef`] `D` mounted on source `S` (decoded with `C`) becomes. Names the
 /// otherwise unwieldy registration type.
@@ -119,7 +119,7 @@ type InjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
 type BatchInjectedRouter<B, S, D, C, E, RC, RL, RP, R> =
     Router<B, (BatchInjectRoute<S, D, C, E>, R), RC, RL, RP>;
 
-/// The router that mounting a publishing [`PublishingDef`](crate::runtime::PublishingDef) `D` on
+/// The router that mounting a publishing [`PublishingDef`](crate::PublishingDef) `D` on
 /// source `S` (decoded with `C`, replying through the policy `RP` and resolving its startup
 /// injections against the attachment `E`) onto `R` produces. See [`IncludedRouter`] for the
 /// carried parameters.
@@ -131,7 +131,7 @@ type RawReplyRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (RawReplyRoute<S, D, C, Reply, E>, R), RC, RL, RP>;
 
 /// The router that mounting a batch publishing
-/// [`BatchPublishingDef`](crate::runtime::BatchPublishingDef) `D` on source `S` (decoded with `C`,
+/// [`BatchPublishingDef`](crate::BatchPublishingDef) `D` on source `S` (decoded with `C`,
 /// replying through the policy `Reply`) onto `R` produces.
 type BatchPublishingRouter<B, S, D, C, Reply, E, RC, RL, RP, R> =
     Router<B, (BatchPublishingRoute<S, D, C, Reply, E>, R), RC, RL, RP>;

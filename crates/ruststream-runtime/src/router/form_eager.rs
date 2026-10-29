@@ -2,16 +2,16 @@
 //!
 //! Each resolves the subscription source from the definition itself, which is where a source
 //! belongs, and the decode codec from the definition's settings against the chain (the
-//! [`codec`](crate::runtime::SubscriberBuilder::codec) override wins, else the chain's codec or
+//! [`codec`](crate::SubscriberBuilder::codec) override wins, else the chain's codec or
 //! the default applies).
 
 use crate::{BatchSubscriber, Broker, Connected, SubscriptionSource};
 
-use crate::runtime::batch::{BatchDef, SourceCarriesBatch};
-use crate::runtime::input::{Carried, DecodeWith, Materialize, Provided};
-use crate::runtime::settings::{BatchSized, DefMountCodec, MountsWith};
-use crate::runtime::subscriber_def::SubscriberDef;
-use crate::runtime::{SourceMessage, SourceSubscriber};
+use crate::batch::{BatchDef, SourceCarriesBatch};
+use crate::input::{Carried, DecodeWith, Materialize, Provided};
+use crate::settings::{BatchSized, DefMountCodec, MountsWith};
+use crate::subscriber_def::SubscriberDef;
+use crate::{SourceMessage, SourceSubscriber};
 
 use super::builder::Router;
 use super::mount::RouterMount;
