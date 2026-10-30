@@ -49,3 +49,39 @@ impl Clock for Tokio {
         time::sleep_until(deadline)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::pin::pin;
+    use std::time::Duration;
+
+    use futures::poll;
+    use ruststream_runtime::Clock;
+    use tokio::time;
+
+    use super::Tokio;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_timer_fires_at_its_deadline_and_not_before() {
+        let clock = Tokio;
+        let deadline = clock.now() + Duration::from_secs(10);
+        let mut timer = pin!(clock.sleep_until(deadline));
+        time::advance(Duration::from_secs(9)).await;
+        assert!(
+            poll!(timer.as_mut()).is_pending(),
+            "the timer fired before its deadline",
+        );
+        time::advance(Duration::from_secs(1)).await;
+        assert!(poll!(timer.as_mut()).is_ready());
+        assert_eq!(clock.now(), deadline);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deadline_already_passed_fires_at_once() {
+        let clock = Tokio;
+        let passed = clock.now();
+        time::advance(Duration::from_secs(1)).await;
+        let timer = pin!(clock.sleep_until(passed));
+        assert!(poll!(timer).is_ready());
+    }
+}

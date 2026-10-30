@@ -4,10 +4,9 @@
 use std::fmt;
 use std::time::Duration;
 
-use tokio::time;
 use tokio_util::task::TaskTracker;
 
-use crate::{Delivery, Detach};
+use crate::{Clock, Delivery, Detach, Tokio};
 
 /// The runner of a subscription on the app's runtime: what its deliveries leave behind is a task
 /// of the app's tracker, which the teardown drains.
@@ -51,7 +50,7 @@ impl Detach for Tracked {
         Work: Future<Output = ()> + Send + 'static,
     {
         drop(self.tasks.spawn(async move {
-            time::sleep(delay).await;
+            Tokio.sleep(delay).await;
             work.await;
         }));
     }
@@ -85,7 +84,7 @@ impl Detach for OnThread {
         Work: Future<Output = ()> + Send + 'static,
     {
         drop(self.tasks.spawn(self.own.track_future(async move {
-            time::sleep(delay).await;
+            Tokio.sleep(delay).await;
             work.await;
         })));
     }
