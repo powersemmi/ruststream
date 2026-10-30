@@ -18,10 +18,11 @@ use core::marker::PhantomData;
 use crate::dispatch::{Delivery, HeadersAtOnce, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handler::LocalHandler;
-use crate::host::{Halt, LocalDetach, OnOneThread, ShutdownWait};
+use crate::host::{Halt, HostDetach, LocalDetach, OnOneThread, ShutdownWait};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
+use crate::redelivery::{CopyPublisher, NoCopies, PairCopies};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
@@ -29,9 +30,11 @@ use crate::{
 };
 
 use super::builder::Router;
-use super::fold::{OpenLayered, RunRoutes};
+use super::fold::{OpenLayered, OpenedRoute, RunRoutes};
 use super::local::LocalPipeline;
 use super::routes::SubscribeRoute;
+use super::routes_inject::InjectRoute;
+use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
 /// How an opened single-message route runs on a runner that hosts the app in one task.
 ///
@@ -42,10 +45,17 @@ use super::routes::SubscribeRoute;
     note = "a plan comes from the runner's own mount steps"
 )]
 pub trait LocalDispatch {
-    /// Runs the route until `signal` stops it.
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    /// What the plan keeps of its retry copies: [`NoCopies`], or
+    /// [`KeepCopies`](crate::KeepCopies) for a plan with a store of its own, whose
+    /// registration pairs the copy path when it opens.
+    type Copies;
+
+    /// Runs the route until `signal` stops it; `path` is the copy path its registration paired
+    /// for the plan's kept copies.
+    fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: LocalRoute<Sub, Body, Cx>,
+        path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
@@ -55,7 +65,8 @@ pub trait LocalDispatch {
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach;
+        Host: LocalDetach,
+        Path: CopyPublisher;
 }
 
 /// One opened route as a plan receives it: the subscriber, the handler with its layers applied,
@@ -77,18 +88,19 @@ pub struct LocalRoute<Sub, Body, Cx> {
 }
 
 impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
-    /// Runs the route one delivery at a time: the plan of a route that declared no workers.
-    pub async fn run_sequential<State, Signal, Host>(
+    /// Runs the route one delivery at a time, on the host the plan lends it: the plan of a route
+    /// that declared no workers.
+    pub async fn run_sequential<State, Signal, Lent>(
         self,
         signal: Signal,
         state: &Arc<State>,
-        host: &Host,
+        host: &Lent,
     ) where
         Sub: LocalSubscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
-        Host: LocalDetach,
+        Lent: HostDetach,
     {
         let failure = DispatchFailure::new(self.policies, signal.clone());
         run_sequential(
@@ -97,7 +109,7 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
             signal,
             self.name,
             Arc::clone(state),
-            (&self.delivery, &OnOneThread(host)),
+            (&self.delivery, host),
             failure,
             (),
             HeadersAtOnce,
@@ -112,21 +124,26 @@ impl<Sub, Body, Cx> LocalRoute<Sub, Body, Cx> {
 pub struct SequentialPlan;
 
 impl LocalDispatch for SequentialPlan {
-    fn run<Sub, Body, Cx, State, Signal, Host>(
+    type Copies = NoCopies;
+
+    async fn run<Sub, Body, Cx, State, Signal, Host, Path>(
         self,
         route: LocalRoute<Sub, Body, Cx>,
+        _path: Option<Path>,
         signal: Signal,
         state: &Arc<State>,
         host: &Host,
-    ) -> impl Future<Output = ()>
-    where
+    ) where
         Sub: LocalSubscriber,
         Body: LocalHandler<Sub::Message, Cx, State>,
         Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
         Signal: ShutdownWait + Halt + Clone,
         Host: LocalDetach,
+        Path: CopyPublisher,
     {
-        route.run_sequential(signal, state, host)
+        route
+            .run_sequential(signal, state, &OnOneThread(host))
+            .await;
     }
 }
 
@@ -141,10 +158,11 @@ pub struct Dispatched<Route, Plan> {
 /// A [`Dispatched`] route, opened: the parts its plan runs.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan> {
+pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path> {
     route: LocalRoute<Sub, Body, Cx>,
     layers: Layers,
     plan: Plan,
+    path: Option<Path>,
 }
 
 /// A registration a runner's mount steps give a plan: a plain one, with no plan yet (`()`), or
@@ -160,14 +178,26 @@ pub trait LocalPlanned: Sized {
     fn into_planned(self) -> (Self::Route, Self::Plan);
 }
 
-impl<S, H, Cx> LocalPlanned for SubscribeRoute<S, H, Cx> {
-    type Route = Self;
-    type Plan = ();
+/// Implements [`LocalPlanned`] for the registrations a mount site adds: none has a plan yet.
+macro_rules! impl_planless {
+    ($($route:ident<$($param:ident),+>),+ $(,)?) => {$(
+        impl<$($param),+> LocalPlanned for $route<$($param),+> {
+            type Route = Self;
+            type Plan = ();
 
-    fn into_planned(self) -> (Self, ()) {
-        (self, ())
-    }
+            fn into_planned(self) -> (Self, ()) {
+                (self, ())
+            }
+        }
+    )+};
 }
+
+impl_planless!(
+    SubscribeRoute<S, H, Cx>,
+    PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    InjectRoute<Source, Def, DecodeCodec, Extra>,
+);
 
 impl<Route, Plan> LocalPlanned for Dispatched<Route, Plan> {
     type Route = Route;
@@ -215,8 +245,79 @@ where
     }
 }
 
-impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx, Plan> OpenLayered<B, State>
-    for Dispatched<SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>, Plan>
+/// A registration the fold opens into the parts a plan runs: the subscription, its handler and
+/// what each delivery runs under. Every single-message registration of a local router is one;
+/// its plain opening and its planned one ([`Dispatched`]) both go through it.
+#[doc(hidden)]
+pub trait OpenLocalRoute<B: LocalBroker, State> {
+    /// The descriptor the registration subscribes through.
+    type Source;
+    /// The opened subscription.
+    type Sub: LocalSubscriber;
+    /// The handler each delivery runs.
+    type Body: LocalHandler<<Self::Sub as LocalSubscriber>::Message, Self::Cx, State>;
+    /// The broker's typed per-delivery context the handler reads.
+    type Cx: BuildContext<<Self::Sub as LocalSubscriber>::Message> + Send + Sync + 'static;
+
+    /// The descriptor, read before the registration opens.
+    fn source(&self) -> &Self::Source;
+
+    /// Subscribes against `connected` and builds the handler.
+    ///
+    /// # Errors
+    ///
+    /// The broker's refusal to subscribe, or to pair a publisher the handler holds.
+    #[allow(clippy::type_complexity)] // the route's own parts, named once here
+    fn open_route(
+        self,
+        connected: &LocalConnected<B>,
+    ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
+}
+
+/// Implements the plain opening of every [`OpenLocalRoute`] registration: no plan, the router's
+/// layer stack beside the handler.
+macro_rules! open_plain {
+    ($([$($param:ident),+] $route:ty),+ $(,)?) => {$(
+        impl<B, State, $($param),+> OpenLayered<B, State> for $route
+        where
+            B: LocalBroker,
+            $route: OpenLocalRoute<B, State>,
+        {
+            type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
+                <$route as OpenLocalRoute<B, State>>::Sub,
+                <$route as OpenLocalRoute<B, State>>::Body,
+                <$route as OpenLocalRoute<B, State>>::Cx,
+                Layers,
+            >;
+
+            async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+                self,
+                connected: &LocalConnected<B>,
+                layers: &Layers,
+            ) -> Result<Self::Opened<Layers>, BoxError> {
+                let route = self.open_route(connected).await?;
+                Ok(OpenedRoute::new(
+                    route.subscriber,
+                    route.handler,
+                    layers.clone(),
+                    route.name,
+                    route.delivery,
+                    route.policies,
+                ))
+            }
+        }
+    )+};
+}
+
+open_plain!(
+    [S, H, Cx] SubscribeRoute<S, H, Cx>,
+    [Source, Def, DecodeCodec, Wiring, Extra] PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Wiring, Extra] RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>,
+    [Source, Def, DecodeCodec, Extra] InjectRoute<Source, Def, DecodeCodec, Extra>,
+);
+
+impl<B, State, Source, M, Input, DecodeCodec, Inner, Cx> OpenLocalRoute<B, State>
+    for SubscribeRoute<Source, Typed<M, Input, DecodeCodec, Inner>, Cx>
 where
     B: LocalBroker,
     Source: LocalSubscriptionSource<LocalConnected<B>>,
@@ -225,14 +326,49 @@ where
     Input: Materialize<DecodeCodec, M>,
     Inner: LocalHandler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
-    Plan: LocalDispatch,
+{
+    type Source = Source;
+    type Sub = Source::Subscriber;
+    type Body = LocalTyped<Typed<M, Input, DecodeCodec, Inner>>;
+    type Cx = Cx;
+
+    fn source(&self) -> &Source {
+        &self.source
+    }
+
+    async fn open_route(
+        self,
+        connected: &LocalConnected<B>,
+    ) -> Result<LocalRoute<Self::Sub, Self::Body, Cx>, BoxError> {
+        let name: Arc<str> = Arc::from(self.source.name());
+        let subscriber = self
+            .source
+            .subscribe(connected)
+            .await
+            .map_err(|err| -> BoxError { Box::new(err) })?;
+        Ok(LocalRoute {
+            subscriber,
+            handler: LocalTyped(self.handler),
+            name,
+            delivery: Delivery::unscoped(),
+            policies: self.policies,
+        })
+    }
+}
+
+impl<B, State, Route, Plan> OpenLayered<B, State> for Dispatched<Route, Plan>
+where
+    B: LocalBroker,
+    Route: OpenLocalRoute<B, State>,
+    Plan: LocalDispatch<Copies: PairCopies<B, Route::Source>>,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedDispatch<
-        Source::Subscriber,
-        LocalTyped<Typed<M, Input, DecodeCodec, Inner>>,
-        Cx,
+        Route::Sub,
+        Route::Body,
+        Route::Cx,
         Layers,
         Plan,
+        <Plan::Copies as PairCopies<B, Route::Source>>::Path,
     >;
 
     async fn open_layered<Layers: LocalBlanketLayer + Clone>(
@@ -241,34 +377,28 @@ where
         layers: &Layers,
     ) -> Result<Self::Opened<Layers>, BoxError> {
         let Self { route, plan } = self;
-        let name: Arc<str> = Arc::from(route.source.name());
-        let subscriber = route
-            .source
-            .subscribe(connected)
-            .await
-            .map_err(|err| -> BoxError { Box::new(err) })?;
+        // Paired before the subscription opens, so a copy path the broker refuses fails the
+        // startup before any delivery arrives.
+        let path =
+            <Plan::Copies as PairCopies<B, Route::Source>>::pair(route.source(), connected).await?;
         Ok(OpenedDispatch {
-            route: LocalRoute {
-                subscriber,
-                handler: LocalTyped(route.handler),
-                name,
-                delivery: Delivery::unscoped(),
-                policies: route.policies,
-            },
+            route: route.open_route(connected).await?,
             layers: layers.clone(),
             plan,
+            path,
         })
     }
 }
 
-impl<State, Sub, Body, Cx, Layers, Plan> RunRoutes<State>
-    for OpenedDispatch<Sub, Body, Cx, Layers, Plan>
+impl<State, Sub, Body, Cx, Layers, Plan, Path> RunRoutes<State>
+    for OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path>
 where
     Sub: LocalSubscriber,
     Body: LocalHandler<Sub::Message, Cx, State>,
     Cx: BuildContext<Sub::Message> + Send + Sync + 'static,
     Layers: LocalBlanketLayer,
     Plan: LocalDispatch,
+    Path: CopyPublisher,
 {
     async fn run<Signal, Host>(self, signal: Signal, state: &Arc<State>, host: &Host)
     where
@@ -279,6 +409,7 @@ where
             route,
             layers,
             plan,
+            path,
         } = self;
         // Applied where the loop starts, as on a plain route: the wrapped handler's type is the
         // layer's own.
@@ -291,6 +422,6 @@ where
             delivery: route.delivery,
             policies: route.policies,
         };
-        plan.run(route, signal, state, host).await;
+        plan.run(route, path, signal, state, host).await;
     }
 }

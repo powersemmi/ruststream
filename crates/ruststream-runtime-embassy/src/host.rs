@@ -1,5 +1,8 @@
-//! Where the work a delivery leaves behind runs: futures kept beside the subscriptions and polled
-//! by the app's own task, so every timer they arm is the task's own.
+//! Where the work a delivery leaves behind runs: its continuations, kept beside the
+//! subscriptions and polled by the app's own task, so every timer they arm is the task's own.
+//!
+//! A registration's retry copies wait in its own store (`.retry_capacity::<CAP>()`), as data the
+//! registration's loop publishes once due; this host keeps none.
 
 // The store holds work that is not `Send`, and the driver runs it on the app's one task.
 #![allow(clippy::future_not_send)]
@@ -9,67 +12,43 @@ use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::future::poll_fn;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::task::{Poll, Waker};
 use core::time::Duration;
 
 use ruststream_runtime::{Clock, LocalDetach};
 
-use crate::clock::{EmbassyClock, Schedule};
+use crate::clock::EmbassyClock;
 
-/// A piece of detached work: a continuation, or a delayed copy of `retry_after` with the
-/// instant it is due at.
-struct Work<At> {
-    future: Pin<Box<dyn Future<Output = ()>>>,
-    /// When a delayed copy is due; `None` for a continuation, which runs at once.
-    due: Option<At>,
-}
+/// One piece of detached work.
+type Work = Pin<Box<dyn Future<Output = ()>>>;
 
 /// What a delivery hands over and the driver has not taken yet.
-struct Inbox<At> {
-    works: Vec<Work<At>>,
+struct Inbox {
+    works: Vec<Work>,
     waker: Option<Waker>,
 }
 
-/// The work deliveries left behind, run by [`drive`](Self::drive) on the task that polls it.
+/// The continuations deliveries left behind, run by [`drive`](Self::drive) on the task that
+/// polls it.
 ///
-/// A delivery hands work over through [`LocalDetach`]; the driver takes it at its next poll and polls
-/// it with the task's waker, as embassy's integrated timer queue requires of a timer. `room`
-/// bounds the delayed copies of `retry_after`: a reservation past it is refused, and the body
-/// requeues the delivery. A delayed copy is not polled before it is due: the driver waits for
-/// the earliest one on one timer, so a wake costs one timer however many copies wait. The work
-/// need not be `Send`: deliveries hand it over and the driver runs it on the app's one task, so
-/// the inbox is a plain cell and an idle driver reads one flag and compares its waker.
+/// A delivery hands work over through [`LocalDetach`]; the driver takes it at its next poll and
+/// polls it with the task's waker, as embassy's integrated timer queue requires of a timer. It
+/// keeps no delayed copy: [`reserve`](LocalDetach::reserve) answers `false`, so a `retry_after`
+/// on a registration without a store of its own requeues the delivery. The work need not be
+/// `Send`: deliveries hand it over and the driver runs it on the app's one task, so the inbox is
+/// a plain cell and an idle driver reads one flag and compares its waker.
 pub(crate) struct Detached<Timers: Clock = EmbassyClock> {
-    inbox: RefCell<Inbox<Timers::Instant>>,
+    inbox: RefCell<Inbox>,
     /// Set when the inbox holds work the driver has not taken.
     handed: Cell<bool>,
     /// Set once nothing more will be handed over: the driver ends when it has run what it holds.
     closed: Cell<bool>,
-    /// Delayed copies reserved, waiting or running.
-    reserved: Cell<usize>,
-    room: usize,
     clock: Timers,
 }
 
-impl Detached {
-    /// A host on embassy's clock with room for `room` delayed copies at once.
-    pub(crate) const fn with_room(room: usize) -> Self {
-        Self::on_clock(EmbassyClock, room)
-    }
-}
-
-/// What the driver holds: the work it polls on every wake, and the delayed copies not due yet
-/// with the one timer they wait on.
-struct Held<Timers: Clock> {
-    running: Vec<Work<Timers::Instant>>,
-    waiting: Vec<Work<Timers::Instant>>,
-    /// The timer of the earliest waiting copy, and the instant it ends at.
-    next: Option<(Timers::Instant, Timers::Sleep)>,
-}
-
-impl<Timers: Schedule> Detached<Timers> {
-    /// A host on `clock` with room for `room` delayed copies at once.
-    pub(crate) const fn on_clock(clock: Timers, room: usize) -> Self {
+impl<Timers: Clock<Sleep: 'static> + 'static> Detached<Timers> {
+    /// A host on `clock`.
+    pub(crate) const fn on_clock(clock: Timers) -> Self {
         Self {
             inbox: RefCell::new(Inbox {
                 works: Vec::new(),
@@ -77,8 +56,6 @@ impl<Timers: Schedule> Detached<Timers> {
             }),
             handed: Cell::new(false),
             closed: Cell::new(false),
-            reserved: Cell::new(0),
-            room,
             clock,
         }
     }
@@ -92,11 +69,7 @@ impl<Timers: Schedule> Detached<Timers> {
     /// Runs what deliveries hand over, until [`close`](Self::close) and the last piece of work
     /// finished.
     pub(crate) fn drive(&self) -> impl Future<Output = ()> + '_ {
-        let mut held = Held::<Timers> {
-            running: Vec::new(),
-            waiting: Vec::new(),
-            next: None,
-        };
+        let mut running: Vec<Work> = Vec::new();
         let mut known: Option<Waker> = None;
         poll_fn(move |cx| {
             if !known
@@ -111,15 +84,12 @@ impl<Timers: Schedule> Detached<Timers> {
             let closed = self.closed.get();
             if self.handed.get() {
                 self.handed.set(false);
-                self.take_handed(&mut held);
+                running.append(&mut self.inbox.borrow_mut().works);
             }
-            if !held.waiting.is_empty() {
-                self.release_due(&mut held, cx);
+            if !running.is_empty() {
+                running.retain_mut(|work| work.as_mut().poll(cx).is_pending());
             }
-            if !held.running.is_empty() {
-                self.poll_running(&mut held.running, cx);
-            }
-            if closed && held.running.is_empty() && held.waiting.is_empty() && !self.handed.get() {
+            if closed && running.is_empty() && !self.handed.get() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -127,62 +97,7 @@ impl<Timers: Schedule> Detached<Timers> {
         })
     }
 
-    /// Moves what was handed over into the driver: continuations to run, delayed copies to
-    /// wait, the timer moved earlier when a new copy is due first.
-    fn take_handed(&self, held: &mut Held<Timers>) {
-        for work in self.inbox.borrow_mut().works.drain(..) {
-            let Some(due) = work.due else {
-                held.running.push(work);
-                continue;
-            };
-            if held.next.as_ref().is_none_or(|(next, _)| due < *next) {
-                held.next = Some((due, self.clock.sleep_until(due)));
-            }
-            held.waiting.push(work);
-        }
-    }
-
-    /// Polls the earliest copy's timer; once it ends, moves every copy due by then to the
-    /// running work and arms the timer for the next one.
-    fn release_due(&self, held: &mut Held<Timers>, cx: &mut Context<'_>) {
-        let Some((_, timer)) = held.next.as_mut() else {
-            return;
-        };
-        if Pin::new(timer).poll(cx).is_pending() {
-            return;
-        }
-        let now = self.clock.now();
-        let mut earliest: Option<Timers::Instant> = None;
-        let mut index = 0;
-        while index < held.waiting.len() {
-            match held.waiting[index].due {
-                Some(due) if due > now => {
-                    earliest = Some(earliest.map_or(due, |at| at.min(due)));
-                    index += 1;
-                }
-                _ => held.running.push(held.waiting.swap_remove(index)),
-            }
-        }
-        held.next = earliest.map(|due| (due, self.clock.sleep_until(due)));
-        if held.next.is_some() {
-            // The new timer registers this task's waker on its first poll.
-            self.release_due(held, cx);
-        }
-    }
-
-    fn poll_running(&self, running: &mut Vec<Work<Timers::Instant>>, cx: &mut Context<'_>) {
-        running.retain_mut(|work| {
-            if work.future.as_mut().poll(cx).is_pending() {
-                return true;
-            }
-            if work.due.is_some() {
-                self.give_back();
-            }
-            false
-        });
-    }
-
-    fn hand(&self, work: Work<Timers::Instant>) {
+    fn hand(&self, work: Work) {
         self.inbox.borrow_mut().works.push(work);
         self.handed.set(true);
         self.wake();
@@ -193,183 +108,63 @@ impl<Timers: Schedule> Detached<Timers> {
             waker.wake_by_ref();
         }
     }
-
-    fn give_back(&self) {
-        self.reserved.set(self.reserved.get().saturating_sub(1));
-    }
 }
 
-impl<Timers: Schedule> LocalDetach for Detached<Timers> {
+impl<Timers: Clock<Sleep: 'static> + 'static> LocalDetach for Detached<Timers> {
     fn detach<Work>(&self, work: Work)
     where
         Work: Future<Output = ()> + 'static,
     {
-        self.hand(self::Work {
-            future: Box::pin(work),
-            due: None,
-        });
+        self.hand(Box::pin(work));
     }
 
+    // Reached only after a reservation, which this host refuses; the work still runs after its
+    // delay, on the task's own timer.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
         Work: Future<Output = ()> + 'static,
     {
-        self.hand(self::Work {
-            future: Box::pin(work),
-            due: Some(self.clock.deadline(delay)),
-        });
+        let timer = self.clock.sleep(delay);
+        self.hand(Box::pin(async move {
+            timer.await;
+            work.await;
+        }));
     }
 
     fn reserve(&self) -> bool {
-        let reserved = self.reserved.get();
-        if reserved >= self.room {
-            return false;
-        }
-        self.reserved.set(reserved + 1);
-        true
-    }
-
-    fn release(&self) {
-        self.give_back();
+        false
     }
 }
 
-/// The app's own host: it runs every continuation a delivery leaves, and keeps no delayed copy,
-/// so `retry_after` on a mount that declared no retry capacity requeues the delivery.
+/// The app's own host: it runs every continuation a delivery leaves.
 pub(crate) type AppHost = Detached;
 
 impl AppHost {
     /// The app's host.
     pub(crate) const fn new() -> Self {
-        Self::with_room(0)
+        Self::on_clock(EmbassyClock)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::sync::Arc;
-    use core::pin::{Pin, pin};
-    use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-    use core::task::{Context, Poll, Waker};
-    use core::time::Duration;
-
     use alloc::rc::Rc;
+    use alloc::sync::Arc;
     use core::cell::Cell;
+    use core::pin::pin;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::task::{Context, Poll, Waker};
 
-    use ruststream_runtime::{Clock, LocalDetach};
+    use ruststream_runtime::LocalDetach;
 
     // The driver on embassy's clock polls embassy's timer, whose queue lives in the executor.
     use embassy_executor as _;
 
     use super::Detached;
-    use crate::clock::Schedule;
-
-    /// A clock the test moves by hand, counting how often its timers are polled.
-    #[derive(Clone, Default)]
-    struct Probe {
-        now: Arc<AtomicU64>,
-        polls: Arc<AtomicU32>,
-    }
-
-    impl Probe {
-        fn advance_to(&self, at: u64) {
-            self.now.store(at, Ordering::Relaxed);
-        }
-
-        fn polls(&self) -> u32 {
-            self.polls.load(Ordering::Relaxed)
-        }
-    }
-
-    /// A timer of the probe clock.
-    struct ProbeSleep {
-        at: u64,
-        clock: Probe,
-    }
-
-    impl Future for ProbeSleep {
-        type Output = ();
-
-        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
-            self.clock.polls.fetch_add(1, Ordering::Relaxed);
-            if self.clock.now.load(Ordering::Relaxed) >= self.at {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        }
-    }
-
-    impl Clock for Probe {
-        type Instant = u64;
-        type Sleep = ProbeSleep;
-
-        fn now(&self) -> u64 {
-            self.now.load(Ordering::Relaxed)
-        }
-
-        fn sleep(&self, duration: Duration) -> ProbeSleep {
-            self.sleep_until(self.deadline(duration))
-        }
-
-        fn sleep_until(&self, at: u64) -> ProbeSleep {
-            ProbeSleep {
-                at,
-                clock: self.clone(),
-            }
-        }
-    }
-
-    impl Schedule for Probe {
-        fn deadline(&self, after: Duration) -> u64 {
-            self.now() + after.as_secs()
-        }
-    }
-
-    #[test]
-    fn waiting_copies_cost_one_timer_per_wake_and_run_once_due() {
-        let clock = Probe::default();
-        let host = Detached::on_clock(clock.clone(), 3);
-        let ran = Arc::new(AtomicU32::new(0));
-        for delay in [10, 20, 30] {
-            assert!(host.reserve(), "room for the copy");
-            let ran = Arc::clone(&ran);
-            host.detach_after(Duration::from_secs(delay), async move {
-                ran.fetch_add(1, Ordering::Relaxed);
-            });
-        }
-        let mut driver = pin!(host.drive());
-        let mut cx = Context::from_waker(Waker::noop());
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        for _ in 0..10 {
-            // A continuation a delivery leaves wakes the driver, as each delivery would.
-            host.detach(async {});
-            assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        }
-        assert_eq!(
-            clock.polls(),
-            11,
-            "timer polls over eleven wakes with three copies waiting"
-        );
-        clock.advance_to(20);
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
-        assert_eq!(ran.load(Ordering::Relaxed), 2, "copies run once due");
-        assert!(
-            host.reserve() && host.reserve(),
-            "the finished copies gave their room back"
-        );
-        assert!(!host.reserve(), "the waiting copy keeps its room");
-        host.release();
-        host.release();
-        clock.advance_to(30);
-        host.close();
-        assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
-        assert_eq!(ran.load(Ordering::Relaxed), 3, "every copy ran");
-    }
 
     #[test]
     fn the_driver_runs_handed_work_and_ends_once_closed() {
-        let host = Detached::with_room(0);
+        let host = Detached::new();
         let ran = Arc::new(AtomicBool::new(false));
         let mut driver = pin!(host.drive());
         let mut cx = Context::from_waker(Waker::noop());
@@ -383,31 +178,16 @@ mod tests {
 
     #[test]
     fn the_store_runs_work_that_is_not_send() {
-        let host = Detached::on_clock(Probe::default(), 1);
+        let host = Detached::new();
         let ran = Rc::new(Cell::new(0));
         let mut driver = pin!(host.drive());
         let mut cx = Context::from_waker(Waker::noop());
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Pending);
         let held = Rc::clone(&ran);
         LocalDetach::detach(&host, async move { held.set(held.get() + 1) });
-        assert!(LocalDetach::reserve(&host), "room for the copy");
-        let held = Rc::clone(&ran);
-        LocalDetach::detach_after(&host, Duration::ZERO, async move {
-            held.set(held.get() + 1);
-        });
         host.close();
         assert_eq!(driver.as_mut().poll(&mut cx), Poll::Ready(()));
-        assert_eq!(ran.get(), 2, "pieces of work that hold an `Rc` and ran");
-    }
-
-    #[test]
-    fn room_bounds_the_delayed_copies_and_a_release_gives_it_back() {
-        let host = Detached::with_room(2);
-        assert!(host.reserve());
-        assert!(host.reserve());
-        assert!(!host.reserve(), "a third copy has no room");
-        host.release();
-        assert!(host.reserve(), "a released reservation is room again");
+        assert_eq!(ran.get(), 1, "pieces of work that hold an `Rc` and ran");
     }
 
     #[test]

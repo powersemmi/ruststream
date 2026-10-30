@@ -14,7 +14,6 @@ use crate::dispatch::Delivery;
 use crate::inject::LocalFromStartup;
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
-use crate::middleware::LocalBlanketLayer;
 use crate::publish::{
     BatchTransformIdentity, Direct, ForReply, PublishCodec, PublishIdentity, PublishTransform,
     RawReplyWiring, ReplyWiring, TypedPublisher,
@@ -29,7 +28,7 @@ use crate::{
     LocalPublisher, LocalSubscriber, LocalSubscriptionSource, Serialized,
 };
 
-use super::fold::{OpenLayered, OpenedRoute};
+use super::fold_plan::{LocalRoute, OpenLocalRoute};
 use super::local::LocalPipeline;
 use super::routes_publish::{PublishingRoute, RawReplyRoute};
 
@@ -67,7 +66,7 @@ where
 
 // A single-message reply runs the per-message transforms only, as on the multi-thread runner,
 // so its wiring carries no batch stack.
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLayered<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Enc, PL, Extra> OpenLocalRoute<B, State>
     for PublishingRoute<
         Source,
         Def,
@@ -90,18 +89,19 @@ where
     Enc: PublishCodec<Codec: Clone>,
     PL: PublishTransform<ForReply<Def::Context>, <Policy::Live as LocalPublisher>::Options>,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
-        Source::Subscriber,
-        LocalReply<Def, DecodeCodec, LocalStack<Policy, B, Enc, PL>>,
-        Def::Context,
-        Layers,
-    >;
+    type Source = Source;
+    type Sub = Source::Subscriber;
+    type Body = LocalReply<Def, DecodeCodec, LocalStack<Policy, B, Enc, PL>>;
+    type Cx = Def::Context;
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn source(&self) -> &Source {
+        &self.source
+    }
+
+    async fn open_route(
         self,
         connected: &LocalConnected<B>,
-        layers: &Layers,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
+    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -135,18 +135,17 @@ where
             #[cfg(feature = "testing")]
             origin: Origin::default(),
         });
-        Ok(OpenedRoute::new(
+        Ok(LocalRoute {
             subscriber,
             handler,
-            layers.clone(),
             name,
-            Delivery::unscoped(),
+            delivery: Delivery::unscoped(),
             policies,
-        ))
+        })
     }
 }
 
-impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLayered<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Policy, Extra> OpenLocalRoute<B, State>
     for RawReplyRoute<Source, Def, DecodeCodec, RawReplyWiring<Policy>, Extra>
 where
     B: LocalBroker,
@@ -161,18 +160,19 @@ where
     Policy: LocalPublishPolicy<LocalConnected<B>>,
     Policy::Live: LocalPublisher,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
-        Source::Subscriber,
-        LocalReply<Def, DecodeCodec, Policy::Live>,
-        Def::Context,
-        Layers,
-    >;
+    type Source = Source;
+    type Sub = Source::Subscriber;
+    type Body = LocalReply<Def, DecodeCodec, Policy::Live>;
+    type Cx = Def::Context;
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn source(&self) -> &Source {
+        &self.source
+    }
+
+    async fn open_route(
         self,
         connected: &LocalConnected<B>,
-        layers: &Layers,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
+    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -206,13 +206,12 @@ where
             #[cfg(feature = "testing")]
             origin: Origin::default(),
         });
-        Ok(OpenedRoute::new(
+        Ok(LocalRoute {
             subscriber,
             handler,
-            layers.clone(),
             name,
-            Delivery::unscoped(),
+            delivery: Delivery::unscoped(),
             policies,
-        ))
+        })
     }
 }

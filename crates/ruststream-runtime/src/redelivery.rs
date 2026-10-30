@@ -40,6 +40,12 @@ use crate::{
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{Origin, TestHooks, paired, publishing_to};
 
+mod kept;
+
+pub use kept::{
+    AddressedCopy, CopyPublisher, KeepCopies, KeptAddress, NoCopies, NoCopyPath, PairCopies,
+};
+
 /// The plain publish policy of a broker's connected form, which is what a retry copy leaves
 /// through until a mount site names another.
 type DefaultPolicy<B> = <Connected<B> as DefaultPublish>::Policy;

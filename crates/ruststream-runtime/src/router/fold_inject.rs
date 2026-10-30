@@ -13,16 +13,15 @@ use crate::dispatch::Delivery;
 use crate::inject::{InjectHandler, LocalFromStartup, LocalInject, LocalInjectCall};
 use crate::input::Materialize;
 use crate::lifecycle::BoxError;
-use crate::middleware::LocalBlanketLayer;
 use crate::{
     BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
     LocalSubscriptionSource,
 };
 
-use super::fold::{OpenLayered, OpenedRoute};
+use super::fold_plan::{LocalRoute, OpenLocalRoute};
 use super::routes_inject::InjectRoute;
 
-impl<B, State, Source, M, Def, DecodeCodec, Extra> OpenLayered<B, State>
+impl<B, State, Source, M, Def, DecodeCodec, Extra> OpenLocalRoute<B, State>
     for InjectRoute<Source, Def, DecodeCodec, Extra>
 where
     B: LocalBroker,
@@ -34,18 +33,19 @@ where
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Context: BuildContext<M> + Send + Sync + 'static,
 {
-    type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
-        Source::Subscriber,
-        LocalInject<InjectHandler<Def, DecodeCodec>>,
-        Def::Context,
-        Layers,
-    >;
+    type Source = Source;
+    type Sub = Source::Subscriber;
+    type Body = LocalInject<InjectHandler<Def, DecodeCodec>>;
+    type Cx = Def::Context;
 
-    async fn open_layered<Layers: LocalBlanketLayer + Clone>(
+    fn source(&self) -> &Source {
+        &self.source
+    }
+
+    async fn open_route(
         self,
         connected: &LocalConnected<B>,
-        layers: &Layers,
-    ) -> Result<Self::Opened<Layers>, BoxError> {
+    ) -> Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError> {
         let Self {
             source,
             def,
@@ -69,13 +69,12 @@ where
             injections,
             decode: policies.decode,
         });
-        Ok(OpenedRoute::new(
+        Ok(LocalRoute {
             subscriber,
             handler,
-            layers.clone(),
             name,
-            Delivery::unscoped(),
+            delivery: Delivery::unscoped(),
             policies,
-        ))
+        })
     }
 }
