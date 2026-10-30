@@ -123,6 +123,6 @@ pub use ruststream_runtime_tokio::{
 };
 #[doc(hidden)]
 pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
-pub use ruststream_runtime_tokio::{MainRuntime, MainRuntimeExt, RouterSink};
+pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 
 pub mod cli;

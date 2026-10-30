@@ -26,7 +26,18 @@ metrics = []
 # The decode-failure flag and the batch-size histogram the OpenTelemetry layers read.
 otel = ["dep:opentelemetry"]
 # The in-process dispatch the test harness drives, and the broker contract of that harness.
-testing = ["dep:inventory", "dep:tokio", "dep:tokio-util", "tokio/test-util", "ruststream-core/testing"]
+testing = [
+    "dep:inventory",
+    "dep:tokio",
+    "dep:tokio-util",
+    "tokio/macros",
+    "tokio/sync",
+    "tokio/time",
+    "tokio/test-util",
+    "ruststream-core/testing",
+]
+# The app's runtime as a handler reaches it (`MainRuntime`), for the runner built on Tokio.
+tokio = ["dep:tokio"]
 poll-diagnostics = ["dep:quanta", "dep:pin-project-lite"]
 
 [dependencies]
@@ -37,8 +48,9 @@ futures.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tracing.workspace = true
-# The harness's coordinator steps a reaction on tokio; the delivery body names no runtime.
-tokio = { workspace = true, optional = true }
+# The handle of the app's runtime under the `tokio` feature, and the harness's coordinator under
+# `testing`; the delivery body itself names no runtime. Only `rt`: the body spawns nothing.
+tokio = { version = "1.44", optional = true, default-features = false, features = ["rt"] }
 tokio-util = { workspace = true, optional = true }
 quanta = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }

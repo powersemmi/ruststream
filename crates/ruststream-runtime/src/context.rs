@@ -28,6 +28,8 @@ use super::dispatch::Delivery;
 use super::failure::FailurePolicy;
 use super::handler::{HandlerOutcome, HandlerResult};
 use crate::host::Halt;
+#[cfg(feature = "tokio")]
+use crate::main_runtime::MainRuntime;
 
 /// Where one delivery's header map comes from.
 ///
@@ -199,6 +201,10 @@ pub struct Context<'a, C = (), S = ()> {
     /// record; `None` everywhere else, and always outside a harness run.
     #[cfg(feature = "testing")]
     carried: Option<RecordedValue>,
+    /// The app's runtime, read off the runner the first time the handler asks for it: a delivery
+    /// that never asks pays for the empty cell alone.
+    #[cfg(feature = "tokio")]
+    main: OnceCell<MainRuntime>,
 }
 
 impl<C, S> fmt::Debug for Context<'_, C, S> {
@@ -237,6 +243,8 @@ impl<'a, C, S> Context<'a, C, S> {
             decode_failed: false,
             #[cfg(feature = "testing")]
             carried: None,
+            #[cfg(feature = "tokio")]
+            main: OnceCell::new(),
         }
     }
 
@@ -365,6 +373,35 @@ impl<'a, C, S> Context<'a, C, S> {
     #[must_use]
     pub fn name(&self) -> &str {
         self.name
+    }
+
+    /// The runtime the app runs on: the one explicit way from a handler on dedicated threads
+    /// (`threads(n)`) to send work to the app's runtime (see [`MainRuntime`]). On any other
+    /// placement the handler already runs there.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called outside the context of a Tokio runtime, as Tokio's `Handle::current`
+    /// does; a handler always runs inside one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::IncomingMessage;
+    /// use ruststream::runtime::{Context, HandlerOutcome};
+    ///
+    /// async fn notify(_id: u64) {}
+    ///
+    /// async fn handle<M: IncomingMessage>(_msg: &M, ctx: &mut Context<'_>) -> HandlerOutcome {
+    ///     // The notification leaves the handler's thread; the handler does not wait for it.
+    ///     ctx.main_runtime().spawn(notify(7));
+    ///     HandlerOutcome::ack()
+    /// }
+    /// ```
+    #[cfg(feature = "tokio")]
+    #[must_use]
+    pub fn main_runtime(&self) -> &MainRuntime {
+        self.main.get_or_init(MainRuntime::current)
     }
 
     /// The delivery's own headers, taken off the broker on the first call and kept for the rest

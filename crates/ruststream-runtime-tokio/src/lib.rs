@@ -21,7 +21,6 @@ mod buffered;
 mod clock;
 mod detach;
 mod dispatch;
-mod main_runtime;
 mod shutdown;
 mod sink;
 #[cfg(test)]
@@ -41,7 +40,7 @@ pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, St
 pub use app::{IncludeMount, ScopeCommit};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use clock::Tokio;
-pub use main_runtime::{MainRuntime, MainRuntimeExt};
+pub use ruststream_runtime::MainRuntime;
 #[doc(hidden)]
 pub use shutdown::Shutdown;
 pub use sink::RouterSink;

@@ -41,6 +41,8 @@ mod in_messages;
 mod inject;
 mod input;
 mod lifecycle;
+#[cfg(feature = "tokio")]
+mod main_runtime;
 mod metadata;
 mod middleware;
 #[cfg(feature = "poll-diagnostics")]
@@ -84,8 +86,6 @@ pub use dispatch::{Placement, RETRY_COUNT_HEADER, Workers};
 pub use dynstack::{DynMiddleware, DynStack, DynStackHandler, Next};
 pub use extract::{Ctx, CtxKey, FromContext, FromRef, Headers, State};
 #[doc(hidden)]
-pub use extract::{CtxKeySeal, ReadKey};
-#[doc(hidden)]
 pub use failure::DispatchFailure;
 pub use failure::{FailurePolicies, FailurePolicy};
 #[doc(hidden)]
@@ -113,6 +113,8 @@ pub use handler::{Handler, HandlerOutcome};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
 pub use host::{Detach, Halt};
+#[cfg(feature = "tokio")]
+pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
 #[cfg(any(feature = "metrics", feature = "otel", feature = "testing"))]
 #[doc(hidden)]

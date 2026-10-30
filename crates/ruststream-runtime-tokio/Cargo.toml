@@ -25,7 +25,7 @@ poll-diagnostics = ["ruststream-runtime/poll-diagnostics"]
 
 [dependencies]
 ruststream-core.workspace = true
-ruststream-runtime.workspace = true
+ruststream-runtime = { workspace = true, features = ["tokio"] }
 bytes = { workspace = true, features = ["std"] }
 futures.workspace = true
 rtrb.workspace = true
