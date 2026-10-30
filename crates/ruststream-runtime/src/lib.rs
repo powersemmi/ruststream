@@ -193,7 +193,7 @@ pub use handler::IntoOutcome;
 pub use handler::{Handler, HandlerOutcome, LocalHandler};
 pub use host::{Clock, ShutdownWait};
 #[doc(hidden)]
-pub use host::{Detach, Halt, LocalDetach};
+pub use host::{Detach, Halt, HostDetach, LocalDetach, OnOneThread};
 #[cfg(feature = "tokio")]
 pub use main_runtime::MainRuntime;
 // The status half of `HandlerOutcome`, for the feature modules outside `runtime` that read it.
@@ -299,7 +299,7 @@ pub use router::{
     MountSink, OpenLayered, OpenRoutes, Opened, OpenedBatchRoute, OpenedRoute, PoolFits,
     PublishInjectMount, PublishMount, RawReplyInjectMount, RawReplyMount, ReplyAttachment,
     RetryDestinationsDeclared, RouteMetadata, RouteSubscription, RouterBroker, RouterCommit,
-    RouterMount, RouterPipe, RunRoutes, TakesWorkers,
+    RouterMount, RouterPipe, RunRoutes, RunsBatches, TakesWorkers,
 };
 #[cfg(feature = "alloc")]
 pub use router::{

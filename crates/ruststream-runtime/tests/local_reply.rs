@@ -19,9 +19,9 @@ use ruststream_core::{
 };
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
 use ruststream_runtime::{
-    Context, ContextKind, Deserialized, Detach, Halt, Handle, HandlerOutcome, Input, OpenRoutes,
-    Outgoing, PublishTransform, Reads, Router, RunRoutes, ShutdownWait, SoloDeserialized,
-    subscriber,
+    Context, ContextKind, Deserialized, Halt, Handle, HandlerOutcome, Input, LocalDetach,
+    OpenRoutes, Outgoing, PublishTransform, Reads, Router, RunRoutes, ShutdownWait,
+    SoloDeserialized, subscriber,
 };
 use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
@@ -69,17 +69,17 @@ impl Halt for &Stop {
 #[derive(Default)]
 struct CountDetached(AtomicUsize);
 
-impl Detach for CountDetached {
+impl LocalDetach for CountDetached {
     fn detach<Work>(&self, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + 'static,
     {
         self.0.fetch_add(1, Ordering::Relaxed);
     }
 
     fn detach_after<Work>(&self, _delay: Duration, _work: Work)
     where
-        Work: Future<Output = ()> + Send + 'static,
+        Work: Future<Output = ()> + 'static,
     {
         self.0.fetch_add(1, Ordering::Relaxed);
     }

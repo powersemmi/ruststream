@@ -42,7 +42,7 @@ pub use local::{PoolFits, RouterPipe, TakesWorkers};
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
-pub use fold::{OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes};
+pub use fold::{OpenLayered, OpenRoutes, OpenedBatchRoute, OpenedRoute, RunRoutes, RunsBatches};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;

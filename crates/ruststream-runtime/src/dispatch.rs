@@ -39,7 +39,7 @@ use super::handler::HandlerOutcome;
 #[cfg(doc)]
 use super::handler::HandlerResult;
 use super::handler::LocalHandler;
-use super::host::{Detach, Halt, ShutdownWait};
+use super::host::{Halt, HostDetach, ShutdownWait};
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
     Coordinator, Delivered, HarnessScope, Record, calls_in_harness_scope, in_harness_scope,
@@ -324,7 +324,7 @@ pub async fn dispatch<H, M, C, St, Signal, Host, Headers>(
     C: BuildContext<M> + Send + Sync + 'static,
     M: LocalIncomingMessage,
     Signal: Halt,
-    Host: Detach,
+    Host: HostDetach,
     Headers: LendHeaders<M>,
 {
     // Settling the message is what releases the harness's quiescence wait, and the post-settle
@@ -530,9 +530,9 @@ pub async fn run_batch<H, Batch, C, St, Signal, Host>(
     host: &Host,
     failure: &DispatchFailure<Signal>,
 ) where
-    H: LocalBatchHandler<Batch, C, St>,
+    H: LocalBatchHandler<Batch, Host, C, St>,
     Signal: Halt,
-    Host: Detach,
+    Host: HostDetach,
 {
     let batch = H::take(batch);
     // A batch spans many deliveries, so its context carries only subscription-scoped data, built

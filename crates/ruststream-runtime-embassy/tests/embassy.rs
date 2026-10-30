@@ -25,7 +25,7 @@ use ruststream_core::LocalIncomingMessage;
 use ruststream_core::{BytesMut, CallerName, OutgoingDestination};
 use ruststream_runtime::{
     Clock, Context, Delivery, DispatchFailure, FailurePolicies, HandlerOutcome, HeadersAtOnce,
-    LocalHandler, run_sequential,
+    LocalDetach, LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
     Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, ReplyShape, Router, RunRoutes,
@@ -81,7 +81,30 @@ struct App {
     /// The request channel its reply subscription reads, and the channel its replies go to.
     requests: Frames,
     replies: Frames,
+    /// The app's host: counts the work its deliveries leave behind.
+    host: LocalCount,
     ended: Cell<bool>,
+}
+
+/// A one-thread runner's host as the app task keeps it: counts what it is handed, which this
+/// app's deliveries leave none of.
+#[derive(Default)]
+struct LocalCount(Cell<usize>);
+
+impl LocalDetach for LocalCount {
+    fn detach<Work>(&self, _work: Work)
+    where
+        Work: Future<Output = ()> + 'static,
+    {
+        self.0.set(self.0.get() + 1);
+    }
+
+    fn detach_after<Work>(&self, _delay: Duration, _work: Work)
+    where
+        Work: Future<Output = ()> + 'static,
+    {
+        self.0.set(self.0.get() + 1);
+    }
 }
 
 /// A reading as the device's handler takes it: a view over the frame's bytes, decoded by no
@@ -246,7 +269,7 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
 /// The app's task: connects the broker, opens every route the router holds and runs them in one
 /// future until the app's control stops it.
 #[embassy_executor::task]
-async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetached) {
+async fn app(broker: FrameBroker, app: &'static App) {
     let connected = broker.connect().await.expect("the broker connects");
     let opened = routes(app)
         .open(&connected)
@@ -254,7 +277,7 @@ async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetache
         .expect("every route opens");
     // The task's future is its static storage: embassy keeps it in place, so it is not boxed.
     #[allow(clippy::large_futures)]
-    opened.run(&app.stop, &Arc::new(()), host).await;
+    opened.run(&app.stop, &Arc::new(()), &app.host).await;
     app.ended.set(true);
 }
 
@@ -434,6 +457,7 @@ async fn check_the_app(app: &App) {
     assert_eq!(allocations, 0, "allocations on the router's delivery path");
     passed("the router's delivery path allocates nothing");
 
+    assert_eq!(app.host.0.get(), 0, "work the app's deliveries detached");
     app.stop.stop();
     settle().await;
     assert!(app.ended.get(), "the app's run outlives shutdown");
@@ -515,6 +539,7 @@ fn main() {
             batched: AtomicU32::new(0),
             requests: Frames::new(),
             replies: Frames::new(),
+            host: LocalCount::default(),
             ended: Cell::new(false),
         },
     });
@@ -526,7 +551,7 @@ fn main() {
                 .with_bursts(&probe.app.bursts)
                 .with_requests(&probe.app.requests)
                 .with_replies(&probe.app.replies);
-            spawner.spawn(app(broker, &probe.app, &probe.host).expect("the app task is free"));
+            spawner.spawn(app(broker, &probe.app).expect("the app task is free"));
             spawner.spawn(drive(probe).expect("the driver task is free"));
         },
         || probe.checked.get(),
