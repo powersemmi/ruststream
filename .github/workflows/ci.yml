@@ -18,6 +18,14 @@ permissions:
 # failing test still reports the file and line of its panic.
 env:
   CARGO_PROFILE_DEV_DEBUG: "0"
+  # The two runtimes, `tokio` and `embassy`, exclude each other, so no build enables every
+  # feature. Each runtime has its set instead: the tokio set is every feature of the facade but
+  # `embassy`, and the embassy set is every feature that builds beside it. A workspace leg names
+  # them without a package, which turns each on in every member that has it, and adds the memory
+  # crate's local bus, which builds beside its tokio bus. The justfile keeps the same sets.
+  TOKIO_FEATURES: asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio
+  EMBASSY_FEATURES: cbor,embassy,json,macros,memory,msgpack
+  WORKSPACE_FEATURES: asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio,ruststream-memory/embassy
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -158,7 +166,7 @@ jobs:
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: cargo fmt --all -- --check
 
-      # The benchmarks are not in the all-features lints: they are built with the production
+      # The benchmarks are not in the workspace lints: they are built with the production
       # feature set, and the harness feature is a compile error in them. CI only keeps them
       # compiling; `just bench` runs them. A rustc warning fails their build, through cargo's
       # `build.warnings` as in the justfile, which leaves the build fingerprint alone.
@@ -167,18 +175,50 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
-            -- -D warnings
-          cargo check --locked --benches --no-default-features --features memory,macros,json
+          cargo clippy --locked --workspace --lib --bins --tests --examples \
+            --features "$WORKSPACE_FEATURES" -- -D warnings
+          cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
+
+      # The embassy runtime: the facade with the embassy set, where every target that needs tokio
+      # names it and drops out, then the embedded runner and the local bus. The set keeps tokio
+      # out of the facade's dependency graph, and both runtimes at once are a compile error that
+      # names them.
+      - name: Embassy runtime (lints, dependency graph, both runtimes)
+        if: "!cancelled() && env.RUST_CHANGED == 'true'"
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: |
+          cargo clippy --locked -p ruststream --all-targets --no-default-features \
+            --features "$EMBASSY_FEATURES" -- -D warnings
+          cargo clippy --locked -p ruststream-runtime-embassy -p ruststream-memory --all-targets \
+            --no-default-features --features embassy -- -D warnings
+          tree="$(cargo tree --locked -p ruststream --no-default-features \
+            --features "$EMBASSY_FEATURES" -e normal -i tokio)"
+          if [ -n "$tree" ]; then
+            echo "::error::the embassy set pulls tokio into the facade"
+            echo "$tree"
+            exit 1
+          fi
+          if out="$(cargo check --locked -p ruststream --features embassy 2>&1)"; then
+            echo "::error::the facade built with both runtimes"
+            exit 1
+          fi
+          grep -qF 'the `tokio` and `embassy` features select the runtime and exclude each other; enable one' \
+            <<< "$out" || { echo "$out"; exit 1; }
 
       # Allow-list in external-types.toml, one for every published crate: the facade shows the
-      # crates behind it only as re-exports, so each is checked where its items are defined.
+      # crates behind it only as re-exports, so each is checked where its items are defined. The
+      # facade is checked with each runtime's set.
       # Every entry makes a version bump of that dependency breaking for every broker crate
       # downstream, so a new leak is added deliberately or not at all.
       - name: cargo check-external-types
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: |
-          for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          cargo +nightly-2026-03-20 check-external-types --features "$TOKIO_FEATURES" \
+            --manifest-path Cargo.toml --config external-types.toml
+          cargo +nightly-2026-03-20 check-external-types --no-default-features \
+            --features "$EMBASSY_FEATURES" --manifest-path Cargo.toml --config external-types.toml
+          for manifest in crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done
@@ -192,8 +232,9 @@ jobs:
         env:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
-          cargo publish --locked --dry-run --all-features -p ruststream-macros -p ruststream-core \
-            -p ruststream-runtime -p ruststream-runtime-tokio -p ruststream-memory -p ruststream-asyncapi \
+          cargo publish --locked --dry-run --features "$WORKSPACE_FEATURES" -p ruststream-macros \
+            -p ruststream-core -p ruststream-runtime -p ruststream-runtime-tokio \
+            -p ruststream-runtime-embassy -p ruststream-memory -p ruststream-asyncapi \
             -p ruststream-observability -p ruststream-testing -p ruststream-conformance \
             -p ruststream-cli -p ruststream
 
@@ -259,12 +300,13 @@ jobs:
       # --no-dev-deps: a dev-dependency in scope masks a missing feature gate in the library.
       # It also rewrites the manifests while it runs, which is why this is the last step and the
       # one without --locked. A feature that leaves code unreached on its own fails on the
-      # warning.
+      # warning. The two runtimes exclude each other, so the run with every feature on is left
+      # out; the workspace legs build each member with its features.
       - name: cargo hack check (each feature)
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo hack check --workspace --each-feature --no-dev-deps
+        run: cargo hack check --workspace --each-feature --exclude-all-features --no-dev-deps
 
       # Minimal versions is one chain: each step runs only when the one before it succeeded, since
       # a step on a graph that failed to resolve checks nothing.
@@ -293,9 +335,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
         run: |
-          cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       # Everything above still sees dev-dependencies, which raise shared floors before the library
       # is built: the run proves the workspace resolves, not that the manifest is honest for a
@@ -315,15 +357,17 @@ jobs:
         if: "!cancelled() && steps.minimal-resolve-lib.outcome == 'success'"
         run: cargo update -p tower@0.5.0 --precise 0.5.1
 
-      # The library as a dependency, on the floor toolchain. No --locked: cargo-hack edits the
-      # manifests it checks.
+      # The library as a dependency, on the floor toolchain, with each runtime. No --locked: the
+      # step before removed the dev-dependencies from the manifests.
       - name: Check the library against its own declared floors
         id: minimal-check-lib
         if: "!cancelled() && steps.minimal-pin-lib.outcome == 'success'"
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-minimal
-        run: cargo hack check --workspace --no-dev-deps --all-features
+        run: |
+          cargo check --workspace --features "$WORKSPACE_FEATURES"
+          cargo check -p ruststream --no-default-features --features "$EMBASSY_FEATURES"
 
       - name: Delete the minimal versions build
         if: always()
@@ -382,25 +426,25 @@ jobs:
 
       # The stable builds and tests below fail on a rustc warning, through cargo's
       # `build.warnings` as in the justfile. The instrumented run is left out: clippy lints its
-      # all-features build.
+      # workspace build.
       - name: cargo check (no default features)
         env:
           CARGO_BUILD_WARNINGS: deny
-        # The probe always asks for `macros` and `json`, and a workspace build unifies a
+        # The probe always asks for `macros`, `json` and `tokio`, and a workspace build unifies a
         # dependency's features across members, so it is left out here and checked on its own.
         run: |
           cargo check --locked --workspace --exclude ruststream-no-std-probe --no-default-features
           cargo check --locked -p ruststream-no-std-probe
 
-      # The test run below builds every other target with all features, and clippy holds that
-      # build to its warnings.
+      # The test run below builds every other target with the workspace features, and clippy
+      # holds that build to its warnings.
       - name: cargo check (benchmarks)
         env:
           CARGO_BUILD_WARNINGS: deny
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json
+        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
 
       # The `DefaultCodec` fallback aliases (cbor, then msgpack) are cfg'd out whenever `json` is
-      # on, so neither the all-features build nor the all-features tests ever compile them. Build
+      # on, so neither the workspace build nor the workspace tests ever compile them. Build
       # each single-codec configuration so the alias and its default-codec call sites stay valid.
       - name: cargo check (single-codec default fallbacks)
         env:
@@ -424,7 +468,9 @@ jobs:
           REQUIRE_UI_TESTS: '1'
         # `--tests` and not every target: the examples' tests are modules of one test binary, so
         # an example needs no binary of its own, and clippy has already compiled each one.
-        run: cargo llvm-cov --locked --no-report --workspace --all-features --no-fail-fast --tests
+        run: >-
+          cargo llvm-cov --locked --no-report --workspace --features "$WORKSPACE_FEATURES"
+          --no-fail-fast --tests
 
       # The summary is written before the gate's exit code propagates, so it shows up even on a
       # failure. Each report reads the packages the run covered, the whole workspace.
@@ -501,14 +547,22 @@ jobs:
           CARGO_BUILD_WARNINGS: deny
         run: cargo test --locked -p ruststream --no-fail-fast
 
-      # All-features hides a doc example that names a feature-gated item without gating itself.
+      # The embassy runtime's host tests: the embedded runner and the local bus.
+      - name: cargo test (embassy runtime)
+        env:
+          CARGO_BUILD_WARNINGS: deny
+        run: >-
+          cargo test --locked -p ruststream-runtime-embassy -p ruststream-memory
+          --no-default-features --features embassy --no-fail-fast
+
+      # The workspace run hides a doc example that names a feature-gated item without gating itself.
       # Both ends of the range catch it, on the facade alone for the reason the default-features
       # run gives.
       - name: cargo test --doc (feature edges)
         env:
           CARGO_BUILD_WARNINGS: deny
         run: |
-          cargo test --locked --workspace --doc --all-features
+          cargo test --locked --workspace --doc --features "$WORKSPACE_FEATURES"
           cargo test --locked -p ruststream --doc
           cargo test --locked -p ruststream --doc --no-default-features
 
@@ -517,7 +571,7 @@ jobs:
       - name: cargo doc
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --workspace --all-features --no-deps
+        run: cargo doc --locked --workspace --features "$WORKSPACE_FEATURES" --no-deps
 
       # The gate the later toolchains wait on: it succeeds only when every stable step did.
       - name: Stable passed
@@ -533,7 +587,8 @@ jobs:
           RUSTUP_TOOLCHAIN: beta
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
         run: |
-          cargo clippy --locked --workspace --lib --bins --tests --examples --all-features \
+          cargo clippy --locked --workspace --lib --bins --tests --examples \
+            --features "$WORKSPACE_FEATURES" \
             -- -D warnings
 
       - name: cargo check (no default features, beta)
@@ -548,7 +603,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json
+        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
 
       - name: cargo test (beta)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -556,9 +611,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "beta"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-beta
         run: |
-          cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       - name: Delete the beta build
         if: always()
@@ -576,7 +631,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
-        run: cargo check --locked --benches --no-default-features --features memory,macros,json
+        run: cargo check --locked --benches --no-default-features --features memory,macros,json,tokio
 
       - name: cargo test (1.95)
         if: "!cancelled() && steps.stable.outcome == 'success'"
@@ -584,9 +639,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "1.95"
           CARGO_TARGET_DIR: ${{ runner.temp }}/target-floor
         run: |
-          cargo check --locked --workspace --examples --all-features
-          cargo test --locked --workspace --all-features --no-fail-fast --tests
-          cargo test --locked --workspace --all-features --no-fail-fast --doc
+          cargo check --locked --workspace --examples --features "$WORKSPACE_FEATURES"
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --tests
+          cargo test --locked --workspace --features "$WORKSPACE_FEATURES" --no-fail-fast --doc
 
       - name: Delete the floor build
         if: always()
@@ -643,7 +698,7 @@ jobs:
       # The API links on the pages resolve against this rustdoc, the one docs.rs renders for the
       # same code; an item it lacks fails the build below.
       - name: Build the rustdoc the API links resolve against
-        run: cargo doc --locked --all-features --no-deps -p ruststream
+        run: cargo doc --locked --features "$TOKIO_FEATURES" --no-deps -p ruststream
 
       # Strict: a broken link, anchor, Markdown link or API link fails the build.
       - name: Build site (strict)

@@ -82,7 +82,10 @@ jobs:
 
       - name: Build the rustdoc the API links resolve against
         if: "!inputs.archive_ref"
-        run: cargo doc --locked --all-features --no-deps -p ruststream
+        # The tokio set, which docs.rs documents too: the two runtimes exclude each other.
+        run: >-
+          cargo doc --locked --no-deps -p ruststream --features
+          asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio
 
       - name: Configure git
         run: |
