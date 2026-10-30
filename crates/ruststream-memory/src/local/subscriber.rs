@@ -430,6 +430,7 @@ mod tests {
 
     use super::*;
     use crate::local::LocalMemoryBroker;
+    use crate::local::drive::{ended, waiting};
 
     async fn open(name: &str) -> (ConnectedLocalMemoryBroker<4>, LocalMemorySubscriber<4>) {
         let connected = LocalMemoryBroker::<4>::new().connect().await.unwrap();
@@ -448,11 +449,11 @@ mod tests {
             let (connected, mut subscriber) = open("cmd").await;
             publish(&connected, "cmd", b"open").await;
             let mut stream = pin!(subscriber.stream());
-            let first = stream.next().await.unwrap().unwrap();
+            let first = waiting(&mut stream).unwrap();
             assert_eq!(first.redelivery_count(), Some(1));
             first.nack(true).await.unwrap();
 
-            let again = stream.next().await.unwrap().unwrap();
+            let again = waiting(&mut stream).unwrap();
             assert_eq!(again.payload(), b"open");
             assert_eq!(again.redelivery_count(), Some(2));
             again.ack().await.unwrap();
@@ -466,14 +467,7 @@ mod tests {
             let (connected, mut subscriber) = open("cmd").await;
             publish(&connected, "cmd", b"open").await;
             let mut stream = pin!(subscriber.stream());
-            stream
-                .next()
-                .await
-                .unwrap()
-                .unwrap()
-                .nack(false)
-                .await
-                .unwrap();
+            waiting(&mut stream).unwrap().nack(false).await.unwrap();
             assert!(stream.next().now_or_never().is_none());
         });
     }
@@ -484,8 +478,8 @@ mod tests {
             let (connected, mut subscriber) = open("cmd").await;
             publish(&connected, "cmd", b"open").await;
             let mut stream = pin!(subscriber.stream());
-            drop(stream.next().await.unwrap().unwrap());
-            let again = stream.next().await.unwrap().unwrap();
+            drop(waiting(&mut stream).unwrap());
+            let again = waiting(&mut stream).unwrap();
             assert_eq!(again.redelivery_count(), Some(2));
             again.ack().await.unwrap();
         });
@@ -496,7 +490,7 @@ mod tests {
         block_on(async {
             let (connected, mut subscriber) = open("cmd").await;
             publish(&connected, "cmd", b"open").await;
-            let delivery = pin!(subscriber.stream()).next().await.unwrap().unwrap();
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
             connected.shutdown().await.unwrap();
             assert!(matches!(
                 delivery.nack(true).await,
@@ -514,7 +508,7 @@ mod tests {
             let msg =
                 OutgoingMessage::produced("cmd", BytesMut::from("open")).with_headers(headers);
             connected.publisher().publish(msg, None).await.unwrap();
-            let delivery = pin!(subscriber.stream()).next().await.unwrap().unwrap();
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
             assert_eq!(
                 delivery.headers().get("x-origin"),
                 Some(b"panel".as_slice())
@@ -532,15 +526,15 @@ mod tests {
                 publish(&connected, "cmd", payload).await;
             }
             let mut batches = pin!(subscriber.batches(NonZeroUsize::new(2).unwrap()));
-            let first = batches.next().await.unwrap().unwrap();
-            let second = batches.next().await.unwrap().unwrap();
+            let first = waiting(&mut batches).unwrap();
+            let second = waiting(&mut batches).unwrap();
             let sizes = [first.len(), second.len()];
             for delivery in first.into_iter().chain(second) {
                 delivery.ack().await.unwrap();
             }
             assert_eq!(sizes, [2, 1]);
             connected.shutdown().await.unwrap();
-            assert!(batches.next().await.is_none());
+            assert!(ended(&mut batches));
         });
     }
 

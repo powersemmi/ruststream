@@ -507,6 +507,7 @@ mod tests {
     use ruststream_core::{LocalIncomingMessage, LocalSubscriber, OutgoingFor};
 
     use super::*;
+    use crate::local::drive::{ended, waiting};
 
     fn reading<'a>(name: &'a str, payload: &'static [u8]) -> OutgoingFor<'a, Take> {
         OutgoingMessage::produced(name, BytesMut::from(payload))
@@ -526,7 +527,7 @@ mod tests {
                 .unwrap();
 
             for subscriber in [&mut first, &mut second] {
-                let delivery = pin!(subscriber.stream()).next().await.unwrap().unwrap();
+                let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
                 assert_eq!(delivery.payload(), b"21");
                 delivery.ack().await.unwrap();
             }
@@ -545,7 +546,7 @@ mod tests {
                 .publish(reading("temp", b"21"), None)
                 .await
                 .unwrap();
-            let held = pin!(roomy.stream()).next().await.unwrap().unwrap();
+            let held = waiting(&mut pin!(roomy.stream())).unwrap();
             held.ack().await.unwrap();
 
             let refused = publisher.publish(reading("temp", b"22"), None).await;
@@ -574,14 +575,14 @@ mod tests {
                 .await
                 .unwrap();
             let mut stream = pin!(subscriber.stream());
-            let in_hand = stream.next().await.unwrap().unwrap();
+            let in_hand = waiting(&mut stream).unwrap();
 
             assert!(matches!(
                 publisher.publish(reading("temp", b"22"), None).await,
                 Err(LocalMemoryError::Full { .. })
             ));
             in_hand.nack(true).await.unwrap();
-            let again = stream.next().await.unwrap().unwrap();
+            let again = waiting(&mut stream).unwrap();
             assert_eq!(again.payload(), b"21");
             again.ack().await.unwrap();
             publisher
@@ -634,7 +635,7 @@ mod tests {
                 .publish(reading("temp", b"22"), None)
                 .await
                 .unwrap();
-            let delivery = pin!(subscriber.stream()).next().await.unwrap().unwrap();
+            let delivery = waiting(&mut pin!(subscriber.stream())).unwrap();
             assert_eq!(delivery.payload(), b"22");
             delivery.ack().await.unwrap();
         });
@@ -654,10 +655,10 @@ mod tests {
             assert_eq!(closed.subscriptions_closed(), 1);
 
             let mut stream = pin!(subscriber.stream());
-            let drained = stream.next().await.unwrap().unwrap();
+            let drained = waiting(&mut stream).unwrap();
             assert_eq!(drained.payload(), b"21");
             drained.ack().await.unwrap();
-            assert!(stream.next().await.is_none());
+            assert!(ended(&mut stream));
         });
     }
 }
