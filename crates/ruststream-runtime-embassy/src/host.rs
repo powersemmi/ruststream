@@ -12,9 +12,9 @@ use core::time::Duration;
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use ruststream_runtime::{Clock, Detach};
+use ruststream_runtime::Detach;
 
-use crate::clock::EmbassyClock;
+use crate::clock::{EmbassyClock, Schedule};
 
 /// A piece of detached work, and whether it holds a reservation for a delayed copy.
 struct Work {
@@ -35,7 +35,7 @@ struct Inbox {
 /// bounds the delayed copies of `retry_after`: a reservation past it is refused, and the body
 /// requeues the delivery. Handing work over takes a critical section; an idle driver reads one
 /// flag and compares its waker.
-pub(crate) struct Detached {
+pub(crate) struct Detached<Timers = EmbassyClock> {
     inbox: Mutex<CriticalSectionRawMutex, RefCell<Inbox>>,
     /// Set when the inbox holds work the driver has not taken.
     handed: AtomicBool,
@@ -44,11 +44,19 @@ pub(crate) struct Detached {
     /// Delayed copies reserved or running.
     reserved: AtomicUsize,
     room: usize,
+    clock: Timers,
 }
 
 impl Detached {
-    /// A host with room for `room` delayed copies at once.
+    /// A host on embassy's clock with room for `room` delayed copies at once.
     pub(crate) const fn with_room(room: usize) -> Self {
+        Self::on_clock(EmbassyClock, room)
+    }
+}
+
+impl<Timers: Schedule> Detached<Timers> {
+    /// A host on `clock` with room for `room` delayed copies at once.
+    pub(crate) const fn on_clock(clock: Timers, room: usize) -> Self {
         Self {
             inbox: Mutex::new(RefCell::new(Inbox {
                 works: Vec::new(),
@@ -58,6 +66,7 @@ impl Detached {
             closed: AtomicBool::new(false),
             reserved: AtomicUsize::new(0),
             room,
+            clock,
         }
     }
 
@@ -135,7 +144,7 @@ impl Detached {
     }
 }
 
-impl Detach for Detached {
+impl<Timers: Schedule> Detach for Detached<Timers> {
     fn detach<Work>(&self, work: Work)
     where
         Work: Future<Output = ()> + Send + 'static,
@@ -150,9 +159,10 @@ impl Detach for Detached {
     where
         Work: Future<Output = ()> + Send + 'static,
     {
+        let sleep = self.clock.sleep_until(self.clock.deadline(delay));
         self.hand(self::Work {
             future: Box::pin(async move {
-                EmbassyClock.sleep(delay).await;
+                sleep.await;
                 work.await;
             }),
             delayed: true,
