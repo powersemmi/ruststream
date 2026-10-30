@@ -1,4 +1,4 @@
-//! Typed views over [`HeaderMap`]: serialize a flat struct into the header map and parse it back.
+//! Typed views over headers: serialize a flat struct into the headers and parse it back.
 //!
 //! Header values travel as bytes and are string-encoded by convention, while the Rust side keeps
 //! a typed contract: a plain struct whose fields are scalars (numbers, booleans, strings, raw
@@ -7,26 +7,42 @@
 //! them back, converting each value by what the target field expects. The parse direction
 //! reaches user code through the [`Message<H, P>`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Message.html) input and the
 //! [`Headers`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.Headers.html) extractor, which ride the same machinery.
+//!
+//! The same contract reads from and writes into any [`HeaderStore`](crate::HeaderStore) without
+//! a heap, through [`HeaderStore::read_typed`](crate::HeaderStore::read_typed) and
+//! [`HeaderStoreMut::write_typed`](crate::HeaderStoreMut::write_typed); their errors borrow
+//! instead of copying.
 
 mod de;
+mod read;
+#[cfg(feature = "alloc")]
 mod ser;
+mod write;
 
-use alloc::string::String;
-use alloc::string::ToString;
-use core::fmt;
+#[cfg(feature = "alloc")]
+use {
+    alloc::borrow::ToOwned,
+    alloc::string::{String, ToString},
+    core::fmt,
+    serde::Serialize,
+    serde::de::{DeserializeOwned, Error as DeError},
+    serde::ser::Error as SerError,
+    thiserror::Error,
+};
 
-use serde::Serialize;
-use serde::de::{DeserializeOwned, Error as DeError};
-use serde::ser::Error as SerError;
-use thiserror::Error;
-
-use crate::headers::HeaderMap;
+pub(crate) use de::HeadersDeserializer;
+pub use read::ReadHeadersError;
+pub(crate) use write::StoreSerializer;
+pub use write::WriteHeadersError;
+#[cfg(feature = "alloc")]
+use {crate::headers::HeaderMap, de::ReadError};
 
 /// Error of the crate-internal `to_typed` parse: the header map does not satisfy the typed
 /// contract.
 ///
 /// Every variant names the offending header, so a failed extraction can be diagnosed from the
 /// error alone.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DeserializeHeadersError {
@@ -67,13 +83,44 @@ pub enum DeserializeHeadersError {
     Message(String),
 }
 
+#[cfg(feature = "alloc")]
 impl DeError for DeserializeHeadersError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
 }
 
+/// The heap's family: the header's name and value are copied into the error.
+#[cfg(feature = "alloc")]
+impl<'de> ReadError<'de> for DeserializeHeadersError {
+    fn not_utf8(header: &'de str) -> Self {
+        Self::NotUtf8 {
+            header: header.to_owned(),
+        }
+    }
+
+    fn parse(header: &'de str, expected: &'static str, value: &'de [u8]) -> Self {
+        Self::Parse {
+            header: header.to_owned(),
+            expected,
+            value: String::from_utf8_lossy(value).into_owned(),
+        }
+    }
+
+    fn unsupported_shape(header: &'de str, kind: &'static str) -> Self {
+        Self::UnsupportedShape {
+            header: header.to_owned(),
+            kind,
+        }
+    }
+
+    fn top_level(kind: &'static str) -> Self {
+        Self::TopLevel { kind }
+    }
+}
+
 /// Error of [`HeaderMap::insert_typed`]: the value does not fit the flat header-map shape.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum SerializeHeadersError {
@@ -97,12 +144,14 @@ pub enum SerializeHeadersError {
     Message(String),
 }
 
+#[cfg(feature = "alloc")]
 impl SerError for SerializeHeadersError {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self::Message(msg.to_string())
     }
 }
 
+#[cfg(feature = "alloc")]
 impl HeaderMap {
     /// Parses the header map into a typed contract `T`.
     ///
@@ -155,7 +204,7 @@ impl HeaderMap {
     /// ```
     #[doc(hidden)]
     pub fn to_typed<T: DeserializeOwned>(&self) -> Result<T, DeserializeHeadersError> {
-        T::deserialize(de::HeadersDeserializer::new(self))
+        T::deserialize(HeadersDeserializer::<_, DeserializeHeadersError>::new(self))
     }
 
     /// Serializes a typed contract into the header map, one entry per field.
@@ -254,9 +303,8 @@ impl HeaderMap {
 }
 
 #[cfg(test)]
+#[cfg(feature = "alloc")]
 mod tests {
-    use std::borrow::ToOwned;
-
     use bytes::Bytes;
     use serde::ser::Error;
     use serde::{Deserialize, Serialize};

@@ -87,7 +87,6 @@ mod subscriber;
 mod subscription;
 #[cfg(feature = "alloc")]
 mod twin;
-#[cfg(feature = "alloc")]
 mod typed_headers;
 #[cfg(feature = "alloc")]
 pub mod wire;
@@ -143,6 +142,7 @@ pub use subscription::{
 };
 #[cfg(feature = "alloc")]
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
+pub use typed_headers::{ReadHeadersError, WriteHeadersError};
 
 /// Builds a [`NonZero`](core::num::NonZero) integer from a literal, rejecting zero at compile
 /// time.

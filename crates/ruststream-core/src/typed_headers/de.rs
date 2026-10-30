@@ -1,9 +1,9 @@
-//! The serde deserializer behind [`HeaderMap::to_typed`](crate::HeaderMap::to_typed): a flat struct
-//! (or string-keyed map) reads one header per field, parsing the string-encoded value into
-//! whatever scalar the field expects.
+//! The serde deserializer behind [`HeaderMap::to_typed`](crate::HeaderMap::to_typed) and
+//! [`HeaderStore::read_typed`](crate::HeaderStore::read_typed): a flat struct (or string-keyed
+//! map) reads one header per field, parsing the string-encoded value into whatever scalar the
+//! field expects. It reads any [`HeaderStore`] and reports through either error family.
 
-use alloc::borrow::ToOwned;
-use alloc::string::String;
+use core::marker::PhantomData;
 use core::slice::Iter;
 use core::str;
 use core::str::FromStr;
@@ -12,26 +12,42 @@ use serde::de::value::{BorrowedStrDeserializer, StrDeserializer};
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, Visitor};
 use serde::forward_to_deserialize_any;
 
-use super::DeserializeHeadersError;
-use crate::headers::HeaderMap;
+use crate::header_store::HeaderStore;
 
-/// Top-level deserializer over a borrowed header map.
-pub(super) struct HeadersDeserializer<'de> {
-    headers: &'de HeaderMap,
+/// How an error family reports what the deserializer rejects. The heap's family copies the
+/// header's name and value into its own strings; the borrowing family keeps references to them.
+pub(crate) trait ReadError<'de>: de::Error {
+    /// A header value is not valid UTF-8 while the target field expects text.
+    fn not_utf8(header: &'de str) -> Self;
+    /// A header value does not parse into the target field's type.
+    fn parse(header: &'de str, expected: &'static str, value: &'de [u8]) -> Self;
+    /// The target field asks for a shape a header value cannot carry.
+    fn unsupported_shape(header: &'de str, kind: &'static str) -> Self;
+    /// The top-level type is not a struct or a map.
+    fn top_level(kind: &'static str) -> Self;
 }
 
-impl<'de> HeadersDeserializer<'de> {
-    pub(super) fn new(headers: &'de HeaderMap) -> Self {
-        Self { headers }
-    }
+/// Top-level deserializer over a borrowed header store.
+pub(crate) struct HeadersDeserializer<'de, Store, Error> {
+    headers: &'de Store,
+    error: PhantomData<Error>,
+}
 
-    fn top_level(kind: &'static str) -> DeserializeHeadersError {
-        DeserializeHeadersError::TopLevel { kind }
+impl<'de, Store, Error> HeadersDeserializer<'de, Store, Error> {
+    pub(crate) const fn new(headers: &'de Store) -> Self {
+        Self {
+            headers,
+            error: PhantomData,
+        }
     }
 }
 
-impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
-    type Error = DeserializeHeadersError;
+impl<'de, Store, Error> de::Deserializer<'de> for HeadersDeserializer<'de, Store, Error>
+where
+    Store: HeaderStore,
+    Error: ReadError<'de>,
+{
+    type Error = Error;
 
     fn deserialize_struct<V: Visitor<'de>>(
         self,
@@ -43,6 +59,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
             headers: self.headers,
             fields: fields.iter(),
             pending: None,
+            error: PhantomData,
         })
     }
 
@@ -50,6 +67,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
         visitor.visit_map(EntryAccess {
             entries: self.headers.iter(),
             pending: None,
+            error: PhantomData,
         })
     }
 
@@ -62,7 +80,7 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
     }
 
     fn deserialize_any<V: Visitor<'de>>(self, _visitor: V) -> Result<V::Value, Self::Error> {
-        Err(Self::top_level("a self-describing value"))
+        Err(Error::top_level("a self-describing value"))
     }
 
     fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -77,14 +95,19 @@ impl<'de> de::Deserializer<'de> for HeadersDeserializer<'de> {
 
 /// Struct fields: walks the declared field list and yields only the headers that are present, so
 /// `Option` fields default to `None` and serde reports missing required fields by name.
-struct FieldAccess<'de> {
-    headers: &'de HeaderMap,
+struct FieldAccess<'de, Store, Error> {
+    headers: &'de Store,
     fields: Iter<'static, &'static str>,
     pending: Option<(&'static str, &'de [u8])>,
+    error: PhantomData<Error>,
 }
 
-impl<'de> MapAccess<'de> for FieldAccess<'de> {
-    type Error = DeserializeHeadersError;
+impl<'de, Store, Error> MapAccess<'de> for FieldAccess<'de, Store, Error>
+where
+    Store: HeaderStore,
+    Error: ReadError<'de>,
+{
+    type Error = Error;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(
         &mut self,
@@ -93,7 +116,7 @@ impl<'de> MapAccess<'de> for FieldAccess<'de> {
         for &field in self.fields.by_ref() {
             if let Some(raw) = self.headers.get(field) {
                 self.pending = Some((field, raw));
-                let key: StrDeserializer<'_, DeserializeHeadersError> = field.into_deserializer();
+                let key: StrDeserializer<'_, Error> = field.into_deserializer();
                 return seed.deserialize(key).map(Some);
             }
         }
@@ -108,21 +131,23 @@ impl<'de> MapAccess<'de> for FieldAccess<'de> {
             .pending
             .take()
             .expect("next_value_seed called before next_key_seed");
-        seed.deserialize(ValueDeserializer { header, raw })
+        seed.deserialize(ValueDeserializer::new(header, raw))
     }
 }
 
 /// Map entries: yields every header as a `(name, value)` pair.
-struct EntryAccess<'de, Entries> {
+struct EntryAccess<'de, Entries, Error> {
     entries: Entries,
     pending: Option<(&'de str, &'de [u8])>,
+    error: PhantomData<Error>,
 }
 
-impl<'de, Entries> MapAccess<'de> for EntryAccess<'de, Entries>
+impl<'de, Entries, Error> MapAccess<'de> for EntryAccess<'de, Entries, Error>
 where
     Entries: Iterator<Item = (&'de str, &'de [u8])>,
+    Error: ReadError<'de>,
 {
-    type Error = DeserializeHeadersError;
+    type Error = Error;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(
         &mut self,
@@ -146,38 +171,38 @@ where
             .pending
             .take()
             .expect("next_value_seed called before next_key_seed");
-        seed.deserialize(ValueDeserializer { header, raw })
+        seed.deserialize(ValueDeserializer::new(header, raw))
     }
 }
 
 /// One header value, parsed by what the target field asks for.
-struct ValueDeserializer<'de> {
+struct ValueDeserializer<'de, Error> {
     header: &'de str,
     raw: &'de [u8],
+    error: PhantomData<Error>,
 }
 
-impl<'de> ValueDeserializer<'de> {
-    fn utf8(&self) -> Result<&'de str, DeserializeHeadersError> {
-        str::from_utf8(self.raw).map_err(|_| DeserializeHeadersError::NotUtf8 {
-            header: self.header.to_owned(),
-        })
+impl<'de, Error: ReadError<'de>> ValueDeserializer<'de, Error> {
+    const fn new(header: &'de str, raw: &'de [u8]) -> Self {
+        Self {
+            header,
+            raw,
+            error: PhantomData,
+        }
     }
 
-    fn parse<T: FromStr>(&self, expected: &'static str) -> Result<T, DeserializeHeadersError> {
+    fn utf8(&self) -> Result<&'de str, Error> {
+        str::from_utf8(self.raw).map_err(|_| Error::not_utf8(self.header))
+    }
+
+    fn parse<T: FromStr>(&self, expected: &'static str) -> Result<T, Error> {
         self.utf8()?
             .parse()
-            .map_err(|_| DeserializeHeadersError::Parse {
-                header: self.header.to_owned(),
-                expected,
-                value: String::from_utf8_lossy(self.raw).into_owned(),
-            })
+            .map_err(|_| Error::parse(self.header, expected, self.raw))
     }
 
-    fn unsupported(&self, kind: &'static str) -> DeserializeHeadersError {
-        DeserializeHeadersError::UnsupportedShape {
-            header: self.header.to_owned(),
-            kind,
-        }
+    fn unsupported(&self, kind: &'static str) -> Error {
+        Error::unsupported_shape(self.header, kind)
     }
 }
 
@@ -191,8 +216,8 @@ macro_rules! parse_scalar {
     };
 }
 
-impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
-    type Error = DeserializeHeadersError;
+impl<'de, Error: ReadError<'de>> de::Deserializer<'de> for ValueDeserializer<'de, Error> {
+    type Error = Error;
 
     parse_scalar! {
         deserialize_bool => bool: visit_bool,
@@ -314,9 +339,12 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "alloc")]
 mod tests {
+    use std::borrow::ToOwned;
     use std::collections::BTreeMap;
     use std::fmt;
+    use std::string::String;
     use std::vec;
     use std::vec::Vec;
 
@@ -325,6 +353,8 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::*;
+    use crate::HeaderMap;
+    use crate::typed_headers::DeserializeHeadersError;
 
     #[derive(Debug, Deserialize)]
     struct One<T> {
