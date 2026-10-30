@@ -19,6 +19,8 @@ pub(crate) mod coordinator;
 mod error;
 #[cfg(feature = "testing")]
 pub(crate) mod hooks;
+#[cfg(feature = "testing")]
+mod in_process;
 
 #[cfg(feature = "testing")]
 pub use assertions::{PublishedAssertions, SubscriberAssertions};
@@ -43,3 +45,6 @@ pub use error::TestError;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use hooks::{HookFailures, PublishTarget, Within};
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub use in_process::{InProcessRun, RunBroker};

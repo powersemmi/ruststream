@@ -11,12 +11,16 @@ use core::pin::pin;
 
 use futures::future::{Either, join, select};
 use ruststream_core::LocalBroker;
+#[cfg(feature = "testing")]
+use ruststream_runtime::testing::InProcessRun;
 use ruststream_runtime::{Balance, BoxError, Identity, LocalPipeline, Router, RunRoutes};
 use thiserror::Error;
 
 use crate::control::{Control, LoopSignal};
 use crate::hooks::{HookList, Hooks, NoHooks};
 use crate::host::AppHost;
+#[cfg(feature = "testing")]
+use crate::in_process::StartInProcess;
 use crate::mounts::{BrokerMount, CloseAll, MountChain, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
@@ -395,6 +399,22 @@ impl<M: Mounts> EmbeddedApp<M> {
     pub fn run(self, control: &Control) -> impl Future<Output = Result<(), RunError>> {
         self.mounts.run_app(control)
     }
+
+    /// Runs the app with every broker connected in process and noted in `run`: the test
+    /// harness's run of the production app.
+    ///
+    /// # Errors
+    ///
+    /// As [`run`](Self::run).
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    pub fn run_in_process(
+        self,
+        control: &Control,
+        run: &InProcessRun,
+    ) -> impl Future<Output = Result<(), RunError>> {
+        self.mounts.run_in_process(control, run)
+    }
 }
 
 /// The content of an [`EmbeddedApp`]: its brokers with their mounts, its state and its hooks.
@@ -414,65 +434,133 @@ pub trait Mounts {
     /// Runs the app; [`EmbeddedApp::run`] is the call.
     #[doc(hidden)]
     fn run_app(self, control: &Control) -> impl Future<Output = Result<(), RunError>>;
+
+    /// Runs the app with every broker connected in process, noted in `run`: the test harness's
+    /// run of the production app.
+    #[cfg(feature = "testing")]
+    #[doc(hidden)]
+    fn run_in_process(
+        self,
+        control: &Control,
+        run: &InProcessRun,
+    ) -> impl Future<Output = Result<(), RunError>>;
 }
+
+/// The app's broker list, balanced: what starts it in production and, under the `testing`
+/// feature, in process.
+#[cfg(not(feature = "testing"))]
+#[doc(hidden)]
+pub trait AppBrokers<State>: StartMounts<State> {}
+
+#[cfg(not(feature = "testing"))]
+impl<State, Tree: StartMounts<State>> AppBrokers<State> for Tree {}
+
+/// The app's broker list, balanced: what starts it in production and, under the `testing`
+/// feature, in process.
+// Why the in-process start is a bound of every app under `testing`: a function that builds the app
+// returns `EmbeddedApp<impl Mounts>`, so the harness reaches the app through `Mounts` alone and
+// can name no other bound on it.
+#[cfg(feature = "testing")]
+#[doc(hidden)]
+pub trait AppBrokers<State>: StartMounts<State> + StartInProcess<State> {}
+
+#[cfg(feature = "testing")]
+impl<State, Tree: StartMounts<State> + StartInProcess<State>> AppBrokers<State> for Tree {}
 
 impl<State, Brokers, AfterStartup, OnShutdown, AfterShutdown> Mounts
     for Parts<State, Brokers, Hooks<AfterStartup, OnShutdown, AfterShutdown>>
 where
-    Brokers: Balance<Tree: StartMounts<State>>,
+    Brokers: Balance<Tree: AppBrokers<State>>,
     AfterStartup: HookList<State>,
     OnShutdown: HookList<State>,
     AfterShutdown: HookList<State>,
 {
-    async fn run_app(self, control: &Control) -> Result<(), RunError> {
+    fn run_app(self, control: &Control) -> impl Future<Output = Result<(), RunError>> {
         let Self {
             state,
             brokers,
             hooks,
         } = self;
-        let state = Arc::new(state);
-        let (connections, opened) = match brokers.balance().start().await {
-            Ok(started) => started,
-            Err(err) => {
-                control.fail_app("app", "startup failed");
-                return Err(err);
-            }
-        };
-        control.running();
-        let host = AppHost::new();
-        let startup = async {
-            let outcome = hooks.after_startup.call(&state).await;
-            if outcome.is_err() {
-                control.fail_app("app", "an after_startup hook failed");
-            }
-            outcome
-        };
-        let serve = async {
-            let signal = LoopSignal::new(control);
-            let loops = pin!(opened.run(signal, &state, &host));
-            // The loops end on the stop, or on their own once every stream has ended.
-            if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
-                loops.await;
-            }
-            // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
-            host.close();
-        };
-        let ((), startup) = join(join(serve, host.drive()).map_unit(), startup).await;
-        hooks.on_shutdown.call_all(&state, "on_shutdown").await;
-        connections.close_all().await;
-        hooks
-            .after_shutdown
-            .call_all(&state, "after_shutdown")
-            .await;
-        if let Err(source) = startup {
-            return Err(RunError::Startup { source });
-        }
-        if control.has_failed() {
-            return Err(RunError::Failed);
-        }
-        control.stopped();
-        Ok(())
+        serve(state, hooks, control, brokers.balance().start())
     }
+
+    #[cfg(feature = "testing")]
+    fn run_in_process(
+        self,
+        control: &Control,
+        run: &InProcessRun,
+    ) -> impl Future<Output = Result<(), RunError>> {
+        let Self {
+            state,
+            brokers,
+            hooks,
+        } = self;
+        serve(
+            state,
+            hooks,
+            control,
+            brokers.balance().start_in_process(run),
+        )
+    }
+}
+
+/// The app's run once its brokers start through `started`: the subscriptions joined with the
+/// detached work and the `after_startup` hooks, then the shutdown hooks and the brokers' shutdown.
+async fn serve<State, Connections, Opened, AfterStartup, OnShutdown, AfterShutdown>(
+    state: State,
+    hooks: Hooks<AfterStartup, OnShutdown, AfterShutdown>,
+    control: &Control,
+    started: impl Future<Output = Result<(Connections, Opened), RunError>>,
+) -> Result<(), RunError>
+where
+    Connections: CloseAll,
+    Opened: RunRoutes<State>,
+    AfterStartup: HookList<State>,
+    OnShutdown: HookList<State>,
+    AfterShutdown: HookList<State>,
+{
+    let state = Arc::new(state);
+    let (connections, opened) = match started.await {
+        Ok(started) => started,
+        Err(err) => {
+            control.fail_app("app", "startup failed");
+            return Err(err);
+        }
+    };
+    control.running();
+    let host = AppHost::new();
+    let startup = async {
+        let outcome = hooks.after_startup.call(&state).await;
+        if outcome.is_err() {
+            control.fail_app("app", "an after_startup hook failed");
+        }
+        outcome
+    };
+    let serve = async {
+        let signal = LoopSignal::new(control);
+        let loops = pin!(opened.run(signal, &state, &host));
+        // The loops end on the stop, or on their own once every stream has ended.
+        if let Either::Right(((), loops)) = select(loops, pin!(signal.watch())).await {
+            loops.await;
+        }
+        // Every loop has ended, so nothing detaches more work: the host finishes what it holds.
+        host.close();
+    };
+    let ((), startup) = join(join(serve, host.drive()).map_unit(), startup).await;
+    hooks.on_shutdown.call_all(&state, "on_shutdown").await;
+    connections.close_all().await;
+    hooks
+        .after_shutdown
+        .call_all(&state, "after_shutdown")
+        .await;
+    if let Err(source) = startup {
+        return Err(RunError::Startup { source });
+    }
+    if control.has_failed() {
+        return Err(RunError::Failed);
+    }
+    control.stopped();
+    Ok(())
 }
 
 /// Discards the unit outputs of a joined pair.
