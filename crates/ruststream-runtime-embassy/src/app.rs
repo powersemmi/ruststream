@@ -19,6 +19,27 @@ use crate::host::AppHost;
 use crate::mounts::{BrokerMount, CloseAll, MountChain, StartMounts};
 
 /// The router a broker's scope hands the closure of [`EmbeddedApp::with_broker`].
+///
+/// # Examples
+///
+/// A scope written as a function of its own:
+///
+/// ```
+/// use ruststream_memory::local::LocalMemoryBroker;
+/// use ruststream_runtime_embassy::{EmbeddedApp, Mounts, Scope};
+///
+/// type Bus = LocalMemoryBroker<4>;
+///
+/// /// The bus's mounts, kept apart from the app.
+/// fn mounts(b: Scope<Bus>) -> Scope<Bus> {
+///     b
+/// }
+///
+/// fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
+///     EmbeddedApp::new().with_broker(bus, mounts)
+/// }
+/// # let _ = app(Bus::new());
+/// ```
 pub type Scope<B> = Router<B, (), (), Identity, LocalPipeline>;
 
 /// A device service's app: its brokers with their mounts, its state and its lifecycle hooks, all
