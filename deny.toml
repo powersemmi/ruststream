@@ -31,6 +31,10 @@ skip = [
     # tokio-macros, tracing-attributes, and zerocopy-derive still pull 2. Drop
     # this skip once the tail of derive crates has moved.
     { crate = "syn@2", reason = "syn 2 -> 3 ecosystem migration in progress" },
+    # embassy-time implements the delay traits of both HAL generations and depends on
+    # embedded-hal 0.2 and 1.0 unconditionally in every release up to 0.5.1. Drop this skip
+    # once embassy-time makes the 0.2 traits optional.
+    { crate = "embedded-hal@0.2", reason = "embassy-time depends on both HAL generations" },
 ]
 
 [sources]
