@@ -5,17 +5,19 @@
 // Written over the local twins of the contract for a runner that polls on one thread.
 #![allow(clippy::future_not_send)]
 
-use alloc::borrow::ToOwned;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::boxed::Box;
 use alloc::string::String;
+use core::any::type_name;
 use core::future::ready;
 use core::marker::PhantomData;
 
+use super::RetryDestinationError;
 use crate::lifecycle::BoxError;
 use crate::{
     AddressedCopies, BrokerMoves, HeaderMap, LocalBroker, LocalConnected, LocalDefaultPublish,
     LocalPublishPolicy, LocalPublisher, LocalRedeliveryAddressed, LocalSubscriptionSource,
-    OutgoingMessage, PayloadForm,
+    NamedCopies, OutgoingMessage, PayloadForm,
 };
 
 /// Where a kept copy leaves: the publisher and the address that reaches the subscription
@@ -254,5 +256,117 @@ where
             live,
             address: address.as_str().to_owned(),
         })
+    }
+}
+
+/// The deferred-retry position a local mount chain bound with `.out_retry(policy)`: the policy a
+/// kept copy leaves through, and the destination a `.to(name)` after it gave the copies.
+/// Machinery; never named directly.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LocalRetrySlot<Policy> {
+    pub(crate) policy: Policy,
+    pub(crate) destination: Option<Cow<'static, str>>,
+}
+
+/// What a plan's copies need when a registration that bound `.out_retry(policy)` opens on broker
+/// `B` through `Source`: the copy path paired from the mount site's policy. Machinery; never named
+/// directly.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "`.out_retry(..)` on the embedded runner names the publisher of copies the mount \
+               keeps, and this mount keeps none",
+    label = "bound here without `.retry_capacity::<CAP>()`",
+    note = "on the embedded runner a `retry_after` copy waits in the mount's own store: add \
+            `.retry_capacity::<CAP>()` after `.out_retry(..)`, with room for the copies that \
+            wait at once"
+)]
+pub trait PairSlot<B: LocalBroker, Source, Policy> {
+    /// The copy path the registration opens with.
+    type Path: CopyPublisher;
+
+    /// Pairs the slot's policy against the connected broker, addressed where the slot or the
+    /// descriptor says.
+    ///
+    /// # Errors
+    ///
+    /// The broker's refusal to pair the policy or to say the address.
+    fn pair_slot(
+        slot: LocalRetrySlot<Policy>,
+        source: &Source,
+        connected: &LocalConnected<B>,
+    ) -> impl Future<Output = Result<Option<Self::Path>, BoxError>>;
+}
+
+impl<B, Source, Policy> PairSlot<B, Source, Policy> for KeepCopies
+where
+    B: LocalBroker,
+    Source: LocalSubscriptionSource<LocalConnected<B>>,
+    Source::Copies: SlotAddress<B, Source>,
+    Policy: LocalPublishPolicy<LocalConnected<B>>,
+    Policy::Live: LocalPublisher,
+{
+    type Path = AddressedCopy<Policy::Live>;
+
+    async fn pair_slot(
+        slot: LocalRetrySlot<Policy>,
+        source: &Source,
+        connected: &LocalConnected<B>,
+    ) -> Result<Option<Self::Path>, BoxError> {
+        // A destination the mount site named is where the copies go; the descriptor is asked
+        // only otherwise, as on the multi-thread runner.
+        let address = match slot.destination {
+            Some(named) => named.into_owned(),
+            None => <Source::Copies as SlotAddress<B, Source>>::address(source, connected).await?,
+        };
+        let live = slot.policy.pair(connected).await.map_err(BoxError::from)?;
+        Ok(Some(AddressedCopy { live, address }))
+    }
+}
+
+/// Where a copy goes back to the subscription when the mount site named no destination.
+/// Machinery; never named directly.
+#[doc(hidden)]
+pub trait SlotAddress<B: LocalBroker, Source> {
+    /// The descriptor's own address for its copies.
+    ///
+    /// # Errors
+    ///
+    /// The broker's refusal to say the address, or a descriptor that addresses none.
+    fn address(
+        source: &Source,
+        connected: &LocalConnected<B>,
+    ) -> impl Future<Output = Result<String, BoxError>>;
+}
+
+impl<B, Source> SlotAddress<B, Source> for AddressedCopies
+where
+    B: LocalBroker,
+    Source: LocalRedeliveryAddressed<LocalConnected<B>>,
+{
+    async fn address(source: &Source, connected: &LocalConnected<B>) -> Result<String, BoxError> {
+        let address = source
+            .redelivery_address(connected)
+            .await
+            .map_err(|err| -> BoxError { Box::new(err) })?;
+        Ok(address.as_str().to_owned())
+    }
+}
+
+// The chain admits a registration on such a descriptor only with a destination named, so this is
+// reached by none; it answers the way the multi-thread runner's startup refusal does.
+impl<B, Source> SlotAddress<B, Source> for NamedCopies
+where
+    B: LocalBroker,
+    Source: LocalSubscriptionSource<LocalConnected<B>>,
+{
+    fn address(
+        source: &Source,
+        _connected: &LocalConnected<B>,
+    ) -> impl Future<Output = Result<String, BoxError>> {
+        ready(Err(BoxError::from(RetryDestinationError {
+            subscription: source.name().to_owned(),
+            source_type: type_name::<Source>(),
+        })))
     }
 }

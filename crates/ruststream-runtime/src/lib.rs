@@ -299,9 +299,9 @@ pub use publishing::{LocalPublishing, PublishingHandler};
 #[doc(hidden)]
 pub use redelivery::{
     AddressedCopy, AppliesDeclaration, CopiesAddressed, CopyPathAddress, CopyPathPairing,
-    CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, NoCopies, NoCopyPath, PairCopies,
-    PublishesCopiesHere, RetryPairing, RetrySetup, ScopeDelivery, Undeclared,
-    open_mounted_subscriber,
+    CopyPublisher, DeclaredOn, KeepCopies, KeptAddress, LocalRetrySlot, NoCopies, NoCopyPath,
+    PairCopies, PairSlot, PublishesCopiesHere, RetryPairing, RetrySetup, ScopeDelivery,
+    SlotAddress, Undeclared, open_mounted_subscriber,
 };
 #[cfg(feature = "alloc")]
 pub use retry::Retry;
@@ -325,7 +325,8 @@ pub use router::{
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use router::{
-    Dispatched, LocalDispatch, LocalPlanned, LocalRoute, OpenedDispatch, SequentialPlan,
+    Dispatched, LocalDispatch, LocalPlanned, LocalRetriedRoute, LocalRoute, LocalRouteSource,
+    OpenedDispatch, SequentialPlan, UnboundRetry,
 };
 #[cfg(feature = "alloc")]
 pub use router::{

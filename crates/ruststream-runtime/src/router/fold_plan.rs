@@ -153,18 +153,18 @@ impl LocalDispatch for SequentialPlan {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct Dispatched<Route, Plan> {
-    route: Route,
-    plan: Plan,
+    pub(super) route: Route,
+    pub(super) plan: Plan,
 }
 
 /// A [`Dispatched`] route, opened: the parts its plan runs.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct OpenedDispatch<Sub, Body, Cx, Layers, Plan, Path> {
-    route: LocalRoute<Sub, Body, Cx>,
-    layers: Layers,
-    plan: Plan,
-    path: Option<Path>,
+    pub(super) route: LocalRoute<Sub, Body, Cx>,
+    pub(super) layers: Layers,
+    pub(super) plan: Plan,
+    pub(super) path: Option<Path>,
 }
 
 /// A registration a runner's mount steps give a plan: a plain one, with no plan yet (`()`), or
@@ -298,6 +298,29 @@ pub trait OpenLocalRoute<B: LocalBroker, State> {
     ) -> impl Future<Output = Result<LocalRoute<Self::Sub, Self::Body, Self::Cx>, BoxError>>;
 }
 
+/// A registration that bound no deferred-retry position of its own: its plan's copies leave
+/// through the broker's default publisher. Machinery; never named directly.
+///
+/// A trait with no parameters, so the opening of a registration that did bind one
+/// (`fold_retry`) stays apart from this one.
+#[doc(hidden)]
+pub trait UnboundRetry {}
+
+impl<S, H, Cx> UnboundRetry for SubscribeRoute<S, H, Cx> {}
+impl<Source, Def, DecodeCodec, Wiring, Extra> UnboundRetry
+    for PublishingRoute<Source, Def, DecodeCodec, Wiring, Extra>
+{
+}
+impl<Source, Def, DecodeCodec, Wiring, Extra> UnboundRetry
+    for RawReplyRoute<Source, Def, DecodeCodec, Wiring, Extra>
+{
+}
+impl<Source, Def, DecodeCodec, Extra> UnboundRetry
+    for InjectRoute<Source, Def, DecodeCodec, Extra>
+{
+}
+impl<Route: UnboundRetry> UnboundRetry for DeclaredRoute<Route> {}
+
 /// Implements the plain opening of every [`OpenLocalRoute`] registration: no plan, the router's
 /// layer stack beside the handler.
 macro_rules! open_plain {
@@ -413,7 +436,7 @@ where
 impl<B, State, Route, Plan> OpenLayered<B, State> for Dispatched<Route, Plan>
 where
     B: LocalBroker,
-    Route: OpenLocalRoute<B, State>,
+    Route: OpenLocalRoute<B, State> + UnboundRetry,
     Plan: LocalDispatch<
         Copies: PairCopies<B, Route::Source> + AppliesDeclaration<Route::Declaration>,
     >,

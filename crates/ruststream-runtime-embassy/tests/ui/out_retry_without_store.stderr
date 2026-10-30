@@ -1,0 +1,24 @@
+error[E0277]: `.out_retry(..)` on the embedded runner names the publisher of copies the mount keeps, and this mount keeps none
+  --> tests/ui/out_retry_without_store.rs:15:50
+   |
+15 | fn app(bus: LocalMemoryBroker<4>) -> EmbeddedApp<impl Mounts> {
+   |                                                  ^^^^^^^^^^^ bound here without `.retry_capacity::<CAP>()`
+   |
+   = help: the trait `ruststream_runtime::redelivery::kept::PairSlot<ruststream::memory::local::LocalMemoryBroker<4>, LocalMemorySource, LocalMemoryPublish>` is not implemented for `ruststream_runtime::redelivery::kept::NoCopies`
+   = note: on the embedded runner a `retry_after` copy waits in the mount's own store: add `.retry_capacity::<CAP>()` after `.out_retry(..)`, with room for the copies that wait at once
+help: the trait `ruststream_runtime::redelivery::kept::PairSlot<B, Source, Policy>` is implemented for `ruststream_runtime::redelivery::kept::KeepCopies`
+  --> $WORKSPACE/crates/ruststream-runtime/src/redelivery/kept.rs
+   |
+   | / impl<B, Source, Policy> PairSlot<B, Source, Policy> for KeepCopies
+   | | where
+   | |     B: LocalBroker,
+   | |     Source: LocalSubscriptionSource<LocalConnected<B>>,
+   | |     Source::Copies: SlotAddress<B, Source>,
+   | |     Policy: LocalPublishPolicy<LocalConnected<B>>,
+   | |     Policy::Live: LocalPublisher,
+   | |_________________________________^
+   = note: required for `ruststream_runtime::router::fold_retry::LocalRetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>, LocalMemoryPublish, ruststream::runtime::DestinationDeclared>` to implement `ruststream_runtime::router::fold::OpenLayered<ruststream::memory::local::LocalMemoryBroker<4>, ()>`
+   = note: required for `Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::fold_retry::LocalRetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>, LocalMemoryPublish, ruststream::runtime::DestinationDeclared>, ()), (), Identity, LocalPipeline>` to implement `ruststream_runtime::router::fold::OpenRoutes<ruststream::memory::local::LocalMemoryBroker<4>>`
+   = note: required for `ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::fold_retry::LocalRetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>, LocalMemoryPublish, ruststream::runtime::DestinationDeclared>, ()), (), Identity, LocalPipeline>>` to implement `ruststream::runtime::StartMounts<()>`
+   = note: required for `ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::fold_retry::LocalRetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>, LocalMemoryPublish, ruststream::runtime::DestinationDeclared>, ()), (), Identity, LocalPipeline>>` to implement `ruststream_runtime_embassy::app::AppBrokers<()>`
+   = note: required for `ruststream::runtime::Parts<(), (ruststream::runtime::BrokerMount<ruststream::memory::local::LocalMemoryBroker<4>, Router<ruststream::memory::local::LocalMemoryBroker<4>, (ruststream_runtime::router::fold_retry::LocalRetriedRoute<ruststream_runtime::router::routes::SubscribeRoute<LocalMemorySource, Typed<LocalMemoryMessage<4>, Provided<Job<'_>>, (), ruststream_runtime::handle::eager::SoloBody<SoloDeserialized<Job<'_>>, (), on_job>>>, LocalMemoryPublish, ruststream::runtime::DestinationDeclared>, ()), (), Identity, LocalPipeline>>, ()), ruststream::runtime::Hooks<(), (), ()>>` to implement `Mounts`

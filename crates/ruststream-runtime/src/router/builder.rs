@@ -461,7 +461,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     }
 }
 
-impl<B: Broker + 'static, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
+impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     Router<B, (Head, Tail), RouteCodec, RouteLayers, RoutePipe>
 {
     /// Names the publish policy of one position of the registration just added (the preceding
@@ -670,7 +670,8 @@ where
     // registration and lets the startup refusal report it.
     RetryOfferOf<Head, B, Dest>: SettlesDestination<RetryUse<Transforms, Policy, B, Head>>,
     C: Clone,
-    Pipe: Clone + OutPipeline<RetryWire<Transforms, Policy, B, Head>> + 'static,
+    // A local chain's pipeline is not one: its registrations bind the position in `fold_retry`.
+    Pipe: Clone + PublishPipeline + OutPipeline<RetryWire<Transforms, Policy, B, Head>> + 'static,
     Enc: SlotCodec<C>,
     Policy: PublishPolicy<Connected<B>>,
     Transforms: RetryStackUse<RetryLive<Policy, B>, RetryCx<Head, B>>
