@@ -37,7 +37,9 @@
 //!     let mut logged = Vec::new();
 //!     let mut deliveries = core::pin::pin!(readings.stream());
 //!     for _ in 0..2 {
-//!         let reading = deliveries.next().await.expect("the bus is open")?;
+//!         let Some(Ok(reading)) = deliveries.next().await else {
+//!             unreachable!("the bus is open and its stream yields no error");
+//!         };
 //!         logged.push(reading.payload()[0]);
 //!         reading.ack().await.expect("the bus settles");
 //!     }
