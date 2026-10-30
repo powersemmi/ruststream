@@ -21,10 +21,10 @@
 #![no_std]
 
 mod clock;
+mod control;
 mod detach;
 pub mod frames;
-mod control;
 
 pub use clock::EmbassyClock;
+pub use control::{Control, Health, Stopping};
 pub use detach::CountDetached;
-pub use control::{Control, Stopping};
