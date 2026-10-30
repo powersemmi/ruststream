@@ -59,6 +59,12 @@ check:
     # Rustdoc sees what rustc cannot: broken intra-doc links and redundant targets. CI gates on
     # it, so a link to an item a refactor removed must fail here rather than three jobs later.
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    # The types the public API of each published crate names from its dependencies, as CI checks
+    # them: the facade, and each crate behind it where its items are defined.
+    for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do \
+        cargo +nightly-2026-03-20 check-external-types --all-features \
+            --manifest-path "$manifest" --config external-types.toml || exit 1; \
+    done
     # The compile-fail snapshots: rustc's exact wording on the stable toolchain this repository
     # selects, which is what CI records them with. REQUIRE_UI_TESTS turns a skip into a failure,
     # so a lost opt-in shows here. `ui_codec_free` holds the errors that exist only where no

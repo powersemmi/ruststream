@@ -178,7 +178,7 @@ jobs:
       - name: cargo check-external-types
         if: "!cancelled() && env.RUST_CHANGED == 'true'"
         run: |
-          for manifest in Cargo.toml crates/ruststream-{core,runtime,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
+          for manifest in Cargo.toml crates/ruststream-{core,runtime,runtime-tokio,memory,asyncapi,observability,testing,cli,conformance}/Cargo.toml; do
             cargo +nightly-2026-03-20 check-external-types --all-features \
               --manifest-path "$manifest" --config external-types.toml
           done

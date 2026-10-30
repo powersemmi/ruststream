@@ -14,6 +14,8 @@ allowed_external_types = [
     "ruststream_core::*",
     "ruststream_runtime",
     "ruststream_runtime::*",
+    "ruststream_runtime_tokio",
+    "ruststream_runtime_tokio::*",
     "ruststream_memory",
     "ruststream_memory::*",
     "ruststream_asyncapi",
@@ -48,6 +50,10 @@ allowed_external_types = [
     # the two methods do not cover.
     "tokio::runtime::task::join::JoinHandle",
     "tokio::runtime::handle::Handle",
+    # The tokio runner's clock is tokio's timer wheel: its `Clock` impl names tokio's instant and
+    # timer future, so a sleep is tokio's own future with nothing boxed around it.
+    "tokio::time::instant::Instant",
+    "tokio::time::sleep::Sleep",
     # Optional-feature surfaces: each is the integration point the feature exists for, so the
     # foreign type is the API rather than an implementation detail leaking through it.
     "inventory::Collect",
