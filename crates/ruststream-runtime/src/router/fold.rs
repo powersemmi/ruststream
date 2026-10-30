@@ -27,7 +27,7 @@ use tracing::error;
 
 use futures::future::join;
 
-use crate::batch::{DeserializedBatch, LocalBatch, SliceHandler};
+use crate::batch::{DeserializedBatch, LocalBatch, LocalSliceHandler};
 use crate::dispatch::{Delivery, HeadersAtOnce, Turn, run_batch, run_sequential};
 use crate::failure::{DispatchFailure, FailurePolicies};
 use crate::handle::Deserialized;
@@ -38,7 +38,7 @@ use crate::lifecycle::BoxError;
 use crate::middleware::{LocalBlanketLayer, Stack};
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    BuildBatchContext, BuildContext, Handler, LocalBatchSubscriber, LocalBroker, LocalConnected,
+    BuildBatchContext, BuildContext, LocalBatchSubscriber, LocalBroker, LocalConnected,
     LocalIncomingMessage, LocalSubscriber, LocalSubscriptionSource,
 };
 
@@ -258,7 +258,7 @@ where
     Source::Subscriber: LocalSubscriber<Message = M>,
     M: LocalIncomingMessage,
     Input: Materialize<DecodeCodec, M>,
-    Inner: Handler<Input::Target, Cx, State>,
+    Inner: LocalHandler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
 {
     type Opened<Layers: LocalBlanketLayer + Clone> = OpenedRoute<
@@ -466,7 +466,7 @@ where
     Batch: IntoIterator<Item = M>,
     M: LocalIncomingMessage,
     F: Deserialized,
-    Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+    Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,
 {
     type Scratch = ();

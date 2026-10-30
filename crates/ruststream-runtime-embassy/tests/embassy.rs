@@ -30,10 +30,10 @@ use ruststream_runtime::{
     INSTRUMENTED_BODY, LocalDetach, LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
-    Deserialized, Handle, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire,
-    OpenRoutes, OutSlot, Outs, PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized,
+    Deserialized, Input, LocalBlanketLayer, LocalHandle, LocalOutEntry, MessageWire, OpenRoutes,
+    OutSlot, Outs, PublishedThrough, Reads, ReplyShape, Router, RunRoutes, Serialized,
     SerializedReply, SerializedWire, SoloDeserialized, SubscriberSettings, WireBytes,
-    local_subscriber, subscriber,
+    local_subscriber,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FramePublish, FrameSource, FrameSubscriber, Frames,
@@ -136,13 +136,13 @@ struct CountReadings {
     seen: &'static AtomicU32,
 }
 
-impl Handle<Reading<'_>> for CountReadings {
+impl LocalHandle<Reading<'_>> for CountReadings {
     fn handle(
         &self,
         reading: &Reading<'_>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let verdict = if reading.0.is_empty() {
             Err(HandlerOutcome::drop())
         } else {
@@ -191,13 +191,13 @@ struct CountBursts {
     readings: &'static AtomicU32,
 }
 
-impl Handle<[Reading<'_>]> for CountBursts {
+impl LocalHandle<[Reading<'_>]> for CountBursts {
     fn handle(
         &self,
         readings: &[Reading<'_>],
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> + Send {
+    ) -> impl Future<Output = Result<(), Vec<HandlerOutcome>>> {
         self.batches.fetch_add(1, Ordering::Relaxed);
         let count = u32::try_from(readings.len()).expect("a batch fits the counter");
         self.readings.fetch_add(count, Ordering::Relaxed);
@@ -231,13 +231,13 @@ impl ReplyShape for Pong {
 /// The app's request handler: answers every request with a [`Pong`].
 struct Answer;
 
-impl Handle<Reading<'_>, Pong> for Answer {
+impl LocalHandle<Reading<'_>, Pong> for Answer {
     fn handle(
         &self,
         _request: &Reading<'_>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<Pong, HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<Pong, HandlerOutcome>> {
         ready(Ok(Pong))
     }
 }
@@ -320,19 +320,19 @@ fn routes(app: &'static App) -> impl OpenRoutes<FrameBroker> {
             reached: &app.layered,
         })
         .include(
-            subscriber(
+            local_subscriber(
                 FrameSource::new("readings"),
                 CountReadings { seen: &app.seen },
             )
             .build(),
         )
         .include(
-            subscriber(FrameSource::bursts("bursts"), bursts)
+            local_subscriber(FrameSource::bursts("bursts"), bursts)
                 .batch(BURST)
                 .build(),
         )
         .include(
-            subscriber(FrameSource::requests("requests"), Answer)
+            local_subscriber(FrameSource::requests("requests"), Answer)
                 .reply()
                 .to("pongs")
                 .build(),

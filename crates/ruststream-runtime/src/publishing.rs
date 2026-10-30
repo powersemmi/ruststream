@@ -29,7 +29,7 @@ use super::context::Context;
 use super::dispatch::Workers;
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handler::LocalHandler;
-use super::handler::{Handler, HandlerOutcome};
+use super::handler::{Handler, HandlerOutcome, LocalCall, SendCall};
 use super::input::{InputKind, Materialize};
 use super::metadata::{HandlerMetadata, OutgoingMessageMetadata};
 use super::publish::{
@@ -429,6 +429,54 @@ pub(crate) trait PublishingCall<S>: PublishingDef {
     ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>> + Send;
 }
 
+/// The local twin of [`PublishingCall`]: runs the body on a runner that polls it where it
+/// started, so its future need not be `Send`.
+pub(crate) trait LocalPublishingCall<S>: PublishingDef {
+    /// Runs the handler body. See [`PublishingCall::call`].
+    fn call_local(
+        &self,
+        input: &<Self::Input as InputKind>::Target,
+        injections: &Self::Injections,
+        ctx: &mut Context<'_, Self::Context, S>,
+    ) -> impl Future<Output = Result<Self::Reply, HandlerOutcome>>;
+}
+
+/// The runner family a publishing handler calls its definition through, as
+/// [`CallHandler`](crate::handler::CallHandler) is for a handler.
+pub(crate) trait CallPublishing<Def: PublishingDef, S> {
+    /// Runs the definition's body.
+    fn call(
+        def: &Def,
+        input: &<Def::Input as InputKind>::Target,
+        injections: &Def::Injections,
+        ctx: &mut Context<'_, Def::Context, S>,
+    ) -> impl Future<Output = Result<Def::Reply, HandlerOutcome>>;
+}
+
+impl<Def: PublishingCall<S>, S> CallPublishing<Def, S> for SendCall {
+    #[inline]
+    fn call(
+        def: &Def,
+        input: &<Def::Input as InputKind>::Target,
+        injections: &Def::Injections,
+        ctx: &mut Context<'_, Def::Context, S>,
+    ) -> impl Future<Output = Result<Def::Reply, HandlerOutcome>> {
+        def.call(input, injections, ctx)
+    }
+}
+
+impl<Def: LocalPublishingCall<S>, S> CallPublishing<Def, S> for LocalCall {
+    #[inline]
+    fn call(
+        def: &Def,
+        input: &<Def::Input as InputKind>::Target,
+        injections: &Def::Injections,
+        ctx: &mut Context<'_, Def::Context, S>,
+    ) -> impl Future<Output = Result<Def::Reply, HandlerOutcome>> {
+        def.call_local(input, injections, ctx)
+    }
+}
+
 /// Reports a registration whose reply type's own `#[outgoing(name = "..")]` declaration overrode
 /// the name its mount site wrote. The reply still goes to the declared destination; the warning
 /// only tells the author that the mount-site name they read has no effect. Called once per
@@ -592,7 +640,7 @@ where
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> impl Future<Output = HandlerOutcome> + Send {
-        self.handle_with(SendSink(&self.publisher), msg, ctx)
+        self.handle_with::<SendCall, _, _, _>(SendSink(&self.publisher), msg, ctx)
     }
 }
 
@@ -603,7 +651,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
     /// handler's body, for a delivery and a sink of either family.
     // `Send` exactly where the delivery and the sink are: the `Handler` impl proves it there.
     #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_with<Msg, State, Sink>(
+    pub(crate) async fn handle_with<Via, Msg, State, Sink>(
         &self,
         sink: Sink,
         msg: &Msg,
@@ -611,7 +659,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
     ) -> HandlerOutcome
     where
         Msg: LocalIncomingMessage,
-        Def: PublishingCall<State>,
+        Via: CallPublishing<Def, State>,
         Def::Input: Materialize<DecodeCodec, Msg>,
         Sink: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
     {
@@ -637,7 +685,7 @@ impl<Def: PublishingDef, DecodeCodec, Wiring, Pipeline>
         #[cfg(feature = "testing")]
         <Def::Input as Materialize<DecodeCodec, Msg>>::record(&held, ctx);
         let view = <Def::Input as Materialize<DecodeCodec, Msg>>::view(&held, msg);
-        let reply = match self.def.call(view, &self.injections, ctx).await {
+        let reply = match Via::call(&self.def, view, &self.injections, ctx).await {
             Ok(reply) => reply,
             Err(outcome) => return outcome,
         };
@@ -678,7 +726,7 @@ impl<Msg, Def, DecodeCodec, Wiring, Pipeline, State> LocalHandler<Msg, Def::Cont
     for LocalPublishing<PublishingHandler<Def, DecodeCodec, Wiring, Pipeline>>
 where
     Msg: LocalIncomingMessage,
-    Def: PublishingCall<State>,
+    Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, Msg>,
     for<'w> &'w Wiring: LocalReplySink<Def::Reply, Def::Context, Pipeline>,
 {
@@ -689,7 +737,8 @@ where
         msg: &Msg,
         ctx: &mut Context<'_, Def::Context, State>,
     ) -> impl Future<Output = HandlerOutcome> {
-        self.0.handle_with(&self.0.publisher, msg, ctx)
+        self.0
+            .handle_with::<LocalCall, _, _, _>(&self.0.publisher, msg, ctx)
     }
 }
 

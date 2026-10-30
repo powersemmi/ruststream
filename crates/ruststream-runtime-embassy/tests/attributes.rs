@@ -9,8 +9,12 @@
 // A thread-mode embassy task is never sent anywhere, and the bodies hold values that are not
 // `Send` on purpose.
 #![allow(clippy::future_not_send)]
+// Six routes on one broker nest the app future past the compiler's default layout depth.
+#![recursion_limit = "256"]
 
 use core::cell::Cell;
+use core::num::NonZeroUsize;
+use core::pin::pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
@@ -19,11 +23,12 @@ use embassy_executor::{Executor, SpawnError, Spawner};
 use embassy_futures::yield_now;
 use futures::{FutureExt, StreamExt};
 use ruststream::memory::local::{LocalMemoryBroker, LocalMemoryPublish, LocalMemorySource};
-use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Health, Mounts, Out};
+use ruststream::runtime::{EmbeddedApp, HandlerOutcome, Health, Mounts, Out, SubscriberSettings};
 use ruststream::{
     Deserialized, LocalBroker, LocalIncomingMessage, LocalPublisher, LocalSubscriber,
     LocalSubscriptionSource, OutSlot, Outgoing, OutgoingMessage, Publisher, Serialized, subscriber,
 };
+use serde::Serialize;
 use static_cell::StaticCell;
 
 /// Executor rounds a step yields: a round polls every task woken before it began.
@@ -62,9 +67,71 @@ async fn on_level(level: &Reading<'_>, Out(alerts): Out<impl Publisher, Alerts>)
     }
 }
 
+/// The readings the plain handler saw.
+static PLAIN: AtomicU32 = AtomicU32::new(0);
+
+/// Counts every reading, holding a value that is not `Send` across an await: the eager form.
+#[subscriber(LocalMemorySource::new("bus/plain"))]
+async fn on_plain(reading: &Reading<'_>) -> HandlerOutcome {
+    let held = Rc::new(reading.0.len());
+    yield_now().await;
+    PLAIN.fetch_add(u32::from(*held > 0), Ordering::Relaxed);
+    HandlerOutcome::ack()
+}
+
+/// The reply to a ping: the ping's bytes, as they came.
+#[derive(Outgoing, Serialized)]
+#[outgoing(name = "bus/pong")]
+struct Pong(Vec<u8>);
+
+/// Answers a ping with its own bytes, byte for byte: the raw reply form.
+#[subscriber(LocalMemorySource::new("bus/ping"), reply)]
+async fn on_ping(ping: &Reading<'_>) -> Pong {
+    let held = Rc::new(ping.0.to_vec());
+    yield_now().await;
+    Pong(held.to_vec())
+}
+
+/// The reply to a measure: how many bytes it had, encoded by the codec.
+#[derive(Outgoing, Serialize)]
+#[outgoing(name = "bus/measured")]
+struct Measured {
+    bytes: usize,
+}
+
+/// Measures a reading and answers through the codec: the reply form.
+#[subscriber(LocalMemorySource::new("bus/measure"), reply)]
+async fn on_measure(reading: &Reading<'_>) -> Measured {
+    let held = Rc::new(reading.0.len());
+    yield_now().await;
+    Measured { bytes: *held }
+}
+
+/// The readings the batch handler saw, over every batch.
+static BATCHED: AtomicU32 = AtomicU32::new(0);
+
+/// Counts the readings of every batch: the batch form.
+#[subscriber(LocalMemorySource::new("bus/batches"))]
+async fn on_batch(readings: &[Reading<'_>]) -> HandlerOutcome {
+    let held = Rc::new(readings.len());
+    yield_now().await;
+    BATCHED.fetch_add(u32::try_from(*held).unwrap_or(u32::MAX), Ordering::Relaxed);
+    HandlerOutcome::ack()
+}
+
+/// The size the batch handler's subscription reads its batches at.
+const BATCH: NonZeroUsize = NonZeroUsize::new(2).expect("two is not zero");
+
 #[ruststream::app]
 fn app(bus: Bus) -> EmbeddedApp<impl Mounts> {
-    EmbeddedApp::new().with_broker(bus, |b| b.include(on_level).out(Alerts, LocalMemoryPublish))
+    EmbeddedApp::new().with_broker(bus, |b| {
+        b.include(on_level)
+            .out(Alerts, LocalMemoryPublish)
+            .include(on_plain)
+            .include(on_ping)
+            .include(on_measure)
+            .include(on_batch.batch(BATCH))
+    })
 }
 
 /// What the scenario keeps in statics.
@@ -97,12 +164,30 @@ async fn publish(bus: &Bus, subject: &'static str, payload: &[u8]) {
         .expect("the bus takes the message");
 }
 
+/// The payload of the next message `subscriber` holds, if it holds one now.
+fn next_payload<Sub: LocalSubscriber>(subscriber: &mut Sub) -> Option<Vec<u8>> {
+    pin!(subscriber.stream())
+        .next()
+        .now_or_never()
+        .flatten()
+        .and_then(Result::ok)
+        .map(|message| message.payload().to_vec())
+}
+
 async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     let connected = stand.bus.clone().connect().await.expect("the bus connects");
     let mut alerts = LocalMemorySource::new("bus/alerts")
         .subscribe(&connected)
         .await
         .expect("the alerts subscribe");
+    let mut pongs = LocalMemorySource::new("bus/pong")
+        .subscribe(&connected)
+        .await
+        .expect("the pongs subscribe");
+    let mut measured = LocalMemorySource::new("bus/measured")
+        .subscribe(&connected)
+        .await
+        .expect("the measures subscribe");
     let starting = app::CONTROL.health();
     spawner.spawn(app::task(stand.bus.clone()).expect("the app task is free"));
     settle().await;
@@ -110,13 +195,15 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     let busy = matches!(app::task(stand.bus.clone()), Err(SpawnError::Busy));
 
     publish(&stand.bus, "bus/levels", b"high").await;
+    publish(&stand.bus, "bus/plain", b"one").await;
+    publish(&stand.bus, "bus/ping", b"ping").await;
+    publish(&stand.bus, "bus/measure", b"four").await;
+    publish(&stand.bus, "bus/batches", b"a").await;
+    publish(&stand.bus, "bus/batches", b"b").await;
     settle().await;
-    let alert = alerts
-        .stream()
-        .next()
-        .now_or_never()
-        .flatten()
-        .map(|delivery| delivery.ok().map(|message| message.payload().to_vec()));
+    let alert = next_payload(&mut alerts);
+    let pong = next_payload(&mut pongs);
+    let measure = next_payload(&mut measured);
 
     app::CONTROL.stop();
     settle().await;
@@ -138,10 +225,30 @@ async fn check_the_app(spawner: Spawner, stand: &'static Stand) {
     passed("a handler the attribute made runs on the embedded app");
     assert_eq!(
         alert,
-        Some(Some(b"high".to_vec())),
+        Some(b"high".to_vec()),
         "the alert the level handler published"
     );
     passed("a handler publishes through its Out slot");
+    assert_eq!(
+        PLAIN.load(Ordering::Relaxed),
+        1,
+        "readings the eager form saw"
+    );
+    passed("a handler without a slot runs on the embedded app");
+    assert_eq!(pong, Some(b"ping".to_vec()), "the raw reply");
+    passed("a handler replies byte for byte");
+    assert_eq!(
+        measure,
+        Some(br#"{"bytes":4}"#.to_vec()),
+        "the reply the codec encoded"
+    );
+    passed("a handler replies through the codec");
+    assert_eq!(
+        BATCHED.load(Ordering::Relaxed),
+        2,
+        "readings the batch form saw"
+    );
+    passed("a batch handler runs on the embedded app");
     assert_eq!(stopped, Health::Stopped, "the health after the stop");
     // The pool holds one task: a fresh one is free only once the first returned. Taken after
     // every other check, so a failing one does not drop an unspawned token.
