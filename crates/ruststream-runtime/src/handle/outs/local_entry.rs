@@ -9,6 +9,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::Deref;
 
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::codec::Codec;
 use crate::inject::LocalFromStartup;
 use crate::metadata::OutgoingMessageMetadata;
@@ -57,7 +58,7 @@ impl<M, W, E, Pipe, Body> Deref for LocalSlot<M, W, E, Pipe, Body> {
     }
 }
 
-impl<M: OutSlot, W: LocalPublisher, E: Codec, Pipe, Body> LocalSlot<M, W, E, Pipe, Body> {
+impl<M: OutSlot, W: LocalPublisher, E, Pipe, Body> LocalSlot<M, W, E, Pipe, Body> {
     /// Starts a typed publish through the slot, on the message type's own wire: the slot's
     /// [`message`](super::Slot::message) of the multi-thread runner, read the same way.
     ///
@@ -134,6 +135,25 @@ where
     }
 }
 
+/// What a local entry's codec position is: a [`Codec`] in a build that has one, so a body
+/// generic over its entry encodes through it, and anything in a build without one. Machinery;
+/// never named in user code.
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+#[doc(hidden)]
+pub trait SlotEncoding: Codec {}
+
+#[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
+impl<C: Codec> SlotEncoding for C {}
+
+/// See the codec counterpart: without a codec the position is
+/// [`UnnamedCodec`](crate::UnnamedCodec), and an encoded publish names the missing codec.
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+#[doc(hidden)]
+pub trait SlotEncoding {}
+
+#[cfg(not(any(feature = "json", feature = "cbor", feature = "msgpack")))]
+impl<C> SlotEncoding for C {}
+
 /// [`OutEntry`](super::OutEntry) for a [`LocalHandle`](crate::LocalHandle) body: what one arena
 /// entry is, stated as the mount's choices, with no `Send` or `Sync` demanded of it.
 ///
@@ -204,8 +224,10 @@ pub trait LocalOutEntry<M, Body = ()> {
     /// The wired live value: the bound policy's live form.
     type Wire;
 
-    /// The codec the entry's typed publishes encode with.
-    type Enc: Codec;
+    /// The codec the entry's typed publishes encode with: the include site's, or
+    /// [`UnnamedCodec`](crate::UnnamedCodec) in a build without one, where the entry publishes
+    /// only the types that carry their own bytes.
+    type Enc: SlotEncoding;
 
     /// The publish path every message leaving the entry travels.
     type Pipe;
@@ -216,7 +238,7 @@ pub trait LocalOutEntry<M, Body = ()> {
     fn entry(&self) -> &LocalSlot<M, Self::Wire, Self::Enc, Self::Pipe, Body>;
 }
 
-impl<M, W, E: Codec, Pipe, Body> LocalOutEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
+impl<M, W, E: SlotEncoding, Pipe, Body> LocalOutEntry<M, Body> for LocalSlot<M, W, E, Pipe, Body> {
     type Wire = W;
     type Enc = E;
     type Pipe = Pipe;

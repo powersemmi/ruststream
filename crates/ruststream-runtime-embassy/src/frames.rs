@@ -225,6 +225,7 @@ pub struct FrameBroker {
     bursts: &'static Frames,
     requests: &'static Frames,
     replies: &'static Frames,
+    events: &'static Frames,
     settled: &'static Settlements,
 }
 
@@ -240,8 +241,16 @@ impl FrameBroker {
             bursts: frames,
             requests: frames,
             replies: frames,
+            events: frames,
             settled,
         }
+    }
+
+    /// The same broker with `events` as the channel its event subscription reads.
+    #[must_use]
+    pub const fn with_events(mut self, events: &'static Frames) -> Self {
+        self.events = events;
+        self
     }
 
     /// The same broker with `requests` as the channel its request subscription reads.
@@ -275,6 +284,7 @@ pub struct FrameConnected {
     bursts: &'static Frames,
     requests: &'static Frames,
     replies: &'static Frames,
+    events: &'static Frames,
     settled: &'static Settlements,
 }
 
@@ -288,6 +298,7 @@ impl LocalBroker for FrameBroker {
             bursts: self.bursts,
             requests: self.requests,
             replies: self.replies,
+            events: self.events,
             settled: self.settled,
         }))
     }
@@ -315,6 +326,7 @@ enum Lane {
     Frames,
     Bursts,
     Requests,
+    Events,
 }
 
 impl FrameSource {
@@ -346,6 +358,17 @@ impl FrameSource {
     }
 }
 
+impl FrameSource {
+    /// The subscription to the broker's event channel (see [`FrameBroker::with_events`]).
+    #[must_use]
+    pub const fn events(name: &'static str) -> Self {
+        Self {
+            name,
+            lane: Lane::Events,
+        }
+    }
+}
+
 impl LocalSubscriptionSource<FrameConnected> for FrameSource {
     type Subscriber = FrameSubscriber;
     // A frame the handler retries goes back on the channel by the device's own logic, not by a
@@ -364,6 +387,7 @@ impl LocalSubscriptionSource<FrameConnected> for FrameSource {
             Lane::Frames => connected.frames,
             Lane::Bursts => connected.bursts,
             Lane::Requests => connected.requests,
+            Lane::Events => connected.events,
         };
         ready(Ok(FrameSubscriber::new(frames, connected.settled)))
     }
