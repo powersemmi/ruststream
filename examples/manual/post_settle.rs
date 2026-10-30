@@ -95,7 +95,7 @@ mod single {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
     }
 
@@ -158,7 +158,7 @@ mod batch {
                         .batch(nonzero!(3))
                         .start_at(MemoryPosition::start())
                         .build(),
-                );
+                )
             })
     }
     // --8<-- [end:batch]
@@ -223,7 +223,7 @@ mod hooks {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Notifier::default())))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
     }
 

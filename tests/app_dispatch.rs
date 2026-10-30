@@ -159,7 +159,7 @@ async fn graceful_shutdown_drains_post_settle_continuations() {
 
     let app = RustStream::new(AppInfo::new("drain", "0.1.0")).with_broker(broker, |b| {
         let subscriber = b.broker().subscribe("work");
-        b.handle(subscriber, handler, HandlerMetadata::raw("work"));
+        b.handle(subscriber, handler, HandlerMetadata::raw("work"))
     });
 
     let shutdown = Arc::new(Notify::new());
@@ -221,7 +221,7 @@ async fn global_layer_wraps_handlers() {
                 subscriber,
                 move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("orders"),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -268,7 +268,7 @@ async fn cross_broker_publish_via_captured_publisher() {
 
     let app = RustStream::new(AppInfo::new("bridge", "0.1.0"))
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Bridge(egress_pub.clone())).build());
+            b.include(subscriber("orders", Bridge(egress_pub.clone())).build())
         })
         .with_broker_labeled("egress", egress, |b| {
             let subscriber = b.broker().subscribe("responses");
@@ -276,7 +276,7 @@ async fn cross_broker_publish_via_captured_publisher() {
                 subscriber,
                 move |_msg: &_, _ctx: &mut Context| ready(HandlerOutcome::ack()),
                 HandlerMetadata::raw("responses"),
-            );
+            )
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

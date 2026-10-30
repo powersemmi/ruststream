@@ -97,7 +97,7 @@ impl Injector for HeaderInjector<'_> {
 ///         .with_broker(MemoryBroker::new(), |b| {
 ///             b.include(confirm)
 ///                 .out_reply(Publish)
-///                 .transform(otel.propagation());
+///                 .transform(otel.propagation())
 ///         })
 /// }
 /// # }
@@ -141,7 +141,7 @@ impl OpenTelemetry {
     ///         .with_broker(MemoryBroker::new(), |b| {
     ///             b.include(confirm)
     ///                 .out_reply(Publish)
-    ///                 .transform(otel.propagation());
+    ///                 .transform(otel.propagation())
     ///         })
     /// }
     /// # }
@@ -184,7 +184,7 @@ impl OpenTelemetry {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
     ///         .layer(OpenTelemetry::new().consume_layer())
     ///         .with_broker(MemoryBroker::new(), |b| {
-    ///             b.include(confirm).out_reply(Publish);
+    ///             b.include(confirm).out_reply(Publish)
     ///         })
     /// }
     /// # }
@@ -229,7 +229,7 @@ impl OpenTelemetry {
     ///         // The confirmation carries the order's `traceparent`.
     ///         b.include(confirm)
     ///             .out_reply(Publish)
-    ///             .transform(OpenTelemetry::new().propagation());
+    ///             .transform(OpenTelemetry::new().propagation())
     ///     })
     /// }
     /// # }

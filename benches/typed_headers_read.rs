@@ -64,7 +64,7 @@ async fn read_meta(
 
 fn app(messages: usize) -> Pending {
     common::pending_with_headers(messages, &HEADERS, |b| {
-        b.include(read_meta).out(Audit, Publish).build();
+        b.include(read_meta).out(Audit, Publish)
     })
 }
 

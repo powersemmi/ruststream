@@ -224,21 +224,19 @@ async fn a_pair_input_reaches_every_single_message_cell() {
         RustStream::new(AppInfo::new("matrix", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("matrix.mirror", MirrorPair).build())
                 .out(Analytics, Publish)
-                .build();
-            b.include(
-                subscriber("matrix.confirm", ConfirmPair)
-                    .reply()
-                    .to("matrix.confirmations")
-                    .build(),
-            );
-            b.include(
-                subscriber("matrix.gateway", GatewayPair)
-                    .reply()
-                    .to("matrix.gateway-confirmations")
-                    .build(),
-            )
-            .out(Analytics, Publish)
-            .build();
+                .include(
+                    subscriber("matrix.confirm", ConfirmPair)
+                        .reply()
+                        .to("matrix.confirmations")
+                        .build(),
+                )
+                .include(
+                    subscriber("matrix.gateway", GatewayPair)
+                        .reply()
+                        .to("matrix.gateway-confirmations")
+                        .build(),
+                )
+                .out(Analytics, Publish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -292,15 +290,14 @@ async fn a_pair_input_reaches_every_batch_cell() {
                     .build(),
             )
             .out(Analytics, Publish)
-            .build();
-            b.include(
+            .include(
                 subscriber("matrix.confirm-batch", ConfirmPairBatch)
                     .reply()
                     .to("matrix.batch-confirmations")
                     .batch(nonzero!(8))
                     .build(),
-            );
-            b.include(
+            )
+            .include(
                 subscriber("matrix.gateway-batch", GatewayPairBatch)
                     .reply()
                     .to("matrix.gateway-batch-confirmations")
@@ -308,7 +305,6 @@ async fn a_pair_input_reaches_every_batch_cell() {
                     .build(),
             )
             .out(Analytics, Publish)
-            .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

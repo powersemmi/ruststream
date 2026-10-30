@@ -36,7 +36,7 @@ fn app() -> impl App {
             // The reply carries the consumer span's trace context.
             b.include(confirm)
                 .out_reply(Publish)
-                .transform(otel.propagation());
+                .transform(otel.propagation())
         })
 }
 // --8<-- [end:app]

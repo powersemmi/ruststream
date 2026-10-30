@@ -431,7 +431,7 @@ impl<T: 'static> PublishedAssertions<T> {
     /// }
     ///
     /// let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///     b.include(confirm).out_reply(Publish);
+    ///     b.include(confirm).out_reply(Publish)
     /// });
     /// let tb = TestApp::start(app).await?;
     ///

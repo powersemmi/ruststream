@@ -82,7 +82,7 @@ impl Spec {
     ///         "in-process",
     ///         MemoryBroker::new(),
     ///         |b| {
-    ///             b.include(confirm);
+    ///             b.include(confirm)
     ///         },
     ///     );
     ///     build_spec(&app).to_json()
@@ -124,7 +124,7 @@ impl Spec {
     ///
     /// pub fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("orders", "1.0.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(accept);
+    ///         b.include(accept)
     ///     })
     /// }
     ///

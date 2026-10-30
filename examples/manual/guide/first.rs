@@ -54,7 +54,7 @@ impl Handle<Order> for Accept {
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("shop", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders.placed", Accept).build());
+        b.include(subscriber("orders.placed", Accept).build())
     })
 }
 

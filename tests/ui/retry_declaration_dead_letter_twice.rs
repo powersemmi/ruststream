@@ -20,6 +20,6 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile)
             .dead_letter("orders.dead")
-            .dead_letter("orders.parked");
+            .dead_letter("orders.parked")
     });
 }

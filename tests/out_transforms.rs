@@ -120,7 +120,6 @@ async fn each_slot_keeps_its_own_transform_stack() {
                 .out(Journal, Publish)
                 .out(Audit, Publish)
                 .transform(Envelope)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -156,7 +155,6 @@ async fn a_reply_and_a_slot_carry_their_own_transforms_under_one_app_layer() {
                 .transform(StampSource)
                 .out(Audit, Publish)
                 .transform(Envelope)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -202,7 +200,6 @@ async fn a_slot_transform_reads_the_slot_it_rides() {
                 .transform(StampSlot)
                 .out(Journal, Publish)
                 .transform(StampSlot)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

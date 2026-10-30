@@ -61,9 +61,7 @@ fn service() -> RustStream<Identity, AppState> {
     let receipts = broker.publisher();
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(AppState { receipts }))
-        .with_broker(broker, |b| {
-            b.include(handle_order);
-        })
+        .with_broker(broker, |b| b.include(handle_order))
 }
 // --8<-- [end:app]
 

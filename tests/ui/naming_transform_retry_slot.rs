@@ -38,6 +38,6 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile)
             .out_retry(MemoryPublish)
-            .transform(ByTenant);
+            .transform(ByTenant)
     });
 }

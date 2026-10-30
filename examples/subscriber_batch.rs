@@ -33,7 +33,7 @@ mod batch {
     fn app(broker: MemoryBroker) -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
             // At most 64 orders per call.
-            b.include(store.batch(nonzero!(64)));
+            b.include(store.batch(nonzero!(64)))
         })
     }
     // --8<-- [end:batch]
@@ -92,9 +92,8 @@ mod per_element {
     // --8<-- [end:per_element]
 
     fn app(broker: MemoryBroker) -> impl App {
-        RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(broker, |b| {
-            b.include(reconcile.batch(nonzero!(64)));
-        })
+        RustStream::new(AppInfo::new("payments", "0.1.0"))
+            .with_broker(broker, |b| b.include(reconcile.batch(nonzero!(64))))
     }
 
     #[tokio::test(start_paused = true)]

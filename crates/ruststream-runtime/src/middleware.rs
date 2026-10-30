@@ -35,8 +35,8 @@
 //!     RustStream::new(AppInfo::new("orders", "0.1.0"))
 //!         .layer(TracingLayer::default())
 //!         .with_broker(MemoryBroker::new(), |b| {
-//!             b.include(accept);
-//!             b.include(audit);
+//!             b.include(accept)
+//!             .include(audit)
 //!         })
 //! }
 //! # }
@@ -138,7 +138,7 @@ pub trait Layer<H> {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
 ///         .layer(LogLayer)
 ///         .with_broker(MemoryBroker::new(), |b| {
-///             b.include(handle);
+///             b.include(handle)
 ///         })
 /// }
 /// # }

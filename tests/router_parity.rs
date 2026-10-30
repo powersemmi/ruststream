@@ -454,7 +454,7 @@ async fn a_router_accepts_a_cross_broker_bind_token() {
         .build();
     let app = RustStream::new(AppInfo::new("rp-bridge", "0.1.0"))
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| b.include_router(router))
-        .with_broker_labeled("egress", egress_broker, |_b| {});
+        .with_broker_labeled("egress", egress_broker, |b| b.end());
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.broker_named("ingress")

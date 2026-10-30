@@ -188,7 +188,6 @@ async fn the_mount_site_default_holds_until_a_step_overrides_it() {
         RustStream::new(AppInfo::new("options", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
         });
     // --8<-- [end:mount]
     let tb = TestApp::start(app).await.expect("harness start");
@@ -221,7 +220,6 @@ async fn a_step_keeps_the_codec_the_mount_site_named() {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3))
                 .codec(CborCodec)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -283,7 +281,6 @@ async fn a_step_inside_a_transaction_scope_reaches_the_broker() {
         |b| {
             b.include(stage)
                 .out(Staged, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -332,7 +329,7 @@ async fn a_bare_publisher_takes_the_same_steps() {
                         .publish()
                         .await
                 },
-            );
+            )
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -387,10 +384,8 @@ async fn the_slot_view_reads_back_the_options_a_publish_carried() {
         |b| {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
-            b.include(note)
+                .include(note)
                 .out(Notes, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -427,10 +422,8 @@ async fn one_delivery() -> TestApp<()> {
         |b| {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
-            b.include(note)
+                .include(note)
                 .out(Notes, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -552,7 +545,6 @@ async fn a_slot_transform_completes_what_the_call_site_set() {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3).ttl(9))
                 .transform(Expedite)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -592,7 +584,6 @@ async fn a_slot_transform_overrides_a_field_the_call_site_named() {
             b.include(record)
                 .out(Ledger, PriorityPublish::default().priority(3))
                 .transform(Downgrade)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -618,7 +609,7 @@ async fn a_reply_transform_sets_what_the_reply_has_no_call_site_for() {
         |b| {
             b.include(acknowledge)
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .transform(Expedite);
+                .transform(Expedite)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -658,7 +649,7 @@ async fn a_batch_transform_sets_the_options_of_every_reply() {
         |b| {
             b.include(confirm_all.batch(nonzero!(8)))
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .batch_transform(for_batch(Expedite));
+                .batch_transform(for_batch(Expedite))
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -712,10 +703,9 @@ async fn reply_then_slot_publish() -> TestApp<()> {
         |b| {
             b.include(acknowledge)
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .transform(Expedite);
-            b.include(follow_up)
+                .transform(Expedite)
+                .include(follow_up)
                 .out(Followups, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -770,7 +760,7 @@ async fn the_options_of_a_reply_do_not_stand_for_the_tests_own_publish() {
         |b| {
             b.include(acknowledge)
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .transform(Expedite);
+                .transform(Expedite)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -820,7 +810,7 @@ async fn the_options_of_an_evicted_reply_do_not_stand_for_the_tests_own_publish(
         |b| {
             b.include(acknowledge)
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .transform(Expedite);
+                .transform(Expedite)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -852,11 +842,11 @@ async fn two_brokers_one_channel_name() -> TestApp<()> {
         .with_broker_labeled("expedited", MemoryBroker::new(), |b| {
             b.include(acknowledge)
                 .out_reply(PriorityPublish::default().priority(4).ttl(9))
-                .transform(Expedite);
+                .transform(Expedite)
         })
         .with_broker_labeled("plain", MemoryBroker::new(), |b| {
             b.include(acknowledge)
-                .out_reply(PriorityPublish::default().priority(4).ttl(9));
+                .out_reply(PriorityPublish::default().priority(4).ttl(9))
         });
     let tb = TestApp::start(app).await.expect("harness start");
     for label in ["plain", "expedited"] {

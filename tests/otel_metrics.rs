@@ -211,10 +211,7 @@ async fn consume_layer_records_per_delivery_metrics() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(consume);
-            b.include(reject);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(consume).include(reject));
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
@@ -252,9 +249,7 @@ async fn an_undecodable_payload_bumps_the_decode_failure_counter() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(consume);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(consume));
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
@@ -316,9 +311,7 @@ async fn a_panicking_handler_does_not_leak_the_in_flight_gauge() {
     let (otel, provider, exporter) = otel_with_memory_exporter();
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(implode);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(implode));
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.broker::<MemoryBroker>()
@@ -369,9 +362,9 @@ async fn a_failed_publish_keeps_error_type_low_cardinality() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(AtomicBool::new(false))))
         .publish_layer(otel.publish_layer())
-        .with_broker_labeled("egress", egress, |_b| {})
+        .with_broker_labeled("egress", egress, |b| b.end())
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-            b.include(confirm_once).out(Reply, to_egress);
+            b.include(confirm_once).out(Reply, to_egress)
         });
     let tb = TestApp::start(app).await.expect("harness start failed");
     connected(&bus_killer)
@@ -446,9 +439,7 @@ async fn publish_layer_records_per_publish_metrics_and_queue_time() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())
-        .with_broker(broker, |b| {
-            b.include(confirm);
-        });
+        .with_broker(broker, |b| b.include(confirm));
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -492,10 +483,7 @@ async fn queue_time_is_bucketed_like_the_other_durations() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .layer(otel.consume_layer())
         .publish_layer(otel.publish_layer())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm);
-            b.include(settle);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(confirm).include(settle));
 
     let tb = TestApp::start(app).await.expect("harness start failed");
     tb.message(&Order { id: 5 })
@@ -540,7 +528,7 @@ async fn batch_dispatch_records_the_batch_size_histogram() {
     global::set_meter_provider(provider.clone());
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(absorb.batch(nonzero!(8)));
+        b.include(absorb.batch(nonzero!(8)))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     for id in 0..3u32 {
@@ -629,19 +617,15 @@ fn the_dispatch_metrics_allocate_nothing_per_message() {
         .stamp_publish_time(false)
         .attach(SdkTracerProvider::builder().build(), meter_provider);
 
-    let bare = steady_allocations(RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm);
-        },
-    ));
+    let bare = steady_allocations(
+        RustStream::new(AppInfo::new("svc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm)),
+    );
     let recorded = steady_allocations(
         RustStream::new(AppInfo::new("svc", "0.1.0"))
             .layer(otel.consume_layer())
             .publish_layer(otel.publish_layer())
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(confirm);
-            }),
+            .with_broker(MemoryBroker::new(), |b| b.include(confirm)),
     );
     assert_eq!(
         recorded, bare,
@@ -748,8 +732,8 @@ fn a_destination_past_the_kept_ones_builds_only_what_it_records() {
         RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(answer)
                 .out_reply(MemoryPublish)
-                .transform(ToTenant);
-            b.include(consume);
+                .transform(ToTenant)
+                .include(consume)
         }),
     );
     let (answers, deliveries) = allocations_past_many_destinations(
@@ -759,8 +743,8 @@ fn a_destination_past_the_kept_ones_builds_only_what_it_records() {
             .with_broker(MemoryBroker::new(), |b| {
                 b.include(answer)
                     .out_reply(MemoryPublish)
-                    .transform(ToTenant);
-                b.include(consume);
+                    .transform(ToTenant)
+                    .include(consume)
             }),
     );
     assert_eq!(

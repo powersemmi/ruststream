@@ -74,8 +74,11 @@ mod decoded {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(issue_receipt).out_reply(Publish);
-            b.include(issue_invoice).out_reply(Publish).codec(Versioned);
+            b.include(issue_receipt)
+                .out_reply(Publish)
+                .include(issue_invoice)
+                .out_reply(Publish)
+                .codec(Versioned)
         })
     }
 
@@ -139,7 +142,7 @@ mod decoded_as {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(issue_tickets).out(Tickets, Publish).build();
+            b.include(issue_tickets).out(Tickets, Publish)
         })
     }
 
@@ -185,8 +188,11 @@ mod with {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(issue_receipt).out_reply(Publish);
-            b.include(issue_invoice).out_reply(Publish).codec(Versioned);
+            b.include(issue_receipt)
+                .out_reply(Publish)
+                .include(issue_invoice)
+                .out_reply(Publish)
+                .codec(Versioned)
         })
     }
 
@@ -229,7 +235,7 @@ mod with_raw {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(issue_receipt).out_reply(Publish);
+            b.include(issue_receipt).out_reply(Publish)
         })
     }
 

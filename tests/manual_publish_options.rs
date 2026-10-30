@@ -189,7 +189,6 @@ async fn the_mount_site_default_holds_until_a_step_overrides_it() {
         RustStream::new(AppInfo::new("options", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("options.in", Record).build())
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
         });
     // --8<-- [end:mount]
     let tb = TestApp::start(app).await.expect("harness start");
@@ -222,7 +221,6 @@ async fn a_step_keeps_the_codec_the_mount_site_named() {
             b.include(subscriber("options.in", Record).build())
                 .out(Ledger, PriorityPublish::default().priority(3))
                 .codec(CborCodec)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -296,7 +294,6 @@ async fn a_step_inside_a_transaction_scope_reaches_the_broker() {
         |b| {
             b.include(subscriber("options.txn.in", Stage).build())
                 .out(Staged, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -341,7 +338,7 @@ async fn a_bare_publisher_takes_the_same_steps() {
                         .publish()
                         .await
                 },
-            );
+            )
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -398,7 +395,7 @@ async fn the_reply_position_takes_the_policy_defaults() {
                     .to("options.reply.out")
                     .build(),
             )
-            .out_reply(PriorityPublish::default().priority(4));
+            .out_reply(PriorityPublish::default().priority(4))
         },
     );
     // --8<-- [end:reply_mount]
@@ -463,10 +460,8 @@ async fn the_slot_view_reads_back_the_options_a_publish_carried() {
         |b| {
             b.include(subscriber("options.in", Record).build())
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
-            b.include(subscriber("options.note.in", Note).build())
+                .include(subscriber("options.note.in", Note).build())
                 .out(Notes, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -500,10 +495,8 @@ async fn one_delivery() -> TestApp<()> {
         |b| {
             b.include(subscriber("options.in", Record).build())
                 .out(Ledger, PriorityPublish::default().priority(3))
-                .build();
-            b.include(subscriber("options.note.in", Note).build())
+                .include(subscriber("options.note.in", Note).build())
                 .out(Notes, PriorityPublish::default().priority(3))
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

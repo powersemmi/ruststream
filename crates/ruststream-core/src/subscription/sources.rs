@@ -113,7 +113,7 @@ impl FromName for Name {
 ///
 /// fn app(region: &str) -> RustStream {
 ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(audit.name(format!("orders.{region}")));
+///         b.include(audit.name(format!("orders.{region}")))
 ///     })
 /// }
 /// # }
@@ -144,7 +144,7 @@ impl FromName for Name {
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
 ///         // Never named: there is no subscription to open.
-///         b.include(audit);
+///         b.include(audit)
 ///     })
 /// }
 /// # }
@@ -265,7 +265,7 @@ impl<C: Subscribe<Copies = AddressedCopies>> RedeliveryAddressed<C> for Name {
 ///     let broker = MemoryBroker::retaining(Retention::Messages(nonzero!(1024)));
 ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
 ///         // Wraps the descriptor in `StartAt`: every start replays the whole retained log.
-///         b.include(rebuild.name("audit").start_at(MemoryPosition::start()));
+///         b.include(rebuild.name("audit").start_at(MemoryPosition::start()))
 ///     })
 /// }
 /// # }
@@ -357,7 +357,7 @@ impl<S, P> StartAt<S, P> {
     ///                 .batch(nonzero!(64))
     ///                 .start_at(MemoryPosition::start())
     ///                 .linger(Duration::from_millis(25)),
-    ///         );
+    ///         )
     ///     })
     /// }
     /// # }

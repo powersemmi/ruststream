@@ -100,15 +100,15 @@ impl Handle<Order, Quote> for QuoteOrder {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // The broker's default policy, under the default codec.
-        b.include(subscriber("orders", IssueReceipt).reply().build());
-        // The destination the type leaves open, and the policy the reply leaves through.
-        b.include(
-            subscriber("quote-requests", QuoteOrder)
-                .reply()
-                .to("quotes")
-                .build(),
-        )
-        .out_reply(Publish);
+        b.include(subscriber("orders", IssueReceipt).reply().build())
+            // The destination the type leaves open, and the policy the reply leaves through.
+            .include(
+                subscriber("quote-requests", QuoteOrder)
+                    .reply()
+                    .to("quotes")
+                    .build(),
+            )
+            .out_reply(Publish)
     })
 }
 // --8<-- [end:app]

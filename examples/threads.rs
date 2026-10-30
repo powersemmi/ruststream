@@ -53,9 +53,8 @@ async fn resize(job: &Resize, Ctx(main): Ctx<MainRuntime>) -> Resized {
 /// The dedicated threads carry the computation, so the app's runtime needs one thread for I/O.
 #[ruststream::app(flavor = "current_thread")]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(resize);
-    })
+    RustStream::new(AppInfo::new("images", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(resize))
 }
 // --8<-- [end:app]
 

@@ -84,7 +84,7 @@ mod settings {
                     // A payload that does not decode is acked and skipped, not dropped.
                     .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip))
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:settings]

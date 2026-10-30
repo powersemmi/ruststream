@@ -36,9 +36,7 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         // Wraps every handler the app mounts, router handlers included.
         .layer(TracingLayer::default())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(confirm);
-        })
+        .with_broker(MemoryBroker::new(), |b| b.include(confirm))
 }
 // --8<-- [end:app]
 

@@ -72,7 +72,7 @@ fn app() -> impl App {
                     .build(),
             )
             .out_reply(Publish)
-            .transform(otel.propagation());
+            .transform(otel.propagation())
         })
 }
 // --8<-- [end:app]

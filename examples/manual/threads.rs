@@ -86,7 +86,7 @@ fn app() -> impl App {
                 .threads(nonzero!(8))
                 .reply()
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:threads]

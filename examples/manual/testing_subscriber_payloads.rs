@@ -94,7 +94,7 @@ mod with {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -141,7 +141,7 @@ mod with_raw {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -190,7 +190,7 @@ mod received {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -240,7 +240,7 @@ mod received_raw {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("frames", Ingest).build());
+            b.include(subscriber("frames", Ingest).build())
         })
     }
 
@@ -296,7 +296,7 @@ mod batches {
                     .batch(nonzero!(2))
                     .start_at(MemoryPosition::start())
                     .build(),
-            );
+            )
         })
     }
 
@@ -360,7 +360,7 @@ mod batches_raw {
                     .batch(nonzero!(2))
                     .start_at(MemoryPosition::start())
                     .build(),
-            );
+            )
         })
     }
 
@@ -421,7 +421,7 @@ mod assert_batch_sizes {
                     .batch(nonzero!(2))
                     .start_at(MemoryPosition::start())
                     .build(),
-            );
+            )
         })
     }
 

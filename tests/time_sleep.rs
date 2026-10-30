@@ -44,9 +44,7 @@ async fn a_service_sleep_follows_the_harness_clock() {
     let state = Arc::clone(&reminded);
     let app = RustStream::new(AppInfo::new("reminders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(remind_later);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(remind_later));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })

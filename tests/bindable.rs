@@ -26,7 +26,7 @@ async fn a_cloned_token_pairs_against_the_same_broker() {
         "the token names the policy it carries",
     );
 
-    let app = RustStream::new(AppInfo::new("bound", "0.1.0")).with_broker(bindable, |_scope| {});
+    let app = RustStream::new(AppInfo::new("bound", "0.1.0")).with_broker(bindable, |b| b.end());
     let running = app.start().await.expect("startup failed");
 
     for (token, payload) in [(token, b"one"), (spare, b"two")] {

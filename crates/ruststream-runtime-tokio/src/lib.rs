@@ -27,17 +27,17 @@ mod sink;
 mod testkit;
 pub mod time;
 
+#[doc(hidden)]
+pub use app::MountChain;
 #[cfg(feature = "testing")]
 #[doc(hidden)]
 pub use app::TestParts;
 pub use app::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
+    Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 #[doc(hidden)]
 pub use app::{ConnectedEntry, LifecycleHook, RegisteredBroker, ShutdownHooks, Starter, Teardown};
-#[doc(hidden)]
-pub use app::{IncludeMount, ScopeCommit};
 pub use buffered::{Buffered, BufferedSubscriber};
 pub use clock::Tokio;
 pub use ruststream_runtime::MainRuntime;

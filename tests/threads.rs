@@ -70,10 +70,8 @@ async fn mixed(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_main_runtime_key_sits_beside_a_broker_key() {
-    let app =
-        RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(mixed);
-        });
+    let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(mixed));
     let tb = TestApp::start(app).await.expect("startup");
     tb.message(&Order { id: 1 })
         .to("mixed")
@@ -99,9 +97,7 @@ async fn crunch(_job: &Order, ctx: &mut Context<'_, (), Arc<Barrier>>) -> Handle
 async fn the_threads_run_as_that_many_workers() {
     let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Barrier::new(4))))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(crunch);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(crunch));
     let tb = TestApp::start(app).await.expect("startup");
     let jobs: Vec<Order> = (1..=4).map(|id| Order { id }).collect();
     let published = time::timeout(
@@ -133,10 +129,8 @@ async fn keyed(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn keyed_threads_keep_each_key_in_order() {
-    let app =
-        RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(keyed);
-        });
+    let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(keyed));
     let tb = TestApp::start(app).await.expect("startup");
     keys_stay_in_order(&tb, "keyed").await;
 }
@@ -280,9 +274,7 @@ async fn defer(order: &Order, ctx: &mut Context<'_, (), Arc<Seen>>) -> HandlerOu
 async fn redeliveries_from_threads_follow_the_harness_clock() {
     let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Arc::new(Seen::default())))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(defer);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(defer));
     let tb = TestApp::start(app).await.expect("startup");
     tb.message(&Order { id: 1 })
         .to("deferred")

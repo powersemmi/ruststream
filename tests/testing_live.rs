@@ -67,8 +67,7 @@ fn app() -> RustStream<Identity, Seen> {
     RustStream::new(AppInfo::new("orders", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Seen::default()))
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(accept).out_reply(MemoryPublish);
-            b.include(file);
+            b.include(accept).out_reply(MemoryPublish).include(file)
         })
 }
 
@@ -137,9 +136,7 @@ async fn slow(job: &Job) -> HandlerOutcome {
 async fn a_live_settle_that_outlasts_the_deadline_says_so() {
     let app = RustStream::new(AppInfo::new("slow", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(10))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(slow));
     let tb = TestApp::start_live_within(app, Duration::from_millis(100))
         .await
         .expect("start");
@@ -191,11 +188,9 @@ fn announcing_app() -> RustStream {
                     .await
                     .map_err(|err| AnnounceError(err.to_string()))
             });
-            b.include(take_order_slowly);
+            b.include(take_order_slowly)
         })
-        .with_broker_labeled("west", west, |b| {
-            b.include(take_order_slowly);
-        })
+        .with_broker_labeled("west", west, |b| b.include(take_order_slowly))
 }
 
 /// What a startup hook publishes is the service's own publishing, like a publisher it holds: a
@@ -234,9 +229,7 @@ struct NotReady;
 fn failing_app(broker: MemoryBroker) -> RustStream {
     RustStream::new(AppInfo::new("failing", "0.1.0"))
         .after_startup(async move |_state| Err::<(), _>(NotReady))
-        .with_broker(broker, |b| {
-            b.include(take_order);
-        })
+        .with_broker(broker, |b| b.include(take_order))
 }
 
 /// A failing `after_startup` fails the start with the hook's own error, and the start shuts down
@@ -291,9 +284,7 @@ async fn a_timed_out_shutdown_stops_the_handler_it_waited_for() -> Result<(), Bo
     let app = RustStream::new(AppInfo::new("stuck", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(10))
         .on_startup(async move |()| Ok::<_, Infallible>(held))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(stuck);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(stuck));
     let tb = TestApp::start_live_within(app, Duration::from_millis(100)).await?;
     let unsettled = tb
         .broker::<MemoryBroker>()
@@ -335,10 +326,7 @@ async fn one_shutdown_timeout_bounds_every_stuck_subscription() -> Result<(), Bo
     const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
     let app = RustStream::new(AppInfo::new("stuck", "0.1.0"))
         .shutdown_timeout(SHUTDOWN_TIMEOUT)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(stuck_a);
-            b.include(stuck_b);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(stuck_a).include(stuck_b));
     let tb = TestApp::start(app).await?;
     for name in ["stuck-a", "stuck-b"] {
         // The reaction never settles, so the publish is left once the handler holds the delivery.

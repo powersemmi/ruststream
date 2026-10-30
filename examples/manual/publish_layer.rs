@@ -91,7 +91,7 @@ mod service {
             // The replies and the `Out` slot publishes of the handlers below pass through it.
             .publish_layer(Origin { service: "billing" })
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", IssueReceipt).reply().build());
+                b.include(subscriber("orders", IssueReceipt).reply().build())
             })
     }
     // --8<-- [end:app]

@@ -16,8 +16,6 @@ async fn handle(orders: &[Order]) -> HandlerOutcome {
 }
 
 fn main() {
-    let _app =
-        RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(handle);
-        });
+    let _app = RustStream::new(AppInfo::new("app", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(handle));
 }

@@ -237,7 +237,7 @@ impl<B: LocalBroker + 'static, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("routing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(orders().merge(shipping()));
+    ///         b.include_router(orders().merge(shipping()))
     ///     })
     /// }
     /// # }
@@ -337,7 +337,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }
@@ -396,7 +396,7 @@ impl<B, S, H, Cx, Routes, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }
@@ -503,7 +503,7 @@ impl<B, Head, Tail, RouteCodec, RouteLayers, RoutePipe>
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include_router(jobs());
+    ///         b.include_router(jobs())
     ///     })
     /// }
     /// # }

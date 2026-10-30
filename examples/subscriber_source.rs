@@ -34,7 +34,7 @@ mod name_at_mount {
 
     fn app(shard: u32) -> impl App {
         RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audit.name(format!("audit-{shard}")));
+            b.include(audit.name(format!("audit-{shard}")))
         })
     }
     // --8<-- [end:name_at_mount]
@@ -82,8 +82,7 @@ mod descriptor {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-            b.include(archive.name("archive"));
+            b.include(accept).include(archive.name("archive"))
         })
     }
     // --8<-- [end:descriptor]

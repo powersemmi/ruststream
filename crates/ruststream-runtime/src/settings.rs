@@ -613,7 +613,7 @@ where
 ///                 .name(format!("orders-{shard}"))
 ///                 .workers(nonzero!(4))
 ///                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)),
-///         );
+///         )
 ///     })
 /// }
 /// # }
@@ -776,7 +776,7 @@ pub trait SubscriberSettings: Declared {
     ///                 .name("orders")
     ///                 .batch(nonzero!(64))
     ///                 .linger(Duration::from_millis(20)),
-    ///         );
+    ///         )
     ///     })
     /// }
     /// # }

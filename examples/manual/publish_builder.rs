@@ -78,7 +78,6 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("shipping", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("shipments", Notify).build())
             .out(DefaultSlot, Publish)
-            .build();
     })
 }
 

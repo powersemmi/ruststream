@@ -95,7 +95,7 @@ fn app(broker: MemoryBroker) -> impl App {
         )
         .out_reply(Publish)
         .batch_transform(Batched)
-        .batch_transform(for_batch(Service("billing")));
+        .batch_transform(for_batch(Service("billing")))
     })
 }
 // --8<-- [end:app]

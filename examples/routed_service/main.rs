@@ -74,6 +74,6 @@ fn app() -> impl App {
         .shutdown_timeout(Duration::from_secs(10))
         .with_broker(MemoryBroker::new(), |b| {
             b.include_router(routes::orders(&metrics));
-            b.include_router(routes::payments(&metrics));
+            b.include_router(routes::payments(&metrics))
         })
 }

@@ -291,7 +291,7 @@ impl<'a, Payload> OutgoingMessage<'a, Payload> {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(price).out(Pricing, Request).build();
+    ///         b.include(price).out(Pricing, Request)
     ///     })
     /// }
     /// # }

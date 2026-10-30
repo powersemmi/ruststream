@@ -60,9 +60,9 @@ fn app() -> impl App {
     // `orders.eu` goes to `Europe` alone; the pattern takes the names nobody else reads.
     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        b.include(subscriber("orders.eu", Europe).build());
-        // Reads every `orders.<region>` name.
-        b.include(subscriber(MemoryPattern::new("orders.*"), OtherRegions).build());
+        b.include(subscriber("orders.eu", Europe).build())
+            // Reads every `orders.<region>` name.
+            .include(subscriber(MemoryPattern::new("orders.*"), OtherRegions).build())
     })
 }
 // --8<-- [end:app]

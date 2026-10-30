@@ -94,7 +94,7 @@ mod hooks {
             // How long shutdown waits for handlers still running.
             .shutdown_timeout(Duration::from_secs(10))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
+                b.include(subscriber("orders", Accept).build())
             })
     }
     // --8<-- [end:hooks]
@@ -157,7 +157,6 @@ mod announce {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
             // Runs once the subscriptions are open, with a publisher of this broker.
             b.after_startup(Publish, async move |publisher| {
                 let started = Started {
@@ -165,6 +164,7 @@ mod announce {
                 };
                 publisher.message(&started).publish().await
             });
+            b.include(subscriber("orders", Accept).build())
         })
     }
     // --8<-- [end:announce]

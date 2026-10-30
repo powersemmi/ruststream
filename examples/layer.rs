@@ -89,9 +89,7 @@ mod app_wide {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             // Every handler the app mounts below runs inside the layer.
             .layer(RequireTenant)
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(accept);
-            })
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
     // --8<-- [end:app]
 
@@ -151,7 +149,7 @@ mod scopes {
                     .include(invoice)
                     .layer(RequireTenant)
                     .include(audit),
-            );
+            )
         })
     }
     // --8<-- [end:scopes]

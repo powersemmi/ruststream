@@ -21,6 +21,6 @@ fn main() {
         b.include(reconcile)
             .out_retry(MemoryPublish)
             .to("orders.retry")
-            .to("orders.other");
+            .to("orders.other")
     });
 }

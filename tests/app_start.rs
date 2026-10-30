@@ -40,9 +40,7 @@ async fn observe(_order: &Order) -> HandlerOutcome {
 fn service(broker: MemoryBroker) -> impl App {
     RustStream::new(AppInfo::new("svc", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| {
-            b.include(observe);
-        })
+        .with_broker(broker, |b| b.include(observe))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -98,7 +96,7 @@ async fn start_and_shutdown_run_lifecycle_hooks_in_order() {
             o4.lock().expect("poisoned").push("after_shutdown");
             Ok::<(), Infallible>(())
         })
-        .with_broker(MemoryBroker::new(), |_b| {});
+        .with_broker(MemoryBroker::new(), |b| b.end());
 
     let running = app.start().await.expect("startup failed");
     assert_eq!(
@@ -132,9 +130,7 @@ async fn lifecycle_hooks_run_and_shutdown_hook_errors_only_log() {
         .on_shutdown(async move |_state| Err::<(), _>(io::Error::other("on_shutdown boom")))
         .after_shutdown(async move |_state| Err::<(), _>(io::Error::other("after_shutdown boom")))
         .shutdown_timeout(Duration::from_secs(5))
-        .with_broker(broker, |b| {
-            b.include(quiet);
-        });
+        .with_broker(broker, |b| b.include(quiet));
 
     let running = app.start().await.expect("startup failed");
     // Shutdown hooks may fail; per the lifecycle contract their errors are logged, never
@@ -186,9 +182,7 @@ async fn failed_after_startup_drains_continuations_then_unwinds_the_brokers() {
             CONT_IN_FLIGHT_HOOK.notified().await;
             Err::<(), _>(io::Error::other("after_startup boom"))
         })
-        .with_broker(broker, |b| {
-            b.include(parks_a_continuation);
-        });
+        .with_broker(broker, |b| b.include(parks_a_continuation));
 
     let mut start_task = tokio::spawn(app.start());
     HOOK_READY.notified().await;

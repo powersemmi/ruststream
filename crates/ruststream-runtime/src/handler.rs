@@ -137,7 +137,7 @@ impl HandlerResult {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(reconcile.batch(nonzero!(64)));
+///         b.include(reconcile.batch(nonzero!(64)))
 ///     })
 /// }
 /// # }
@@ -240,7 +240,7 @@ impl HandlerOutcome {
     ///     RustStream::new(AppInfo::new("payments", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
     ///         b.include(reconcile)
     ///             .max_attempts(nonzero!(5u32))
-    ///             .dead_letter("payments.dead");
+    ///             .dead_letter("payments.dead")
     ///     })
     /// }
     /// # }

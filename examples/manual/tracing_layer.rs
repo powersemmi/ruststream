@@ -58,7 +58,7 @@ fn app() -> impl App {
         // Wraps every handler the app mounts, router handlers included.
         .layer(TracingLayer::default())
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Confirm).build());
+            b.include(subscriber("orders", Confirm).build())
         })
 }
 // --8<-- [end:app]

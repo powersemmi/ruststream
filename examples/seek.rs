@@ -40,9 +40,7 @@ mod start_at {
     // --8<-- [end:start_at]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
-        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| {
-            b.include(record);
-        })
+        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(broker, |b| b.include(record))
     }
 
     #[tokio::test]
@@ -101,9 +99,7 @@ mod seek {
     // --8<-- [end:seek]
 
     fn app(broker: MemoryBroker<Retaining>) -> impl App {
-        RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| {
-            b.include(work);
-        })
+        RustStream::new(AppInfo::new("jobs", "0.1.0")).with_broker(broker, |b| b.include(work))
     }
 
     #[tokio::test]

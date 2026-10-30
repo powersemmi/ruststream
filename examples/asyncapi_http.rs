@@ -86,8 +86,7 @@ fn service() -> RustStream {
         )
         // --8<-- [end:security]
         .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
-            b.include(handle);
-            b.include(confirm);
+            b.include(handle).include(confirm)
         })
 }
 // --8<-- [end:server]

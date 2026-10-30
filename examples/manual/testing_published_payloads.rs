@@ -134,15 +134,15 @@ mod decoded {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
-            b.include(
-                subscriber("legacy-orders", IssueInvoice)
-                    .reply()
-                    .to("invoices")
-                    .build(),
-            )
-            .out_reply(Publish)
-            .codec(Versioned);
+                .out_reply(Publish)
+                .include(
+                    subscriber("legacy-orders", IssueInvoice)
+                        .reply()
+                        .to("invoices")
+                        .build(),
+                )
+                .out_reply(Publish)
+                .codec(Versioned)
         })
     }
 
@@ -231,7 +231,6 @@ mod decoded_as {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueTickets).build())
                 .out(Tickets, Publish)
-                .build();
         })
     }
 
@@ -295,15 +294,15 @@ mod with {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
-            b.include(
-                subscriber("legacy-orders", IssueInvoice)
-                    .reply()
-                    .to("invoices")
-                    .build(),
-            )
-            .out_reply(Publish)
-            .codec(Versioned);
+                .out_reply(Publish)
+                .include(
+                    subscriber("legacy-orders", IssueInvoice)
+                        .reply()
+                        .to("invoices")
+                        .build(),
+                )
+                .out_reply(Publish)
+                .codec(Versioned)
         })
     }
 
@@ -356,7 +355,7 @@ mod with_raw {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
+                .out_reply(Publish)
         })
     }
 

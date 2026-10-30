@@ -57,9 +57,8 @@ async fn accept(order: &Order, Tenant(tenant): Tenant) -> Accepted {
 // --8<-- [end:extractor]
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(accept);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 
 #[tokio::test]

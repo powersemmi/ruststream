@@ -61,6 +61,5 @@ fn main() {
         b.include(mirror)
             .out(Audit, MemoryPublish)
             .transform(Urgent)
-            .build();
     });
 }

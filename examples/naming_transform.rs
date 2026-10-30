@@ -55,7 +55,7 @@ async fn answer(question: &Question) -> Answer {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("answers", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(answer).out_reply(Publish).transform(ToInbox);
+        b.include(answer).out_reply(Publish).transform(ToInbox)
     })
 }
 // --8<-- [end:app]

@@ -19,6 +19,6 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(reconcile)
             .max_attempts(nonzero!(3u32))
-            .max_attempts(nonzero!(5u32));
+            .max_attempts(nonzero!(5u32))
     });
 }

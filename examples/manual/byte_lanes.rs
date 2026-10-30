@@ -86,7 +86,7 @@ impl<'p> Handle<Frame<'p>, Export> for Reverse {
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("frames", Reverse).reply().to("exports").build());
+        b.include(subscriber("frames", Reverse).reply().to("exports").build())
     })
 }
 // --8<-- [end:lanes]

@@ -26,6 +26,6 @@ fn main() {
         b.include(confirm)
             .out(Reply, MemoryPublish)
             .codec(JsonCodec)
-            .codec(CborCodec);
+            .codec(CborCodec)
     });
 }

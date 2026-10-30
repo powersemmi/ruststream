@@ -33,9 +33,8 @@ mod run_result {
     }
 
     fn app() -> impl App<State = ()> {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(fulfil);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(fulfil))
     }
 
     // --8<-- [start:run-result]
@@ -68,9 +67,8 @@ mod assert_running {
     }
 
     fn app() -> impl App<State = ()> {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     // --8<-- [start:assert-running]
@@ -105,9 +103,8 @@ mod assert_shut_down {
     }
 
     fn app() -> impl App<State = ()> {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(fulfil);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(fulfil))
     }
 
     // --8<-- [start:assert-shut-down]

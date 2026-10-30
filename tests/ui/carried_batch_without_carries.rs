@@ -23,6 +23,6 @@ async fn handle(rows: &[Row]) -> HandlerOutcome {
 
 fn main() {
     let _ = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle.batch(nonzero!(8)));
+        b.include(handle.batch(nonzero!(8)))
     });
 }

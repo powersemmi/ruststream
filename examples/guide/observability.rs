@@ -134,9 +134,7 @@ mod tests {
 
         let app = RustStream::new(AppInfo::new("reports", "0.1.0"))
             .layer(SlowHandlers::over(Duration::from_millis(250)))
-            .with_broker(test_broker(), |b| {
-                b.include(render);
-            });
+            .with_broker(test_broker(), |b| b.include(render));
         let tb = TestApp::start(app).await?;
         tb.message(&Report { pages: 100 }).publish().await?;
         assert!(!lines.text().contains("slow handler"), "{}", lines.text());

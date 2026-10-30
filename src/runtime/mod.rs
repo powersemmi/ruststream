@@ -133,12 +133,12 @@ pub use ruststream_runtime::{batch_verdict, uniform_batch};
 pub use ruststream_runtime_tokio::Tokio;
 #[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{
-    App, AppInfo, BrokerScope, HealthProbe, HealthState, Mounting, MountingSlots, RunningApp,
-    RustStream, RustStreamError, Setup, SubscriptionCount, SubscriptionEnd, Wired,
+    App, AppInfo, BrokerScope, HealthProbe, HealthState, RunningApp, RustStream, RustStreamError,
+    Setup, SubscriptionCount, SubscriptionEnd, Wired,
 };
 #[cfg(feature = "tokio")]
 #[doc(hidden)]
-pub use ruststream_runtime_tokio::{IncludeMount, ScopeCommit};
+pub use ruststream_runtime_tokio::MountChain;
 #[cfg(feature = "tokio")]
 pub use ruststream_runtime_tokio::{MainRuntime, RouterSink};
 

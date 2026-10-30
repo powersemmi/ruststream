@@ -33,10 +33,8 @@ async fn other_regions(order: &Order) -> HandlerOutcome {
 fn app() -> impl App {
     // `orders.eu` goes to `europe` alone; the pattern takes the names nobody else reads.
     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-        b.include(europe);
-        b.include(other_regions);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(broker, |b| b.include(europe).include(other_regions))
 }
 // --8<-- [end:app]
 

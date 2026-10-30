@@ -590,10 +590,12 @@ mod pool {
         let _context = runtime.enter();
         let app =
             RustStream::new(AppInfo::new("pool", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-                b.include(confirm_pooled).out_reply(SinkPublish);
-                b.include(confirm_sequential).out_reply(SinkPublish);
-                b.include(acknowledge_pooled);
-                b.include(acknowledge_sequential);
+                b.include(confirm_pooled)
+                    .out_reply(SinkPublish)
+                    .include(confirm_sequential)
+                    .out_reply(SinkPublish)
+                    .include(acknowledge_pooled)
+                    .include(acknowledge_sequential)
             });
         let tb = runtime
             .block_on(TestApp::start(app))

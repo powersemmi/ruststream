@@ -125,7 +125,7 @@ mod service {
                         .build(),
                 )
                 .out_reply(Publish)
-                .codec(NamedMsgpack);
+                .codec(NamedMsgpack)
             },
         )
     }

@@ -1,7 +1,7 @@
 error[E0277]: `OneAtATime` does not deliver messages in batches
-  --> tests/ui/subscriber_batch_without_batching.rs:53:15
+  --> tests/ui/subscriber_batch_without_batching.rs:55:15
    |
-53 |             b.include(handle.batch(nonzero!(64)));
+55 |             b.include(handle.batch(nonzero!(64)))
    |               ^^^^^^^ this subscription has no batching of its own
    |
 help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
@@ -21,13 +21,46 @@ help: the following other types implement trait `BatchSubscriber`
    | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
    = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
-   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+
+error[E0277]: `OneAtATime` does not deliver messages in batches
+  --> tests/ui/subscriber_batch_without_batching.rs:54:10
+   |
+54 |         .with_broker(MemoryBroker::new(), |b| {
+   |          ^^^^^^^^^^^ this subscription has no batching of its own
+   |
+help: the trait `BatchSubscriber` is not implemented for `OneAtATime`
+  --> tests/ui/subscriber_batch_without_batching.rs:13:1
+   |
+13 | struct OneAtATime(MemorySubscriber);
+   | ^^^^^^^^^^^^^^^^^
+   = note: a handler taking `&[T]` is handed whole batches: mount it on a subscription kind that batches. A broker whose transport has no native batches gives its subscriber this capability through the `Buffered` adapter (see `BatchSubscriber` and `Buffered`)
+help: the following other types implement trait `BatchSubscriber`
+  --> crates/ruststream-memory/src/capability.rs
+   |
+   | impl<Log: LogMode> BatchSubscriber for MemorySubscriber<Log> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemorySubscriber<Log>`
+   |
+  ::: crates/ruststream-runtime-tokio/src/buffered.rs
+   |
+   | impl<S: Subscriber> BatchSubscriber for BufferedSubscriber<S> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BufferedSubscriber<S>`
+   = note: required for `ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
 
 error[E0277]: `Trickle` declares `Copies = AddressedCopies` but says no address
-  --> tests/ui/subscriber_batch_without_batching.rs:53:15
+  --> tests/ui/subscriber_batch_without_batching.rs:54:10
    |
-53 |             b.include(handle.batch(nonzero!(64)));
-   |               ^^^^^^^ no redelivery address for this descriptor on `ConnectedMemoryBroker`
+54 |         .with_broker(MemoryBroker::new(), |b| {
+   |          ^^^^^^^^^^^ no redelivery address for this descriptor on `ConnectedMemoryBroker`
    |
 help: the trait `RedeliveryAddressed<ConnectedMemoryBroker>` is not implemented for `Trickle`
   --> tests/ui/subscriber_batch_without_batching.rs:25:1
@@ -44,5 +77,12 @@ help: the trait `RedeliveryAddressed<ConnectedMemoryBroker>` is not implemented 
    = note: required for `AddressedCopies` to implement `ruststream::runtime::CopyPathAddress<ConnectedMemoryBroker, Trickle>`
    = note: required for `ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-   = note: required for `ruststream::runtime::forms::Batch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<ruststream::runtime::Batch<Order>, (), (), (), handle, ruststream::runtime::Probed>>, Trickle, (Open, Open, Open, Fixed)>>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<Trickle, ruststream_runtime::batch::TypedBatch<MemoryMessage, ruststream_runtime::input::Decoded<Order>, JsonCodec, ruststream_runtime::handle::eager::BatchBody<ruststream::runtime::Batch<Order>, handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

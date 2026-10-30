@@ -37,13 +37,10 @@ async fn regions(order: &Order) -> HandlerOutcome {
 
 /// The service: one region with a handler of its own, and a pattern over every region.
 fn app(routing: Routing) -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(
-        MemoryBroker::new().routing(routing),
-        |b| {
-            b.include(europe);
-            b.include(regions);
-        },
-    )
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new().routing(routing), |b| {
+            b.include(europe).include(regions)
+        })
 }
 
 /// Publishes one order to `orders.eu` and one to `orders.us`.
@@ -87,11 +84,8 @@ async fn every_match_reaches_the_name_and_the_pattern(
 // The default rule is `EveryMatch`, so the default broker is what runs the rule in process.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_match_is_the_default() -> Result<(), Box<dyn Error>> {
-    let app =
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(europe);
-            b.include(regions);
-        });
+    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(europe).include(regions));
     every_match_reaches_the_name_and_the_pattern(TestApp::start(app).await?).await
 }
 
@@ -146,10 +140,8 @@ async fn misplaced_tail(order: &Order) -> HandlerOutcome {
 // A pattern that does not parse keeps the service from starting, and the error names it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bad_pattern_refuses_to_start() {
-    let app =
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(misplaced_tail);
-        });
+    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(misplaced_tail));
     let Err(TestError::Subscribe(err)) = TestApp::start(app).await else {
         panic!("a bad pattern must refuse to start");
     };
@@ -177,10 +169,8 @@ async fn wildcard_by_name(order: &Order) -> HandlerOutcome {
 // pattern descriptor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_wildcard_in_a_name_refuses_to_start() {
-    let app =
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(wildcard_by_name);
-        });
+    let app = RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(wildcard_by_name));
     let Err(TestError::Subscribe(err)) = TestApp::start(app).await else {
         panic!("a wildcard name must refuse to start");
     };

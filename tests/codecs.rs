@@ -46,7 +46,7 @@ async fn non_default_codecs_dispatch_through_the_router() {
     let app =
         RustStream::new(AppInfo::new("codecs", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include_router(cbor_router);
-            b.include_router(msgpack_router);
+            b.include_router(msgpack_router)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -126,7 +126,6 @@ async fn a_slot_codec_outranks_the_surface_codec_for_that_slot() {
                 .out(Ledger, Publish)
                 .codec(CborCodec)
                 .out(Audit, Publish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");

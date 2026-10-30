@@ -121,7 +121,7 @@ async fn broker_contributed_field_reaches_handler_by_key() {
                 }
             },
             HandlerMetadata::raw("orders"),
-        );
+        )
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -239,7 +239,7 @@ async fn middleware_written_scratch_reaches_downstream_handler_and_is_isolated()
             })
             .with(layer)
         };
-        b.handle(subscriber, handler, HandlerMetadata::raw("orders"));
+        b.handle(subscriber, handler, HandlerMetadata::raw("orders"))
     });
 
     let tb = TestApp::start(app).await.expect("startup failed");

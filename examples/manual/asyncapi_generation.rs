@@ -50,7 +50,7 @@ fn app() -> impl App {
             subscriber("orders", Accept)
                 .describe("Accepts every order placed in the shop.")
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:describe]

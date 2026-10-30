@@ -56,7 +56,7 @@ fn app(broker: MemoryBroker<Retaining>) -> impl App {
             subscriber("audit", Record)
                 .start_at(MemoryPosition::start())
                 .build(),
-        );
+        )
     })
 }
 // --8<-- [end:app]

@@ -28,9 +28,8 @@ async fn greet(row: &Row) -> HandlerOutcome {
 }
 
 fn greeting() -> RustStream {
-    RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(greet);
-    })
+    RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(greet))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -60,7 +59,7 @@ async fn tolerant(row: &Row) -> HandlerOutcome {
 /// it, exactly as it settles a payload that does not decode.
 fn skipping() -> RustStream {
     RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(tolerant.on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)));
+        b.include(tolerant.on_failure(FailurePolicies::default().with_decode(FailurePolicy::Skip)))
     })
 }
 
@@ -115,7 +114,7 @@ async fn welcome(row: &Row) -> Greeting {
 
 fn welcoming() -> RustStream {
     RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(welcome).out_reply(Publish);
+        b.include(welcome).out_reply(Publish)
     })
 }
 
@@ -162,7 +161,7 @@ async fn audit(row: &Row, Out(out): Out<impl Publisher, Audit>) -> HandlerOutcom
 
 fn auditing() -> RustStream {
     RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(audit).out(Audit, Publish).build();
+        b.include(audit).out(Audit, Publish)
     })
 }
 
@@ -199,9 +198,9 @@ async fn receipt(row: &Row) -> Receipt {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_handler_replies_with_its_own_bytes() -> Result<(), Box<dyn error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(receipt).out_reply(Publish);
+    let app = RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(receipt).out_reply(Publish)
         });
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()
@@ -230,12 +229,9 @@ async fn announce(row: &Row, Out(out): Out<impl Publisher, Audit>) -> Greeting {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_handler_replies_and_publishes_through_a_slot()
 -> Result<(), Box<dyn error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(announce)
-                .out_reply(Publish)
-                .out(Audit, Publish)
-                .build();
+    let app = RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(announce).out_reply(Publish).out(Audit, Publish)
         });
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()
@@ -274,9 +270,9 @@ impl Handle<Row> for Greeter {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_carried_body_mounts_by_value() -> Result<(), Box<dyn error::Error>> {
-    let app =
-        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber(Rows::new("rows"), Greeter).build());
+    let app = RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber(Rows::new("rows"), Greeter).build())
         });
     let tb = TestApp::start(app).await?;
     tb.broker::<MemoryBroker>()
@@ -329,11 +325,8 @@ fn a_carried_message_leaves_the_document_without_a_default_media_type() {
         HandlerOutcome::ack()
     }
 
-    let app =
-        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(greet);
-            b.include(accept);
-        });
+    let app = RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(greet).include(accept));
     let spec = build_spec(&app);
 
     assert_eq!(
@@ -349,9 +342,9 @@ fn a_carried_message_leaves_the_document_without_a_default_media_type() {
 fn an_undocumented_carried_registration_reports_no_schema() {
     use ruststream::asyncapi::build_spec;
 
-    let documented =
-        RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber(Rows::new("rows"), Greeter).build());
+    let documented = RustStream::new(AppInfo::new("rows", "0.0.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(subscriber(Rows::new("rows"), Greeter).build())
         });
     assert!(
         build_spec(&documented)
@@ -367,7 +360,7 @@ fn an_undocumented_carried_registration_reports_no_schema() {
                 subscriber(Rows::new("rows"), Greeter)
                     .undocumented()
                     .build(),
-            );
+            )
         });
     assert!(
         build_spec(&undocumented)
@@ -403,7 +396,7 @@ async fn holding(rows: &[&str]) -> Result<MemoryBroker<Retaining>, Box<dyn error
 async fn a_batch_handler_reads_the_values_its_batch_lends() -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
-        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
@@ -427,7 +420,7 @@ async fn a_batch_delivery_without_a_value_is_dropped_by_default()
 -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "gone", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
-        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(tally.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
@@ -458,7 +451,7 @@ async fn a_batch_delivery_without_a_value_settles_by_the_decode_policy()
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start())
                 .on_failure(FailurePolicies::default().with_decode(FailurePolicy::FailFast)),
-        );
+        )
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
@@ -485,7 +478,7 @@ async fn a_carried_batch_whose_body_panics_is_recorded_with_its_values()
 -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
-        b.include(explode.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(explode.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
@@ -514,7 +507,7 @@ async fn count(rows: &[Row], ctx: &mut Context<'_, PageContext>) -> HandlerOutco
 async fn a_carried_batch_builds_its_context_from_the_batch() -> Result<(), Box<dyn error::Error>> {
     let broker = holding(&["1:ann", "2:bob", "3:cyd"]).await?;
     let app = RustStream::new(AppInfo::new("rows", "0.0.0")).with_broker(broker, |b| {
-        b.include(count.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+        b.include(count.batch(nonzero!(8)).start_at(MemoryPosition::start()))
     });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;
@@ -559,7 +552,7 @@ async fn a_carried_batch_settles_each_delivery_by_its_own_value()
             })
         })
         .with_broker(broker, |b| {
-            b.include(sift.batch(nonzero!(8)).start_at(MemoryPosition::start()));
+            b.include(sift.batch(nonzero!(8)).start_at(MemoryPosition::start()))
         });
     let tb = TestApp::start(app).await?;
     tb.settle().await?;

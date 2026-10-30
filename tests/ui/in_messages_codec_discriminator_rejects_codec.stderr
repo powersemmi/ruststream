@@ -1,8 +1,8 @@
 error[E0277]: the message set `OrderEvent` does not decode with the codec `JsonCodec`
-  --> tests/ui/in_messages_codec_discriminator_rejects_codec.rs:49:11
+  --> tests/ui/in_messages_codec_discriminator_rejects_codec.rs:49:49
    |
-49 |         b.include(on_event);
-   |           ^^^^^^^ mounted under `JsonCodec` here
+49 |         .with_broker(MemoryBroker::new(), |b| b.include(on_event))
+   |                                                 ^^^^^^^ mounted under `JsonCodec` here
    |
    = note: a set declared with `#[in_messages(discriminate_with_codec = ..)]` decodes only under the codecs its discriminator implements `CodecDiscriminator` for: mount it in a scope or router whose codec it accepts
 help: the trait `DecodeSet<JsonCodec>` is not implemented for `OrderEvent`
@@ -15,14 +15,13 @@ help: the trait `DecodeSet<JsonCodec>` is not implemented for `OrderEvent`
    = note: required for `SoloSet<OrderEvent>` to implement `ruststream::runtime::TypedLane<OrderEvent, JsonCodec>`
    = note: required for `ruststream_runtime::input::Decoded<OrderEvent>` to implement `ruststream_runtime::input::Materialize<JsonCodec, MemoryMessage>`
    = note: required for `Subscribing` to implement `ruststream::runtime::RouterMount<Router<ruststream::memory::MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<SoloSet<OrderEvent>, (), (), (), on_event, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, ruststream::memory::MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloSet<OrderEvent>, (), (), (), on_event, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
    = note: this error originates in the derive macro `InMessages` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>` cannot handle `MemoryMessage`
-  --> tests/ui/in_messages_codec_discriminator_rejects_codec.rs:49:11
+  --> tests/ui/in_messages_codec_discriminator_rejects_codec.rs:49:10
    |
-49 |         b.include(on_event);
-   |           ^^^^^^^ unsatisfied trait bound
+49 |         .with_broker(MemoryBroker::new(), |b| b.include(on_event))
+   |          ^^^^^^^^^^^ unsatisfied trait bound
    |
    = help: the trait `Handler<MemoryMessage>` is not implemented for `Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>`
    = note: a handler is a named type with an `impl Handler<MemoryMessage>` whose `handle` method returns the settlement, or a closure `|msg: &MemoryMessage, ctx: &mut Context| async { .. }` whose future does not borrow its arguments
@@ -41,5 +40,12 @@ help: the trait `Handler<M, Cx, St>` is conditionally implemented for `Typed<M, 
    | |__________________________________________^
    = note: required for `ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>` to implement `ruststream_runtime::router::routes::MountRoute<ruststream::memory::MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())` to implement `RouterDef<ruststream::memory::MemoryBroker>`
-   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())>` to implement `ruststream::runtime::ScopeCommit<ruststream::memory::MemoryBroker, Identity, (), (), PublishIdentity>`
-   = note: required for `Subscribing` to implement `ruststream::runtime::IncludeMount<'_, ruststream::memory::MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<SoloSet<OrderEvent>, (), (), (), on_event, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>>`
+   = note: required for `Router<ruststream::memory::MemoryBroker, (ruststream_runtime::router::routes::SubscribeRoute<Name, Typed<MemoryMessage, ruststream_runtime::input::Decoded<OrderEvent>, JsonCodec, ruststream_runtime::handle::eager::SoloBody<SoloSet<OrderEvent>, (), on_event>>>, ())>` to implement `ruststream::runtime::MountChain<ruststream::memory::MemoryBroker>`
+note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

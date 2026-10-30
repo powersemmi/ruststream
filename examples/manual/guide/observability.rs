@@ -156,7 +156,7 @@ mod tests {
         let app = RustStream::new(AppInfo::new("reports", "0.1.0"))
             .layer(SlowHandlers::over(Duration::from_millis(250)))
             .with_broker(test_broker(), |b| {
-                b.include(subscriber("reports", Render).build());
+                b.include(subscriber("reports", Render).build())
             });
         let tb = TestApp::start(app).await?;
         tb.message(&Report { pages: 100 }).publish().await?;

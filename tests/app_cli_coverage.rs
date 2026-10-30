@@ -82,7 +82,7 @@ async fn the_lifecycle_logs_name_the_service_brokers_and_subscribers() {
     let app = RustStream::new(AppInfo::new("cov-logged-service", "0.3.0"))
         .register_broker(MemoryBroker::new())
         .with_broker_labeled("cov-logged-ingress", MemoryBroker::new(), |b| {
-            b.include(logged);
+            b.include(logged)
         });
 
     let running = app.start().await.expect("startup failed");
@@ -132,9 +132,7 @@ async fn run_until_returns_when_the_service_tears_itself_down() {
             FAIL_FAST_READY.notify_one();
             Ok::<(), io::Error>(())
         })
-        .with_broker(broker, |b| {
-            b.include(explodes);
-        });
+        .with_broker(broker, |b| b.include(explodes));
 
     let run = tokio::spawn(app.run_until(pending()));
     FAIL_FAST_READY.notified().await;
@@ -186,9 +184,7 @@ async fn run_shuts_down_gracefully_on_a_termination_signal() {
             SIGNAL_READY.notify_one();
             Ok::<(), io::Error>(())
         })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(signalled);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(signalled));
 
     let mut run = tokio::spawn(app.run());
     SIGNAL_READY.notified().await;
@@ -277,9 +273,7 @@ async fn a_refused_subscription_aborts_startup_and_unwinds_the_broker() {
     let app = RustStream::new(AppInfo::new("cov-refused", "0.1.0")).with_broker_labeled(
         "cov-refused-ingress",
         broker,
-        |b| {
-            b.include(subscriber_def(RefusedSubscription, NeverDelivered).build());
-        },
+        |b| b.include(subscriber_def(RefusedSubscription, NeverDelivered).build()),
     );
 
     let err = app
@@ -434,7 +428,7 @@ async fn a_refused_broker_shutdown_still_closes_the_others_and_runs_after_shutdo
 async fn a_refused_shutdown_during_the_startup_unwind_is_logged_not_returned() {
     log_capture::record_shared();
     let app = RustStream::new(AppInfo::new("cov-unwind", "0.1.0"))
-        .with_broker_labeled("cov-unwind-egress", StubbornBroker, |_b| {})
+        .with_broker_labeled("cov-unwind-egress", StubbornBroker, |b| b.end())
         .register_broker(UnreachableBroker);
 
     let err = app
@@ -472,9 +466,7 @@ async fn the_shutdown_timeout_aborts_a_handler_that_never_returns() {
     let app = RustStream::new(AppInfo::new("cov-hung", "0.1.0"))
         // Short on purpose: the timeout firing is the subject, not a wait for something else.
         .shutdown_timeout(Duration::from_millis(50))
-        .with_broker(broker, |b| {
-            b.include(hung);
-        });
+        .with_broker(broker, |b| b.include(hung));
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -509,9 +501,7 @@ async fn the_shutdown_timeout_abandons_a_continuation_that_never_returns() {
     let publisher = broker.publisher();
     let app = RustStream::new(AppInfo::new("cov-continuation", "0.1.0"))
         .shutdown_timeout(Duration::from_millis(50))
-        .with_broker(broker, |b| {
-            b.include(with_continuation);
-        });
+        .with_broker(broker, |b| b.include(with_continuation));
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -564,9 +554,7 @@ async fn the_shutdown_timeout_waits_for_a_continuation_that_finishes_in_time() {
     let app = RustStream::new(AppInfo::new("cov-continuation-brief", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(broker, |b| {
-            b.include(with_brief_continuation);
-        });
+        .with_broker(broker, |b| b.include(with_brief_continuation));
 
     let running = app.start().await.expect("startup failed");
     publisher
@@ -600,9 +588,7 @@ async fn a_labeled_scope_records_its_server_and_decodes_with_its_own_codec() {
         "cov-egress",
         MemoryBroker::new(),
         CborCodec,
-        |b| {
-            b.include(labeled);
-        },
+        |b| b.include(labeled),
     );
     assert!(
         app.servers().contains_key("cov-egress"),
@@ -657,9 +643,9 @@ async fn audited_relay(frame: &Frame<'_>, Out(audit): Out<impl Publisher>) -> Ex
 /// through the broker's default publish policy, with no `.out(Reply, ..)` in the chain.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_reply_handler_with_a_slot_defaults_its_reply_publisher() {
-    let app =
-        RustStream::new(AppInfo::new("cov-audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audited_relay).out(DefaultSlot, Publish).build();
+    let app = RustStream::new(AppInfo::new("cov-audit", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(audited_relay).out(DefaultSlot, Publish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -700,7 +686,6 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
                 .out(Reply, Publish)
                 .transform(Envelope)
                 .out(DefaultSlot, Publish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
 
@@ -719,25 +704,5 @@ async fn a_publishing_handler_with_a_slot_takes_an_explicit_reply_publisher() {
         replies.messages()[0].headers().get("x-envelope"),
         Some(b"1".as_slice()),
         "the reply must leave through the publisher named in the chain",
-    );
-}
-
-#[subscriber("cov.debug.slot")]
-async fn debug_slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
-    let _ = out;
-    HandlerOutcome::ack()
-}
-
-/// The backstop under the `must_use` warning: a mount site that ignored it registered nothing,
-/// and the drop says so instead of starting a service whose handler never consumes.
-#[test]
-#[should_panic(expected = "included but never mounted")]
-fn a_slot_chain_dropped_before_build_refuses_to_vanish() {
-    let _app = RustStream::new(AppInfo::new("cov-unbuilt", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            // What the lint warns about, written deliberately: the chain never reaches `.build()`.
-            let _ = b.include(debug_slot).out(DefaultSlot, Publish);
-        },
     );
 }

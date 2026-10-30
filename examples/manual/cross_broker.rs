@@ -77,10 +77,10 @@ fn app() -> impl App {
         .with_broker_labeled("east", MemoryBroker::new(), |b| {
             // Consumed in the east, answered in the west.
             b.include(subscriber("orders", Mirror).reply().build())
-                .out_reply(to_west);
+                .out_reply(to_west)
         })
         .with_broker_labeled("west", west, |b| {
-            b.include(subscriber("orders.mirrored", Record).build());
+            b.include(subscriber("orders.mirrored", Record).build())
         })
 }
 // --8<-- [end:app]

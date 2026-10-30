@@ -145,15 +145,14 @@ fn app() -> impl App {
         // The broker's request policy: its live publisher correlates replies.
         b.include(subscriber("orders", Price).build())
             .out(Pricing, Request)
-            .build();
-        b.include(
-            subscriber("quotes.ask", QuoteAsk)
-                .reply()
-                .to("quotes.answers")
-                .build(),
-        )
-        .out_reply(Publish)
-        .transform(ToInbox);
+            .include(
+                subscriber("quotes.ask", QuoteAsk)
+                    .reply()
+                    .to("quotes.answers")
+                    .build(),
+            )
+            .out_reply(Publish)
+            .transform(ToInbox)
     })
 }
 // --8<-- [end:app]

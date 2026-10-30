@@ -130,9 +130,7 @@ async fn a_slow_handler_is_sampled_over_the_threshold() {
     let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(slow));
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "slow", 3).await;
     tb.broker::<MemoryBroker>()
@@ -161,9 +159,7 @@ async fn the_average_warns_once_per_crossing_naming_the_fix() {
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(every_poll().threshold(LOW_THRESHOLD))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(slow));
     let tb = TestApp::start(app).await.expect("startup");
     let warnings = || logs.text().matches("threads(n)").count();
 
@@ -188,9 +184,7 @@ async fn a_fast_handler_is_not_warned_about() {
     let _guard = logs.install();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(every_poll().threshold(HIGH_THRESHOLD))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(fast);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(fast));
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "fast", 2 * WARM_UP).await;
     assert!(!logs.text().contains("threads(n)"), "{}", logs.text());
@@ -213,9 +207,7 @@ async fn a_slow_handler_on_threads_is_measured_without_a_warning() {
     let diagnostics = every_poll().threshold(LOW_THRESHOLD);
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow_on_threads);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(slow_on_threads));
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "slow.threads", 2 * WARM_UP).await;
 
@@ -250,8 +242,8 @@ async fn a_name_shared_with_threads_still_warns_for_the_app_runtime() {
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(slow_shared_on_threads);
-            b.include(slow_shared_on_the_app);
+            b.include(slow_shared_on_threads)
+                .include(slow_shared_on_the_app)
         });
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "slow.shared", 2 * WARM_UP).await;
@@ -264,9 +256,7 @@ async fn every_nth_poll_is_sampled() {
     let diagnostics = PollDiagnostics::new().sample_every(nonzero!(4u32));
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(fast);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(fast));
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "fast", 7).await;
     assert_eq!(diagnostics.report("fast").map(|r| r.samples()), Some(1));
@@ -287,9 +277,7 @@ async fn each_poll_is_a_sample() {
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(waits);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(waits));
     let tb = TestApp::start(app).await.expect("startup");
     tb.message(&Order { id: 1 })
         .to("waits")
@@ -323,7 +311,7 @@ async fn a_batch_handler_is_sampled() {
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(batches.batch(nonzero!(8)));
+            b.include(batches.batch(nonzero!(8)))
         });
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "batches", 3).await;
@@ -339,10 +327,7 @@ async fn every_subscription_is_reported_on_its_own() {
     let diagnostics = every_poll();
     let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
         .poll_diagnostics(diagnostics.clone())
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(fast);
-            b.include(waits);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(fast).include(waits));
     let tb = TestApp::start(app).await.expect("startup");
     publish(&tb, "fast", 2).await;
     let mut names: Vec<String> = diagnostics
@@ -376,9 +361,7 @@ mod prometheus_export {
             .expect("the collector registers");
         let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
             .poll_diagnostics(diagnostics.clone())
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(fast);
-            });
+            .with_broker(MemoryBroker::new(), |b| b.include(fast));
         let tb = TestApp::start(app).await.expect("startup");
         publish(&tb, "fast", 3).await;
 
@@ -428,9 +411,7 @@ mod otel_export {
         otel.observe_poll_diagnostics(&diagnostics);
         let app = RustStream::new(AppInfo::new("diag", "0.1.0"))
             .poll_diagnostics(diagnostics.clone())
-            .with_broker(MemoryBroker::new(), |b| {
-                b.include(fast);
-            });
+            .with_broker(MemoryBroker::new(), |b| b.include(fast));
         let tb = TestApp::start(app).await.expect("startup");
         publish(&tb, "fast", 3).await;
         provider.force_flush().expect("flush");

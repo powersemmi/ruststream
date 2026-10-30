@@ -70,7 +70,7 @@ async fn route(order: &Order, Out(orders): Out<impl Publisher, Orders>) -> Handl
 
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(route).out(Orders, Publish).build();
+        b.include(route).out(Orders, Publish)
     })
 }
 

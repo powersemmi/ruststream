@@ -63,7 +63,7 @@ mod start {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(Blocklist { refused: vec![13] }))
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Screen).build());
+                b.include(subscriber("orders", Screen).build())
             })
     }
 
@@ -113,7 +113,7 @@ mod start_live {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -236,9 +236,7 @@ mod with_state {
                 let catalog = Catalog::load("http://catalog.internal").await?;
                 Ok::<_, CatalogError>(Pricing { catalog, quotes })
             })
-            .with_broker(broker, |b| {
-                b.include(subscriber("orders", Price).build());
-            })
+            .with_broker(broker, |b| b.include(subscriber("orders", Price).build()))
     }
 
     // --8<-- [start:with-state]
@@ -294,7 +292,7 @@ mod shutdown {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Fulfil).build());
+            b.include(subscriber("orders", Fulfil).build())
         })
     }
 

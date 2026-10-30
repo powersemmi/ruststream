@@ -49,9 +49,7 @@ async fn a_bare_attribute_is_named_at_the_mount_site() {
 
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), {
         let subject = subject.clone();
-        |b| {
-            b.include(audit.name(subject));
-        }
+        |b| b.include(audit.name(subject))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -85,7 +83,7 @@ async fn a_named_kind_is_built_from_the_name_the_mount_site_gives() {
             record
                 .name("record-kind")
                 .map_source(|_named| MemorySource::new("record-mapped")),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -133,7 +131,7 @@ async fn the_builder_supplies_the_batch_size() {
                 .name("paginate")
                 .start_at(MemoryPosition::start())
                 .batch(nonzero!(2)),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
@@ -181,7 +179,7 @@ async fn the_batch_size_reaches_a_replying_batch() {
                 .name("batch-cap-reply")
                 .start_at(MemoryPosition::start())
                 .batch(nonzero!(2)),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
@@ -239,7 +237,6 @@ async fn the_batch_size_reaches_a_slot_carrying_batch() {
                 .batch(nonzero!(2)),
         )
         .out(DefaultSlot, MemoryPublish)
-        .build();
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batch settles");
@@ -283,7 +280,7 @@ async fn the_buffer_composes_with_a_start_position() {
             replay_batches
                 .batch(nonzero!(8))
                 .start_at(MemoryPosition::start()),
-        );
+        )
     });
     let tb = TestApp::start(app).await.expect("startup failed");
     tb.settle().await.expect("the replayed batches settle");
@@ -314,7 +311,7 @@ async fn ingest(frames: &[Frame<'_>]) -> HandlerOutcome {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_raw_batch_handler_borrows_the_payloads() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(ingest.batch(nonzero!(8)));
+        b.include(ingest.batch(nonzero!(8)))
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -396,9 +393,9 @@ mod codec_override {
             MemoryBroker::new(),
             CborCodec,
             |b| {
-                b.include(decoded.name("codec-decoded").codec(JsonCodec));
-                b.include(paired.name("codec-paired").codec(JsonCodec));
-                b.include(provided.name("codec-provided").codec(JsonCodec));
+                b.include(decoded.name("codec-decoded").codec(JsonCodec))
+                    .include(paired.name("codec-paired").codec(JsonCodec))
+                    .include(provided.name("codec-provided").codec(JsonCodec))
             },
         );
         let tb = TestApp::start(app).await.expect("startup failed");

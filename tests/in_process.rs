@@ -79,9 +79,8 @@ async fn accept(order: &Order) -> HandlerOutcome {
 /// The app a service would ship: built on the production broker, exactly as `main` builds it,
 /// and returned the way `#[ruststream::app]` recommends.
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(Dialling::default(), |b| {
-        b.include(accept);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(Dialling::default(), |b| b.include(accept))
 }
 
 // The production app starts under the harness although its broker cannot connect, and the test

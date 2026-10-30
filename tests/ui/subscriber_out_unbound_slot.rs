@@ -22,9 +22,9 @@ async fn transcode(
 }
 
 fn main() {
-    // The Audit slot is never bound: `.build()` must not compile, and the error names the
+    // The Audit slot is never bound: the chain does not mount, and the error names the
     // missing slot through `MissingSlot<Audit>` in the attachment type.
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(transcode).out(Encoded, MemoryPublish).build();
+        b.include(transcode).out(Encoded, MemoryPublish)
     });
 }

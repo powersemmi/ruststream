@@ -67,8 +67,7 @@ fn app() -> RustStream {
         b.include(accept)
             .out_reply(Publish)
             .out(Audit, Publish)
-            .build();
-        b.include(take_bulk.batch(nonzero!(8)));
+            .include(take_bulk.batch(nonzero!(8)))
     })
 }
 

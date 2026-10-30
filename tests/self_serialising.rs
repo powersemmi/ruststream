@@ -140,10 +140,8 @@ fn an_infallible_writer_needs_no_result() {
 /// reader the type already declares.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_self_serialising_message_is_asserted_on_its_own_bytes() {
-    let app =
-        RustStream::new(AppInfo::new("wire", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(count);
-        });
+    let app = RustStream::new(AppInfo::new("wire", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(count));
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Tick { seq: 9 })
@@ -171,10 +169,8 @@ async fn a_self_serialising_message_is_asserted_on_its_own_bytes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_frame_is_settled_by_the_decode_policy() {
-    let app =
-        RustStream::new(AppInfo::new("wire", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(count);
-        });
+    let app = RustStream::new(AppInfo::new("wire", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(count));
     let tb = TestApp::start(app).await.expect("harness start");
 
     // Bytes the reader rejects, injected as bytes so nothing encodes them on the way in.
@@ -194,10 +190,8 @@ async fn a_rejected_frame_is_settled_by_the_decode_policy() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rejected_value_reports_its_own_encoder() {
-    let app =
-        RustStream::new(AppInfo::new("wire", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(count);
-        });
+    let app = RustStream::new(AppInfo::new("wire", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(count));
     let tb = TestApp::start(app).await.expect("harness start");
 
     let err = tb

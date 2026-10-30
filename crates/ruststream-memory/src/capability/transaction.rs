@@ -116,7 +116,7 @@ impl TransactionalPublisher for MemoryPublisher {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(settle).out(Ledger, Publish).build();
+///         b.include(settle).out(Ledger, Publish)
 ///     })
 /// }
 /// # }

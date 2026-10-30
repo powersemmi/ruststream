@@ -77,9 +77,7 @@ mod service {
         RustStream::new(AppInfo::new("checkout", "0.1.0")).with_broker_codec(
             MemoryBroker::new(),
             NamedMsgpack,
-            |b| {
-                b.include(checkout).out_reply(Publish).codec(NamedMsgpack);
-            },
+            |b| b.include(checkout).out_reply(Publish).codec(NamedMsgpack),
         )
     }
     // --8<-- [end:mount]

@@ -45,6 +45,8 @@ async fn confirm(order: &Order) -> Receipt {
 
 fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm).out_reply(MemoryPublish).transform(Urgent);
+        b.include(confirm)
+            .out_reply(MemoryPublish)
+            .transform(Urgent)
     });
 }

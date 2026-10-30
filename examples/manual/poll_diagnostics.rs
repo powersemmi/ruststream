@@ -89,8 +89,8 @@ mod diagnostics {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .poll_diagnostics(diagnostics)
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Accept).build());
-                b.include(subscriber("reports", Summarize).build());
+                b.include(subscriber("orders", Accept).build())
+                    .include(subscriber("reports", Summarize).build())
             })
     }
     // --8<-- [end:diagnostics]

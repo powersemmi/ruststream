@@ -28,7 +28,6 @@ async fn consume(_event: &Event) -> HandlerOutcome {
 async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
     let app =
         RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(consume);
             b.after_startup(Publish, async move |publisher| {
                 publisher
                     .message(&Event { id: 1 })
@@ -36,6 +35,7 @@ async fn the_scope_hook_publishes_first_with_a_paired_publisher() {
                     .publish()
                     .await
             });
+            b.include(consume)
         });
 
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -57,9 +57,8 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
     let observer = connected(broker.broker()).await;
     let egress = broker.bind(Publish);
 
-    let app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| {
-        b.include(consume);
-    });
+    let app = RustStream::new(AppInfo::new("pairing", "0.1.0"))
+        .with_broker(broker, |b| b.include(consume));
     let running = app.start().await.expect("startup failed");
 
     let publisher = running
@@ -84,7 +83,7 @@ async fn the_running_handle_pairs_a_token_for_sibling_tasks() {
 async fn pairing_before_startup_reports_a_clear_error() {
     let broker = MemoryBroker::new().bindable();
     let token = broker.bind(Publish);
-    let _app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |_b| {});
+    let _app = RustStream::new(AppInfo::new("pairing", "0.1.0")).with_broker(broker, |b| b.end());
 
     let err = token
         .live()

@@ -189,7 +189,7 @@ impl ciborium_io::Write for BufWriter<'_> {
 ///         MemoryBroker::new(),
 ///         OrdersJson,
 ///         |b| {
-///             b.include(accept);
+///             b.include(accept)
 ///         },
 ///     )
 /// }
@@ -321,7 +321,7 @@ pub trait Codec: Send + Sync {
     ///         MemoryBroker::new(),
     ///         OrdersJson,
     ///         |b| {
-    ///             b.include(accept);
+    ///             b.include(accept)
     ///         },
     ///     )
     /// }

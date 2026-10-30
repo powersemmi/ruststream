@@ -102,9 +102,8 @@ mod left_to_right {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("ltr", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(on_event);
-        })
+        RustStream::new(AppInfo::new("ltr", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
     #[tokio::test]
@@ -152,7 +151,7 @@ mod left_to_right {
                 on_batch
                     .batch(nonzero!(2))
                     .start_at(MemoryPosition::start()),
-            );
+            )
         });
         let tb = TestApp::start(app).await?;
         tb.settle().await?;
@@ -228,9 +227,8 @@ mod discriminated {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("disc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(on_event);
-        })
+        RustStream::new(AppInfo::new("disc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
     #[tokio::test]
@@ -311,9 +309,8 @@ mod by_header {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("hdr", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(on_event);
-        })
+        RustStream::new(AppInfo::new("hdr", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
     #[tokio::test]
@@ -437,7 +434,7 @@ mod manual {
     /// The mount stays in the documented state: a set demands no schema of its own.
     pub(super) fn app() -> impl App {
         RustStream::new(AppInfo::new("man", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("man.orders", OnEvent).build());
+            b.include(subscriber("man.orders", OnEvent).build())
         })
     }
 
@@ -495,9 +492,8 @@ mod serde_tagged {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("tagged", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(on_event);
-        })
+        RustStream::new(AppInfo::new("tagged", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(on_event))
     }
 
     #[tokio::test]
@@ -546,9 +542,8 @@ mod document {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(record);
-        })
+        RustStream::new(AppInfo::new("doc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(record))
     }
 
     #[test]
@@ -631,10 +626,8 @@ mod document {
 
     #[test]
     fn the_handler_headers_join_each_variant() {
-        let app =
-            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-                b.include(record_tenant);
-            });
+        let app = RustStream::new(AppInfo::new("doc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(record_tenant));
         let spec = build_spec(&app);
 
         for name in ["OrderCreated", "OrderCancelled"] {
@@ -690,7 +683,7 @@ mod document {
             RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
                 b.include(record_returns)
                     .max_attempts(nonzero!(2))
-                    .dead_letter("doc.returns.dlq");
+                    .dead_letter("doc.returns.dlq")
             });
         let spec = build_spec(&app);
 
@@ -837,10 +830,8 @@ mod document {
             .expect("a carrier the contract names");
         assert!(matches!(source, shipping::Source::Courier));
 
-        let app =
-            RustStream::new(AppInfo::new("doc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-                b.include(record_dispatch);
-            });
+        let app = RustStream::new(AppInfo::new("doc", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(record_dispatch));
         let spec = build_spec(&app);
 
         for name in ["OrderDispatched", "OrderCreated"] {

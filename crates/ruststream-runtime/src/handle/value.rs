@@ -115,7 +115,7 @@ impl<A, R, O, C, H, Doc> HandleValue<A, R, O, C, H, Doc> {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(subscriber("orders", Audit).workers(nonzero!(4)).build());
+///         b.include(subscriber("orders", Audit).workers(nonzero!(4)).build())
 ///     })
 /// }
 /// # }

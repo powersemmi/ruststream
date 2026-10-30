@@ -49,7 +49,6 @@ mod batch_slots {
                     .start_at(MemoryPosition::start()),
             )
             .out(DefaultSlot, Publish)
-            .build();
         });
         let tb = TestApp::start(app).await?;
         tb.settle().await?;
@@ -136,15 +135,13 @@ mod reply_and_slot {
             b.include(on_event)
                 .out_reply(Publish)
                 .out(DefaultSlot, Publish)
-                .build();
-            b.include(
-                on_batch
-                    .batch(nonzero!(2))
-                    .start_at(MemoryPosition::start()),
-            )
-            .out_reply(Publish)
-            .out(DefaultSlot, Publish)
-            .build();
+                .include(
+                    on_batch
+                        .batch(nonzero!(2))
+                        .start_at(MemoryPosition::start()),
+                )
+                .out_reply(Publish)
+                .out(DefaultSlot, Publish)
         });
         let tb = TestApp::start(app).await?;
         let broker = tb.broker::<MemoryBroker<Retaining>>();

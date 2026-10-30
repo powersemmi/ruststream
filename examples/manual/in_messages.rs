@@ -156,7 +156,7 @@ impl Handle<OrderEvent> for OnEvent {
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", OnEvent).build());
+        b.include(subscriber("orders", OnEvent).build())
     })
 }
 // --8<-- [end:app]

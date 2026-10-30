@@ -42,7 +42,6 @@ async fn handle(order: &Order) -> HandlerOutcome {
 // --8<-- [start:app]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(handle);
         // The outgoing half of the same declaration: the value encodes itself on the way out
         // too, so this publish names no codec either.
         b.after_startup(Publish, async move |publisher| {
@@ -54,6 +53,7 @@ fn app() -> impl App {
                 .publish()
                 .await
         });
+        b.include(handle)
     })
 }
 // --8<-- [end:app]

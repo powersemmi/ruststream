@@ -162,10 +162,9 @@ fn app() -> impl App {
         // The policy holds the defaults: priority 3 unless a step says otherwise.
         b.include(ship)
             .out(Shipments, PriorityPublish::default().priority(3))
-            .build();
-        b.include(issue_receipt)
+            .include(issue_receipt)
             .out_reply(PriorityPublish::default().priority(3))
-            .transform(LowPriority);
+            .transform(LowPriority)
     })
 }
 // --8<-- [end:app]

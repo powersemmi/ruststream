@@ -53,7 +53,7 @@ use super::transaction::{AnyDeclared, TransactionScope, TypedTransaction};
 ///                 .message(&Started { service: "catalog" })
 ///                 .publish()
 ///                 .await
-///         });
+///         })
 ///     })
 /// }
 /// # }

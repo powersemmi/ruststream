@@ -288,7 +288,7 @@ impl RunningApp {
     ///
     /// let broker = MemoryBroker::new().bindable();
     /// let egress = broker.bind(Publish);
-    /// let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |_b| {});
+    /// let app = RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| b.end());
     /// let running = app.start().await?;
     ///
     /// // The HTTP task owns this publisher and sends what its requests carry.

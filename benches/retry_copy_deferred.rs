@@ -147,9 +147,7 @@ fn app(messages: usize) -> Pending {
     };
     let app = RustStream::new(AppInfo::new("bench", "0.0.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(state))
-        .with_broker(broker.clone(), |b| {
-            b.include(consume);
-        });
+        .with_broker(broker.clone(), |b| b.include(consume));
     let mut pending = common::built(runtime, latch, broker, app, messages, 0);
     pending.expected = messages * 2;
     pending

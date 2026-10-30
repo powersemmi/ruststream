@@ -171,7 +171,7 @@ use parse::SubscriberArgs;
 /// vocabulary.
 ///
 /// An `Out(out): Out<P>` parameter injects a live publisher, paired at startup from the
-/// policy attached at the include site (`b.include(f).out(marker, policy).build()`); its optional third
+/// policy attached at the include site (`b.include(f).out(marker, policy)`); its optional third
 /// position declares the message set the handler publishes (`Out<impl Publisher, Marker,
 /// (A, B)>` - a tuple, a single type, or a `#[derive(OutMessages)]` set enum), narrowing what
 /// the publish builder accepts on it, and the generated document reports that narrowed list as

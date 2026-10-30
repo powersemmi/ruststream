@@ -110,7 +110,7 @@ mod app_wide {
             // Every handler the app mounts below runs inside the layer.
             .layer(RequireTenant)
             .with_broker(MemoryBroker::new(), |b| {
-                b.include(subscriber("orders", Log).build());
+                b.include(subscriber("orders", Log).build())
             })
     }
     // --8<-- [end:app]
@@ -157,7 +157,7 @@ mod scopes {
                     .include(subscriber("invoices", Log).build())
                     .layer(RequireTenant)
                     .include(subscriber("audit", Log).build()),
-            );
+            )
         })
     }
     // --8<-- [end:scopes]

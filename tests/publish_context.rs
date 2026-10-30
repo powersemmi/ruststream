@@ -75,7 +75,7 @@ async fn delivery_context_propagates_to_the_reply() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(echo)
             .out(Reply, Publish)
-            .transform(PropagateCorrelation);
+            .transform(PropagateCorrelation)
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -108,7 +108,7 @@ async fn enrich(req: &Req, ctx: &mut Context<'_>) -> Resp {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_context_headers_never_reach_the_reply() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(enrich).out(Reply, Publish);
+        b.include(enrich).out(Reply, Publish)
     });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -196,7 +196,7 @@ async fn transforms_run_first_and_the_last_publish_layer_added_runs_outermost() 
         .publish_layer(AppendA)
         .publish_layer(AppendB)
         .with_broker(MemoryBroker::new(), |b| {
-            b.include(ord_echo).out(Reply, Publish).transform(AppendT);
+            b.include(ord_echo).out(Reply, Publish).transform(AppendT)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 

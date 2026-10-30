@@ -85,7 +85,7 @@ use crate::router::forms::{BatchOut, CarriedBatch, Out, RawBatch, RawSubscribing
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("billing", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(subscriber("orders", Bill).build());
+///         b.include(subscriber("orders", Bill).build())
 ///     })
 /// }
 /// # }
@@ -357,8 +357,8 @@ pub struct SoloPair<H, P>(PhantomData<(H, P)>);
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("mailer", "0.1.0")).with_broker(QueueBroker::new(), |b| {
-///         b.include(send);
-///         b.include(send_newsletter.batch(nonzero!(64)));
+///         b.include(send)
+///         .include(send_newsletter.batch(nonzero!(64)))
 ///     })
 /// }
 /// # }

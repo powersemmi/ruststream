@@ -55,9 +55,7 @@ mod start {
     fn app(broker: MemoryBroker) -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0"))
             .on_subscription_end(SubscriptionEnd::FailFast)
-            .with_broker(broker, |b| {
-                b.include(issue_receipt).out_reply(Publish);
-            })
+            .with_broker(broker, |b| b.include(issue_receipt).out_reply(Publish))
     }
     // --8<-- [end:subscription_end]
 

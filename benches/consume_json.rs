@@ -27,9 +27,7 @@ async fn consume(order: &Order, ctx: &mut Context<'_, (), Latch>) -> HandlerOutc
 }
 
 fn app(messages: usize) -> Pending {
-    common::pending(messages, 0, |b| {
-        b.include(consume);
-    })
+    common::pending(messages, 0, |b| b.include(consume))
 }
 
 #[library_benchmark(config = common::config(0, 27))]

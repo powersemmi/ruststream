@@ -88,9 +88,8 @@ async fn on_chain(order: &Order) -> HandlerOutcome {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn macro_builder_chain_in_decorator() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(on_chain);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_chain));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // The `at(..)` option won: the subscription binds to "chain.stream".
@@ -150,11 +149,11 @@ async fn static_publish_layer_transforms_reply() {
     let egress = MemoryBroker::new().bindable();
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker_labeled("egress", egress, |_b| {})
+        .with_broker_labeled("egress", egress, |b| b.end())
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
             b.include(relay)
                 .out(Reply, egress_pub)
-                .transform(StaticEnvelope);
+                .transform(StaticEnvelope)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -210,9 +209,9 @@ async fn macro_publisher_replies_cross_broker() {
     let egress_pub = egress.bind(Publish);
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .publish_layer(Tagger)
-        .with_broker_labeled("egress", egress, |_b| {})
+        .with_broker_labeled("egress", egress, |b| b.end())
         .with_broker_labeled("ingress", MemoryBroker::new(), |b| {
-            b.include(reply).out(Reply, egress_pub);
+            b.include(reply).out(Reply, egress_pub)
         });
     let tb = TestApp::start(app).await.expect("startup failed");
 
@@ -249,9 +248,8 @@ async fn confirm(order: &Order) -> Result<Confirmation, HandlerOutcome> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publishing_result_form_controls_ack_and_publish() {
-    let app = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm);
-    });
+    let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(confirm));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     // Err(HandlerOutcome) skips the publish entirely.
@@ -301,9 +299,7 @@ async fn ctx_reply(req: &Request, ctx: &mut Context<'_, (), Bump>) -> Response {
 async fn publishing_handler_reads_context_state() {
     let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
         .on_startup(async move |()| Ok::<_, Infallible>(Bump(100)))
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(ctx_reply);
-        });
+        .with_broker(MemoryBroker::new(), |b| b.include(ctx_reply));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Request { n: 1 })

@@ -75,7 +75,7 @@ fn app() -> Result<impl App, BindingError> {
         .server("production", production)
         // Described by the broker itself, under its label.
         .with_broker_labeled("in-process", MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         }))
 }
 // --8<-- [end:app]

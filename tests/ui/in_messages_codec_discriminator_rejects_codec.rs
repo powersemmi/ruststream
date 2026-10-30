@@ -45,9 +45,8 @@ async fn on_event(_event: &OrderEvent) -> HandlerOutcome {
 
 // The default codec is JSON, which `ByRecord` cannot read: the set does not mount here.
 fn app() -> RustStream {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(on_event);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(on_event))
 }
 
 fn main() {

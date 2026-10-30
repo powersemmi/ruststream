@@ -24,7 +24,7 @@ pub(crate) fn shop(
             b.include_router(orders::routes());
             b.include_router(payments::routes());
             b.include_router(shipping::routes());
-            b.include_router(notifications::routes());
+            b.include_router(notifications::routes())
         })
 }
 // --8<-- [end:shop]

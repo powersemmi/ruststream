@@ -116,10 +116,8 @@ fn a_delivery_is_handled_on_a_dedicated_thread_alone() {
     let traces = app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("traces");
         let mut replies = pin!(subscriber.stream());
-        let app =
-            RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
-                b.include(traced).out_reply(Publish);
-            });
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .with_broker(broker.clone(), |b| b.include(traced).out_reply(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         for id in 0..JOBS {
@@ -193,10 +191,8 @@ fn a_key_stays_on_one_thread_and_in_order() {
     let seen: Vec<Placed> = app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("placed");
         let mut replies = pin!(subscriber.stream());
-        let app =
-            RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
-                b.include(placed).out_reply(Publish);
-            });
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .with_broker(broker.clone(), |b| b.include(placed).out_reply(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         for sequence in 0..PER_KEY {
@@ -258,10 +254,8 @@ fn keyless_deliveries_of_a_keyed_subscription_take_the_threads_in_turn() {
     let seen: Vec<Placed> = app_runtime().block_on(async {
         let mut subscriber = broker.subscribe("unkeyed.done");
         let mut replies = pin!(subscriber.stream());
-        let app =
-            RustStream::new(AppInfo::new("threads", "0.1.0")).with_broker(broker.clone(), |b| {
-                b.include(unkeyed).out_reply(Publish);
-            });
+        let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
+            .with_broker(broker.clone(), |b| b.include(unkeyed).out_reply(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         for id in 0..JOBS {
@@ -362,9 +356,7 @@ fn a_held_thread_holds_up_none_of_the_others() {
         let state = Arc::clone(&shared);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
-            .with_broker(broker.clone(), |b| {
-                b.include(held).out_reply(Publish);
-            });
+            .with_broker(broker.clone(), |b| b.include(held).out_reply(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         publisher
@@ -460,9 +452,7 @@ fn continuations(early: bool) -> Vec<Placed> {
         let state = Arc::clone(&report);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
-            .with_broker(broker.clone(), |b| {
-                b.include(continued);
-            });
+            .with_broker(broker.clone(), |b| b.include(continued));
         let running = app.start().await.expect("startup");
         broker
             .publisher()
@@ -551,9 +541,7 @@ fn the_shutdown_timeout_cancels_a_delivery_on_its_thread() {
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .shutdown_timeout(Duration::from_millis(100))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
-            .with_broker(broker.clone(), |b| {
-                b.include(stuck);
-            });
+            .with_broker(broker.clone(), |b| b.include(stuck));
         let running = app.start().await.expect("startup");
         broker
             .publisher()
@@ -677,9 +665,7 @@ fn copy_arrival(orders: &[u32], shut: bool) -> Option<Duration> {
         let state = Arc::clone(&deferred);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(state))
-            .with_broker(broker.clone(), |b| {
-                b.include(retried).out_retry(Publish);
-            });
+            .with_broker(broker.clone(), |b| b.include(retried).out_retry(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         for &id in orders {
@@ -758,9 +744,7 @@ fn a_batch_is_handled_on_a_dedicated_thread() {
         let report = Report::new(&broker);
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .on_startup(async move |()| Ok::<_, Infallible>(report))
-            .with_broker(broker.clone(), |b| {
-                b.include(batched.batch(nonzero!(4)));
-            });
+            .with_broker(broker.clone(), |b| b.include(batched.batch(nonzero!(4))));
         let running = app.start().await.expect("startup");
         broker
             .publisher()
@@ -806,9 +790,7 @@ fn every_thread_samples_into_the_subscription_report() {
         let mut replies = pin!(subscriber.stream());
         let app = RustStream::new(AppInfo::new("threads", "0.1.0"))
             .poll_diagnostics(diagnostics.clone())
-            .with_broker(broker.clone(), |b| {
-                b.include(sampled).out_reply(Publish);
-            });
+            .with_broker(broker.clone(), |b| b.include(sampled).out_reply(Publish));
         let running = app.start().await.expect("startup");
         let publisher = broker.publisher();
         for id in 0..JOBS {

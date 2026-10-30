@@ -55,12 +55,10 @@ async fn encode_reply(order: &Order) -> Receipt {
 /// under the scope's default (JSON).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_named_codec_encodes_the_reply() {
-    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(encode_reply).out(Reply, Publish).codec(CborCodec);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(encode_reply).out(Reply, Publish).codec(CborCodec)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 7 })
@@ -153,7 +151,7 @@ async fn a_publishers_base_headers_reach_the_reply() {
         |b| {
             b.include(laned_reply)
                 .out(Reply, LanePublish)
-                .transform(Stamp);
+                .transform(Stamp)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -188,7 +186,7 @@ async fn a_publishers_base_headers_reach_a_batch_reply() {
         MemoryBroker::new(),
         |b| {
             b.include(laned_batch.batch(nonzero!(8)))
-                .out(Reply, LanePublish);
+                .out(Reply, LanePublish)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -224,12 +222,10 @@ async fn laned_slot(order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutc
 /// leaves a slot carries the bound publisher's argument like a reply does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_publishers_base_headers_reach_a_slot_publish() {
-    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(laned_slot).out(DefaultSlot, LanePublish).build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("reply-wiring", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(laned_slot).out(DefaultSlot, LanePublish)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 8 })
@@ -349,7 +345,7 @@ async fn a_batch_reply_commits_its_transaction() {
                 .start_at(MemoryPosition::start()),
         )
         .out(Reply, policy)
-        .transactional();
+        .transactional()
     });
     let tb = TestApp::start(app).await.expect("harness start");
     tb.settle().await.expect("the replayed batch settles");
@@ -409,7 +405,6 @@ async fn a_reply_and_slot_chain_keeps_the_reply_only_steps() {
                 .batch_transform(for_batch(Stamp))
                 .transactional()
                 .out(Journal, Publish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");

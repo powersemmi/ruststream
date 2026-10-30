@@ -63,8 +63,8 @@ async fn run_and_capture(incoming: Option<&'static str>) -> SpanContext {
             // The reply wiring propagates the delivery's trace context onto each reply.
             b.include(echo)
                 .out_reply(Publish)
-                .transform(otel.propagation());
-            b.include(capture);
+                .transform(otel.propagation())
+                .include(capture)
         });
     // --8<-- [end:wiring]
 

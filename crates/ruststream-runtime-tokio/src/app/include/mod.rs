@@ -1,211 +1,183 @@
-//! `include` on [`BrokerScope`]: the scope's window onto the one mount chain.
+//! `include` on [`BrokerScope`]: the scope opens the one mount chain, and the `with_broker`
+//! closure returns it.
 //!
-//! Both registration surfaces run the same builder. A [`Router`] is a consuming builder, so its
-//! chain ends in an explicit `.build()`; a scope is a `&mut` borrow inside the `with_broker`
-//! closure, so `include` hands back a [`Mounting`] guard that owns a router chain of its own and
-//! drains it into the scope's sink when the statement ends. The guard is an adapter and nothing
-//! more: every step, every typestate slot and every diagnostic comes from
-//! [`RouterWith`](crate::RouterWith).
+//! Both registration surfaces run the same builder. `b.include(def)` consumes the scope and hands
+//! back the chain a [`Router`] would: every step, every typestate slot and every diagnostic comes
+//! from [`RouterWith`], and a step is followed by the next `include` directly. The closure returns
+//! the chain, and the app mounts it once the closure is done ([`MountChain`]).
 //!
-//! Which guard a registration uses follows its form. A plain or batch handler and a
-//! reply-publishing one commit when the [`Mounting`] guard drops at the end of the statement, so
-//! `b.include(handle);` and `b.include(respond).out_reply(Publish);` are each a whole
-//! registration. One carrying [`Out`](crate::Out) slots gets a [`MountingSlots`] guard
-//! and commits with `.build()`: a chain that still has an unbound slot has nothing to commit, so
-//! its terminal has to be a call - and the type is `#[must_use]`, so forgetting it is a warning
-//! where the mount site is.
-//!
-//! Because every form hands back a guard, a registration is a statement: the guard borrows the
-//! scope, so a `with_broker` closure whose body is the bare call does not compile. Write the body
-//! as statements, `|b| { b.include(handle); }`.
+//! Because `include` consumes the scope, every registration of a broker is one expression: a
+//! second `b.include(..)` beside the first is a use of a moved value, not a mount that silently
+//! went nowhere.
 
-mod guard;
 // Every spelling, mounted on this surface and on the router's. The JSON codec and the document
 // schemas it mounts with come with the facade the tests reach the in-memory broker through.
 #[cfg(test)]
 mod parity_tests;
 
-use crate::Broker;
-use crate::Identity;
-use crate::{Router, RouterMount, forms};
+use crate::{BlanketLayer, Broker, Declared, PublishIdentity, PublishPipeline};
+use crate::{Identity, RetryDestinationsDeclared};
+use crate::{Router, RouterCommit, RouterDef, RouterMount, RouterWith};
 
 use super::scope::BrokerScope;
-use crate::Declared;
-pub use guard::{Mounting, MountingSlots, ScopeCommit};
+use crate::sink::RouterSink;
 
-/// The empty chain a scope drives one registration through: its codec and publish pipeline, no
-/// router-scope layers of its own.
+/// The empty chain a scope opens: its codec and publish pipeline, no router-scope layers of its
+/// own (the app's stack wraps at the mount, as it does for any router).
 pub(crate) type ScopeRouter<B, C, Pipeline> = Router<B, (), C, Identity, Pipeline>;
 
-/// The chain a form produces on a scope, before the guard wraps it.
-type ScopeChain<Form, B, C, Pipeline, Def> =
-    <Form as RouterMount<ScopeRouter<B, C, Pipeline>, Def>>::Out;
-
-/// Form-token dispatch for [`BrokerScope::include`]: implemented by the tokens in
-/// [`forms`](crate::forms), it picks the chain the form opens and the guard that
-/// commits it. Machinery; you never implement or name it.
+/// What a `with_broker` closure returns: the mount chain the app registers once the closure is
+/// done.
+///
+/// Implemented by the chain `b.include(..)` opens (a [`Router`] or a [`RouterWith`] waiting for
+/// its next step); [`BrokerScope::end`] and every registration the scope makes at once return the
+/// empty one. `()` is not a chain, so a closure that dropped what `include` returned does not
+/// compile. Machinery; you never implement it.
 #[doc(hidden)]
-pub trait IncludeMount<'s, B: Broker, Layers, C, State, Pipeline, Def> {
-    /// What `include` hands back: a guard over the form's own mount chain.
-    type Out;
-
-    fn begin(def: Def, scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>) -> Self::Out;
+#[diagnostic::on_unimplemented(
+    message = "the `with_broker` closure must return the mount chain",
+    label = "`{Self}` is not a mount chain",
+    note = "return the chain `include` opens: `|b| b.include(a).include(b)`, every `Out` slot \
+            bound with `.out(marker, policy)`; a scope that mounts nothing returns `b.end()`"
+)]
+pub trait MountChain<B: Broker, Layers = Identity, State = (), Pipeline = PublishIdentity> {
+    /// Registers every mount of the chain into `sink`, each handler wrapped with `global`.
+    fn mount_chain(self, global: &Layers, pipeline: &Pipeline, sink: &mut RouterSink<B, State>);
 }
 
-/// Implements [`IncludeMount`] for a form whose registration is complete as it stands: open the
-/// router chain over a scope-shaped router, then wrap it in the guard that commits on drop.
-macro_rules! scope_mount {
-    ($($form:ty),+ $(,)?) => {$(
-        impl<'s, B, Layers, C, State, Pipeline, Def>
-            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
-        where
-            B: Broker + 'static,
-            C: Clone + 's,
-            Layers: 's,
-            State: 's,
-            Pipeline: Clone + 's,
-            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-            ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
-        {
-            type Out = Mounting<
-                's,
-                B,
-                Layers,
-                C,
-                State,
-                Pipeline,
-                ScopeChain<Self, B, C, Pipeline, Def>,
-            >;
-
-            fn begin(
-                def: Def,
-                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
-            ) -> Self::Out {
-                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
-                Mounting::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
-            }
-        }
-    )+};
+// A finished chain is a router: mounting it is the operation `include_router` performs, so a
+// scope's chain and a router reach the sink through one path.
+impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
+    for Router<B, Routes, RC, RL, RP>
+where
+    B: Broker + 'static,
+    Routes: RouterDef<B, State, RP>,
+    RL: BlanketLayer + Clone + Send + Sync + 'static,
+    Layers: BlanketLayer + Clone + Send + Sync + 'static,
+    Pipeline: PublishPipeline + Clone + Send + 'static,
+    State: Send + Sync + 'static,
+{
+    fn mount_chain(self, global: &Layers, pipeline: &Pipeline, sink: &mut RouterSink<B, State>) {
+        // The chain's router carries the scope's own publish path, so the fallback here is never
+        // the one a registration takes.
+        RouterDef::mount(self, global, pipeline, &PublishIdentity, sink);
+    }
 }
 
-scope_mount! {
-    forms::Publishing,
-    forms::RawReply,
-    forms::BatchPublishing,
+// A chain whose last registration still takes steps commits through the router's own terminal,
+// bounded exactly as `build` and the next `include` are.
+impl<B, Layers, State, Pipeline, Mount, R, Def, Attach, Last> MountChain<B, Layers, State, Pipeline>
+    for RouterWith<Mount, R, Def, Attach, Last>
+where
+    B: Broker + 'static,
+    Attach: RouterCommit<Mount, R, Def, Out: RetryDestinationsDeclared>,
+    Attach::Out: MountChain<B, Layers, State, Pipeline>,
+{
+    fn mount_chain(self, global: &Layers, pipeline: &Pipeline, sink: &mut RouterSink<B, State>) {
+        self.build().mount_chain(global, pipeline, sink);
+    }
 }
 
-/// Implements [`IncludeMount`] for a form carrying [`Out`](crate::Out) slots: the same
-/// chain, in the guard whose terminal is `.build()`. The chain is not committable until every
-/// slot is bound, so no commit bound is stated here - `build` is where it is checked.
-macro_rules! scope_mount_slots {
-    ($($form:ty),+ $(,)?) => {$(
-        impl<'s, B, Layers, C, State, Pipeline, Def>
-            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
-        where
-            B: Broker + 'static,
-            C: Clone + 's,
-            Layers: 's,
-            State: 's,
-            Pipeline: Clone + 's,
-            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-        {
-            type Out = MountingSlots<
-                's,
-                B,
-                Layers,
-                C,
-                State,
-                Pipeline,
-                ScopeChain<Self, B, C, Pipeline, Def>,
-            >;
-
-            fn begin(
-                def: Def,
-                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
-            ) -> Self::Out {
-                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
-                MountingSlots::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
-            }
-        }
-    )+};
-}
-
-scope_mount_slots! {
-    forms::Out,
-    forms::BatchOut,
-    forms::PublishingOut,
-    forms::RawReplyOut,
-    forms::BatchPublishingOut,
-}
-
-/// Implements [`IncludeMount`] for a form that attaches no publish of the handler's own: its
-/// chain is a finished router, in the guard that drains it when the statement ends. The guard is
-/// what carries the one position such a registration can still bind, the deferred retry.
-macro_rules! eager_mount {
-    ($($form:ty),+ $(,)?) => {$(
-        impl<'s, B, Layers, C, State, Pipeline, Def>
-            IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
-        where
-            B: Broker + 'static,
-            C: Clone + 's,
-            Layers: 's,
-            State: 's,
-            Pipeline: Clone + 's,
-            Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-            ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
-        {
-            type Out = Mounting<
-                's,
-                B,
-                Layers,
-                C,
-                State,
-                Pipeline,
-                ScopeChain<Self, B, C, Pipeline, Def>,
-            >;
-
-            fn begin(
-                def: Def,
-                scope: &'s mut BrokerScope<B, Layers, C, State, Pipeline>,
-            ) -> Self::Out {
-                let router = Router::for_scope(scope.codec.clone(), scope.pipeline.clone());
-                Mounting::new(<Self as RouterMount<_, Def>>::begin(def, router), scope)
-            }
-        }
-    )+};
-}
-
-eager_mount! {
-    forms::Subscribing,
-    forms::RawSubscribing,
-    forms::Batch,
-    forms::RawBatch,
-    forms::CarriedBatch,
-}
-
-impl<B: Broker + 'static, Layers, C, State, Pipeline> BrokerScope<B, Layers, C, State, Pipeline> {
-    /// Mounts a definition of any form on this broker.
+impl<B: Broker + 'static, Layers, C, State, Pipeline>
+    BrokerScope<'_, B, Layers, C, State, Pipeline>
+{
+    /// Mounts a definition of any form on this broker and returns the mount chain, which the
+    /// `with_broker` closure returns.
     ///
-    /// A plain or batch handler and a `reply("dest")` one register when the statement ends, so
-    /// `b.include(handle);` and `b.include(respond).out_reply(Publish);` are both complete; a
-    /// handler carrying [`Out`](crate::Out) slots binds each with `.out(marker, policy)`
-    /// and finishes with `.build()`. Every form takes `.out_retry(policy)`, the deferred
-    /// `retry_after` slot of that one registration, which takes the slot steps like any other.
+    /// The chain takes the per-handler steps (`.out(marker, policy)`, `.out_reply(policy)`,
+    /// `.out_retry(policy)`, `.transform(..)`) and goes on to the next registration with
+    /// `.include(def)`, which exists once every position the handler declares is bound.
     ///
     /// Decoding uses the scope codec when one was set
     /// ([`with_broker_codec`](crate::RustStream::with_broker_codec)), else the
     /// [`DefaultCodec`](ruststream_runtime::codec::DefaultCodec).
-    pub fn include<'s, D>(
-        &'s mut self,
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(Serialize, Outgoing)]
+    /// struct Receipt {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders", reply("receipts"))]
+    /// async fn confirm(order: &Order) -> Receipt {
+    ///     Receipt { id: order.id }
+    /// }
+    ///
+    /// #[subscriber("audit")]
+    /// async fn audit(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+    ///         b.include(confirm).out_reply(Publish).include(audit)
+    ///     })
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn include<D>(
+        self,
         def: D,
-    ) -> <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::Out
+    ) -> <D::Form as RouterMount<ScopeRouter<B, C, Pipeline>, D::Settings>>::Out
     where
         D: Declared,
-        D::Form: IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>,
+        D::Form: RouterMount<ScopeRouter<B, C, Pipeline>, D::Settings>,
     {
-        <D::Form as IncludeMount<'s, B, Layers, C, State, Pipeline, D::Settings>>::begin(
-            def.declare(),
-            self,
-        )
+        Router::for_scope(self.codec, self.pipeline).include(def)
+    }
+
+    /// Ends a scope that mounts no handler of its own, returning the empty mount chain.
+    ///
+    /// For a broker the service only publishes to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "json")]
+    /// # mod demo {
+    /// use ruststream::memory::prelude::*;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     id: u64,
+    /// }
+    ///
+    /// #[subscriber("orders")]
+    /// async fn handle(order: &Order) -> HandlerOutcome {
+    ///     let _ = order.id;
+    ///     HandlerOutcome::ack()
+    /// }
+    ///
+    /// fn app() -> RustStream {
+    ///     RustStream::new(AppInfo::new("orders", "0.1.0"))
+    ///         .with_broker_labeled("ingress", MemoryBroker::new(), |b| b.include(handle))
+    ///         // The service publishes to the second broker and consumes nothing from it.
+    ///         .with_broker_labeled("audit", MemoryBroker::new(), |b| b.end())
+    /// }
+    /// # }
+    /// # fn main() {}
+    /// ```
+    #[must_use]
+    pub fn end(&self) -> ScopeRouter<B, C, Pipeline>
+    where
+        C: Clone,
+        Pipeline: Clone,
+    {
+        self.chain()
     }
 }

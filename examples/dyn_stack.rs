@@ -80,7 +80,7 @@ mod service {
         let stack = DynStack::new(chain);
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             // The stack wraps one registration, which sees the broker's own message.
-            b.include_router(Router::new().include(accept).layer(stack));
+            b.include_router(Router::new().include(accept).layer(stack))
         })
     }
     // --8<-- [end:app]

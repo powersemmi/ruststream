@@ -35,9 +35,8 @@ mod with_value {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("users", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(greet);
-        })
+        RustStream::new(AppInfo::new("users", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(greet))
     }
 
     // --8<-- [start:with_value]
@@ -77,9 +76,8 @@ mod received_values {
     }
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("users", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(greet);
-        })
+        RustStream::new(AppInfo::new("users", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(greet))
     }
 
     // --8<-- [start:received_values]

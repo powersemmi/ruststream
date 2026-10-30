@@ -6,6 +6,6 @@ use ruststream::runtime::{AppInfo, RustStream};
 
 fn main() {
     let _app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-        .with_broker(MemoryBroker::new(), |_b| {})
+        .with_broker(MemoryBroker::new(), |b| b.end())
         .layer(TracingLayer::default());
 }

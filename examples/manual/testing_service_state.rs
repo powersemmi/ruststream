@@ -54,7 +54,7 @@ mod run_result {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Fulfil).build());
+            b.include(subscriber("orders", Fulfil).build())
         })
     }
 
@@ -98,7 +98,7 @@ mod assert_running {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -144,7 +144,7 @@ mod assert_shut_down {
 
     fn app() -> impl App<State = ()> {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Fulfil).build());
+            b.include(subscriber("orders", Fulfil).build())
         })
     }
 

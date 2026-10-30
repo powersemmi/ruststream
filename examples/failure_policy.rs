@@ -37,9 +37,8 @@ mod defaults {
     // --8<-- [end:defaults]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(fulfil);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(fulfil))
     }
 
     #[tokio::test]
@@ -81,9 +80,8 @@ mod skip {
     // --8<-- [end:skip]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(audit);
-        })
+        RustStream::new(AppInfo::new("audit", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(audit))
     }
 
     #[tokio::test]
@@ -125,9 +123,8 @@ mod tuned {
     // --8<-- [end:tuned]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        RustStream::new(AppInfo::new("orders", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(accept))
     }
 
     #[tokio::test(start_paused = true)]

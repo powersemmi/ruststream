@@ -63,9 +63,7 @@ fn app(otel: &Otel) -> impl App + use<> {
                 },
             })
         })
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 // --8<-- [end:app]
 

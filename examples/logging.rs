@@ -28,9 +28,8 @@ async fn accept(order: &Order) -> HandlerOutcome {
 
 #[ruststream::app]
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(accept);
-    })
+    RustStream::new(AppInfo::new("orders", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 // --8<-- [end:app]
 

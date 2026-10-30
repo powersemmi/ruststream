@@ -150,9 +150,7 @@ fn confirm_route() -> impl RouterDef<MemoryBroker, Repository> {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders-service", "0.1.0"))
         .on_startup(async move |()| Repository::open().await)
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include_router(confirm_route());
-        })
+        .with_broker(MemoryBroker::new(), |b| b.include_router(confirm_route()))
 }
 
 #[tokio::main]

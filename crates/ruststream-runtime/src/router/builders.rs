@@ -162,7 +162,7 @@ impl<Mount, R, Def, Attach, Last> RouterWith<Mount, R, Def, Attach, Last> {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("receipts", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(issue).out_reply(Publish);
+    ///         b.include(issue).out_reply(Publish)
     ///     })
     /// }
     /// # }

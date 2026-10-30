@@ -104,10 +104,10 @@ fn check_schemas(spec: &Spec) -> Result<(), String> {
 // --8<-- [start:undocumented]
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(subscriber("orders", Accept).build());
-        b.include(subscriber("refunds", Refund).build());
-        // `AuditRecord` has no `JsonSchema`: without this step the mount does not compile.
-        b.include(subscriber("audit", Record).undocumented().build());
+        b.include(subscriber("orders", Accept).build())
+            .include(subscriber("refunds", Refund).build())
+            // `AuditRecord` has no `JsonSchema`: without this step the mount does not compile.
+            .include(subscriber("audit", Record).undocumented().build())
     })
 }
 // --8<-- [end:undocumented]

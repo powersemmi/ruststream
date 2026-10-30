@@ -43,21 +43,16 @@ async fn record(reading: &Reading) -> HandlerOutcome {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("plant", "0.1.0"))
         // The default codec: `Order` is `application/json`.
-        .with_broker(MemoryBroker::new(), |b| {
-            b.include(accept);
-        })
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
         // The scope's codec: `Reading` is `application/cbor`.
-        .with_broker_codec(MemoryBroker::new(), CborCodec, |b| {
-            b.include(record);
-        })
+        .with_broker_codec(MemoryBroker::new(), CborCodec, |b| b.include(record))
 }
 // --8<-- [end:app]
 
 /// The same service with JSON alone, so every message names one media type.
 fn json_only() -> impl App {
-    RustStream::new(AppInfo::new("plant", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(accept);
-    })
+    RustStream::new(AppInfo::new("plant", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(accept))
 }
 
 // The scenarios are the tests below; the command in the header runs them.

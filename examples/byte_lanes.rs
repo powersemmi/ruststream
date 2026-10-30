@@ -34,9 +34,8 @@ async fn reverse(frame: &Frame<'_>) -> Export {
 }
 
 fn app() -> impl App {
-    RustStream::new(AppInfo::new("frames", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(reverse);
-    })
+    RustStream::new(AppInfo::new("frames", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(reverse))
 }
 // --8<-- [end:lanes]
 

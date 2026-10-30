@@ -1,5 +1,7 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ContextKind, HandlerOutcome, Out, Outgoing, PublishTransform, Reads, RustStream};
+use ruststream::runtime::{
+    AppInfo, ContextKind, HandlerOutcome, Out, Outgoing, PublishTransform, Reads, RustStream,
+};
 use ruststream::{Deserialized, OutSlot, Publisher, subscriber};
 
 #[derive(Deserialized)]
@@ -13,19 +15,16 @@ struct Envelope;
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Envelope {
     type Destination = Reads;
 
-    fn apply(
-        &self,
-        out: &mut Outgoing<'_>,
-        _options: &mut Option<Options>,
-        _cx: &K::View<'_>,
-    ) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-outbox", b"1".to_vec());
     }
 }
 
 #[subscriber("chunks")]
-async fn transcode(chunk: &Chunk<'_>, Out(_encoded): Out<impl Publisher, Encoded>) -> HandlerOutcome
-{
+async fn transcode(
+    chunk: &Chunk<'_>,
+    Out(_encoded): Out<impl Publisher, Encoded>,
+) -> HandlerOutcome {
     let _ = chunk.0;
     HandlerOutcome::ack()
 }
@@ -37,6 +36,5 @@ fn main() {
         b.include(transcode)
             .transform(Envelope)
             .out(Encoded, MemoryPublish)
-            .build();
     });
 }

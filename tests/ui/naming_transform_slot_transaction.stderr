@@ -1,8 +1,8 @@
 error[E0277]: `ruststream::runtime::NamedDestinationSend<MemoryPublisher>` does not support broker-side transactions
-  --> tests/ui/naming_transform_slot_transaction.rs:64:14
+  --> tests/ui/naming_transform_slot_transaction.rs:63:51
    |
-64 |             .build();
-   |              ^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
+63 |     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+   |                                                   ^^^^^^^^^^^ the trait `TransactionalPublisher` is not implemented for `ruststream::runtime::NamedDestinationSend<MemoryPublisher>`
    |
    = note: for an `Out<impl TransactionalPublisher, _>` slot, attach a policy whose live publisher is transactional (a transactional producer configuration)
 help: the following other types implement trait `TransactionalPublisher`
@@ -22,29 +22,29 @@ help: the following other types implement trait `TransactionalPublisher`
    |   impl TransactionalPublisher for MemoryPublisher {
    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `MemoryPublisher`
 note: required for `settle` to implement `Handle<Order, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>>`
-  --> tests/ui/naming_transform_slot_transaction.rs:38:1
+  --> tests/ui/naming_transform_slot_transaction.rs:41:1
    |
-38 | #[subscriber("orders")]
+41 | #[subscriber("orders")]
    | ^^^^^^^^^^^^^^^^^^^^^^^
-39 | async fn settle(
+42 | async fn settle(
    |          ^^^^^^
-40 |     order: &Order,
-41 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
+43 |     order: &Order,
+44 |     Out(audit): Out<impl TransactionalPublisher, Audit>,
    |                          ---------------------- unsatisfied trait bound introduced here
    = note: required for `Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>` to implement `ruststream_runtime::inject::InjectCall<()>`
    = note: 1 redundant requirement hidden
    = note: required for `SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>` to implement `ruststream_runtime::inject::InjectCall<()>`
    = note: required for `ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((ruststream::runtime::SendOnlyPolicy<MemoryPublish>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>),)>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
    = note: required for `(ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((ruststream::runtime::SendOnlyPolicy<MemoryPublish>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>),)>, ())` to implement `RouterDef<MemoryBroker>`
-   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((ruststream::runtime::SendOnlyPolicy<MemoryPublish>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>),)>, ())>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes_inject::InjectRoute<Name, SubscriberBuilder<Sealed<HandleValue<Solo<Order>, (), Outs<(Slot<Audit, ruststream::runtime::NamedDestinationSend<MemoryPublisher>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>>,)>, (), settle, ruststream::runtime::Probed>>, Name, (Open, Open, Open, Open)>, JsonCodec, ((ruststream::runtime::SendOnlyPolicy<MemoryPublish>, JsonCodec, ruststream::runtime::SlotTransforms<PublishTransformStack<PublishTransformIdentity, ByTenant>, PublishIdentity>),)>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
    = note: 1 redundant requirement hidden
-   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<settle, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Audit, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::ScopeCommit<MemoryBroker, Identity, (), (), PublishIdentity>`
-note: required by a bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
-  --> crates/ruststream-runtime-tokio/src/app/include/guard.rs
+   = note: required for `RouterWith<ruststream_runtime::router::mount::InjectMount, Router<MemoryBroker>, SubscriberBuilder<settle, Name, (Open, Open, Open, Open)>, (ruststream::runtime::NoReply, (ruststream::runtime::WithSource<ruststream::runtime::OutAttachment<Audit, MemoryPublish, PublishTransformStack<PublishTransformIdentity, ByTenant>>>,)), ruststream::runtime::SlotPos<0>>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
    |
-   |     pub fn build(self)
-   |            ----- required by a bound in this associated function
-   |     where
-   |         Chain: ScopeCommit<B, Layers, C, State, Pipeline>,
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MountingSlots::<'s, B, Layers, C, State, Pipeline, Chain>::build`
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
+...
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`
    = note: this error originates in the attribute macro `subscriber` (in Nightly builds, run with -Z macro-backtrace for more info)

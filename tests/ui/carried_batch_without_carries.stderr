@@ -1,32 +1,57 @@
 error[E0277]: the subscription `MemorySource` does not lend batches of `Row`
   --> tests/ui/carried_batch_without_carries.rs:26:11
    |
-26 |         b.include(handle.batch(nonzero!(8)));
+26 |         b.include(handle.batch(nonzero!(8)))
    |           ^^^^^^^ a `&[Row]` handler reads the values this subscription's batches hold
    |
    = help: the trait `ruststream_runtime::batch::carried::SourceCarriesBatch<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
    = note: mount it on a subscription whose batches implement `CarriesBatch<Row>`
-help: the trait `ruststream::runtime::IncludeMount<'_, B, Layers, C, State, Pipeline, Def>` is conditionally implemented for `CarriedBatch`
+help: the trait `ruststream::runtime::RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def>` is conditionally implemented for `CarriedBatch`
+  --> crates/ruststream-runtime/src/router/form_eager.rs
+   |
+   | / impl<B, Routes, RouteCodec, RouteLayers, RoutePipe, Def, T>
+   | |     RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for forms::CarriedBatch
+   | | where
+   | |     B: Broker + 'static,
+...  |
+   | |         SubscriptionSource<Connected<B>> + SourceCarriesBatch<T, Connected<B>> + Send + 'static,
+   | |                                            ----------------------------------- unsatisfied requirement introduced here: `<SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)> as ruststream_runtime::batch::BatchDef>::Source: ruststream_runtime::batch::carried::SourceCarriesBatch<Row, <MemoryBroker as ruststream::Broker>::Connected>`
+   | |     SourceSubscriber<B, Def::Source>: BatchSubscriber + Send + 'static,
+   | |     Def::Handler: 'static,
+   | |     T: Clone + Send + Sync + 'static,
+   | |_____________________________________^
+   = note: required for `CarriedBatch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
+
+error[E0277]: the subscription `MemorySource` does not lend batches of `Row`
+  --> tests/ui/carried_batch_without_carries.rs:25:13
+   |
+25 |     let _ = RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a `&[Row]` handler reads the values this subscription's batches hold
+   |
+   = help: the trait `ruststream_runtime::batch::carried::SourceCarriesBatch<Row, ConnectedMemoryBroker>` is not implemented for `MemorySource`
+   = note: mount it on a subscription whose batches implement `CarriesBatch<Row>`
+help: the trait `ruststream::runtime::MountChain<B, Layers, State, Pipeline>` is conditionally implemented for `Router<B, Routes, RC, RL, RP>`
   --> crates/ruststream-runtime-tokio/src/app/include/mod.rs
    |
-   | /         impl<'s, B, Layers, C, State, Pipeline, Def>
-   | |             IncludeMount<'s, B, Layers, C, State, Pipeline, Def> for $form
-   | |         where
-   | |             B: Broker + 'static,
+   | / impl<B, Layers, State, Pipeline, Routes, RC, RL, RP> MountChain<B, Layers, State, Pipeline>
+   | |     for Router<B, Routes, RC, RL, RP>
+   | | where
+   | |     B: Broker + 'static,
+   | |     Routes: RouterDef<B, State, RP>,
+   | |             ----------------------- unsatisfied requirement introduced here: `(ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ()): RouterDef<MemoryBroker>`
 ...  |
-   | |             Self: RouterMount<ScopeRouter<B, C, Pipeline>, Def>,
-   | |                   --------------------------------------------- unsatisfied requirement introduced here: `CarriedBatch: ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
-   | |             ScopeChain<Self, B, C, Pipeline, Def>: ScopeCommit<B, Layers, C, State, Pipeline>,
-   | |______________________________________________________________________________________________^
+   | |     Pipeline: PublishPipeline + Clone + Send + 'static,
+   | |     State: Send + Sync + 'static,
+   | |_________________________________^
+   = note: required for `ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>` to implement `ruststream_runtime::batch::BatchHandler<Vec<MemoryMessage>>`
+   = note: required for `ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>` to implement `ruststream_runtime::router::routes::MountRoute<MemoryBroker, (), PublishIdentity>`
+   = note: required for `(ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ())` to implement `RouterDef<MemoryBroker>`
+   = note: required for `Router<MemoryBroker, (ruststream_runtime::router::routes::BatchRoute<MemorySource, ruststream_runtime::batch::carried::CarriedBatch<MemorySource, ConnectedMemoryBroker, Row, ruststream_runtime::handle::eager::BatchBody<BatchCarried<Row>, handle>>>, ())>` to implement `ruststream::runtime::MountChain<MemoryBroker>`
+note: required by a bound in `ruststream::RustStream::<Layers, State, Pipeline, Phase>::with_broker`
+  --> crates/ruststream-runtime-tokio/src/app/service.rs
+   |
+   |     pub fn with_broker<R, F, Chain>(
+   |            ----------- required by a bound in this associated function
 ...
-   | / eager_mount! {
-   | |     forms::Subscribing,
-   | |     forms::RawSubscribing,
-   | |     forms::Batch,
-   | |     forms::RawBatch,
-   | |     forms::CarriedBatch,
-   | | }
-   | |_- in this macro invocation
-   = note: required for `CarriedBatch` to implement `ruststream::runtime::RouterMount<Router<MemoryBroker>, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
-   = note: required for `CarriedBatch` to implement `ruststream::runtime::IncludeMount<'_, MemoryBroker, Identity, (), (), PublishIdentity, SubscriberBuilder<Sealed<HandleValue<BatchCarried<Row>, (), (), (), handle, ruststream::runtime::Probed>>, MemorySource, (Open, Open, Open, Fixed)>>`
-   = note: this error originates in the macro `eager_mount` (in Nightly builds, run with -Z macro-backtrace for more info)
+   |         Chain: MountChain<R::Broker, Layers, State, Pipeline>,
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RustStream::<Layers, State, Pipeline, Phase>::with_broker`

@@ -84,7 +84,7 @@ const DEFAULT_SETTLE_DEADLINE: Duration = Duration::from_secs(10);
 /// }
 ///
 /// let app = RustStream::new(AppInfo::new("svc", "0.1.0"))
-///     .with_broker(MemoryBroker::new(), |b| { b.include(handle); });
+///     .with_broker(MemoryBroker::new(), |b| { b.include(handle) });
 /// let tb = TestApp::start(app).await?;
 ///
 /// tb.broker::<MemoryBroker>()
@@ -193,7 +193,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// /// The app `main` runs, and the one the tests hand the harness.
     /// pub fn app() -> impl App {
     ///     RustStream::new(AppInfo::new("orders", "0.0.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(confirm).out_reply(Publish);
+    ///         b.include(confirm).out_reply(Publish)
     ///     })
     /// }
     ///
@@ -350,7 +350,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(accept);
+    ///         b.include(accept)
     ///     })
     /// }
     ///

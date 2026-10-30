@@ -175,7 +175,7 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
                      service subscribed to the broker would see the event too.",
                 )
                 .build(),
-        );
+        )
     });
 
     // The messaging side starts in the background; a startup failure (a broker refusing to

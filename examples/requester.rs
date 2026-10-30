@@ -94,8 +94,11 @@ async fn quote_price(ask: &Ask) -> Quote {
 fn app() -> impl App {
     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         // The broker's request policy: its live publisher correlates replies.
-        b.include(price).out(Pricing, Request).build();
-        b.include(quote_price).out_reply(Publish).transform(ToInbox);
+        b.include(price)
+            .out(Pricing, Request)
+            .include(quote_price)
+            .out_reply(Publish)
+            .transform(ToInbox)
     })
 }
 // --8<-- [end:app]

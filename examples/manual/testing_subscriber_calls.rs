@@ -84,7 +84,7 @@ mod assert_called_once {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -131,7 +131,7 @@ mod assert_called {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -217,8 +217,7 @@ mod assert_not_called {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", Accept).build())
                 .out(Rejected, Publish)
-                .build();
-            b.include(subscriber("rejected", Review).build());
+                .include(subscriber("rejected", Review).build())
         })
     }
 
@@ -267,7 +266,7 @@ mod settled {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -318,7 +317,7 @@ mod outcomes {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -366,7 +365,7 @@ mod assert_outcome {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Reserve).build());
+            b.include(subscriber("orders", Reserve).build())
         })
     }
 
@@ -415,7 +414,7 @@ mod panicked {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 
@@ -462,7 +461,7 @@ mod assert_last_failed_to_decode {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(subscriber("orders", Accept).build());
+            b.include(subscriber("orders", Accept).build())
         })
     }
 

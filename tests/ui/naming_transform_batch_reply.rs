@@ -1,5 +1,8 @@
 use ruststream::memory::{MemoryBroker, MemoryPublish};
-use ruststream::runtime::{AppInfo, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply, RustStream, SubscriberSettings};
+use ruststream::runtime::{
+    AppInfo, ForReply, Names, Outgoing as OutgoingMessage, PublishContext, PublishTransform, Reply,
+    RustStream, SubscriberSettings,
+};
 use ruststream::{Outgoing, nonzero, subscriber};
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +42,6 @@ fn main() {
     RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(confirm.batch(nonzero!(8)))
             .out(Reply, MemoryPublish)
-            .transform(ReplyTo);
+            .transform(ReplyTo)
     });
 }

@@ -18,12 +18,7 @@ struct Stamp;
 impl<K: ContextKind, Options> PublishTransform<K, Options> for Stamp {
     type Destination = Reads;
 
-    fn apply(
-        &self,
-        out: &mut Outgoing<'_>,
-        _options: &mut Option<Options>,
-        _cx: &K::View<'_>,
-    ) {
+    fn apply(&self, out: &mut Outgoing<'_>, _options: &mut Option<Options>, _cx: &K::View<'_>) {
         out.headers_mut().insert("x-stamp", b"1".to_vec());
     }
 }
@@ -35,7 +30,6 @@ async fn confirm(order: &Order) -> Receipt {
 
 // A step rides the position the `.out(marker, policy)` before it named, and there is none here.
 fn main() {
-    RustStream::new(AppInfo::new("app", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-        b.include(confirm).transform(Stamp);
-    });
+    RustStream::new(AppInfo::new("app", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(confirm).transform(Stamp));
 }

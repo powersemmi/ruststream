@@ -42,11 +42,9 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("bridge", "0.1.0"))
         .with_broker_labeled("east", MemoryBroker::new(), |b| {
             // Consumed in the east, answered in the west.
-            b.include(mirror).out_reply(to_west);
+            b.include(mirror).out_reply(to_west)
         })
-        .with_broker_labeled("west", west, |b| {
-            b.include(record);
-        })
+        .with_broker_labeled("west", west, |b| b.include(record))
 }
 // --8<-- [end:app]
 

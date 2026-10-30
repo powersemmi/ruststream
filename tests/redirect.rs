@@ -67,12 +67,10 @@ async fn confirm(order: &Order) -> Receipt {
 /// the one the generated document reports.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_naming_transform_that_sets_nothing_leaves_the_declared_destination() {
-    let app = RustStream::new(AppInfo::new("redirect-fallback", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm).out(Reply, Publish).transform(ReplyTo);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redirect-fallback", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm).out(Reply, Publish).transform(ReplyTo)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 5 })
@@ -97,7 +95,7 @@ async fn the_chain_runs_in_the_order_the_caller_wrote() {
             b.include(confirm)
                 .out(Reply, Publish)
                 .transform(ReplyTo)
-                .transform(Stamp);
+                .transform(Stamp)
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -119,12 +117,10 @@ async fn the_chain_runs_in_the_order_the_caller_wrote() {
 /// over that destination rather than deciding it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_one_the_declared_destination_stands() {
-    let app = RustStream::new(AppInfo::new("redirect-none", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(confirm).out(Reply, Publish).transform(Stamp);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redirect-none", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(confirm).out(Reply, Publish).transform(Stamp)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 7 })
@@ -179,15 +175,10 @@ async fn mirror(order: &Order, Out(audit): Out<impl Publisher, Audit>) -> Handle
 /// records the same message the broker received.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slot_publishes_where_its_naming_transform_says() {
-    let app = RustStream::new(AppInfo::new("redirect-slot", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(mirror)
-                .out(Audit, Publish)
-                .transform(ByTenant)
-                .build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redirect-slot", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(mirror).out(Audit, Publish).transform(ByTenant)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 9 })
@@ -223,7 +214,6 @@ async fn a_naming_transform_rides_the_reply_of_a_slot_carrying_handler() {
                 .out(Reply, Publish)
                 .transform(ReplyTo)
                 .out(Audit, Publish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("harness start");
@@ -259,15 +249,10 @@ async fn plain(order: &Order, Out(out): Out<impl Publisher, DefaultSlot>) -> Han
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_marker_without_a_dictionary_still_takes_an_ordinary_transform() {
-    let app = RustStream::new(AppInfo::new("redirect-default-slot", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(plain)
-                .out(DefaultSlot, Publish)
-                .transform(Stamp)
-                .build();
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redirect-default-slot", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(plain).out(DefaultSlot, Publish).transform(Stamp)
+        });
     let tb = TestApp::start(app).await.expect("harness start");
 
     tb.message(&Order { id: 13 })

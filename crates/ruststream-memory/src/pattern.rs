@@ -49,8 +49,8 @@ use ruststream_core::{
 /// fn app() -> RustStream {
 ///     let broker = MemoryBroker::new().routing(Routing::MostSpecific);
 ///     RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(broker, |b| {
-///         b.include(europe);
-///         b.include(elsewhere);
+///         b.include(europe)
+///         .include(elsewhere)
 ///     })
 /// }
 /// # }
@@ -395,7 +395,7 @@ impl Routing {
 ///
 /// fn app() -> RustStream {
 ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(audit);
+///         b.include(audit)
 ///     })
 /// }
 /// # }
@@ -431,7 +431,7 @@ impl MemoryPattern {
     ///
     /// fn app() -> RustStream {
     ///     RustStream::new(AppInfo::new("audit", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-    ///         b.include(audit);
+    ///         b.include(audit)
     ///     })
     /// }
     /// # }

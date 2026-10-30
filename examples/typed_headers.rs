@@ -101,7 +101,7 @@ mod handler {
 
     fn app() -> impl App {
         RustStream::new(AppInfo::new("transcoder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert).out(Events, Publish).build();
+            b.include(convert).out(Events, Publish)
         })
     }
 
@@ -151,9 +151,8 @@ mod message {
     // --8<-- [end:message]
 
     fn app() -> impl App {
-        RustStream::new(AppInfo::new("store", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(store);
-        })
+        RustStream::new(AppInfo::new("store", "0.1.0"))
+            .with_broker(MemoryBroker::new(), |b| b.include(store))
     }
 
     #[tokio::test]
@@ -244,7 +243,6 @@ mod stamp {
             b.include(convert)
                 .out(Events, Publish)
                 .transform(Stamp(origin))
-                .build();
         })
     }
     // --8<-- [end:stamp]

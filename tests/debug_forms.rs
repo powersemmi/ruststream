@@ -40,21 +40,15 @@ async fn slot(_order: &Order, Out(out): Out<impl Publisher>) -> HandlerOutcome {
     HandlerOutcome::ack()
 }
 
-/// The app module: a mount guard names the terminal it commits through and elides the scope it
-/// borrows, and a running app shows its subscriber and broker counts and its shutdown timeout.
+/// The app module: a scope names itself and elides what it borrows, and a running app shows its
+/// subscriber and broker counts and its shutdown timeout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_app_types_render_their_debug_forms() {
     let app = RustStream::new(AppInfo::new("debug", "0.1.0"))
         .shutdown_timeout(Duration::from_secs(5))
         .with_broker(MemoryBroker::new(), |b| {
-            // A reply-only registration is complete as it stands, so dropping the guard commits.
-            let mounting = b.include(answer);
-            assert_eq!(format!("{mounting:?}"), "Mounting { .. }");
-            drop(mounting);
-
-            let slots = b.include(slot);
-            assert_eq!(format!("{slots:?}"), "MountingSlots { .. }");
-            slots.out(DefaultSlot, Publish).build();
+            assert_eq!(format!("{b:?}"), "BrokerScope { .. }");
+            b.include(answer).include(slot).out(DefaultSlot, Publish)
         });
 
     let running = app.start().await.expect("startup failed");
@@ -126,9 +120,7 @@ async fn the_testing_types_render_their_debug_forms() {
     let app = RustStream::new(AppInfo::new("debug", "0.1.0")).with_broker_labeled(
         "east",
         MemoryBroker::new(),
-        |b| {
-            b.include(slot).out(DefaultSlot, Publish).build();
-        },
+        |b| b.include(slot).out(DefaultSlot, Publish),
     );
     let tb = TestApp::with_state(app, |brokers| {
         assert_eq!(format!("{brokers:?}"), "TestBrokers { brokers: 1, .. }");

@@ -114,7 +114,6 @@ async fn a_transactional_entry_settles_its_scope_atomically() {
         RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("ledger.orders", SettleAtomically).build())
                 .out(Journal, TransactionalPublish)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
     let broker = tb.broker::<MemoryBroker>();
@@ -281,10 +280,8 @@ async fn a_request_reply_entry_correlates_its_reply() {
         RustStream::new(AppInfo::new("quotes", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("quotes.ask", Respond).build())
                 .out(Answers, Publish)
-                .build();
-            b.include(subscriber("quotes.orders", AskQuote).build())
+                .include(subscriber("quotes.orders", AskQuote).build())
                 .out(Quotes, Request)
-                .build();
         });
     let tb = TestApp::start(app).await.expect("harness start");
     let broker = tb.broker::<MemoryBroker>();

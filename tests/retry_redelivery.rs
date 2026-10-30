@@ -204,7 +204,7 @@ async fn the_retry_position_composes_with_the_reply_wiring() {
             b.include(settle)
                 .out_retry(MemoryPublish)
                 .out_reply(MemoryPublish)
-                .codec(JsonCodec);
+                .codec(JsonCodec)
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -239,12 +239,8 @@ async fn the_retry_position_composes_with_the_reply_wiring() {
 /// the one the broker's default policy pairs.
 #[tokio::test(start_paused = true)]
 async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(reconcile);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(reconcile));
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -285,12 +281,10 @@ async fn a_deferred_retry_reaches_the_handler_through_the_reported_address() {
 /// copy left to a timer task would still be on its way when the publish returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_zero_delay_copy_arrives_without_advancing_the_clock() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(refund).out_retry(MemoryPublish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(refund).out_retry(MemoryPublish)
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -466,7 +460,7 @@ async fn a_transform_on_the_retry_slot_sets_the_deferred_copy_options() {
         |b| {
             b.include(reconcile)
                 .out_retry(PriorityPublish::default())
-                .transform(Expedite);
+                .transform(Expedite)
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -503,7 +497,7 @@ async fn a_codec_named_on_the_retry_slot_does_not_re_encode_the_copy() {
         |b| {
             b.include(reconcile)
                 .out_retry(MemoryPublish)
-                .codec(MsgpackCodec);
+                .codec(MsgpackCodec)
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -532,12 +526,10 @@ async fn a_codec_named_on_the_retry_slot_does_not_re_encode_the_copy() {
 /// copy too: the copy leaves through that publisher, not past it.
 #[tokio::test(start_paused = true)]
 async fn the_retry_publishers_base_headers_reach_the_deferred_copy() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(reconcile).out_retry(StampedPublish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(reconcile).out_retry(StampedPublish)
+        });
     let tb = TestApp::start(app).await.expect("startup failed");
 
     tb.message(&Order { id: 1 })
@@ -566,7 +558,7 @@ async fn a_router_registration_takes_the_retry_slots_steps() {
                     .codec(JsonCodec)
                     .transform(StampSource)
                     .build(),
-            );
+            )
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -629,7 +621,6 @@ async fn the_retry_slot_binds_beside_a_handlers_own_slots() {
                 .out_retry(MemoryPublish)
                 .transform(StampSource)
                 .out(Audit, MemoryPublish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -696,7 +687,6 @@ async fn a_slot_carrying_registration_declares_and_replies_on_one_chain() {
                 .dead_letter("ledger.dead")
                 .out_reply(MemoryPublish)
                 .out(Audit, MemoryPublish)
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -728,7 +718,6 @@ async fn a_slot_carrying_registration_names_where_its_copies_go() {
                 .out(Audit, MemoryPublish)
                 .out_retry(MemoryPublish)
                 .to("audits.retry")
-                .build();
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -765,7 +754,7 @@ async fn the_declaration_reads_in_either_order_ahead_of_the_publisher() {
                 .dead_letter("payments.dead")
                 .max_attempts(nonzero!(1u32))
                 .out_retry(MemoryPublish)
-                .to("payments");
+                .to("payments")
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -800,7 +789,7 @@ async fn a_router_chain_declares_and_names_the_destination_the_same_way() {
                     .out_retry(MemoryPublish)
                     .to("payments")
                     .build(),
-            );
+            )
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -871,7 +860,7 @@ async fn a_brokers_settings_trait_reaches_the_retry_publisher() {
         |b| {
             b.include(reconcile)
                 .out_retry(PriorityPublish::default())
-                .priority(4);
+                .priority(4)
         },
     );
     let tb = TestApp::start(app).await.expect("startup failed");
@@ -917,12 +906,10 @@ impl PublishPolicy<ConnectedMemoryBroker> for UnpairablePublish {
 /// leave through never takes a delivery.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_retry_policy_that_fails_to_pair_refuses_to_start() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(reconcile).out_retry(UnpairablePublish);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(reconcile).out_retry(UnpairablePublish)
+        });
 
     let Err(TestError::Subscribe(err)) = TestApp::start(app).await else {
         panic!("a retry policy that cannot pair must refuse to start");
@@ -976,12 +963,8 @@ async fn haunt(order: &Order) -> HandlerOutcome {
 /// open on a copy path that has nowhere to go.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_failed_address_lookup_refuses_to_start_with_the_brokers_error() {
-    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0")).with_broker(
-        MemoryBroker::new(),
-        |b| {
-            b.include(haunt);
-        },
-    );
+    let app = RustStream::new(AppInfo::new("redelivery", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| b.include(haunt));
 
     let Err(TestError::Subscribe(err)) = TestApp::start(app).await else {
         panic!("a descriptor that cannot say where its copies go must refuse to start");

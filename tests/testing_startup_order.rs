@@ -88,9 +88,7 @@ enum StartupError {
 fn failing_app(broker: Counted) -> RustStream {
     RustStream::new(AppInfo::new("failing", "0.1.0"))
         .on_startup(async move |()| Err::<(), _>(StartupError::Missing))
-        .with_broker(broker, |b| {
-            b.include(take_order);
-        })
+        .with_broker(broker, |b| b.include(take_order))
 }
 
 /// An app whose `on_startup` refuses to run once a broker is connected, as it never is in
@@ -102,9 +100,7 @@ fn observing_app(broker: Counted) -> RustStream {
             0 => Ok(()),
             connected => Err(StartupError::Connected(connected)),
         })
-        .with_broker(broker, |b| {
-            b.include(take_order);
-        })
+        .with_broker(broker, |b| b.include(take_order))
 }
 
 async fn start(app: RustStream, live: bool) -> Result<TestApp<()>, TestError> {
@@ -168,7 +164,7 @@ fn announcing_app() -> RustStream {
                 .await
                 .map_err(|err| io::Error::other(err.to_string()))
         });
-        b.include(take_order);
+        b.include(take_order)
     })
 }
 

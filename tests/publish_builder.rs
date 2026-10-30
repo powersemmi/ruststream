@@ -145,12 +145,9 @@ async fn convert(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn every_destination_form_resolves_through_one_builder() {
-    let app =
-        RustStream::new(AppInfo::new("builder", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-            b.include(convert)
-                .out(Events, Publish)
-                .out(Frames, Publish)
-                .build();
+    let app = RustStream::new(AppInfo::new("builder", "0.1.0"))
+        .with_broker(MemoryBroker::new(), |b| {
+            b.include(convert).out(Events, Publish).out(Frames, Publish)
         });
     let tb = TestApp::start(app).await.expect("harness start");
 

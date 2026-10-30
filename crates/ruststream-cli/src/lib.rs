@@ -143,7 +143,7 @@ enum Command {
 /// #[ruststream::app(flavor = "current_thread")]
 /// fn app() -> impl App {
 ///     RustStream::new(AppInfo::new("images", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
-///         b.include(resize);
+///         b.include(resize)
 ///     })
 /// }
 /// # }
@@ -426,7 +426,7 @@ mod tests {
                 .on_startup(async move |()| {
                     Err::<(), _>(io::Error::other("state producer refused"))
                 })
-                .with_broker(MemoryBroker::new(), |_b| {})
+                .with_broker(MemoryBroker::new(), |b| b.end())
         };
         let err = execute_default(&args(&["run"]), build).expect_err("the failing state producer");
         assert!(

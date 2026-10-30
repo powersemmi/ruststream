@@ -63,7 +63,7 @@ mod start_at {
                 subscriber("audit", Record)
                     .start_at(MemoryPosition::start())
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:start_at]
@@ -147,7 +147,7 @@ mod seek {
                 subscriber("jobs", Work)
                     .start_at(MemoryPosition::start())
                     .build(),
-            );
+            )
         })
     }
     // --8<-- [end:seek]

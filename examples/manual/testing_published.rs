@@ -88,7 +88,7 @@ mod assert_called_once {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
+                .out_reply(Publish)
         })
     }
 
@@ -165,7 +165,6 @@ mod assert_called {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueTickets).build())
                 .out(Tickets, Publish)
-                .build();
         })
     }
 
@@ -215,7 +214,7 @@ mod assert_not_called {
     fn app() -> impl App {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueReceipt).reply().build())
-                .out_reply(Publish);
+                .out_reply(Publish)
         })
     }
 
@@ -295,7 +294,6 @@ mod messages {
         RustStream::new(AppInfo::new("orders", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
             b.include(subscriber("orders", IssueTickets).build())
                 .out(Tickets, Publish)
-                .build();
         })
     }
 
@@ -376,7 +374,7 @@ mod with_header {
             .with_broker(MemoryBroker::new(), |b| {
                 b.include(subscriber("orders", IssueReceipt).reply().build())
                     .out_reply(Publish)
-                    .transform(SchemaVersion);
+                    .transform(SchemaVersion)
             })
     }
 

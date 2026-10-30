@@ -3,7 +3,7 @@
 //! `#[subscriber("in")] async fn f(msg: &T, Out(out): Out<impl Publisher>)` declares parameters
 //! the runtime prepares before the first delivery: an injected publisher pairs against the
 //! connected broker from the policy attached at the include site
-//! (`b.include(f).out(marker, policy).build()`). Every such parameter implements [`FromStartup`], the
+//! (`b.include(f).out(marker, policy)`). Every such parameter implements [`FromStartup`], the
 //! definition carries them as one tuple ([`InjectDef::Injections`]) resolved
 //! element-by-element against a matching extra tuple, and a single handler adapter serves
 //! every combination - fully monomorphized, nothing to check on the hot path.
@@ -136,7 +136,6 @@ use super::typed::{refused, unmaterialized};
 ///         b.include(route)
 ///             .out(Orders, Publish)
 ///             .out(Trail, Publish)
-///             .build();
 ///     })
 /// }
 /// # }

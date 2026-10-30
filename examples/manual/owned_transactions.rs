@@ -134,7 +134,6 @@ fn app() -> impl App {
     RustStream::new(AppInfo::new("ledger", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
         b.include(subscriber("transfers", Book).build())
             .out(Ledger, Publish)
-            .build();
     })
 }
 // --8<-- [end:app]
