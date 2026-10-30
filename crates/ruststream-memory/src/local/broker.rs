@@ -603,10 +603,12 @@ mod tests {
                 .await
                 .unwrap();
             drop(gone);
-            publisher
-                .publish(reading("temp", b"22"), None)
-                .await
-                .unwrap();
+            for celsius in [b"22", b"23"] {
+                publisher
+                    .publish(reading("temp", celsius), None)
+                    .await
+                    .unwrap();
+            }
         });
     }
 
