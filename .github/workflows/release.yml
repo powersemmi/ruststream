@@ -46,6 +46,7 @@ jobs:
       - name: cargo publish (dependency order)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          TOKIO_FEATURES: asyncapi,cbor,cli,conformance,json,logging,macros,memory,metrics,msgpack,otel,poll-diagnostics,testing,tokio
         run: |
           # Publish a crate only if its current version is not already on crates.io,
           # so re-running a release after a partial failure is safe. Each crate goes up after
@@ -65,13 +66,15 @@ jobs:
           publish ruststream-core --all-features
           publish ruststream-runtime --all-features
           publish ruststream-runtime-tokio --all-features
+          publish ruststream-runtime-embassy --all-features
           publish ruststream-memory --all-features
           publish ruststream-asyncapi --all-features
           publish ruststream-observability --all-features
           publish ruststream-testing --all-features
           publish ruststream-conformance --all-features
           publish ruststream-cli --all-features
-          publish ruststream --all-features
+          # The facade's two runtimes exclude each other, so it is verified with the tokio set.
+          publish ruststream --features "$TOKIO_FEATURES"
 
       - name: Generate release notes
         if: github.event_name == 'release'
