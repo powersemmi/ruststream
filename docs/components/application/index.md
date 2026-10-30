@@ -14,7 +14,7 @@ A [`RustStream`](api:ruststream::runtime::RustStream) value names the service, h
 They name the service in its logs and in its AsyncAPI document.
 [`with_broker`](api:ruststream::runtime::RustStream::with_broker) registers one broker, hands its closure a [`BrokerScope`](api:ruststream::runtime::BrokerScope), and mounts the chain the closure returns: `|b| b.include(accept).include(audit)`.
 Each handler is one more `.include(..)` on that chain, after the steps of the one before it.
-A broker the service only publishes to returns the empty chain, `|b| b.end()`.
+A broker the service only publishes to returns the empty chain, `|b| b`.
 A service with several brokers calls it once per broker.
 A broker constructor does no I/O: the application connects every broker when it [starts](./running/index.md).
 Handlers mounted with `b.include(..)` decode with the default codec; `with_broker_codec` names another one for the whole scope.

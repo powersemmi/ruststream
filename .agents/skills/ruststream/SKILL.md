@@ -158,7 +158,8 @@ opens: `|b| b.include(a).include(b)`. The cap and the dead letter follow `includ
 `.max_attempts(nonzero!(5u32)).dead_letter("orders.dead")`. Publish policies are named after it:
 `.out_reply(policy)`, `.out(Marker, policy)`, `.out_retry(policy)`, and the next `.include(..)`
 follows directly. Chain nothing and the broker's default policy is used. A broker the service only
-publishes to returns `b.end()`. A handler signature never names a broker type.
+publishes to returns the scope as it is, `|b| b`. `b.after_startup(..)` and
+`b.include_router(r)` are steps of the same chain, written before the `include`s. A handler signature never names a broker type.
 
 ### Where a message goes belongs to its type
 
