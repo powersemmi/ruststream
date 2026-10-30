@@ -366,6 +366,10 @@ fn handing_the_header_map_to_the_broker_allocates_nothing() {
     let mut out = OutgoingView::new("events", b"{}".as_slice());
     out.headers_mut().insert(STAMP, b"1".to_vec());
     let stamped_at = out.headers().get(STAMP).expect("just stamped").as_ptr() as usize;
+    // The probe's lock and the thread's runtime entry before the count: on some platforms the
+    // first of each allocates, and that is the platform's cost, not the publish's.
+    drop(taker.0.lock());
+    runtime.block_on(async {});
 
     let (outcome, spent) = allocations_of(&runtime, pipeline.run(&mut out, &taker, None));
     outcome.expect("the taker never refuses");
