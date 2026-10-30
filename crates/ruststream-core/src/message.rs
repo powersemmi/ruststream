@@ -492,291 +492,306 @@ impl<Payload: AsRef<[u8]>> OutgoingMessage<'_, Payload> {
     }
 }
 
-/// A message delivered by a [`Subscriber`].
-///
-/// Consumers inspect [`payload`] and [`headers`], then must call either [`ack`] or [`nack`]
-/// exactly once. The consuming `self` receiver in those methods makes double acknowledgement
-/// a compile-time error.
-///
-/// # Implementing it
-///
-/// Every accessor hands back a borrow, so one delivery needs one reference count, not one per
-/// field. A client's message usually holds its name, payload and headers as three counted values;
-/// a broker's delivery puts them in one block behind one `Arc` and keeps outside it what differs
-/// per copy (a log position, an attempt count). A hand-over (a copy per subscriber, a requeue, a
-/// replay) then costs one atomic increment instead of three, which a service whose client thread
-/// and dispatch task sit on different cores pays on every message. `MemoryBroker` is written that
-/// way.
-///
-/// The five defaulted methods are optional, and a broker that overrides none of them still works
-/// with every runtime feature:
-///
-/// - without [`supports_nack_after`](Self::supports_nack_after) and
-///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
-///   delivery and, after the delay, publishes a copy through the registration's retry publisher
-///   with an incremented [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html), to the
-///   address the subscription reports
-///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed));
-/// - without [`redelivery_count`](Self::redelivery_count), a `max_attempts(..)` cap reads that
-///   header;
-/// - without [`partition_key`](Self::partition_key), keyed worker lanes hand messages out
-///   round-robin;
-/// - without [`decode_error`](Self::decode_error), every delivery reads as whole.
-///
-/// The two delayed-redelivery methods are a pair: the runtime asks `supports_nack_after` first,
-/// so a `nack_after` overridden alone is never called.
-///
-/// A broker may honour a delay with a copy of its own (a wait queue behind a dead-letter
-/// exchange, a retry topic). It increments `RETRY_COUNT_HEADER` on that copy only where the
-/// transport counts nothing. Where the transport counts, the copy is a new message counted from
-/// one again, so a delivery that went round the wait queue reaches the cap as a first attempt:
-/// that is the behaviour of the broker's delay scheme, documented by its crate, with the header
-/// left out.
-///
-/// # Cancel safety
-///
-/// Implementations must document whether [`ack`] and [`nack`] are cancel-safe. If a future is
-/// dropped before completion, the broker may treat the message as still pending, leading to
-/// redelivery once the visibility timeout expires.
-///
-/// [`Subscriber`]: crate::Subscriber
-/// [`payload`]: Self::payload
-/// [`headers`]: Self::headers
-/// [`ack`]: Self::ack
-/// [`nack`]: Self::nack
-pub trait IncomingMessage: Send + Sync {
-    /// Returns the raw payload of the message.
-    fn payload(&self) -> &[u8];
-
-    /// Returns the headers attached to the message.
-    fn headers(&self) -> &HeaderMap;
-
-    /// Returns the routing key the broker partitioned this message by, or `None` when the
-    /// message carries no key.
-    ///
-    /// Defaulted to `None` so existing implementations keep compiling. Brokers whose messages
-    /// implement the [`Partitioned`](crate::Partitioned) capability override this to return the
-    /// same key, which lets the runtime preserve per-key ordering in keyed worker lanes
-    /// (`workers(n, by_key)`) without a `Partitioned` bound on every dispatch path.
-    fn partition_key(&self) -> Option<&[u8]> {
-        None
+crate::__contract_twin! {
+    send {
+        /// A message delivered by a [`Subscriber`].
+        ///
+        /// Consumers inspect [`payload`] and [`headers`], then must call either [`ack`] or [`nack`]
+        /// exactly once. The consuming `self` receiver in those methods makes double
+        /// acknowledgement a compile-time error.
+        ///
+        /// # Implementing it
+        ///
+        /// Every accessor hands back a borrow, so one delivery needs one reference count, not one
+        /// per field. A client's message usually holds its name, payload and headers as three
+        /// counted values; a broker's delivery puts them in one block behind one `Arc` and keeps
+        /// outside it what differs per copy (a log position, an attempt count). A hand-over (a copy
+        /// per subscriber, a requeue, a replay) then costs one atomic increment instead of three,
+        /// which a service whose client thread and dispatch task sit on different cores pays on
+        /// every message. `MemoryBroker` is written that way.
+        ///
+        /// The five defaulted methods are optional, and a broker that overrides none of them still
+        /// works with every runtime feature:
+        ///
+        /// - without [`supports_nack_after`](Self::supports_nack_after) and
+        ///   [`nack_after`](Self::nack_after), the runtime runs `retry_after` itself: it drops the
+        ///   delivery and, after the delay, publishes a copy through the registration's retry
+        ///   publisher with an incremented
+        ///   [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html),
+        ///   to the address the subscription reports
+        ///   ([`RedeliveryAddressed`](crate::RedeliveryAddressed));
+        /// - without [`redelivery_count`](Self::redelivery_count), a `max_attempts(..)` cap reads
+        ///   that header;
+        /// - without [`partition_key`](Self::partition_key), keyed worker lanes hand messages out
+        ///   round-robin;
+        /// - without [`decode_error`](Self::decode_error), every delivery reads as whole.
+        ///
+        /// The two delayed-redelivery methods are a pair: the runtime asks `supports_nack_after`
+        /// first, so a `nack_after` overridden alone is never called.
+        ///
+        /// A broker may honour a delay with a copy of its own (a wait queue behind a dead-letter
+        /// exchange, a retry topic). It increments `RETRY_COUNT_HEADER` on that copy only where the
+        /// transport counts nothing. Where the transport counts, the copy is a new message counted
+        /// from one again, so a delivery that went round the wait queue reaches the cap as a first
+        /// attempt: that is the behaviour of the broker's delay scheme, documented by its crate,
+        /// with the header left out.
+        ///
+        /// # Cancel safety
+        ///
+        /// Implementations must document whether [`ack`] and [`nack`] are cancel-safe. If a future
+        /// is dropped before completion, the broker may treat the message as still pending, leading
+        /// to redelivery once the visibility timeout expires.
+        ///
+        /// [`Subscriber`]: crate::Subscriber
+        /// [`payload`]: Self::payload
+        /// [`headers`]: Self::headers
+        /// [`ack`]: Self::ack
+        /// [`nack`]: Self::nack
+        pub trait IncomingMessage: Send + Sync
     }
-
-    /// How many times the broker has delivered this message, counting this delivery. `None`
-    /// where the transport counts nothing.
-    ///
-    /// Defaulted to `None`, which is the honest answer for a transport with no counter of its
-    /// own; the runtime then counts with its own
-    /// [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html) alone. A broker whose
-    /// deliveries carry a count reports it here - `JetStream`'s `num_delivered`, a claimed Redis
-    /// stream entry's delivery count, Pulsar's `redelivery_count`, SQS's
-    /// `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt`, AMQP 1.0's `delivery-count` - so
-    /// that a registration's `max_attempts(..)` cap counts the broker's own redeliveries rather
-    /// than only the copies this process published. The first delivery of a message answers `1`.
-    ///
-    /// Where the transport counts, this count is the only one a cap reads: the framework's header
-    /// is never mixed in, and a copy your crate republishes starts the transport's count afresh.
-    /// A delay or a requeue the count does not grow on is the broker's behaviour to document, not
-    /// something to work around by adding the header back.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::{AckError, HeaderMap, IncomingMessage};
-    ///
-    /// struct Delivered {
-    ///     payload: Vec<u8>,
-    ///     headers: HeaderMap,
-    ///     delivered: u64,
-    /// }
-    ///
-    /// impl IncomingMessage for Delivered {
-    ///     fn payload(&self) -> &[u8] {
-    ///         &self.payload
-    ///     }
-    ///     fn headers(&self) -> &HeaderMap {
-    ///         &self.headers
-    ///     }
-    ///     fn redelivery_count(&self) -> Option<u64> {
-    ///         Some(self.delivered)
-    ///     }
-    ///     async fn ack(self) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
-    fn redelivery_count(&self) -> Option<u64> {
-        None
+    local {
+        #[doc = include_str!("local/incoming.md")]
+        pub trait LocalIncomingMessage
     }
+    blanket { impl<T: IncomingMessage> LocalIncomingMessage for T }
+    forward { <T as IncomingMessage> }
+    docs { IncomingMessage }
+    fns {
+        /// Returns the raw payload of the message.
+        fn payload(&self) -> [&[u8]];
 
-    /// The error the broker met while reading this delivery, or `None` when it read the delivery
-    /// whole.
-    ///
-    /// A broker that reads a delivery into a value itself, such as a database queue reading a row
-    /// through its driver, can fail where no codec runs: a column whose type differs from the
-    /// field's. It reports that error here. The runtime asks before it materializes the handler's
-    /// input, on every input lane and for each delivery of a batch, and settles a delivery that
-    /// reports an error by the subscription's decode-failure policy
-    /// ([`on_failure(decode = ..)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.FailurePolicies.html)), as it settles a payload that
-    /// does not decode: the handler does not run, and the warning names the subscription, the
-    /// message type and the error.
-    ///
-    /// A batch that lends its values as one slice ([`CarriesBatch`](crate::CarriesBatch)) has no
-    /// value for such a delivery: the body reads the slice before the runtime reaches the
-    /// deliveries, so the batch puts the delivery past the end of the slice, with the deliveries
-    /// whose value is gone.
-    ///
-    /// Defaulted to `None`, which costs a broker that keeps it nothing: the check compiles to a
-    /// constant and folds away. A broker that overrides it pays one branch per delivery.
-    ///
-    /// # Examples
-    ///
-    /// A queue table's delivery keeps the row its driver read, or the error the driver met:
-    ///
-    /// ```
-    /// use std::str;
-    ///
-    /// use ruststream::codec::CodecError;
-    /// use ruststream::{AckError, Carries, HeaderMap, IncomingMessage};
-    ///
-    /// /// One row of the queue table.
-    /// struct SendEmail {
-    ///     to: String,
-    /// }
-    ///
-    /// /// A claimed row: the bytes the table stores, and the row read from them or the error met
-    /// /// reading it.
-    /// struct Claimed {
-    ///     bytes: Vec<u8>,
-    ///     headers: HeaderMap,
-    ///     row: Result<SendEmail, CodecError>,
-    /// }
-    ///
-    /// impl Claimed {
-    ///     /// Reads the row the way the driver does: the recipient column holds text.
-    ///     fn read(bytes: Vec<u8>, headers: HeaderMap) -> Self {
-    ///         let row = str::from_utf8(&bytes)
-    ///             .map(|to| SendEmail { to: to.to_owned() })
-    ///             .map_err(|err| CodecError::Decode(Box::new(err)));
-    ///         Self { bytes, headers, row }
-    ///     }
-    /// }
-    ///
-    /// impl Carries<SendEmail> for Claimed {
-    ///     fn carried(&self) -> Option<&SendEmail> {
-    ///         self.row.as_ref().ok()
-    ///     }
-    /// }
-    ///
-    /// impl IncomingMessage for Claimed {
-    ///     fn payload(&self) -> &[u8] {
-    ///         &self.bytes
-    ///     }
-    ///     fn headers(&self) -> &HeaderMap {
-    ///         &self.headers
-    ///     }
-    ///     fn decode_error(&self) -> Option<&CodecError> {
-    ///         self.row.as_ref().err()
-    ///     }
-    ///     async fn ack(self) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// // A recipient that is not text: the runtime settles this claim by the decode policy.
-    /// let claimed = Claimed::read(vec![0xff, 0xfe], HeaderMap::new());
-    /// assert!(claimed.decode_error().is_some());
-    /// ```
-    fn decode_error(&self) -> Option<&CodecError> {
-        None
-    }
+        /// Returns the headers attached to the message.
+        fn headers(&self) -> [&HeaderMap];
 
-    /// Acknowledges successful processing. Consumes the message handle.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AckError`] when the broker rejects the acknowledgement, the operation times out,
-    /// or acknowledgement is not supported by this transport.
-    fn ack(self) -> impl Future<Output = Result<(), AckError>> + Send;
+        /// Returns the routing key the broker partitioned this message by, or `None` when the
+        /// message carries no key.
+        ///
+        /// Defaulted to `None` so existing implementations keep compiling. Brokers whose messages
+        /// implement the [`Partitioned`](crate::Partitioned) capability override this to return the
+        /// same key, which lets the runtime preserve per-key ordering in keyed worker lanes
+        /// (`workers(n, by_key)`) without a `Partitioned` bound on every dispatch path.
+        fn partition_key(&self) -> [Option<&[u8]>] {
+            None
+        }
 
-    /// Negatively acknowledges the message. When `requeue` is `true` the broker should
-    /// redeliver according to its own retry policy; when `false` it should drop or dead-letter
-    /// the message.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AckError`] under the same conditions as [`ack`].
-    ///
-    /// [`ack`]: Self::ack
-    fn nack(self, requeue: bool) -> impl Future<Output = Result<(), AckError>> + Send;
+        /// How many times the broker has delivered this message, counting this delivery. `None`
+        /// where the transport counts nothing.
+        ///
+        /// Defaulted to `None`, which is the honest answer for a transport with no counter of its
+        /// own; the runtime then counts with its own
+        /// [`RETRY_COUNT_HEADER`](https://docs.rs/ruststream/latest/ruststream/runtime/constant.RETRY_COUNT_HEADER.html)
+        /// alone. A broker whose deliveries carry a count reports it here - `JetStream`'s
+        /// `num_delivered`, a claimed Redis stream entry's delivery count, Pulsar's
+        /// `redelivery_count`, SQS's `ApproximateReceiveCount`, Pub/Sub's `delivery_attempt`, AMQP
+        /// 1.0's `delivery-count` - so that a registration's `max_attempts(..)` cap counts the
+        /// broker's own redeliveries rather than only the copies this process published. The first
+        /// delivery of a message answers `1`.
+        ///
+        /// Where the transport counts, this count is the only one a cap reads: the framework's
+        /// header is never mixed in, and a copy your crate republishes starts the transport's count
+        /// afresh. A delay or a requeue the count does not grow on is the broker's behaviour to
+        /// document, not something to work around by adding the header back.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use ruststream::{AckError, HeaderMap, IncomingMessage};
+        ///
+        /// struct Delivered {
+        ///     payload: Vec<u8>,
+        ///     headers: HeaderMap,
+        ///     delivered: u64,
+        /// }
+        ///
+        /// impl IncomingMessage for Delivered {
+        ///     fn payload(&self) -> &[u8] {
+        ///         &self.payload
+        ///     }
+        ///     fn headers(&self) -> &HeaderMap {
+        ///         &self.headers
+        ///     }
+        ///     fn redelivery_count(&self) -> Option<u64> {
+        ///         Some(self.delivered)
+        ///     }
+        ///     async fn ack(self) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        /// }
+        /// ```
+        fn redelivery_count(&self) -> [Option<u64>] {
+            None
+        }
 
-    /// Reports whether this transport can honor [`nack_after`](Self::nack_after) natively.
-    ///
-    /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
-    /// message back for `delay` on its own. The runtime reads this BEFORE settling a
-    /// [`retry_after`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html#method.retry_after) outcome: when it returns `true`
-    /// the runtime calls [`nack_after`](Self::nack_after) and trusts the broker timer; when it
-    /// returns `false` the runtime applies its broker-agnostic deferred-republish fallback
-    /// instead, so the delay is never silently dropped. Brokers with native delayed redelivery
-    /// (`JetStream` `NAK` with delay, a durable delayed queue) override this to `true` and
-    /// override `nack_after`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ruststream::{AckError, HeaderMap, IncomingMessage};
-    ///
-    /// struct CoreMessage {
-    ///     payload: Vec<u8>,
-    ///     headers: HeaderMap,
-    /// }
-    ///
-    /// impl IncomingMessage for CoreMessage {
-    ///     fn payload(&self) -> &[u8] {
-    ///         &self.payload
-    ///     }
-    ///     fn headers(&self) -> &HeaderMap {
-    ///         &self.headers
-    ///     }
-    ///     async fn ack(self) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
-    ///         Ok(())
-    ///     }
-    ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
-    /// }
-    /// ```
-    fn supports_nack_after(&self) -> bool {
-        false
-    }
+        /// The error the broker met while reading this delivery, or `None` when it read the
+        /// delivery whole.
+        ///
+        /// A broker that reads a delivery into a value itself, such as a database queue reading a
+        /// row through its driver, can fail where no codec runs: a column whose type differs from
+        /// the field's. It reports that error here. The runtime asks before it materializes the
+        /// handler's input, on every input lane and for each delivery of a batch, and settles a
+        /// delivery that reports an error by the subscription's decode-failure policy
+        /// ([`on_failure(decode =
+        /// ..)`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.FailurePolicies.html)),
+        /// as it settles a payload that does not decode: the handler does not run, and the warning
+        /// names the subscription, the message type and the error.
+        ///
+        /// A batch that lends its values as one slice ([`CarriesBatch`](crate::CarriesBatch)) has
+        /// no value for such a delivery: the body reads the slice before the runtime reaches the
+        /// deliveries, so the batch puts the delivery past the end of the slice, with the
+        /// deliveries whose value is gone.
+        ///
+        /// Defaulted to `None`, which costs a broker that keeps it nothing: the check compiles to a
+        /// constant and folds away. A broker that overrides it pays one branch per delivery.
+        ///
+        /// # Examples
+        ///
+        /// A queue table's delivery keeps the row its driver read, or the error the driver met:
+        ///
+        /// ```
+        /// use std::str;
+        ///
+        /// use ruststream::codec::CodecError;
+        /// use ruststream::{AckError, Carries, HeaderMap, IncomingMessage};
+        ///
+        /// /// One row of the queue table.
+        /// struct SendEmail {
+        ///     to: String,
+        /// }
+        ///
+        /// /// A claimed row: the bytes the table stores, and the row read from them or the error met
+        /// /// reading it.
+        /// struct Claimed {
+        ///     bytes: Vec<u8>,
+        ///     headers: HeaderMap,
+        ///     row: Result<SendEmail, CodecError>,
+        /// }
+        ///
+        /// impl Claimed {
+        ///     /// Reads the row the way the driver does: the recipient column holds text.
+        ///     fn read(bytes: Vec<u8>, headers: HeaderMap) -> Self {
+        ///         let row = str::from_utf8(&bytes)
+        ///             .map(|to| SendEmail { to: to.to_owned() })
+        ///             .map_err(|err| CodecError::Decode(Box::new(err)));
+        ///         Self { bytes, headers, row }
+        ///     }
+        /// }
+        ///
+        /// impl Carries<SendEmail> for Claimed {
+        ///     fn carried(&self) -> Option<&SendEmail> {
+        ///         self.row.as_ref().ok()
+        ///     }
+        /// }
+        ///
+        /// impl IncomingMessage for Claimed {
+        ///     fn payload(&self) -> &[u8] {
+        ///         &self.bytes
+        ///     }
+        ///     fn headers(&self) -> &HeaderMap {
+        ///         &self.headers
+        ///     }
+        ///     fn decode_error(&self) -> Option<&CodecError> {
+        ///         self.row.as_ref().err()
+        ///     }
+        ///     async fn ack(self) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        /// }
+        ///
+        /// // A recipient that is not text: the runtime settles this claim by the decode policy.
+        /// let claimed = Claimed::read(vec![0xff, 0xfe], HeaderMap::new());
+        /// assert!(claimed.decode_error().is_some());
+        /// ```
+        fn decode_error(&self) -> [Option<&CodecError>] {
+            None
+        }
 
-    /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
-    /// `delay` from now.
-    ///
-    /// The default returns [`AckError::Unsupported`]: a transport without native delayed
-    /// redelivery cannot honor the delay, and the default reports that honestly rather than
-    /// silently degrading to an immediate `nack(true)`. The runtime never relies on this default
-    /// to honor a delay; it checks [`supports_nack_after`](Self::supports_nack_after) first and
-    /// only calls `nack_after` when that is `true`, otherwise running its own deferred-republish
-    /// fallback. Brokers with native delayed redelivery override both methods.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AckError::Unsupported`] by default. Overrides return [`AckError`] under the same
-    /// conditions as [`nack`](Self::nack).
-    fn nack_after(self, delay: Duration) -> impl Future<Output = Result<(), AckError>> + Send
-    where
-        Self: Sized,
-    {
-        let _ = delay;
-        future::ready(Err(AckError::Unsupported))
+        /// Acknowledges successful processing. Consumes the message handle.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`AckError`] when the broker rejects the acknowledgement, the operation times
+        /// out, or acknowledgement is not supported by this transport.
+        fn ack(self) -> [impl Future<Output = Result<(), AckError>> @send { + Send }];
+
+        /// Negatively acknowledges the message. When `requeue` is `true` the broker should
+        /// redeliver according to its own retry policy; when `false` it should drop or dead-letter
+        /// the message.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`AckError`] under the same conditions as [`ack`].
+        ///
+        /// [`ack`]: Self::ack
+        fn nack(self, requeue: bool)
+            -> [impl Future<Output = Result<(), AckError>> @send { + Send }];
+
+        /// Reports whether this transport can honor [`nack_after`](Self::nack_after) natively.
+        ///
+        /// Defaulted to `false`: a transport without native delayed redelivery cannot hold a
+        /// message back for `delay` on its own. The runtime reads this BEFORE settling a
+        /// [`retry_after`](https://docs.rs/ruststream/latest/ruststream/runtime/struct.HandlerOutcome.html#method.retry_after)
+        /// outcome: when it returns `true` the runtime calls [`nack_after`](Self::nack_after) and
+        /// trusts the broker timer; when it returns `false` the runtime applies its broker-agnostic
+        /// deferred-republish fallback instead, so the delay is never silently dropped. Brokers
+        /// with native delayed redelivery (`JetStream` `NAK` with delay, a durable delayed queue)
+        /// override this to `true` and override `nack_after`.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use ruststream::{AckError, HeaderMap, IncomingMessage};
+        ///
+        /// struct CoreMessage {
+        ///     payload: Vec<u8>,
+        ///     headers: HeaderMap,
+        /// }
+        ///
+        /// impl IncomingMessage for CoreMessage {
+        ///     fn payload(&self) -> &[u8] {
+        ///         &self.payload
+        ///     }
+        ///     fn headers(&self) -> &HeaderMap {
+        ///         &self.headers
+        ///     }
+        ///     async fn ack(self) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        ///     async fn nack(self, _requeue: bool) -> Result<(), AckError> {
+        ///         Ok(())
+        ///     }
+        ///     // No native delayed redelivery: keep the default, opting into the runtime fallback.
+        /// }
+        /// ```
+        fn supports_nack_after(&self) -> [bool] {
+            false
+        }
+
+        /// Negatively acknowledges the message, asking the broker to redeliver it no sooner than
+        /// `delay` from now.
+        ///
+        /// The default returns [`AckError::Unsupported`]: a transport without native delayed
+        /// redelivery cannot honor the delay, and the default reports that honestly rather than
+        /// silently degrading to an immediate `nack(true)`. The runtime never relies on this
+        /// default to honor a delay; it checks [`supports_nack_after`](Self::supports_nack_after)
+        /// first and only calls `nack_after` when that is `true`, otherwise running its own
+        /// deferred-republish fallback. Brokers with native delayed redelivery override both
+        /// methods.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`AckError::Unsupported`] by default. Overrides return [`AckError`] under the
+        /// same conditions as [`nack`](Self::nack).
+        fn nack_after(self, delay: Duration)
+            -> [impl Future<Output = Result<(), AckError>> @send { + Send }] where [Self: Sized] {
+            let _ = delay;
+            future::ready(Err(AckError::Unsupported))
+        }
     }
 }
 
@@ -786,6 +801,8 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
 
+    // The parent module defines both flavors of the trait, so a method call on a concrete
+    // delivery here names the one it means.
     use super::*;
 
     #[test]
@@ -862,16 +879,16 @@ mod tests {
             payload: b"body".to_vec(),
             headers: HeaderMap::new(),
         };
-        assert_eq!(stub.payload(), b"body");
+        assert_eq!(IncomingMessage::payload(&stub), b"body");
         // The default partition_key is None (no key).
-        assert!(stub.partition_key().is_none());
+        assert!(IncomingMessage::partition_key(&stub).is_none());
         // The default reports no decode error, so the runtime reads every delivery itself.
-        assert!(stub.decode_error().is_none());
+        assert!(IncomingMessage::decode_error(&stub).is_none());
         // The default reports no native delayed redelivery, so the runtime uses its fallback.
-        assert!(!stub.supports_nack_after());
+        assert!(!IncomingMessage::supports_nack_after(&stub));
         // The default nack_after signals "not honored" rather than silently degrading.
         assert!(matches!(
-            stub.nack_after(Duration::from_secs(1)).await,
+            IncomingMessage::nack_after(stub, Duration::from_secs(1)).await,
             Err(AckError::Unsupported)
         ));
     }

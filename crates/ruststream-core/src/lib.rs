@@ -80,6 +80,8 @@ mod subscriber;
 #[cfg(feature = "alloc")]
 mod subscription;
 #[cfg(feature = "alloc")]
+mod twin;
+#[cfg(feature = "alloc")]
 mod typed_headers;
 #[cfg(feature = "alloc")]
 pub mod wire;
@@ -90,12 +92,14 @@ pub use bytes::{Bytes, BytesMut};
 pub use bytes_utils::Str;
 
 #[cfg(feature = "alloc")]
-pub use broker::{Broker, Connected, ConnectedBroker};
+pub use broker::{Broker, Connected, ConnectedBroker, LocalBroker, LocalConnectedBroker};
 #[cfg(feature = "alloc")]
 pub use capability::{
     ApiKeyLocation, BatchSubscriber, Carries, CarriesBatch, DescribeServer, HttpApiKeyLocation,
-    OwnedTransactions, Partitioned, Positioned, RequestReply, SecurityScheme, Seekable, Seeker,
-    ServerSpec, Subscribe, Transaction, TransactionalPublisher,
+    LocalBatchSubscriber, LocalDescribeServer, LocalOwnedTransactions, LocalPositioned,
+    LocalRequestReply, LocalSeekable, LocalSeeker, LocalSubscribe, LocalTransaction,
+    LocalTransactionalPublisher, OwnedTransactions, Partitioned, Positioned, RequestReply,
+    SecurityScheme, Seekable, Seeker, ServerSpec, Subscribe, Transaction, TransactionalPublisher,
 };
 #[cfg(feature = "alloc")]
 pub use describe::{AppId, AppIdError, Contact, ExternalDocs, License, Tag};
@@ -106,13 +110,14 @@ pub use field::{BuildBatchContext, BuildContext, ContextField, Field, FieldMut};
 #[cfg(feature = "alloc")]
 pub use headers::HeaderMap;
 #[cfg(feature = "alloc")]
-pub use message::{IncomingMessage, OutgoingMessage, RawMessage};
+pub use message::{IncomingMessage, LocalIncomingMessage, OutgoingMessage, RawMessage};
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use publisher::PayloadEncode;
 #[cfg(feature = "alloc")]
 pub use publisher::{
-    DefaultPublish, Lend, OutgoingFor, PairError, PayloadForm, PublishPolicy, Publisher, Take,
+    DefaultPublish, Lend, LocalDefaultPublish, LocalPublishPolicy, LocalPublisher, OutgoingFor,
+    PairError, PayloadForm, PublishPolicy, Publisher, Take,
 };
 #[cfg(feature = "alloc")]
 pub use schema::{
@@ -120,11 +125,12 @@ pub use schema::{
     NameTemplate, NoHeaders, OutgoingDestination, WithHeaders,
 };
 #[cfg(feature = "alloc")]
-pub use subscriber::Subscriber;
+pub use subscriber::{LocalSubscriber, Subscriber};
 #[cfg(feature = "alloc")]
 pub use subscription::{
-    AddressedCopies, BrokerMoves, CopyPath, FromName, Name, NamedCopies, RedeliveryAddress,
-    RedeliveryAddressed, RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
+    AddressedCopies, BrokerMoves, CopyPath, FromName, LocalRedeliveryAddressed,
+    LocalSubscriptionSource, Name, NamedCopies, RedeliveryAddress, RedeliveryAddressed,
+    RetryDeclaration, StartAt, SubscriptionSource, Unnamed,
 };
 #[cfg(feature = "alloc")]
 pub use typed_headers::{DeserializeHeadersError, SerializeHeadersError};
