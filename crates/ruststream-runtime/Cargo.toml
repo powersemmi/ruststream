@@ -31,6 +31,7 @@ alloc = [
     "dep:thiserror",
     "dep:tracing",
     "tracing/attributes",
+    "dep:pin-project-lite",
 ]
 # The standard library's side of the body and of its dependencies: the panic policy's catching
 # part, the mutex-backed broker wrapper, and every feature below that reaches the standard library.
