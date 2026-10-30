@@ -2,18 +2,9 @@ error[E0277]: a registration on a local router takes no worker count at run time
   --> tests/ui/router_takes_workers.rs:44:14
    |
 44 |             .workers(Workers::pool(nonzero!(4)))
-   |              ^^^^^^^ the trait `PublishPipeline` is not implemented for `LocalPipeline`
+   |              ^^^^^^^ the trait `ruststream_runtime::TakesWorkers` is not implemented for `LocalPipeline`
    |
    = note: the embedded runner fixes the count at its mount site: on EmbeddedApp write `.include(def).pool::<N>()` or `.keyed::<N>()`
-help: the following other types implement trait `PublishPipeline`
-  --> $WORKSPACE/crates/ruststream-runtime/src/publish/pipeline.rs
-   |
-   | impl PublishPipeline for PublishIdentity {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PublishIdentity`
-...
-   | impl<Head: PublishLayer, Tail: PublishPipeline> PublishPipeline for PublishStack<Head, Tail> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `PublishStack<Head, Tail>`
-   = note: required for `LocalPipeline` to implement `ruststream_runtime::TakesWorkers`
 note: required by a bound in `Router::<B, (ruststream_runtime::router::routes::SubscribeRoute<S, H, Cx>, Routes), RouteCodec, RouteLayers, RoutePipe>::workers`
   --> $WORKSPACE/crates/ruststream-runtime/src/router/builder.rs
    |
