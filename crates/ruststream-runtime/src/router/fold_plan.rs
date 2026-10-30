@@ -24,7 +24,7 @@ use crate::lifecycle::BoxError;
 use crate::middleware::LocalBlanketLayer;
 use crate::typed::{LocalTyped, Typed};
 use crate::{
-    BuildContext, Handler, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
+    BuildContext, LocalBroker, LocalConnected, LocalIncomingMessage, LocalSubscriber,
     LocalSubscriptionSource,
 };
 
@@ -223,7 +223,7 @@ where
     Source::Subscriber: LocalSubscriber<Message = M>,
     M: LocalIncomingMessage,
     Input: Materialize<DecodeCodec, M>,
-    Inner: Handler<Input::Target, Cx, State>,
+    Inner: LocalHandler<Input::Target, Cx, State>,
     Cx: BuildContext<M> + Send + Sync + 'static,
     Plan: LocalDispatch,
 {

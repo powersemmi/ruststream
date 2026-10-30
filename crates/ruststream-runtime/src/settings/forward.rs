@@ -29,7 +29,7 @@ use crate::handler::HandlerOutcome;
 use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
 use crate::input::InputKind;
 use crate::metadata::OutgoingMessageMetadata;
-use crate::publishing::{PublishingCall, PublishingDef};
+use crate::publishing::{LocalPublishingCall, PublishingCall, PublishingDef};
 use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots};
 use crate::subscriber_def::SubscriberDef;
 
@@ -203,6 +203,23 @@ where
         ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
     ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> + Send {
         self.def.call(input, injections, ctx)
+    }
+}
+
+impl<Def, Src, State, DC, S> LocalPublishingCall<S> for SubscriberBuilder<Def, Src, State, DC>
+where
+    Def: LocalPublishingCall<S>,
+    Src: Clone + Send + Sync,
+    State: Send + Sync,
+    DC: Send + Sync,
+{
+    fn call_local(
+        &self,
+        input: &<<Def as PublishingDef>::Input as InputKind>::Target,
+        injections: &<Def as PublishingDef>::Injections,
+        ctx: &mut Context<'_, <Def as PublishingDef>::Context, S>,
+    ) -> impl Future<Output = Result<<Def as PublishingDef>::Reply, HandlerOutcome>> {
+        self.def.call_local(input, injections, ctx)
     }
 }
 

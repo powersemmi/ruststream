@@ -561,6 +561,58 @@ where
     }
 }
 
+/// The runner family an adapter calls its inner handler through: [`SendCall`] on a runner that
+/// may move the future across threads, [`LocalCall`] on one that polls it where it started.
+///
+/// One adapter body serves both families: the tokio impls call it with [`SendCall`], so the
+/// future is the `Handler`'s own and provably `Send`, and the local twins with [`LocalCall`].
+pub(crate) trait CallHandler<Inner, M: ?Sized, C, S> {
+    /// Runs `inner` on one input.
+    fn handle(
+        inner: &Inner,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome>;
+}
+
+/// Calls the inner handler as a [`Handler`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SendCall;
+
+/// Calls the inner handler as a [`LocalHandler`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LocalCall;
+
+impl<Inner, M, C, S> CallHandler<Inner, M, C, S> for SendCall
+where
+    Inner: Handler<M, C, S>,
+    M: ?Sized,
+{
+    #[inline]
+    fn handle(
+        inner: &Inner,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        Handler::handle(inner, msg, ctx)
+    }
+}
+
+impl<Inner, M, C, S> CallHandler<Inner, M, C, S> for LocalCall
+where
+    Inner: LocalHandler<M, C, S>,
+    M: ?Sized,
+{
+    #[inline]
+    fn handle(
+        inner: &Inner,
+        msg: &M,
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        LocalHandler::handle(inner, msg, ctx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::format;

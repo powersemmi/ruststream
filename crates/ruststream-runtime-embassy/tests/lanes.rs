@@ -30,8 +30,8 @@ use ruststream_core::{
     LocalSubscriber, LocalSubscriptionSource,
 };
 use ruststream_runtime::{
-    Clock, Context, Deserialized, Handle, HandlerOutcome, Input, IntoSource, SoloDeserialized,
-    subscriber,
+    Clock, Context, Deserialized, HandlerOutcome, Input, IntoSource, LocalHandle, SoloDeserialized,
+    local_subscriber,
 };
 use ruststream_runtime_embassy::{Control, EmbassyClock, EmbeddedApp, MountSteps, Mounts};
 use static_cell::StaticCell;
@@ -222,13 +222,13 @@ struct Slow {
     record: &'static Record,
 }
 
-impl Handle<Seq> for Slow {
+impl LocalHandle<Seq> for Slow {
     fn handle(
         &self,
         seq: &Seq,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         let record = self.record;
         let now = record.in_flight.fetch_add(1, Ordering::Relaxed) + 1;
         record.peak.fetch_max(now, Ordering::Relaxed);
@@ -259,7 +259,7 @@ fn pooled(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     };
     EmbeddedApp::new().with_broker(broker, |b| {
         b.include(
-            subscriber(
+            local_subscriber(
                 KeyedSource,
                 Slow {
                     record: &stand.record,
@@ -278,7 +278,7 @@ fn keyed(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     };
     EmbeddedApp::new().with_broker(broker, |b| {
         b.include(
-            subscriber(
+            local_subscriber(
                 KeyedSource,
                 Slow {
                     record: &stand.record,

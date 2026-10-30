@@ -34,7 +34,7 @@ use super::context::Context;
 use super::dispatch::{Slot, Workers, settle_outcome};
 use super::failure::{FailurePolicies, FailurePolicy};
 use super::handle::Deserialized;
-use super::handler::{HandlerOutcome, HandlerResult};
+use super::handler::{HandlerOutcome, HandlerResult, LocalCall, SendCall};
 use super::host::{Detach, HostDetach};
 use super::input::{DecodeWith, InputKind, REPORTED};
 use super::metadata::HandlerMetadata;
@@ -193,6 +193,50 @@ where
         // `&[T]` (which would demand `T: Sync` for it to be `Send`).
         let fut = (self)(batch, ctx);
         async move { fut.await.into_batch_result() }
+    }
+}
+
+/// The local twin of [`SliceHandler`]: a handler of one whole decoded batch on a runner that
+/// polls it where it started, so its future need not be `Send`.
+pub(crate) trait LocalSliceHandler<T, C = (), S = ()> {
+    /// Handles one decoded batch. See [`SliceHandler::handle_slice`].
+    fn handle_slice(
+        &self,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult>;
+}
+
+/// The runner family a batch adapter calls its inner handler through, as
+/// [`CallHandler`](super::handler::CallHandler) is for one delivery at a time.
+pub(crate) trait CallSlice<Inner, T, C, S> {
+    /// Runs `inner` on one decoded batch.
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult>;
+}
+
+impl<Inner: SliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for SendCall {
+    #[inline]
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        SliceHandler::handle_slice(inner, batch, ctx)
+    }
+}
+
+impl<Inner: LocalSliceHandler<T, C, S>, T, C, S> CallSlice<Inner, T, C, S> for LocalCall {
+    #[inline]
+    fn handle_slice(
+        inner: &Inner,
+        batch: &[T],
+        ctx: &mut Context<'_, C, S>,
+    ) -> impl Future<Output = BatchResult> {
+        LocalSliceHandler::handle_slice(inner, batch, ctx)
     }
 }
 
@@ -559,7 +603,7 @@ where
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) -> impl Future<Output = ()> + Send {
-        self.handle_local(batch, scratch, ctx, host)
+        self.handle_local::<SendCall, C, S, Host>(batch, scratch, ctx, host)
     }
 }
 
@@ -570,7 +614,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
     /// [`LocalBatch`](local::LocalBatch).
     // `Send` exactly where the deliveries are: the `BatchHandler` impl's signature proves it there.
     #[allow(clippy::future_not_send)]
-    pub(crate) async fn handle_local<C, S, Host: HostDetach>(
+    pub(crate) async fn handle_local<Via, C, S, Host: HostDetach>(
         &self,
         batch: Vec<M>,
         _scratch: &mut (),
@@ -579,7 +623,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
     ) where
         M: LocalIncomingMessage,
         F: Deserialized,
-        Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+        Via: for<'p> CallSlice<Inner, F::Output<'p>, C, S>,
         C: BuildBatchContext<M> + Send + Sync + 'static,
     {
         let subscription = ctx.subscription();
@@ -621,7 +665,7 @@ impl<M, F, Inner> DeserializedBatch<M, F, Inner> {
         let result = if values.is_empty() {
             BatchResult::PerElement(Vec::new())
         } else {
-            self.inner.handle_slice(&values, ctx).await
+            Via::handle_slice(&self.inner, &values, ctx).await
         };
         drop(values);
         settle_split_batch(batch, rejected, result, subscription, delivery, host).await;

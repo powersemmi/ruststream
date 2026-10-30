@@ -13,7 +13,8 @@ use crate::handle::Deserialized;
 use crate::host::{Detach, HostDetach};
 use crate::{BuildBatchContext, LocalIncomingMessage};
 
-use super::{BatchHandler, DeserializedBatch, SliceHandler, TakenBatch};
+use super::{BatchHandler, DeserializedBatch, LocalSliceHandler, TakenBatch};
+use crate::handler::LocalCall;
 
 /// The dispatch-side consumer of one batch, for a runner whose deliveries stay on the thread
 /// that polls them: the [`BatchHandler`] of the local family, whose batch and future need not be
@@ -84,7 +85,7 @@ where
     Batch: IntoIterator<Item = M>,
     M: LocalIncomingMessage,
     F: Deserialized,
-    Inner: for<'p> SliceHandler<F::Output<'p>, C, S>,
+    Inner: for<'p> LocalSliceHandler<F::Output<'p>, C, S>,
     C: BuildBatchContext<M> + Send + Sync + 'static,
 {
     // See the `BatchHandler` impl: the values borrow the batch, so no buffer outlives it.
@@ -102,6 +103,7 @@ where
         ctx: &mut Context<'_, C, S>,
         host: &Host,
     ) -> impl Future<Output = ()> {
-        self.0.handle_local(batch, scratch, ctx, host)
+        self.0
+            .handle_local::<LocalCall, C, S, Host>(batch, scratch, ctx, host)
     }
 }

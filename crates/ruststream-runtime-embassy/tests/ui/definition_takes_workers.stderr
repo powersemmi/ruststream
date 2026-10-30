@@ -3,7 +3,7 @@ error[E0277]: `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>
    |
 43 |           b.include(
    |             ------- required by a bound introduced by this call
-44 | /             subscriber(LocalMemorySource::new("readings"), Log)
+44 | /             local_subscriber(LocalMemorySource::new("readings"), Log)
 45 | |                 .workers(nonzero!(4))
 46 | |                 .build(),
    | |________________________^ unsatisfied trait bound
@@ -13,8 +13,8 @@ error[E0277]: `SubscriberBuilder<Sealed<HandleValue<SoloDeserialized<Reading<'_>
 note: the method call chain might not have had the expected associated types
   --> tests/ui/definition_takes_workers.rs:46:18
    |
-44 |             subscriber(LocalMemorySource::new("readings"), Log)
-   |             --------------------------------------------------- this expression has type `SubscriberBuilder<HandleValue<SoloDeserialized<Reading<'static>>, (), (), (), Log>, LocalMemorySource, (Open, Open, Open, Open)>`
+44 |             local_subscriber(LocalMemorySource::new("readings"), Log)
+   |             --------------------------------------------------------- this expression has type `SubscriberBuilder<HandleValue<SoloDeserialized<Reading<'static>>, (), (), (), Log>, LocalMemorySource, (Open, Open, Open, Open)>`
 45 |                 .workers(nonzero!(4))
    |                  -------------------- `Declared::Settings` is `SubscriberBuilder<HandleValue<SoloDeserialized<Reading<'_>>, (), (), (), Log>, LocalMemorySource, (Fixed, Open, Open, Open)>` here
 46 |                 .build(),

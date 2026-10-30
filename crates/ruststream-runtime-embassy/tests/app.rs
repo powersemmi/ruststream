@@ -23,8 +23,8 @@ use embassy_futures::yield_now;
 use ruststream_core::{LocalBroker, LocalPublisher, OutgoingMessage};
 use ruststream_memory::local::{LocalMemoryBroker, LocalMemorySource};
 use ruststream_runtime::{
-    Context, Deserialized, FailurePolicies, FailurePolicy, Handle, HandlerOutcome, Input,
-    SoloDeserialized, SubscriberSettings, subscriber,
+    Context, Deserialized, FailurePolicies, FailurePolicy, HandlerOutcome, Input, LocalHandle,
+    SoloDeserialized, SubscriberSettings, local_subscriber,
 };
 use ruststream_runtime_embassy::frames::{Frame, FrameBroker, FrameSource, Frames, Settlements};
 use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
@@ -78,13 +78,13 @@ struct Count {
     seen: &'static AtomicU32,
 }
 
-impl Handle<Reading<'_>> for Count {
+impl LocalHandle<Reading<'_>> for Count {
     fn handle(
         &self,
         _reading: &Reading<'_>,
         _outs: &(),
         _ctx: &mut Context<'_>,
-    ) -> impl Future<Output = Result<(), HandlerOutcome>> + Send {
+    ) -> impl Future<Output = Result<(), HandlerOutcome>> {
         self.seen.fetch_add(1, Ordering::Relaxed);
         ready(Ok(()))
     }
@@ -112,7 +112,7 @@ fn two_brokers(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new()
         .with_broker(FrameBroker::new(&stand.frames, &stand.settled), |b| {
             b.include(
-                subscriber(
+                local_subscriber(
                     FrameSource::new("frames"),
                     Count {
                         seen: &stand.seen_frames,
@@ -123,7 +123,7 @@ fn two_brokers(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
         })
         .with_broker(stand.bus.clone(), |b| {
             b.include(
-                subscriber(
+                local_subscriber(
                     LocalMemorySource::new("bus/readings"),
                     Count {
                         seen: &stand.seen_bus,
@@ -138,7 +138,7 @@ fn two_brokers(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
 fn fails_fast(stand: &'static Stand) -> EmbeddedApp<impl Mounts> {
     EmbeddedApp::new().with_broker(FrameBroker::new(&stand.frames, &stand.settled), |b| {
         b.include(
-            subscriber(
+            local_subscriber(
                 FrameSource::new("frames"),
                 Count {
                     seen: &stand.seen_failing,

@@ -1709,6 +1709,7 @@ dependencies = [
  "ruststream-core",
  "ruststream-memory",
  "ruststream-runtime",
+ "serde",
  "static_cell",
  "stats_alloc",
  "thiserror",

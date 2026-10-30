@@ -57,6 +57,8 @@ trybuild = "1"
 # forms the host tests and the snapshots write.
 ruststream = { path = "../..", default-features = false, features = ["embassy", "macros", "memory", "json"] }
 ruststream-cli.workspace = true
+# The reply the codec encodes, as a device crate derives it.
+serde.workspace = true
 
 # The executor owns the thread it runs on, and the mock clock is one per process, so the test is a
 # binary of its own with no test harness: it passes when the executor returns.

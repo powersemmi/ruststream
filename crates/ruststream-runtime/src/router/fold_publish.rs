@@ -20,7 +20,7 @@ use crate::publish::{
     RawReplyWiring, ReplyWiring, TypedPublisher,
 };
 use crate::publishing::{
-    EncodeReply, LocalPublishing, PublishingCall, PublishingHandler, warn_ignored_reply_name,
+    EncodeReply, LocalPublishing, LocalPublishingCall, PublishingHandler, warn_ignored_reply_name,
 };
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::Origin;
@@ -80,7 +80,7 @@ where
     Source: LocalSubscriptionSource<LocalConnected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
     M: LocalIncomingMessage,
-    Def: PublishingCall<State>,
+    Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: EncodeReply,
@@ -153,7 +153,7 @@ where
     Source: LocalSubscriptionSource<LocalConnected<B>>,
     Source::Subscriber: LocalSubscriber<Message = M>,
     M: LocalIncomingMessage,
-    Def: PublishingCall<State>,
+    Def: LocalPublishingCall<State>,
     Def::Input: Materialize<DecodeCodec, M>,
     Def::Injections: LocalFromStartup<B, Source::Subscriber, Extra>,
     Def::Reply: Serialized,
