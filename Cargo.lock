@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "allocation-counter",
  "anyhow",
@@ -1244,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-asyncapi"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "ruststream",
  "ruststream-core",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-cli"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-conformance"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "bytes",
  "futures",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-core"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -1315,7 +1315,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-macros"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-memory"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "bytes",
  "bytes-utils",
@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-observability"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-runtime"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "axum",
  "bytes",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "ruststream-testing"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "inventory",
  "ruststream",
