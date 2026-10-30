@@ -20,6 +20,10 @@ use crate::app::RunError;
 ///
 /// Implemented by [`Router`] and by an open mount chain ([`RouterWith`]), so a scope ends on
 /// `.include(def)` or on a step such as `.out_reply(policy)` alike.
+///
+/// # Examples
+///
+/// See [`EmbeddedApp::with_broker`](crate::EmbeddedApp::with_broker).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a mount chain of the embedded app",
     label = "the broker's scope returns this",
