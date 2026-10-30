@@ -219,6 +219,7 @@ shutdown, [`ShutdownWait`]. The tokio runner, [`Tokio`], runs it: the app's life
 
 The runtime is a cargo feature of the crate, and the two exclude each other. `tokio`, the default,
 selects the tokio runner and everything above. `embassy` selects the embedded runner on embassy's
-executor and clock: its shutdown and health, `Control`, `Health` and `Stopping`, and its clock,
-`EmbassyClock`, are re-exported in this module, and their reference is the documentation of
+executor and clock: its application object, `EmbeddedApp`, with the mount steps `MountSteps`, its
+shutdown and health, `Control`, `Health` and `Stopping`, and its clock, `EmbassyClock`, are
+re-exported in this module, and their reference is the documentation of
 [`ruststream-runtime-embassy`](https://docs.rs/ruststream-runtime-embassy).
