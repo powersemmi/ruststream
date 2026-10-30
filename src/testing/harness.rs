@@ -31,6 +31,7 @@ use super::assertions::PublishedAssertions;
 use super::broker::{LivePublish, TestableBroker, TestableRegistration, live_publish};
 use super::coordinator::{Coordinator, LiveSubscription};
 use super::handle::{BrokerHandle, Harness, InjectSink, Target, Transport};
+use super::hooks::{HookFailures, Within};
 
 /// The default cap on dispatched deliveries before [`TestApp::publish`] gives up driving a reaction
 /// to quiescence. Guards against a non-terminating requeue loop.
@@ -289,6 +290,7 @@ pub struct TestApp<State> {
     hooks: Mutex<ShutdownHooks>,
     continuations: TaskTracker,
     shutdown_timeout: Option<Duration>,
+    hook_failures: HookFailures,
 }
 
 impl<State> fmt::Debug for TestApp<State> {
@@ -322,7 +324,19 @@ pub(super) enum Mode {
 impl Mode {
     /// Waits for the reaction the harness can see to settle: the in-process transports' count
     /// reaching zero, or, live, every subscription having handled what it is owed.
+    ///
+    /// A panic a test's hook raised meanwhile is raised again here, in the test's own task.
     pub(super) async fn settle(
+        &self,
+        coordinator: &Coordinator,
+        brokers: &[BrokerEntry],
+    ) -> Result<(), TestError> {
+        let settled = self.reaction(coordinator, brokers).await;
+        coordinator.hooks().raise_failure();
+        settled
+    }
+
+    async fn reaction(
         &self,
         coordinator: &Coordinator,
         brokers: &[BrokerEntry],
@@ -768,13 +782,14 @@ impl<State: Send + Sync + 'static> TestApp<State> {
         Ok(Self {
             entries,
             mode,
-            coordinator,
+            coordinator: coordinator.clone(),
             _state: PhantomData,
             shutdown,
             handles,
             hooks: Mutex::new(hooks),
             continuations,
             shutdown_timeout,
+            hook_failures: HookFailures::new(coordinator),
         })
     }
 
@@ -887,10 +902,7 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// ```
     #[must_use]
     pub fn out<M: OutSlot>(&self) -> PublishedAssertions<()> {
-        PublishedAssertions::captured(
-            format!("Out slot `{}`", M::NAME),
-            self.coordinator.slot_published(M::NAME),
-        )
+        PublishedAssertions::captured(&self.coordinator, M::NAME, Within::ALL)
     }
 
     /// The handle of `entry`. `typed` is how a live injection reaches it when the caller named the
@@ -1110,6 +1122,13 @@ impl<State: Send + Sync + 'static> TestApp<State> {
     /// in reverse registration order, and the `after_shutdown` hooks last. A failing shutdown hook
     /// is logged and the shutdown goes on.
     ///
+    /// # Panics
+    ///
+    /// Raises again the panic a test's hook left (see
+    /// [`SubscriberAssertions::on_call`](super::SubscriberAssertions::on_call)) once the handlers
+    /// are done, so a hook's failed assertion fails the test however it ends. A harness dropped
+    /// without a shutdown raises it as it goes.
+    ///
     /// # Errors
     ///
     /// Returns [`RustStreamError::Dispatch`] when a fail-fast failure tore the service down,
@@ -1134,7 +1153,12 @@ impl<State: Send + Sync + 'static> TestApp<State> {
             shutdown_timeout: self.shutdown_timeout,
             continuations: self.continuations,
         };
-        teardown.run().await
+        let stopped = teardown.run().await;
+        // The handlers are done or aborted: the hooks they left waiting go with them.
+        self.hook_failures.stop().await;
+        // The handlers are done, so a failure a hook left is in by now.
+        self.hook_failures.raise();
+        stopped
     }
 }
 

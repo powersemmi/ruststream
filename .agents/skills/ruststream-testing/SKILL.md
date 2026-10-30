@@ -153,6 +153,11 @@ for a reaction the test started some other way. A delay (`retry_after`) is teste
 clock: `#[tokio::test(start_paused = true)]`, then `tb.advance(delay).await?`. On a running clock
 the in-process `advance` panics.
 
+To act at the moment something happens (count calls while a live stand runs, release the test on
+the n-th delivery), register a hook: `.subscriber("name").on_call(async move |calls| ..)` or
+`.published::<T>("name").on_publish(async move |published| ..)`. The hook gets the same
+assertions, reading the record at that moment, and the publish returns after it finished.
+
 ```rust
 #[tokio::test(start_paused = true)]
 async fn a_failing_charge_lands_on_the_dead_letter() -> Result<(), Box<dyn Error>> {
@@ -199,6 +204,7 @@ of `on_startup`. Builder methods such as `app().state(..)` do not exist for this
 | Published | `broker.published::<T>("name")`, `.with(&v)`, `.with_header(..)`, `.with_options(&opts)`, `.assert_options_default()` |
 | A slot | `tb.out::<Marker>()`, then `.decoded_as::<T>()` |
 | Time | `#[tokio::test(start_paused = true)]` and `tb.advance(d).await?`; `tb.drain().await` for `and_after` work |
+| At the event | `.subscriber("name").on_call(async move \|calls\| ..)`, `.published::<T>("name").on_publish(async move \|published\| ..)`: runs at each call or publish, before the publish returns |
 | A real broker | `TestApp::start_live(app())`: the same body against a running stand |
 
 Every function has its own page under

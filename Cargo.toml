@@ -701,6 +701,15 @@ path = "examples/manual/testing_service_state.rs"
 required-features = ["testing", "memory", "json"]
 
 [[example]]
+name = "testing_hooks"
+required-features = ["testing", "macros", "memory", "json"]
+
+[[example]]
+name = "manual_testing_hooks"
+path = "examples/manual/testing_hooks.rs"
+required-features = ["testing", "memory", "json"]
+
+[[example]]
 name = "testing_subscriber_calls"
 required-features = ["testing", "macros", "memory", "json"]
 

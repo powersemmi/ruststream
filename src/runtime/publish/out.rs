@@ -276,7 +276,7 @@ impl<W> OutPipeline<W> for PublishIdentity {
         let sent = leaf.publish(msg, options).await;
         #[cfg(feature = "testing")]
         if sent.is_ok() {
-            recorded.sent();
+            recorded.sent().await;
         }
         sent
     }

@@ -195,7 +195,7 @@ where
         let sent = self.publish(msg, None).await;
         #[cfg(feature = "testing")]
         if sent.is_ok() {
-            recorded.sent();
+            recorded.sent().await;
         }
         sent.map_err(Into::into)
     }

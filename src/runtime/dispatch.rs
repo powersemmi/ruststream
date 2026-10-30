@@ -48,7 +48,8 @@ use super::redelivery::{DeferredRetry, ScopeDelivery};
 use super::shutdown::Shutdown;
 #[cfg(feature = "testing")]
 use crate::testing::coordinator::{
-    Coordinator, Delivered, HarnessScope, Record, TestHooks, in_harness_scope,
+    Coordinator, Delivered, HarnessScope, Record, TestHooks, calls_in_harness_scope,
+    in_harness_scope,
 };
 pub(crate) use threads::StartThreadError;
 use threads::Threads;
@@ -1337,6 +1338,9 @@ async fn dispatch<H, M, C, St>(
     // The context lives in a block of its own and is dropped where it stands when the block ends:
     // a `drop(ctx)` call would move the whole context out of this future's state into the call's
     // argument first, a `memcpy` of the context per delivery.
+    // The hooks a test registered on this subscription, owed by this call once it is settled.
+    #[cfg(feature = "testing")]
+    let mut due_calls = None;
     let (settle, continuations) = {
         let msg = slot.get();
         let cx = C::build(msg);
@@ -1415,7 +1419,7 @@ async fn dispatch<H, M, C, St>(
         // `msg` and dropping `ctx` clears the decode flag.
         #[cfg(feature = "testing")]
         if let Some(coordinator) = delivery.hooks.coordinator() {
-            coordinator.record(Record {
+            due_calls = coordinator.record(Record {
                 scope_id: delivery.scope_id,
                 subscription: delivery.subscription,
                 name: name.to_owned(),
@@ -1454,8 +1458,11 @@ async fn dispatch<H, M, C, St>(
             delivery.spawn_after(fut);
         }
     }
+    // The hooks a test registered on this subscription run once the call is settled, inside the
+    // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
+        coordinator.run_calls(due_calls).await;
         coordinator.consumed();
     }
 }
@@ -1512,8 +1519,10 @@ async fn run_batch<H, Batch, C, St>(
     if let Some(coordinator) = &watcher {
         coordinator.enqueued();
     }
+    // A batch records its call where it settles, inside the handler, so the scope hands back the
+    // hooks that call owes.
     #[cfg(feature = "testing")]
-    let result = in_harness_scope(
+    let (result, mut due_calls) = calls_in_harness_scope(
         harness_scope(delivery),
         observed!(
             delivery,
@@ -1548,14 +1557,14 @@ async fn run_batch<H, Batch, C, St>(
             );
             #[cfg(feature = "testing")]
             if let (Some(coordinator), Some(deliveries)) = (&watcher, unsettled) {
-                coordinator.record(Record {
+                due_calls.extend(coordinator.record(Record {
                     scope_id: delivery.scope_id,
                     subscription: delivery.subscription,
                     name: name.to_owned(),
                     deliveries,
                     panicked: true,
                     decode_failed: false,
-                });
+                }));
             }
             if failure.policies.panic == FailurePolicy::FailFast {
                 failure
@@ -1564,8 +1573,11 @@ async fn run_batch<H, Batch, C, St>(
             }
         }
     }
+    // The hooks a test registered on this subscription run once the call is settled, inside the
+    // dispatch's own in-flight count, so a publish returns only after they are done.
     #[cfg(feature = "testing")]
     if let Some(coordinator) = &watcher {
+        coordinator.run_calls(due_calls).await;
         coordinator.consumed();
     }
 }

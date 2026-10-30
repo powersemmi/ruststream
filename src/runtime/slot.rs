@@ -589,8 +589,11 @@ impl<P: Publisher, M: OutSlot> Publisher for SlotPublisher<P, M> {
         options: Option<&Self::Options>,
     ) -> Result<(), Self::Error> {
         #[cfg(feature = "testing")]
-        record_slot_publish(M::NAME, &msg, options);
-        self.inner.publish(msg, options).await
+        let hooks = record_slot_publish(M::NAME, &msg, options);
+        let sent = self.inner.publish(msg, options).await;
+        #[cfg(feature = "testing")]
+        hooks.run().await;
+        sent
     }
 
     // The slot is attribution, not policy: whatever the broker's publisher contributes to every
@@ -634,7 +637,7 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
     ) -> Result<Self::Reply, Self::Error> {
         // A request takes no call-site options, so what it carried is the policy's defaults.
         #[cfg(feature = "testing")]
-        record_slot_publish::<P::Options, _>(M::NAME, &msg, None);
+        let hooks = record_slot_publish::<P::Options, _>(M::NAME, &msg, None);
         // A request reaches the broker directly rather than through the publish pipeline, so it
         // is recorded here for the channel view as well.
         #[cfg(feature = "testing")]
@@ -642,8 +645,10 @@ impl<P: RequestReply, M: OutSlot> RequestReply for SlotPublisher<P, M> {
         let reply = self.inner.request(msg, timeout).await;
         #[cfg(feature = "testing")]
         if reply.is_ok() {
-            recorded.sent();
+            recorded.sent().await;
         }
+        #[cfg(feature = "testing")]
+        hooks.run().await;
         reply
     }
 }

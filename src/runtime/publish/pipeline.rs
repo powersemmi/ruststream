@@ -50,7 +50,7 @@ impl PublishPipeline for PublishIdentity {
         let result = send.publish(msg, options).await.map_err(BoxError::from);
         #[cfg(feature = "testing")]
         if result.is_ok() {
-            recorded.sent();
+            recorded.sent().await;
         }
         result
     }
