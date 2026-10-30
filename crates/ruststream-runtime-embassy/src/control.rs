@@ -272,6 +272,47 @@ impl Future for Stopping<'_> {
     }
 }
 
+/// The app's shutdown as its loops read it: the stop flag of the app's [`Control`], and the
+/// failure a loop reports through it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LoopSignal<'a> {
+    control: &'a Control,
+}
+
+impl<'a> LoopSignal<'a> {
+    /// The loops' view of `control`.
+    pub(crate) const fn new(control: &'a Control) -> Self {
+        Self { control }
+    }
+}
+
+impl ShutdownWait for LoopSignal<'_> {
+    type Wait<'a>
+        = Stopping<'a>
+    where
+        Self: 'a;
+
+    fn is_cancelled(&self) -> bool {
+        (&self.control).is_cancelled()
+    }
+
+    fn cancelled(&self) -> Stopping<'_> {
+        Stopping {
+            control: self.control,
+        }
+    }
+}
+
+impl Halt for LoopSignal<'_> {
+    fn fail(&self, subscription: &str, reason: &str) {
+        (&self.control).fail(subscription, reason);
+    }
+
+    fn stream_ended(&self, subscription: &str) {
+        (&self.control).stream_ended(subscription);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::pin::pin;
