@@ -245,6 +245,11 @@ cov-html:
 build:
     cargo build --workspace --release --features {{ workspace_features }}
 
+# The facade's rustdoc as docs.rs renders it, with the tokio set, at target/doc: what the site's
+# API links resolve against.
+doc:
+    cargo doc --no-deps -p ruststream --features {{ tokio_set }}
+
 clean:
     cargo clean
 
