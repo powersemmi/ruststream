@@ -38,21 +38,17 @@ impl<Entry> ByName<Entry> {
         }
     }
 
-    /// The entry of `name`, built by `build` the first time the name is seen.
+    /// The entry of `name`, built by `build` the first time the name is seen; `None` for a new
+    /// name past the capacity, which the caller records without an entry.
     ///
     /// Two threads meeting a new name at once may both build it; one entry wins the index and the
-    /// other stays unused, so a name costs at most one entry per thread that raced for it. Past
-    /// the capacity, `build` runs for this call alone.
-    pub(crate) fn get_or_build(
-        &self,
-        name: &str,
-        build: impl FnOnce(&str) -> Entry,
-    ) -> Recorded<'_, Entry> {
+    /// other stays unused, so a name costs at most one entry per thread that raced for it.
+    pub(crate) fn get(&self, name: &str, build: impl FnOnce(&str) -> Entry) -> Option<&Entry> {
         if let Some(&slot) = self.index.load().get(name) {
-            return Recorded::Kept(&self.entries[slot]);
+            return Some(&self.entries[slot]);
         }
         if self.entries.count() >= self.capacity {
-            return Recorded::Once(build(name));
+            return None;
         }
         let slot = self.entries.push(build(name));
         self.index.rcu(|index| {
@@ -60,7 +56,18 @@ impl<Entry> ByName<Entry> {
             next.insert(Box::from(name), slot);
             Arc::new(next)
         });
-        Recorded::Kept(&self.entries[slot])
+        Some(&self.entries[slot])
+    }
+
+    /// The entry of `name` as [`get`](Self::get) finds it, or, past the capacity, one `build`
+    /// makes for this call alone.
+    pub(crate) fn get_or_build(
+        &self,
+        name: &str,
+        build: impl Fn(&str) -> Entry,
+    ) -> Recorded<'_, Entry> {
+        self.get(name, &build)
+            .map_or_else(|| Recorded::Once(build(name)), Recorded::Kept)
     }
 }
 

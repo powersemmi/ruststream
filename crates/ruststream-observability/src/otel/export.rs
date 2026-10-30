@@ -5,6 +5,7 @@
 //!
 //! [export]: https://powersemmi.github.io/ruststream/latest/components/observability/otel-export/
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
@@ -34,7 +35,7 @@ use ruststream_runtime::{
 };
 use ruststream_runtime_tokio::{HealthProbe, HealthState};
 
-use crate::by_name::{ByName, CAPACITY, Recorded};
+use crate::by_name::{ByName, CAPACITY};
 
 /// Header carrying the publish wall-clock time (unix milliseconds, ASCII decimal).
 ///
@@ -572,11 +573,13 @@ impl Instruments {
         }
     }
 
-    /// The attribute sets of `destination`, built the first time it is named.
-    fn attributes(&self, destination: &str) -> Recorded<'_, Attributes> {
-        self.destinations.get_or_build(destination, |name| {
-            Attributes::new(name, self.system.as_ref())
-        })
+    /// The attribute sets of `destination`, built the first time it is named. Past the
+    /// destinations kept, only the shared set is built, and a message adds the one set it records.
+    fn attributes(&self, destination: &str) -> Sets<'_> {
+        let system = self.system.as_ref();
+        self.destinations
+            .get(destination, |name| Attributes::new(name, system))
+            .map_or_else(|| Sets::Once(base_set(destination, system)), Sets::Kept)
     }
 }
 
@@ -598,23 +601,10 @@ struct Attributes {
 
 impl Attributes {
     fn new(destination: &str, system: Option<&KeyValue>) -> Self {
-        let mut base = vec![KeyValue::new(
-            "messaging.destination.name",
-            Arc::<str>::from(destination),
-        )];
-        base.extend(system.cloned());
-        let with = |extra: KeyValue| {
-            let mut set = base.clone();
-            set.push(extra);
-            set
-        };
-        let processed = OUTCOMES.map(|outcome| with(KeyValue::new("outcome", outcome)));
-        let payload = with(KeyValue::new("direction", "publish"));
-        // The error's own message is unbounded, remote-derived text: putting it in an attribute
-        // mints a fresh time series per distinct failure until the SDK's cardinality cap
-        // collapses the instrument. Semconv's `_OTHER` marks the failure dimension; the message
-        // itself belongs to logs and the publish span.
-        let failed = with(KeyValue::new("error.type", "_OTHER"));
+        let base = base_set(destination, system);
+        let processed = OUTCOMES.map(|outcome| extended(&base, outcome_attribute(outcome)));
+        let payload = extended(&base, payload_attribute());
+        let failed = extended(&base, failure_attribute());
         Self {
             base,
             processed,
@@ -625,13 +615,98 @@ impl Attributes {
 
     /// The set `ruststream.messages.processed` counts a delivery settled with `result` under.
     const fn processed(&self, result: HandlerResult) -> &[KeyValue] {
-        let outcome = match result {
-            HandlerResult::Ack => 0,
-            HandlerResult::Nack { requeue: true } => 1,
-            HandlerResult::Nack { requeue: false } => 2,
-            HandlerResult::NackAfter { .. } => 3,
-        };
-        self.processed[outcome].as_slice()
+        self.processed[outcome_slot(result)].as_slice()
+    }
+}
+
+/// The index into [`OUTCOMES`] of a delivery settled with `result`.
+const fn outcome_slot(result: HandlerResult) -> usize {
+    match result {
+        HandlerResult::Ack => 0,
+        HandlerResult::Nack { requeue: true } => 1,
+        HandlerResult::Nack { requeue: false } => 2,
+        HandlerResult::NackAfter { .. } => 3,
+    }
+}
+
+/// The destination plus, when configured, the messaging system, with room for the one attribute
+/// a set adds to it.
+fn base_set(destination: &str, system: Option<&KeyValue>) -> Vec<KeyValue> {
+    let mut base = Vec::with_capacity(3);
+    base.push(KeyValue::new(
+        "messaging.destination.name",
+        Arc::<str>::from(destination),
+    ));
+    base.extend(system.cloned());
+    base
+}
+
+/// `base` with `extra` after it, in one allocation.
+fn extended(base: &[KeyValue], extra: KeyValue) -> Vec<KeyValue> {
+    let mut set = Vec::with_capacity(base.len() + 1);
+    set.extend_from_slice(base);
+    set.push(extra);
+    set
+}
+
+fn outcome_attribute(outcome: &'static str) -> KeyValue {
+    KeyValue::new("outcome", outcome)
+}
+
+fn payload_attribute() -> KeyValue {
+    KeyValue::new("direction", "publish")
+}
+
+/// The error's own message is unbounded, remote-derived text: putting it in an attribute mints a
+/// fresh time series per distinct failure until the SDK's cardinality cap collapses the
+/// instrument. Semconv's `_OTHER` marks the failure dimension; the message itself belongs to logs
+/// and the publish span.
+fn failure_attribute() -> KeyValue {
+    KeyValue::new("error.type", "_OTHER")
+}
+
+/// The attribute sets one message records under: its destination's kept sets, or, past the
+/// destinations kept, the shared set alone, which the message extends with the one attribute
+/// each record adds.
+enum Sets<'a> {
+    Kept(&'a Attributes),
+    Once(Vec<KeyValue>),
+}
+
+impl Sets<'_> {
+    /// The destination plus, when configured, the messaging system.
+    fn base(&self) -> &[KeyValue] {
+        match self {
+            Self::Kept(attrs) => &attrs.base,
+            Self::Once(base) => base,
+        }
+    }
+
+    /// The set `ruststream.messages.processed` counts a delivery settled with `result` under.
+    fn processed(&self, result: HandlerResult) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(attrs.processed(result)),
+            Self::Once(base) => Cow::Owned(extended(
+                base,
+                outcome_attribute(OUTCOMES[outcome_slot(result)]),
+            )),
+        }
+    }
+
+    /// The set the published payload size is recorded under.
+    fn payload(&self) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(&attrs.payload),
+            Self::Once(base) => Cow::Owned(extended(base, payload_attribute())),
+        }
+    }
+
+    /// The set a failed publish is counted under.
+    fn failed(&self) -> Cow<'_, [KeyValue]> {
+        match self {
+            Self::Kept(attrs) => Cow::Borrowed(&attrs.failed),
+            Self::Once(base) => Cow::Owned(extended(base, failure_attribute())),
+        }
     }
 }
 
@@ -713,32 +788,32 @@ where
         let attrs = instruments.attributes(ctx.name());
         let queue_time = queue_time_seconds(ctx.headers());
         async move {
-            instruments.consumed.add(1, &attrs.base);
+            instruments.consumed.add(1, attrs.base());
             if let Some(seconds) = queue_time {
-                instruments.queue_time.record(seconds, &attrs.base);
+                instruments.queue_time.record(seconds, attrs.base());
             }
-            instruments.in_flight.add(1, &attrs.base);
+            instruments.in_flight.add(1, attrs.base());
             let started = Instant::now();
             let settle = {
                 // The decrement rides Drop so an unwinding handler (caught one level up by the
                 // dispatch failure policy) or a cancelled dispatch cannot leak the increment.
                 let _in_flight = InFlightGuard {
                     instruments,
-                    attrs: &attrs.base,
+                    attrs: attrs.base(),
                 };
                 self.inner.handle(msg, ctx).await
             };
             // The decode adapter (wrapped by this layer) marks the context when the payload did
             // not decode.
             if ctx.decode_failed() {
-                instruments.decode_failures.add(1, &attrs.base);
+                instruments.decode_failures.add(1, attrs.base());
             }
             instruments
                 .process_duration
-                .record(started.elapsed().as_secs_f64(), &attrs.base);
+                .record(started.elapsed().as_secs_f64(), attrs.base());
             instruments
                 .processed
-                .add(1, attrs.processed(settle.outcome()));
+                .add(1, &attrs.processed(settle.outcome()));
             settle
         }
     }
@@ -798,18 +873,17 @@ impl PublishLayer for OtelPublishLayer {
         async move {
             instruments
                 .payload_size
-                .record(payload_bytes, &attrs.payload);
+                .record(payload_bytes, &attrs.payload());
             let started = Instant::now();
             let result = next.run(out).await;
             instruments
                 .operation_duration
-                .record(started.elapsed().as_secs_f64(), &attrs.base);
-            let sent = if result.is_ok() {
-                &attrs.base
+                .record(started.elapsed().as_secs_f64(), attrs.base());
+            if result.is_ok() {
+                instruments.sent.add(1, attrs.base());
             } else {
-                &attrs.failed
-            };
-            instruments.sent.add(1, sent);
+                instruments.sent.add(1, &attrs.failed());
+            }
             result
         }
     }
@@ -851,6 +925,24 @@ mod tests {
             outcome(HandlerResult::retry_after(Duration::from_secs(1))),
             "retry_after"
         );
+    }
+
+    #[test]
+    fn a_destination_past_the_kept_ones_records_the_same_sets() {
+        let system = KeyValue::new("messaging.system", "memory");
+        let kept = Attributes::new("orders", Some(&system));
+        let once = Sets::Once(base_set("orders", Some(&system)));
+        assert_eq!(once.base(), kept.base.as_slice());
+        assert_eq!(&*once.payload(), kept.payload.as_slice());
+        assert_eq!(&*once.failed(), kept.failed.as_slice());
+        for result in [
+            HandlerResult::Ack,
+            HandlerResult::Nack { requeue: true },
+            HandlerResult::Nack { requeue: false },
+            HandlerResult::retry_after(Duration::from_secs(1)),
+        ] {
+            assert_eq!(&*once.processed(result), kept.processed(result));
+        }
     }
 
     #[test]

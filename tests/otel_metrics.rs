@@ -16,15 +16,16 @@ use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, HistogramDataPoint, MetricData, ResourceMetrics, ScopeMetrics, SumDataPoint,
 };
-use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+use opentelemetry_sdk::metrics::{InMemoryMetricExporter, Instrument, SdkMeterProvider, Stream};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use ruststream::memory::{MemoryBroker, MemoryPublish, Retention};
 use ruststream::otel::{Otel, PUBLISH_TIME_HEADER};
 use ruststream::runtime::{
-    App, AppInfo, HandlerOutcome, PublishExt, Reply, RustStream, SubscriberSettings,
+    App, AppInfo, ForReply, HandlerOutcome, Names, Outgoing as OutgoingView, PublishContext,
+    PublishExt, PublishTransform, Reply, RustStream, SubscriberSettings,
 };
 use ruststream::testing::{TestApp, expect_published};
-use ruststream::{Broker, ConnectedBroker, nonzero, subscriber};
+use ruststream::{Broker, ConnectedBroker, HeaderMap, Str, nonzero, subscriber};
 use tokio::runtime::Builder;
 use tokio::sync::Mutex;
 
@@ -645,5 +646,133 @@ fn the_dispatch_metrics_allocate_nothing_per_message() {
     assert_eq!(
         recorded, bare,
         "32 recorded rounds allocate {recorded} times, the same rounds unrecorded {bare}",
+    );
+}
+
+/// Answers on the destination the request names in its `x-tenant` header, so a test can publish
+/// to as many destinations as it likes.
+struct ToTenant;
+
+impl<C, Options> PublishTransform<ForReply<C>, Options> for ToTenant {
+    type Destination = Names;
+
+    fn apply(
+        &self,
+        out: &mut OutgoingView<'_>,
+        _options: &mut Option<Options>,
+        cx: &PublishContext<'_, C>,
+    ) {
+        if let Some(Ok(tenant)) = cx.headers().get_shared("x-tenant").map(Str::try_from) {
+            out.set_name(tenant);
+        }
+    }
+}
+
+#[subscriber("otel.tenants", reply("otel.answers"))]
+async fn answer(order: &Order) -> Order {
+    Order { id: order.id }
+}
+
+/// Publishes one request answered on `tenant`.
+async fn tenant_request(tb: &TestApp<()>, tenant: &str) {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-tenant", tenant.to_owned());
+    tb.message(&Order { id: 1 })
+        .to("otel.tenants")
+        .with_headers(headers)
+        .publish()
+        .await
+        .expect("publish failed");
+}
+
+/// Drives `rounds` deliveries to `consume`.
+async fn order_rounds(tb: &TestApp<()>, rounds: u32) {
+    for id in 0..rounds {
+        tb.message(&Order { id })
+            .to("otel.orders")
+            .publish()
+            .await
+            .expect("publish failed");
+    }
+}
+
+/// The allocations this thread makes over 32 answers to one destination and over 32 deliveries
+/// to one subscription, both named only after 2,500 other destinations were answered.
+fn allocations_past_many_destinations<A: App<State = ()>>(app: A) -> (u64, u64) {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime builds");
+    let tb = runtime
+        .block_on(TestApp::start(app))
+        .expect("harness start failed");
+    runtime.block_on(async {
+        for tenant in 0..2_500 {
+            tenant_request(&tb, &format!("tenant.{tenant}")).await;
+        }
+        for _ in 0..8 {
+            tenant_request(&tb, "tenant.late").await;
+        }
+        order_rounds(&tb, 8).await;
+    });
+    let answers = measure(|| {
+        runtime.block_on(async {
+            for _ in 0..32 {
+                tenant_request(&tb, "tenant.late").await;
+            }
+        });
+    });
+    let deliveries = measure(|| runtime.block_on(order_rounds(&tb, 32)));
+    runtime
+        .block_on(tb.shutdown())
+        .expect("graceful shutdown failed");
+    (answers.count_total, deliveries.count_total)
+}
+
+/// Past the destinations the layers keep attribute sets for, a message builds only what it
+/// records: its destination, the shared set, and the one set its outcome adds.
+#[test]
+fn a_destination_past_the_kept_ones_builds_only_what_it_records() {
+    let _globals = GLOBAL_PROVIDERS.blocking_lock();
+    // The SDK's own limit sits above the layers', so its overflow series stays out of the count.
+    let meter_provider = SdkMeterProvider::builder()
+        .with_periodic_exporter(InMemoryMetricExporter::default())
+        .with_view(|_: &Instrument| Stream::builder().with_cardinality_limit(8_192).build().ok())
+        .build();
+    let otel = Otel::builder()
+        .messaging_system("memory")
+        .stamp_publish_time(false)
+        .attach(SdkTracerProvider::builder().build(), meter_provider);
+
+    let (bare_answers, bare_deliveries) = allocations_past_many_destinations(
+        RustStream::new(AppInfo::new("svc", "0.1.0")).with_broker(MemoryBroker::new(), |b| {
+            b.include(answer)
+                .out_reply(MemoryPublish)
+                .transform(ToTenant);
+            b.include(consume);
+        }),
+    );
+    let (answers, deliveries) = allocations_past_many_destinations(
+        RustStream::new(AppInfo::new("svc", "0.1.0"))
+            .layer(otel.consume_layer())
+            .publish_layer(otel.publish_layer())
+            .with_broker(MemoryBroker::new(), |b| {
+                b.include(answer)
+                    .out_reply(MemoryPublish)
+                    .transform(ToTenant);
+                b.include(consume);
+            }),
+    );
+    assert_eq!(
+        answers - bare_answers,
+        3 * 32,
+        "an answer to an uncached destination allocates its name, the shared set and the payload \
+         set",
+    );
+    assert_eq!(
+        deliveries - bare_deliveries,
+        3 * 32,
+        "a delivery to an uncached subscription allocates its name, the shared set and the \
+         outcome set",
     );
 }
