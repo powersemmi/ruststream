@@ -26,7 +26,8 @@ use ruststream_runtime::{
     LocalHandler, run_sequential,
 };
 use ruststream_runtime::{
-    Deserialized, Handle, Input, OpenRoutes, Router, RunRoutes, SoloDeserialized, subscriber,
+    Deserialized, Handle, Input, LocalBlanketLayer, OpenRoutes, Router, RunRoutes,
+    SoloDeserialized, subscriber,
 };
 use ruststream_runtime_embassy::frames::{
     Frame, FrameBroker, FrameDelivery, FrameSource, FrameSubscriber, Frames, Settlements,
@@ -66,6 +67,7 @@ struct App {
     settled: Settlements,
     stop: Control,
     seen: AtomicU32,
+    layered: AtomicU32,
     ended: Cell<bool>,
 }
 
@@ -108,9 +110,42 @@ impl Handle<Reading<'_>> for CountReadings {
     }
 }
 
+/// A router-scope middleware a device service writes: counts every delivery that reaches the
+/// router's handlers, before they run.
+#[derive(Clone, Copy)]
+struct CountDeliveries {
+    reached: &'static AtomicU32,
+}
+
+/// The handler [`CountDeliveries`] wraps around each of the router's handlers.
+struct Counted<H> {
+    inner: H,
+    reached: &'static AtomicU32,
+}
+
+impl LocalBlanketLayer for CountDeliveries {
+    fn apply<M, C, S, H>(&self, handler: H) -> impl LocalHandler<M, C, S>
+    where
+        H: LocalHandler<M, C, S>,
+    {
+        Counted {
+            inner: handler,
+            reached: self.reached,
+        }
+    }
+}
+
+impl<M, C, S, H: LocalHandler<M, C, S>> LocalHandler<M, C, S> for Counted<H> {
+    fn handle(&self, msg: &M, ctx: &mut Context<'_, C, S>) -> impl Future<Output = HandlerOutcome> {
+        self.reached.fetch_add(1, Ordering::Relaxed);
+        self.inner.handle(msg, ctx)
+    }
+}
+
 /// The app's routes, as a device service declares them.
-fn routes(seen: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
+fn routes(seen: &'static AtomicU32, reached: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
     Router::<FrameBroker, _, _, _, _>::local()
+        .layer(CountDeliveries { reached })
         .include(subscriber(FrameSource::new("readings"), CountReadings { seen }).build())
 }
 
@@ -119,7 +154,7 @@ fn routes(seen: &'static AtomicU32) -> impl OpenRoutes<FrameBroker> {
 #[embassy_executor::task]
 async fn app(broker: FrameBroker, app: &'static App, host: &'static CountDetached) {
     let connected = broker.connect().await.expect("the broker connects");
-    let opened = routes(&app.seen)
+    let opened = routes(&app.seen, &app.layered)
         .open(&connected)
         .await
         .expect("every route opens");
@@ -291,9 +326,12 @@ async fn check_the_app(app: &App) {
         app.settled.acked(),
         app.settled.nacked(),
     );
+    let layered = app.layered.load(Ordering::Relaxed);
 
     assert_eq!(settled, (1, 1, 1), "seen, acked, nacked through the router");
     passed("a router mounts a definition on a broker that is not Send");
+    assert_eq!(layered, 2, "deliveries the router's layer saw");
+    passed("the router's layer wraps its handlers");
     assert_eq!(allocations, 0, "allocations on the router's delivery path");
     passed("the router's delivery path allocates nothing");
 
@@ -320,6 +358,7 @@ fn main() {
             settled: Settlements::new(),
             stop: Control::new(),
             seen: AtomicU32::new(0),
+            layered: AtomicU32::new(0),
             ended: Cell::new(false),
         },
     });

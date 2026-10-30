@@ -38,7 +38,7 @@ pub use local::LocalPipeline;
 // The typed default-reply token is machinery, but the macro expansion names it in generated
 // types (the default attach of a sealed reply definition), so it is public and hidden.
 #[doc(hidden)]
-pub use fold::{OpenRoutes, OpenedRoute, RunRoutes};
+pub use fold::{OpenLayered, OpenRoutes, OpenedRoute, RunRoutes};
 #[doc(hidden)]
 pub use mount::DefaultReply;
 pub use mount::IncludeDef;
