@@ -25,9 +25,11 @@ use ruststream_runtime::testing::{
 };
 use ruststream_runtime_embassy::{Control, EmbeddedApp, Health, Mounts, RunError};
 
+mod brokers;
 mod clock;
 mod handle;
 
+pub use brokers::TestBrokers;
 use clock::ClockLease;
 pub use handle::{BrokerHandle, InjectSink};
 
@@ -61,6 +63,7 @@ type HookRun = Pin<Box<dyn Future<Output = ()>>>;
 /// thread and may wait on the clock. A panic inside a hook, a failed assertion included, is raised
 /// again from the step that ran it.
 ///
+/// [`with_state`](Self::with_state) starts the app with a state the test builds, and
 /// [`out`](Self::out) reads what went through an `Out` slot.
 ///
 /// The harness is the test build's embassy-time driver: the clock starts at zero and moves only
@@ -181,13 +184,118 @@ impl TestApp {
     ///
     /// See [`TestApp`].
     pub async fn start<M: Mounts + 'static>(app: EmbeddedApp<M>) -> Result<Self, TestError> {
+        Self::run(app, |state, _brokers| state).await
+    }
+
+    /// Starts the device service's `app` in process with a `state` the test builds in place of
+    /// the one the app was built with, as [`start`](Self::start) starts it otherwise.
+    ///
+    /// `build` runs once every broker is connected, before any subscription delivers, and
+    /// receives the brokers so the state can hold what it needs of them
+    /// ([`TestBrokers::broker`]). The app's own state is dropped unread: a value read from the
+    /// board's flash, a driver of its hardware, whatever the test replaces with a stand-in.
+    ///
+    /// The app function names its state in its type, `EmbeddedApp<impl Mounts<State = ..>>`,
+    /// for the test to build one.
+    ///
+    /// # Errors
+    ///
+    /// As [`start`](Self::start).
+    ///
+    /// # Panics
+    ///
+    /// As [`start`](Self::start).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ruststream::memory::local::{LocalMemoryBroker, LocalMemorySource};
+    /// use ruststream::runtime::{Context, EmbeddedApp, HandlerOutcome, Mounts};
+    /// use ruststream::testing::TestApp;
+    /// use ruststream::{Deserialized, Outgoing, Serialized, subscriber};
+    ///
+    /// type Bus = LocalMemoryBroker<4>;
+    ///
+    /// /// What the board's handlers read: the level from which the pump runs.
+    /// struct Limits {
+    ///     start_pump: u8,
+    /// }
+    ///
+    /// impl Limits {
+    ///     /// The limits the board keeps in its flash.
+    ///     fn from_flash() -> Self {
+    ///         Self { start_pump: 200 }
+    ///     }
+    /// }
+    ///
+    /// /// A tank's level, one byte.
+    /// #[derive(Deserialized)]
+    /// struct Level<'a>(&'a [u8]);
+    ///
+    /// /// Acknowledges a level below the limit, and leaves one at or above it to the pump's
+    /// /// subscription by dropping it here.
+    /// #[subscriber(LocalMemorySource::new("tank/level"))]
+    /// async fn watch(level: &Level<'_>, ctx: &mut Context<'_, (), Limits>) -> HandlerOutcome {
+    ///     if level.0.first().copied().unwrap_or(0) < ctx.state().start_pump {
+    ///         HandlerOutcome::ack()
+    ///     } else {
+    ///         HandlerOutcome::drop()
+    ///     }
+    /// }
+    ///
+    /// /// The app names its state in its type, for a test to hand it one.
+    /// fn app(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
+    ///     EmbeddedApp::new()
+    ///         .with_state(Limits::from_flash())
+    ///         .with_broker(bus, |b| b.include(watch))
+    /// }
+    ///
+    /// /// A level as the test's sensor sends it.
+    /// #[derive(Outgoing, Serialized)]
+    /// #[outgoing(name = "tank/level")]
+    /// struct Sent(&'static [u8]);
+    ///
+    /// async fn a_low_limit_starts_the_pump() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let tb = TestApp::with_state(app(Bus::new()), |_brokers| Limits { start_pump: 10 })
+    ///         .await?;
+    ///     tb.broker::<Bus>().message(&Sent(&[50])).publish().await?;
+    ///
+    ///     tb.broker::<Bus>()
+    ///         .subscriber("tank/level")
+    ///         .assert_called_once()
+    ///         .settled(HandlerOutcome::drop());
+    ///     tb.shutdown().await?;
+    ///     Ok(())
+    /// }
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// #     embassy_futures::block_on(a_low_limit_starts_the_pump())
+    /// # }
+    /// ```
+    pub async fn with_state<M, Build>(app: EmbeddedApp<M>, build: Build) -> Result<Self, TestError>
+    where
+        M: Mounts + 'static,
+        Build: FnOnce(&TestBrokers<'_>) -> M::State + 'static,
+    {
+        Self::run(app, move |_app_state, brokers| build(brokers)).await
+    }
+
+    /// Runs `app` in process, its state the one `state` makes of the app's own once every broker
+    /// is connected, and lets it start.
+    async fn run<M, Make>(app: EmbeddedApp<M>, state: Make) -> Result<Self, TestError>
+    where
+        M: Mounts + 'static,
+        Make: FnOnce(M::State, &TestBrokers<'_>) -> M::State + 'static,
+    {
         let clock = ClockLease::take();
         let record = Rc::new(InProcessRun::new(Coordinator::in_place(MAX_POLLS)));
         let control = Rc::new(Control::new());
         let run: AppRun = {
             let record = Rc::clone(&record);
             let control = Rc::clone(&control);
-            Box::pin(async move { app.run_in_process(&control, &record).await })
+            Box::pin(async move {
+                let swap = |own| state(own, &TestBrokers::of(&record.brokers()));
+                app.run_in_process(&control, &record, swap).await
+            })
         };
         let tb = Self {
             run: RefCell::new(Some(run)),

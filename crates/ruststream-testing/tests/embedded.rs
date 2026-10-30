@@ -521,6 +521,92 @@ fn a_destination_hook_runs_for_the_apps_slot_publish() -> Result<(), Box<dyn Err
     })
 }
 
+/// What the board's handlers read: the level from which a reading is an alarm.
+struct Limits {
+    alarm: u8,
+    /// Where the board echoes each alarm, when something listens.
+    echo: Option<LocalMemoryPublisher<4>>,
+}
+
+/// Raises an alarm for every level at or above the board's limit.
+#[subscriber(LocalMemorySource::new("tank/level"))]
+async fn on_tank(
+    level: &Frame<'_>,
+    ctx: &mut Context<'_, (), Limits>,
+    Out(alerts): Out<impl Publisher, Alerts>,
+) -> HandlerOutcome {
+    let limits = ctx.state();
+    if level.0.first().copied().unwrap_or(0) < limits.alarm {
+        return HandlerOutcome::ack();
+    }
+    if alerts
+        .message(&Alert(level.0.to_vec()))
+        .publish()
+        .await
+        .is_err()
+    {
+        return HandlerOutcome::retry();
+    }
+    if let Some(echo) = &limits.echo {
+        let echoed = OutgoingMessage::produced("tank/echo", BytesMut::from(level.0));
+        if echo.publish(echoed, None).await.is_err() {
+            return HandlerOutcome::retry();
+        }
+    }
+    HandlerOutcome::ack()
+}
+
+/// The tank's app, with the limits the board reads from its flash.
+#[ruststream::app]
+fn tank(bus: Bus) -> EmbeddedApp<impl Mounts<State = Limits>> {
+    EmbeddedApp::new()
+        .with_state(Limits {
+            alarm: 200,
+            echo: None,
+        })
+        .with_broker(bus, |b| b.include(on_tank).out(Alerts, LocalMemoryPublish))
+}
+
+#[test]
+fn the_test_hands_the_app_its_state() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::with_state(tank(Bus::new()), |brokers| Limits {
+            alarm: 50,
+            echo: Some(brokers.broker::<Bus>().publisher()),
+        })
+        .await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"\x64"))
+            .to("tank/level")
+            .publish()
+            .await?;
+
+        tb.out::<Alerts>().assert_called_once().with_raw(b"\x64");
+        tb.broker::<Bus>()
+            .published::<()>("tank/echo")
+            .assert_called_once()
+            .with_raw(b"\x64");
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn without_a_state_of_its_own_the_test_runs_the_apps() -> Result<(), Box<dyn Error>> {
+    block_on(async {
+        let tb = TestApp::start(tank(Bus::new())).await?;
+        tb.broker::<Bus>()
+            .message(&Sent(b"\x64"))
+            .to("tank/level")
+            .publish()
+            .await?;
+
+        tb.out::<Alerts>().assert_not_called();
+        tb.shutdown().await?;
+        Ok(())
+    })
+}
+
 /// How a [`SlowBus`] ends its connect.
 #[derive(Clone, Copy)]
 enum Link {
