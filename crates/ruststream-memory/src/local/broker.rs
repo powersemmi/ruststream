@@ -612,6 +612,52 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "testing")]
+    #[test]
+    fn the_publish_log_holds_what_each_name_took_and_no_refused_publish() {
+        block_on(async {
+            let connected = LocalMemoryBroker::<1>::new().connect().await.unwrap();
+            let _full = connected.subscribe("temp").await.unwrap();
+            let publisher = connected.publisher();
+            publisher
+                .publish(reading("temp", b"21"), None)
+                .await
+                .unwrap();
+            publisher
+                .publish(reading("humidity", b"40"), None)
+                .await
+                .unwrap();
+            assert!(
+                publisher
+                    .publish(reading("temp", b"22"), None)
+                    .await
+                    .is_err()
+            );
+
+            let logged = |name| -> Vec<Vec<u8>> {
+                connected
+                    .published(name)
+                    .iter()
+                    .map(|message| message.payload().to_vec())
+                    .collect()
+            };
+            assert_eq!(logged("temp"), [b"21".to_vec()]);
+            assert_eq!(logged("humidity"), [b"40".to_vec()]);
+        });
+    }
+
+    #[cfg(feature = "testing")]
+    #[test]
+    #[should_panic(expected = "the bus refused it")]
+    fn an_injection_the_bus_refuses_fails_the_test() {
+        block_on(async {
+            let connected = LocalMemoryBroker::<1>::new().connect().await.unwrap();
+            let _full = connected.subscribe("temp").await.unwrap();
+            connected.inject(OutgoingMessage::new("temp", b"21".as_slice()));
+            connected.inject(OutgoingMessage::new("temp", b"22".as_slice()));
+        });
+    }
+
     #[test]
     fn after_shutdown_publishes_and_subscriptions_are_refused_until_a_reconnect() {
         block_on(async {
