@@ -194,9 +194,24 @@ pub trait Detach: Send + Sync {
         Work: Future<Output = ()> + Send + 'static;
 
     /// Runs `work` once `delay` has passed on the runner's clock.
+    ///
+    /// The body calls it only after a [`reserve`](Self::reserve) that returned `true`, and the
+    /// call takes that reservation.
     fn detach_after<Work>(&self, delay: Duration, work: Work)
     where
         Work: Future<Output = ()> + Send + 'static;
+
+    /// Reserves room for one delayed piece of work, before the delivery it copies is settled.
+    ///
+    /// A runner that keeps its delayed work in a store of fixed capacity answers `false` when
+    /// the store is full, and the body requeues the delivery instead of dropping it for a copy
+    /// it could not keep. A runner with room for any amount keeps the default, `true`.
+    fn reserve(&self) -> bool {
+        true
+    }
+
+    /// Gives back a reservation the body did not use: the settle it was made for failed.
+    fn release(&self) {}
 }
 
 /// Where the delivery body hands the work a delivery leaves behind, on a runner of either
