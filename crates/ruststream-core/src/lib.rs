@@ -18,13 +18,17 @@
 //!
 //! # Features
 //!
-//! The crate is `#![no_std]`. The headers traits build with no feature at all. Its features:
+//! The crate is `#![no_std]`. The headers traits, typed headers over them and the slice codec
+//! trait build with no feature at all. Its features:
 //!
 //! - `alloc`: the contract itself. Headers, payloads and names live on the heap, so every trait
 //!   and message type needs an allocator.
 //! - `std` (default): `alloc`, the standard library's side of the dependencies, and
 //!   [`Bindable`](bindable::Bindable), whose slot is a `std` mutex.
 //! - `heapless`: `FixedHeaderMap`, headers in storage of a fixed size.
+//! - `postcard`: `codec::Postcard`, the postcard format through [`SliceCodec`](codec::SliceCodec).
+//! - `json-core`: `codec::JsonCore`, JSON through [`SliceCodec`](codec::SliceCodec) without a
+//!   heap.
 //! - `json`: [`SecurityScheme`] values that carry JSON.
 //! - `asyncapi`: the binding types and the `*_bindings` methods of the contract.
 //! - `testing`: the hook the test harness reads a pairing through; it runs on a host.
@@ -55,7 +59,6 @@ pub mod bindings;
 mod broker;
 #[cfg(feature = "alloc")]
 mod capability;
-#[cfg(feature = "alloc")]
 pub mod codec;
 #[cfg(feature = "alloc")]
 mod describe;
