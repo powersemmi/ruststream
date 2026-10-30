@@ -73,6 +73,14 @@ pub use ruststream_runtime::{
     BindSlots, ContainsMessage, DefaultSlot, HasSlots, ListOffer, OutMessages, OutSlot,
     PublishedThrough, Reply, SlotPublisher, Unrestricted,
 };
+// The local family's slot binding, which `#[subscriber]` emits on the embassy runtime.
+#[doc(hidden)]
+pub use ruststream_runtime::{LocalBindSlots, LocalHasSlots};
+// The body contract of a runner that polls every delivery on one thread, with its arena entry
+// and the publish sink a local slot is: the manual path of the embassy runtime.
+pub use ruststream_runtime::{
+    LocalHandle, LocalOutEntry, LocalPublishSink, LocalSlot, local_subscriber,
+};
 pub use ruststream_runtime::{Bindable, Bound, BrokerRegistration};
 pub use ruststream_runtime::{
     BlanketLayer, HandlerExt, Identity, Layer, LocalBlanketLayer, Stack, layers,
