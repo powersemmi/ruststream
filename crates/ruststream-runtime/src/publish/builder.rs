@@ -24,7 +24,7 @@ use crate::{
     OutgoingDestination, OutgoingMessage, PayloadForm, SerializeHeadersError, WithHeaders,
 };
 
-use super::sink::{CallCodec, PublishCodec, PublishSink};
+use super::sink::{CallCodec, LocalPublishSink, PublishCodec, PublishSink};
 use crate::wire::Serialized;
 
 /// A publish under construction: the entry point's payload plus the positions still open.
@@ -49,7 +49,7 @@ use crate::wire::Serialized;
 ///
 /// You never name this type; the entry points return it and the compiler carries it.
 #[must_use = "a publish builder does nothing until publish() is awaited"]
-pub struct PublishBuilder<Sink: PublishSink, Body, Enc, Hdrs, Dest> {
+pub struct PublishBuilder<Sink: LocalPublishSink, Body, Enc, Hdrs, Dest> {
     sink: Sink,
     body: Body,
     codec: Enc,
@@ -58,7 +58,7 @@ pub struct PublishBuilder<Sink: PublishSink, Body, Enc, Hdrs, Dest> {
     options: Option<Sink::Options>,
 }
 
-impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> fmt::Debug
+impl<Sink: LocalPublishSink, Body, Enc, Hdrs, Dest> fmt::Debug
     for PublishBuilder<Sink, Body, Enc, Hdrs, Dest>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -352,7 +352,7 @@ impl<E> From<PayloadError> for PublishError<E> {
     }
 }
 
-impl<Sink: PublishSink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
+impl<Sink: LocalPublishSink, Body, Enc, Hdrs, Dest> PublishBuilder<Sink, Body, Enc, Hdrs, Dest> {
     /// The whole-tuple constructor the entry points and the position transitions share.
     pub(crate) const fn new(
         sink: Sink,
@@ -422,7 +422,7 @@ pub fn message_of<Sink, T, Enc>(
     codec: Enc,
 ) -> PublishBuilder<Sink, MessageBody<'_, T>, Enc, HeadersUnset, T::Form>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     T: OutgoingDestination,
 {
     PublishBuilder::new(
@@ -445,7 +445,7 @@ pub(crate) fn raw_of<Sink, B>(
     payload: &B,
 ) -> PublishBuilder<Sink, RawBody<'_>, (), HeadersUnset, CallerName>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     B: AsRef<[u8]> + ?Sized,
 {
     PublishBuilder::new(
@@ -458,7 +458,7 @@ where
     )
 }
 
-impl<'a, Sink: PublishSink, T, Enc, Hdrs, Dest>
+impl<'a, Sink: LocalPublishSink, T, Enc, Hdrs, Dest>
     PublishBuilder<Sink, MessageBody<'a, T>, Enc, Hdrs, Dest>
 {
     /// Names the codec for this publish, the most specific level of the codec ladder: it wins
@@ -530,7 +530,7 @@ impl HeaderSource for HeaderMap {
     }
 }
 
-impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
+impl<Sink: LocalPublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, HeadersUnset, Dest> {
     /// Supplies the headers of this publish: the message's declared contract by reference, or an
     /// already-built [`HeaderMap`] by value.
     ///
@@ -604,7 +604,7 @@ impl<Sink: PublishSink, Body, Enc, Dest> PublishBuilder<Sink, Body, Enc, Headers
     }
 }
 
-impl<Sink: PublishSink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
+impl<Sink: LocalPublishSink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, CallerName> {
     /// Names the destination of this publish.
     ///
     /// Present when the message type declares no name of its own, and on the byte entry point.
@@ -626,7 +626,7 @@ impl<Sink: PublishSink, Body, Enc, Hdrs> PublishBuilder<Sink, Body, Enc, Hdrs, C
 
 impl<Sink, T, Enc, Hdrs> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, NameTemplate>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     T: TemplateAddress<Self>,
 {
     /// Opens the placeholder setters of a templated destination: one per `{placeholder}` of the
@@ -706,7 +706,7 @@ pub trait PublishAt {
 }
 
 /// Sends one message, applying the headers position, the broker's settings and the sink.
-async fn deliver<'v, Sink: PublishSink, Hdrs: PublishHeaders>(
+async fn deliver<'v, Sink: LocalPublishSink, Hdrs: PublishHeaders>(
     mut sink: Sink,
     name: &'v str,
     payload: <Sink::Payload as PayloadForm>::Form<'v>,
@@ -734,7 +734,7 @@ async fn wire_and_send<Sink, T, Enc, Hdrs>(
     options: Option<&Sink::Options>,
 ) -> Result<(), PublishError<Sink::Error>>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     T: MessageWire + Sync,
     T::Wire: WirePayload<T, Enc>,
     Hdrs: PublishHeaders,
@@ -756,7 +756,7 @@ where
 // carrying its own bytes publishes in a build with no codec at all.
 impl<Sink, T, Enc, Hdrs, Dest> PublishBuilder<Sink, MessageBody<'_, T>, Enc, Hdrs, Dest>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     T: OutgoingDestination + MessageHeaders + Sync,
     Hdrs: PublishHeaders,
 {
@@ -824,7 +824,7 @@ where
 
 impl<Sink, Hdrs, Dest> PublishBuilder<Sink, RawBody<'_>, (), Hdrs, Dest>
 where
-    Sink: PublishSink,
+    Sink: LocalPublishSink,
     Hdrs: PublishHeaders,
 {
     /// Publishes the bytes as they are, to the destination named at the call site.

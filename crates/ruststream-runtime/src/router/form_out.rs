@@ -29,7 +29,9 @@ use crate::inject::InjectDef;
 use crate::input::{DecodeWith, Materialize};
 #[cfg(any(feature = "json", feature = "cbor", feature = "msgpack"))]
 use crate::publish::ReplyWiring;
-use crate::publish::{LowerOutTransforms, NarrowToUse, RawReplyWiring, SlotStackUse};
+use crate::publish::{
+    LowerOutTransforms, NarrowToUse, PublishPipeline, RawReplyWiring, SlotStackUse,
+};
 use crate::publishing::PublishingDef;
 use crate::settings::{BatchSized, DefMountCodec, MountsWith};
 use crate::slot::{
@@ -59,6 +61,7 @@ macro_rules! slot_form {
             RouterMount<Router<B, Routes, RouteCodec, RouteLayers, RoutePipe>, Def> for $form
         where
             B: Broker + 'static,
+            RoutePipe: PublishPipeline,
             Def: HasSlots,
             Def::Markers: InitSlots,
         {
@@ -125,7 +128,7 @@ macro_rules! impl_inject_out_commit {
         where
             B: Broker + 'static,
             RouteCodec: MountCodec,
-            RoutePipe: Clone,
+            RoutePipe: PublishPipeline + Clone,
             $(
                 $marker: OutSlot,
                 $enc: SlotCodec<RouteCodec::Codec, Codec: Codec>,

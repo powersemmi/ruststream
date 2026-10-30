@@ -9,7 +9,7 @@ use crate::settings::{CapsBatches, SubscriberBuilder};
 
 use super::axis::{Batch, BatchCarried, BatchDeserialized, BatchPair, BatchSet, Input};
 use super::docs::{Docs, Documented, Probed, ProbedDocs, Undocumented};
-use super::{Handle, IntoSource};
+use super::{Handle, IntoSource, LocalHandle};
 use crate::router::IncludeDef;
 
 /// The phantom carrying a definition's axes.
@@ -139,6 +139,52 @@ where
         source.into_source(),
     )
 }
+/// Binds a [`LocalHandle`] body to its subscription source: [`subscriber`] for a runner that
+/// polls every delivery on one thread, with the same chain after it.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "json")]
+/// # mod demo {
+/// use ruststream_runtime::{Context, HandlerOutcome, LocalHandle, local_subscriber};
+/// # #[derive(serde::Deserialize)]
+/// # struct Order { id: u64 }
+///
+/// struct Audit;
+///
+/// impl LocalHandle<Order> for Audit {
+///     async fn handle(&self, order: &Order, _outs: &(), _ctx: &mut Context<'_>) -> Result<(), HandlerOutcome> {
+///         println!("order {}", order.id);
+///         Ok(())
+///     }
+/// }
+///
+/// fn definition() {
+///     let _ = local_subscriber("orders", Audit).build();
+/// }
+/// # }
+/// ```
+#[must_use]
+pub fn local_subscriber<Src, In, R, O, C, S, H>(
+    source: Src,
+    body: H,
+) -> FreshChain<In::Axis, R, O, C, H, Src>
+where
+    Src: IntoSource,
+    In: ?Sized + Input,
+    H: LocalHandle<In, R, O, C, S>,
+{
+    SubscriberBuilder::new(
+        HandleValue {
+            body,
+            docs: Docs::default(),
+            axes: PhantomData,
+        },
+        source.into_source(),
+    )
+}
+
 /// Builds a `#[subscriber]` expansion's sealed plain definition: the same value the
 /// `subscriber(..) .. .build()` chain produces, at the probe-captured documentation state
 /// (see [`ProbedDocs`]) instead of the documented-by-default obligations. Machinery behind the

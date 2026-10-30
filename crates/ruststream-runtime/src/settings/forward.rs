@@ -15,7 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::ConnectedBroker;
+use crate::{ConnectedBroker, LocalConnectedBroker};
 
 use super::SubscriberBuilder;
 use crate::batch::{BatchDef, BatchResult};
@@ -26,11 +26,11 @@ use crate::dispatch::Workers;
 use crate::failure::FailurePolicies;
 use crate::handle::DeclaresReply;
 use crate::handler::HandlerOutcome;
-use crate::inject::{InjectCall, InjectDef};
+use crate::inject::{InjectCall, InjectDef, LocalInjectCall};
 use crate::input::InputKind;
 use crate::metadata::OutgoingMessageMetadata;
 use crate::publishing::{PublishingCall, PublishingDef};
-use crate::slot::{BindSlots, HasSlots};
+use crate::slot::{BindSlots, HasSlots, LocalBindSlots, LocalHasSlots};
 use crate::subscriber_def::SubscriberDef;
 
 /// The metadata methods every definition trait shares, forwarded to the wrapped definition, plus
@@ -144,6 +144,23 @@ where
         ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
     ) -> impl Future<Output = HandlerOutcome> + Send {
         self.def.call(input, injections, ctx)
+    }
+}
+
+impl<Def, Src, State, DC, S> LocalInjectCall<S> for SubscriberBuilder<Def, Src, State, DC>
+where
+    Def: LocalInjectCall<S>,
+    Src: Clone + Send + Sync,
+    State: Send + Sync,
+    DC: Send + Sync,
+{
+    fn call_local(
+        &self,
+        input: &<<Def as InjectDef>::Input as InputKind>::Target,
+        injections: &<Def as InjectDef>::Injections,
+        ctx: &mut Context<'_, <Def as InjectDef>::Context, S>,
+    ) -> impl Future<Output = HandlerOutcome> {
+        self.def.call_local(input, injections, ctx)
     }
 }
 
@@ -269,11 +286,43 @@ impl<Def: HasSlots, Src, State, DC> HasSlots for SubscriberBuilder<Def, Src, Sta
     type Markers = Def::Markers;
 }
 
+impl<Def: LocalHasSlots, Src, State, DC> LocalHasSlots for SubscriberBuilder<Def, Src, State, DC> {
+    type Markers = Def::Markers;
+}
+
 // The reply type is the definition's, so a mount chain reads it through the builder the same way
 // it reads every other structural piece.
 impl<Def: DeclaresReply, Src, State, DC> DeclaresReply for SubscriberBuilder<Def, Src, State, DC> {
     type Reply = Def::Reply;
     type Context = Def::Context;
+}
+
+// The local family's binding, forwarded the same way.
+impl<Def, Src, State, DC, C, Sources> LocalBindSlots<C, Sources>
+    for SubscriberBuilder<Def, Src, State, DC>
+where
+    C: LocalConnectedBroker,
+    Def: LocalBindSlots<C, Sources>,
+{
+    type Bound = SubscriberBuilder<Def::Bound, Src, State, DC>;
+    type Extra = Def::Extra;
+
+    fn bind_local(self, sources: Sources) -> (Self::Bound, Self::Extra) {
+        let (def, source, (workers, failures, batch_size, codec)) = self.into_parts();
+        let (bound, extra) = def.bind_local(sources);
+        (
+            SubscriberBuilder {
+                def: bound,
+                source,
+                workers,
+                failures,
+                batch_size,
+                codec,
+                _state: PhantomData,
+            },
+            extra,
+        )
+    }
 }
 
 // Binding the slots instantiates the publisher-generic definition; the settings and the source
