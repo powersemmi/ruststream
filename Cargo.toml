@@ -990,6 +990,7 @@ tokio = [
 ]
 embassy = [
     "dep:ruststream-runtime-embassy",
+    "dep:tracing",
     "ruststream-macros?/embassy",
     "ruststream-memory?/embassy",
 ]
@@ -1055,6 +1056,8 @@ ruststream-macros = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
+# The log `#[ruststream::app]`'s embassy task reports an app's error to.
+tracing = { workspace = true, optional = true }
 
 # One scenario per file; `benches/common` is the shared setup. `just bench` names them, so a new
 # file is added in two places and `scripts/bench_results.py` fails loudly when one of them is
