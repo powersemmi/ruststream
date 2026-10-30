@@ -84,3 +84,9 @@ workspace = true
 name = "embedded"
 path = "tests/embedded.rs"
 required-features = ["embassy", "json"]
+
+# A delayed retry of a device service, kept in its mount's store, through the embedded `TestApp`.
+[[test]]
+name = "embedded_retry"
+path = "tests/embedded_retry.rs"
+required-features = ["embassy", "json"]
